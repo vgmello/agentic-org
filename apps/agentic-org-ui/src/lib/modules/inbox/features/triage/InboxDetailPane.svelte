@@ -20,12 +20,11 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { isDenyAction } from '$lib/home/model';
 	import { computeSnoozePresets, formatSnoozeReturn, snoozeExceedsExpiry } from './snooze-presets';
+	import { appendInboxDeviceComment, readInboxDeviceComments } from '../../device-comments';
 	import {
 		highlightSegments,
-		inboxCommentsStorageKey,
 		isDeniedOutcome,
 		MAX_INBOX_COMMENT_LENGTH,
-		parseInboxCommentsJson,
 		splitHref,
 		type InboxCommentEntry,
 		type TriageItem
@@ -109,28 +108,17 @@
 		return false;
 	});
 
-	// Persisted comments version counter & status announcement
+	// Device-local notes version counter & status announcement (cleared on sign-out)
 	let commentVersion = $state(0);
-	let commentStatus = $derived.by(() => {
-		void organizationId;
-		void item?.id;
-		return '';
-	});
-
-	function readStoredComments(orgId: string, itemId: string): InboxCommentEntry[] {
-		if (typeof window === 'undefined') return [];
-		try {
-			const raw = window.localStorage.getItem(inboxCommentsStorageKey(orgId, itemId));
-			return parseInboxCommentsJson(raw);
-		} catch {
-			return [];
-		}
-	}
+	let lastCommentNotice = $state<{ key: string; text: string } | undefined>(undefined);
+	const commentScopeKey = $derived(`${organizationId}:${item?.id ?? ''}`);
+	const commentStatus = $derived(
+		lastCommentNotice?.key === commentScopeKey ? lastCommentNotice.text : ''
+	);
 
 	const comments = $derived.by<InboxCommentEntry[]>(() => {
 		void commentVersion;
-		if (!item) return [];
-		return readStoredComments(organizationId, item.id);
+		return item ? readInboxDeviceComments(organizationId, item.id) : [];
 	});
 
 	const isBusy = $derived(Boolean(item && busyId === item.id));
@@ -427,28 +415,18 @@
 			}
 			return;
 		}
-		const text = trimmed.slice(0, MAX_INBOX_COMMENT_LENGTH);
-		const id =
-			typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-				? crypto.randomUUID()
-				: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		const nextEntries: InboxCommentEntry[] = [
-			...readStoredComments(organizationId, item.id),
-			{ id, text, at: Date.now() }
-		];
-		try {
-			window.localStorage.setItem(
-				inboxCommentsStorageKey(organizationId, item.id),
-				JSON.stringify(nextEntries)
-			);
-		} catch {
+		const nextEntries = appendInboxDeviceComment(organizationId, item.id, trimmed);
+		if (!nextEntries) {
 			toast.error('Could not save the comment on this device.');
 			commentInputEl?.focus();
 			return;
 		}
 		onCommentDraftClear(organizationId, item.id);
 		commentVersion += 1;
-		commentStatus = `Comment posted (${nextEntries.length} total).`;
+		lastCommentNotice = {
+			key: commentScopeKey,
+			text: `Saved locally on this device (${nextEntries.length} total; not sent to office).`
+		};
 		commentInputEl?.setCustomValidity('');
 		commentInputEl?.focus();
 	}
@@ -1021,19 +999,21 @@
 				</div>
 			</div>
 
-			<!-- Activity: Interactive Comments + Request History Timeline -->
+			<!-- Activity: Device-local Notes + Request History Timeline -->
 			<section class="triage-activity" aria-labelledby="triage-activity-title">
-				<h3 id="triage-activity-title">Activity</h3>
+				<h3 id="triage-activity-title">
+					Activity <span class="font-normal text-fg-muted">(notes saved on this device only)</span>
+				</h3>
 
 				<form class="triage-comment-form" onsubmit={handleCommentSubmit}>
-					<label class="sr-only" for="triage-comment">Comment on this request</label>
+					<label class="sr-only" for="triage-comment">Add a device-only note on this request</label>
 					<textarea
 						bind:this={commentInputEl}
 						id="triage-comment"
 						name="comment"
 						rows="2"
 						maxlength={MAX_INBOX_COMMENT_LENGTH}
-						placeholder="Leave a comment…"
+						placeholder="Add a local note (saved on this device only)…"
 						value={commentDraft}
 						oninput={(e) => updateCommentDraft(e.currentTarget.value)}
 						onkeydown={(e) => {

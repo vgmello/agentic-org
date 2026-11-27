@@ -56,9 +56,7 @@ struct Inherited(
 fn inherited() -> Inherited {
     let file = fs::File::open("/").unwrap();
     assert!(file.as_raw_fd() > 2);
-    // SAFETY: clears close-on-exec on a descriptor this test owns.
-    let rc = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFD, 0) };
-    assert_eq!(rc, 0);
+    org_platform::posix::set_close_on_exec(&file, false).unwrap();
     Inherited(file)
 }
 

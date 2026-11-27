@@ -2,6 +2,7 @@ Claude Code and Codex start at the repository root (see the root `AGENTS.md`, "T
 
 ## UI Rules
 
+- **Mandatory Svelte 9/10 Architecture & Quality Rules:** Before creating, editing, or reviewing any file under `apps/agentic-org-ui/`, read and follow [`.agents/rules/svelte-architecture-and-quality.md`](../../.agents/rules/svelte-architecture-and-quality.md) (file-size ratchet CAP=700 / TARGET=500, non-UI barrels & shell bundle budgets, zero source cycles, single wire decoder, `appSession.controller()` auth/SSE, built-in HR & Tess immutability, Svelte 5 async/lifecycle hygiene, `prefers-reduced-motion`, 7-point pre-commit self-check, and periodic audit cadence).
 - **Icon-only controls require a tooltip (owner rule, 2026-11-24):** Every icon-only button, link, or interactive control without a visible text label (for example comment, copy, expand, close, filter, display, or sidebar toggle icons) MUST provide both an accessible name (`aria-label`) and a visible tooltip on hover and keyboard focus (matching the action name and optional shortcut, dismissible with `Escape`, WCAG 1.4.13). Never ship an unlabeled icon-only control without a tooltip.
 
 You are able to use the Svelte MCP server, where you have access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:

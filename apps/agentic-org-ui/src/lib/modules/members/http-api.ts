@@ -1,4 +1,10 @@
-import type { AppError, Member, OrgSnapshot, Team } from '$lib/proto';
+import {
+	isBuiltInAgent,
+	type AppError,
+	type Member,
+	type OrgSnapshot,
+	type Team
+} from '$lib/proto';
 import {
 	gatewayStatusCode,
 	readGatewayAppError,
@@ -462,6 +468,13 @@ export function createHttpMembersApi({
 					source: 'api',
 					code: 'not_found',
 					message: 'That member could not be found.'
+				} satisfies AppError;
+			}
+			if (isBuiltInAgent(member)) {
+				throw {
+					source: 'api',
+					code: 'not_authorized',
+					message: 'Built-in agents cannot be moved to another home team.'
 				} satisfies AppError;
 			}
 			await orgApi.command(organizationId, {

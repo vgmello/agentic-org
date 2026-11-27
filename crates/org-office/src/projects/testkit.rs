@@ -63,6 +63,13 @@ fn read<R: Default>(
 macro_rules! memory_read {
     ($($view:ty),+) => {$(
         impl ProjectsRead for $view {
+            fn team_task_moves(
+                &self,
+                chains: &std::collections::BTreeMap<Id, (Vec<Id>, Vec<Id>)>,
+            ) -> Result<Vec<crate::organization::ports::TeamHomedMove>, EngineError> {
+                crate::tasks::relocation::team_task_moves(self, chains)
+            }
+
             fn project(&self, id: &Id) -> Result<Option<Project>, EngineError> {
                 read(self.table(), |t| t.projects.get(id).cloned())
             }

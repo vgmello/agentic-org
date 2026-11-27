@@ -183,6 +183,9 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
         let burst: Vec<String> = (0..70)
             .map(|n| create_hq_task(&hq, &owner, &team_id, &format!("Burst task {n}")))
             .collect();
+        // Creates inside HQ's reserved number block are answered `committed` (`ADR-0019`):
+        // HQ publishes them once flushed and confirmed.
+        hq.sync_store().unwrap();
         let journal_head = sat
             .journal_entries_after(0)
             .last()
@@ -569,6 +572,10 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
     )
     .unwrap()
     .unwrap();
+    // The satellite's second create is inside its reserved block (`committed`, `ADR-0019`):
+    // the outbox takes it once it is flushed and confirmed.
+    sat.sync_store().unwrap();
+    sat.sync_satellite_work_outbox().unwrap();
     assert_eq!(sat.sync_status().unwrap().pending_work_count, 1);
 
     sat.re_enroll_satellite(SatelliteReEnrollSpec {

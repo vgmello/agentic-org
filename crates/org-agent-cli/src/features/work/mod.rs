@@ -1,6 +1,11 @@
 //! The work slice: `task` (14 verbs), `checklist` (5) and `task-note` (6, shorthand
 //! `task note`) (`TASK-49` `CLI-15`, `TASK-77` B4b), each command's row, guidance and handler in
 //! its file; the task schema the files share is in [`schema`].
+//!
+//! Each write declares the class the office answers it in (`doc-79`, `ADR-0014`): a create
+//! inside the office's reserved number block, a comment, a watch or unwatch and a checklist
+//! check are `committed`; a change that rewrites `task.md` (update, transition, assign, a
+//! dependency) or the checklist's steps (add, edit, remove, move) is `durable`.
 
 mod checklist;
 mod schema;

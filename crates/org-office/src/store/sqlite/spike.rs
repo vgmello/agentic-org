@@ -25,22 +25,10 @@ fn open() -> Connection {
     db
 }
 
-/// Zero exactly when every reference of the open transaction is resolved.
+/// Zero exactly when every reference of the open transaction is resolved: the engine's own
+/// counter read (`references.rs`), so the spike asserts what the engine relies on.
 fn unresolved(db: &Connection) -> i32 {
-    let (mut current, mut high) = (0, 0);
-    // SAFETY: the handle is this open connection's, and the two out-pointers are valid for
-    // the call.
-    let code = unsafe {
-        ffi::sqlite3_db_status(
-            db.handle(),
-            ffi::SQLITE_DBSTATUS_DEFERRED_FKS,
-            &mut current,
-            &mut high,
-            0,
-        )
-    };
-    assert_eq!(code, ffi::SQLITE_OK);
-    current
+    super::references::unresolved_references(db).expect("the deferred-reference counter")
 }
 
 fn number(db: &Connection, sql: &str) -> i64 {

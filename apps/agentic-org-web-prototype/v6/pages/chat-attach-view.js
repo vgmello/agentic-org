@@ -3,6 +3,7 @@
 import { CH, M } from "../data.js";
 import { altOf, fileFacts, fileIcon, isImage } from "./chat-attach-files.js";
 import { sentAt } from "./chat-model.js";
+import { syncOverlayHistory } from "./chat-overlays.js";
 import { esc, ic, plural } from "../ui.js";
 
 const GRID_MAX = 4;
@@ -49,7 +50,9 @@ function findMessage(chId, mid) {
   return r ? msgs.find((m) => m.id === r[1])?.thread?.[Number(r[2])] : null;
 }
 
-/* ---------------------------------------------------------------- image viewer */
+/* ---------------------------------------------------------------- image viewer
+   The viewer is Chat's top overlay: opening it adds to Chat's overlay history, so browser Back closes it first and
+   returns focus to its thumbnail (in the stream or the open thread), leaving the conversation as it was. */
 const viewer = { dialog: null, images: [], i: 0, from: "", meta: "" };
 function viewerInner() {
   const img = viewer.images[viewer.i], n = viewer.images.length;
@@ -77,7 +80,9 @@ function closeViewer() {
   d.close();
   d.remove();
   document.querySelector(viewer.from)?.focus();
+  syncOverlayHistory();
 }
+const viewerOpen = () => Boolean(viewer.dialog);
 const LB_KEYS = { ArrowLeft: () => showImage(viewer.i - 1), ArrowRight: () => showImage(viewer.i + 1), Escape: closeViewer };
 /* Tab cycles inside the viewer; a native modal dialog would otherwise let focus leave to the browser. */
 function trapTab(e) {
@@ -114,6 +119,7 @@ function openViewer(mid, t, chId) {
   t.closest(".chat").append(d);
   d.showModal();
   showImage(Number(t.dataset.i) || 0);
+  syncOverlayHistory();
 }
 
 /* ---------------------------------------------------------------- Files panel */
@@ -127,13 +133,22 @@ function conversationFiles(ch) {
   }
   return out.reverse();
 }
+/* Preview opens an image in the viewer (or another file in a new tab); Download saves it; Open source message goes to
+   the message (or exact reply) that carries it. */
+function previewAction(f, m, link) {
+  const label = `aria-label="Preview ${esc(f.name)}"`;
+  if (!isImage(f)) return `<a class="alink" href="${esc(f.url)}" target="_blank" rel="noopener" ${label}>Preview</a>`;
+  const i = (m.files || []).filter(isImage).indexOf(f);
+  return `<button class="alink" type="button" data-act="chat-att-view" data-id="${esc(link)}" data-i="${i}" ${label}>Preview</button>`;
+}
 function fileRow({ f, m, link, inThread }, chId) {
   const thumb = isImage(f) ? `<span class="chat-att-thumb"><img src="${esc(f.url)}" alt="" loading="lazy"></span>` : `<span class="chat-att-thumb">${fileIcon(f)}</span>`;
   const where = inThread ? " · in a thread" : "";
   return `<li class="chat-file-row">${thumb}
-    <span class="chat-att-meta"><a class="chat-att-name alink" href="#/chat/${esc(chId)}/${esc(link)}" data-act="chat-file-open" title="Go to the message">${esc(f.name)}</a>
-      <span class="chat-att-sub">${esc(M[m.who].name)} · ${esc(sentAt(m))}${where} · ${esc(fileFacts(f))}</span></span>
-    <a class="btn ghost icon" href="${esc(f.url)}" download="${esc(f.name)}" aria-label="Download ${esc(f.name)}" title="Download">${ic("download", "ic16")}</a></li>`;
+    <span class="chat-att-meta"><span class="chat-att-name">${esc(f.name)}</span>
+      <span class="chat-att-sub">${esc(M[m.who].name)} · ${esc(sentAt(m))}${where} · ${esc(fileFacts(f))}</span>
+      <span class="chat-file-acts"><a class="alink" href="#/chat/${esc(chId)}/${esc(link)}" data-act="chat-file-open" aria-label="Open source message for ${esc(f.name)}">Open source message</a>
+        ${previewAction(f, m, link)}<a class="alink" href="${esc(f.url)}" download="${esc(f.name)}" aria-label="Download ${esc(f.name)}">Download</a></span></span></li>`;
 }
 function filesPanelHtml(ch, chId, title, o) {
   if (!o.open) return "";
@@ -148,4 +163,4 @@ const filesButton = (open, title) => `<button class="btn ghost icon chat-files-b
 
 const VIEW_CLICKS = { "chat-att-view": openViewer };
 
-export { VIEW_CLICKS, attachmentNameHit, filesButton, filesPanelHtml, messageAttachmentsHtml };
+export { VIEW_CLICKS, attachmentNameHit, closeViewer, filesButton, filesPanelHtml, messageAttachmentsHtml, viewerOpen };

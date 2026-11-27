@@ -1,6 +1,7 @@
 //! Strict transfer/revocation service and real rendezvous reset cleanup.
 use super::*;
 use org_office_launch::{ChannelKind, TransferRecord, MAX_CHANNELS, MAX_WEB_CHANNELS};
+use std::os::fd::{AsFd, BorrowedFd};
 fn assert_transfer_fatal(run: &mut Run, case: &str) {
     let status = run.wait();
     let stderr = run.stderr();
@@ -10,7 +11,7 @@ fn assert_transfer_fatal(run: &mut Run, case: &str) {
         "{case}"
     );
 }
-pub(super) fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[RawFd]) {
+pub(super) fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[BorrowedFd<'_>]) {
     send_until(
         socket,
         payload,
@@ -24,34 +25,11 @@ pub(super) fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[RawFd]) 
 fn send_until(
     socket: &UnixDatagram,
     payload: &[u8],
-    fds: &[RawFd],
+    fds: &[BorrowedFd<'_>],
     deadline: std::time::Instant,
     retry: Option<&std::sync::mpsc::Sender<()>>,
 ) -> std::io::Result<()> {
     use std::io::{Error, ErrorKind};
-    // SAFETY: CMSG_SPACE computes storage for this bounded test-owned fd slice.
-    let space = unsafe { libc::CMSG_SPACE(std::mem::size_of_val(fds) as u32) } as usize;
-    let mut control = vec![0usize; space.div_ceil(std::mem::size_of::<usize>())];
-    let mut data = libc::iovec {
-        iov_base: payload.as_ptr().cast_mut().cast(),
-        iov_len: payload.len(),
-    };
-    // SAFETY: live aligned buffers cover all lengths; passed fds remain sender-owned.
-    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
-    message.msg_iov = &mut data;
-    message.msg_iovlen = 1;
-    if !fds.is_empty() {
-        message.msg_control = control.as_mut_ptr().cast();
-        message.msg_controllen = space as _;
-        // SAFETY: nonempty aligned ancillary storage fits exactly this SCM_RIGHTS message.
-        unsafe {
-            let header = libc::CMSG_FIRSTHDR(&message);
-            (*header).cmsg_level = libc::SOL_SOCKET;
-            (*header).cmsg_type = libc::SCM_RIGHTS;
-            (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of_val(fds) as u32) as _;
-            std::ptr::copy_nonoverlapping(fds.as_ptr(), libc::CMSG_DATA(header).cast(), fds.len());
-        }
-    }
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
@@ -60,7 +38,7 @@ fn send_until(
                 "transfer send deadline expired",
             ));
         }
-        let error = match attempt_send(socket, &message) {
+        let error = match attempt_send(socket, payload, fds) {
             Ok(sent) if sent == payload.len() => return Ok(()),
             Ok(_) => {
                 return Err(Error::new(
@@ -90,21 +68,14 @@ fn send_until(
                 let _ = retry.send(());
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            let mut readiness = libc::pollfd {
-                fd: socket.as_raw_fd(),
-                events: libc::POLLOUT,
-                revents: 0,
-            };
-            // SAFETY: one initialized pollfd; flooring milliseconds never extends the deadline.
-            let result = unsafe {
-                libc::poll(
-                    &mut readiness,
-                    1,
-                    remaining.as_millis().min(i32::MAX as u128) as i32,
-                )
-            };
-            if result < 0 {
-                let error = Error::last_os_error();
+            // Flooring milliseconds never extends the deadline.
+            let remaining =
+                Duration::from_millis(remaining.as_millis().min(i32::MAX as u128) as u64);
+            let mut readiness = [org_platform::posix::poll_slot(
+                socket.as_raw_fd(),
+                libc::POLLOUT,
+            )];
+            if let Err(error) = org_platform::posix::poll(&mut readiness, Some(remaining)) {
                 if error.kind() != ErrorKind::Interrupted {
                     return Err(error);
                 }
@@ -118,18 +89,16 @@ fn send_until(
 thread_local! {
     static NEXT_SEND_ERROR: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
 }
-fn attempt_send(socket: &UnixDatagram, message: &libc::msghdr) -> std::io::Result<usize> {
+fn attempt_send(
+    socket: &UnixDatagram,
+    payload: &[u8],
+    fds: &[BorrowedFd<'_>],
+) -> std::io::Result<usize> {
     if let Some(raw) = NEXT_SEND_ERROR.with(|next| next.take()) {
         return Err(std::io::Error::from_raw_os_error(raw));
     }
-    // SAFETY: send_until retains all borrowed buffers/fds through this call.
     // DONTWAIT keeps a full Linux datagram queue inside the overall deadline.
-    let sent = unsafe { libc::sendmsg(socket.as_raw_fd(), message, libc::MSG_DONTWAIT) };
-    if sent < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(sent as usize)
-    }
+    org_socket::rights::send_once(socket.as_fd(), payload, fds, libc::MSG_DONTWAIT)
 }
 
 #[test]
@@ -226,7 +195,7 @@ fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live
         send_record(
             session.transfer.as_ref().unwrap(),
             &record,
-            &[source.as_raw_fd()],
+            &[source.as_fd()],
         );
         assert_eq!(
             session.event(),
@@ -349,7 +318,7 @@ fn malformed_and_wrong_rights_records_are_fatal_without_any_revoked_ack() {
         send_record(
             session.transfer.as_ref().unwrap(),
             body,
-            &vec![source.as_raw_fd(); count],
+            &vec![source.as_fd(); count],
         );
         assert!(
             frame::read_line(&mut session.reader).unwrap().is_none(),
@@ -453,7 +422,7 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     // Queue one concatenated write before the worker can receive the endpoint.
     host.write_all(&body).unwrap();
     host.shutdown(std::net::Shutdown::Write).unwrap();
-    pass_fd(&stream, child.as_raw_fd());
+    pass_fd(&stream, child.as_fd());
     assert_eq!(
         line(&mut reader),
         json!({"v":1,"event":"fds_received","of":"handoff"})
@@ -629,7 +598,7 @@ fn open_live_channel(session: &mut Session, kind: ChannelKind, id: &str) -> BufR
     send_record(
         session.transfer.as_ref().unwrap(),
         &record,
-        &[source.as_raw_fd()],
+        &[source.as_fd()],
     );
     assert_eq!(
         session.event(),
@@ -663,7 +632,7 @@ fn assert_capacity_refused(session: &mut Session, kind: ChannelKind) {
     send_record(
         session.transfer.as_ref().unwrap(),
         &record,
-        &[source.as_raw_fd()],
+        &[source.as_fd()],
     );
     assert_eq!(
         session.event(),
@@ -781,7 +750,7 @@ fn duplicate_live_channel_remains_fatal_without_ack_and_reaps_every_peer() {
     send_record(
         session.transfer.as_ref().unwrap(),
         &record,
-        &[source.as_raw_fd()],
+        &[source.as_fd()],
     );
     assert_transfer_fatal(&mut session.run, "duplicate-live");
     session.no_stdout();
@@ -825,9 +794,9 @@ fn real_channel_admission_rejects_each_reserved_identity_and_wrong_descriptor_wi
         let (datagram, _datagram_peer) = UnixDatagram::pair().unwrap();
         let file = tempfile::tempfile().unwrap();
         let fd = match case {
-            "datagram" => datagram.as_raw_fd(),
-            "file" => file.as_raw_fd(),
-            _ => source.as_raw_fd(),
+            "datagram" => datagram.as_fd(),
+            "file" => file.as_fd(),
+            _ => source.as_fd(),
         };
         send_record(session.transfer.as_ref().unwrap(), &record, &[fd]);
         assert_transfer_fatal(&mut session.run, case);
@@ -864,11 +833,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
         channel_id: "grant-proof".into(),
     })
     .unwrap();
-    send_record(
-        session.transfer.as_ref().unwrap(),
-        &body,
-        &[source.as_raw_fd()],
-    );
+    send_record(session.transfer.as_ref().unwrap(), &body, &[source.as_fd()]);
     assert_eq!(
         session.event(),
         json!({"v":1,"event":"fds_received","of":"grant-proof"})
@@ -922,7 +887,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     send_record(
         session.transfer.as_ref().unwrap(),
         &barrier,
-        &[barrier_source.as_raw_fd()],
+        &[barrier_source.as_fd()],
     );
     assert_eq!(
         session.event(),

@@ -43,6 +43,13 @@
 //! file is already compiled for one system and needs no predicate. A capability that
 //! has only its macOS adapter so far selects between that and `refused` until its Linux
 //! adapter is written.
+//!
+//! # Where the workspace's unsafe code is
+//!
+//! Here and in `org-platform-host` only: every other crate forbids `unsafe_code`
+//! (`tests/rust_hygiene.rs`). A plain POSIX call that is the same on every system has a
+//! safe wrapper in [`posix`], with no adapters; descriptor passing is
+//! [`socket::rights`]. Each `unsafe` block carries the argument for it beside it.
 
 #[cfg(not(unix))]
 compile_error!("org-platform builds only for Unix targets");
@@ -53,6 +60,7 @@ pub mod disk;
 pub mod fs;
 pub mod image;
 pub mod keychain;
+pub mod posix;
 pub mod process;
 pub mod service;
 pub mod socket;

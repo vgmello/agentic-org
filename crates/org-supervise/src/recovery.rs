@@ -497,18 +497,11 @@ fn safe_identity<'a>(
 mod tests;
 
 fn native_wait_until(deadline: Instant) -> io::Result<()> {
+    // `thread::sleep` resumes an interrupted sleep itself; the loop recomputes the
+    // absolute budget after every wake either way.
     wait_until_with(deadline, Instant::now, |remaining| {
-        let timeout = libc::timespec {
-            tv_sec: remaining.as_secs().min(i64::MAX as u64) as _,
-            tv_nsec: remaining.subsec_nanos() as _,
-        };
-        // SAFETY: a valid finite interval. An interrupted call is retried only
-        // after recomputing the absolute budget, so no remaining-time output is needed.
-        if unsafe { libc::nanosleep(&timeout, std::ptr::null_mut()) } == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
+        std::thread::sleep(remaining);
+        Ok(())
     })
 }
 

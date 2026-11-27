@@ -14,6 +14,7 @@ import { chatTitle, inboxItem } from "./chat-model.js";
 import { followThreadEnd } from "./chat-scroll.js";
 import { receiptHtml } from "./ask-receipt.js";
 import { decidedInInbox, reviewInInbox, routeReasonHtml } from "./ask-route.js";
+import { denyDraftKey, draftText } from "./ask-drafts.js";
 
 const askDrafts = new Map(); /* inbox item id -> unsent follow-up on that request */
 const asks = { followUp: null, note: null };
@@ -59,10 +60,35 @@ function inlineControls(it) {
   const sep = guardedHtml && S.confirmDeny !== it.id ? '<span class="hb-act-sep" aria-hidden="true"></span>' : "";
   return [...b, sep, guardedHtml];
 }
-function needsActions(it, where) {
+/* The guarded action of an inline ask (Deny, Dismiss…): its label, recorded outcome and icon. */
+function guardOf(it) {
+  if (it.kind === "approval" && !it.acts) return { label: "Deny", outcome: "Denied", icon: "deny" };
+  if (it.kind === "problem" && it.dismiss) return { label: "Dismiss", outcome: "Dismissed", icon: "x" };
+  const act = (it.acts || []).find((a) => a[3] === "deny");
+  return act ? { label: act[0], outcome: act[1], icon: act[2] || "x" } : null;
+}
+const CONFIRM_WORD = { Deny: "Confirm denial", Dismiss: "Confirm dismissal" };
+/* Armed denial replaces the whole action row: the opposite outcome (Approve) is not on screen while it is armed.
+   Focus starts in the optional reason; Keep request open (or Escape) disarms and returns to Deny. */
+function armedDenial(it, g) {
+  const who = esc(M[it.from]?.name || "the agent"), id = esc(it.id), confirm = CONFIRM_WORD[g.label] || `Confirm: ${esc(g.label)}`;
+  return `<div class="hb-deny-guard chat-deny-guard" role="group" aria-label="${confirm}">
+    <label class="sr-only" for="deny-msg-${id}">Optional reason for ${who}</label>
+    <input class="field hb-deny-input" id="deny-msg-${id}" data-deny-id="${id}" data-deny-outcome="${esc(g.outcome)}" data-draft="${esc(denyDraftKey(it.id))}" type="text" placeholder="Optional reason for ${who}…" value="${esc(draftText(denyDraftKey(it.id)))}" autocomplete="off">
+    <div class="actions"><button class="btn sm hb-deny-confirm" type="button" data-act="deny-confirm" data-id="${id}" data-v="${esc(g.outcome)}">${ic(g.icon, "ic16")}${confirm}</button><button class="btn ghost sm" type="button" data-act="deny-keep" data-id="${id}">Keep request open</button></div>
+  </div>`;
+}
+/* A step that replaces the card's buttons: its receipt, a reply or follow-up being written, or an armed denial. */
+function openStep(it, where) {
   if (it.handled) return handledLine(it);
   if (S.replying === it.id) return v4ReplyBox(it);
   if (asks.followUp === it.id) return followUpBox(it, where);
+  const guard = S.confirmDeny === it.id && !decidedInInbox(it) && guardOf(it);
+  return guard ? armedDenial(it, guard) : "";
+}
+function needsActions(it, where) {
+  const step = openStep(it, where);
+  if (step) return step;
   const inbox = decidedInInbox(it);
   const primary = inbox ? [reviewInInbox(it)] : inlineControls(it);
   const followUp = `<button class="btn ghost sm" type="button" data-act="chat-ask-reply" data-id="${esc(it.id)}">${ic("reply", "ic16")}Ask a follow-up</button>`;
@@ -70,18 +96,29 @@ function needsActions(it, where) {
   const why = inbox ? routeReasonHtml(it, "chat-needs-route") : "";
   const sentTo = where.thread ? " in this thread" : "";
   const note = asks.note === it.id ? `<p class="chat-needs-note" role="status">${ic("check-circle", "ic14")}Follow-up sent to ${esc(M[it.from].name)}${sentTo}. The request stays open until ${settles(it)}.</p>` : "";
-  return `${note}${why}<div class="actions">${[...primary, followUp, open].join("")}</div>`;
+  /* The responses (presets and Answer…, or approve and deny) stay together as one group; the follow-up and the
+     record link follow as a second group, wrapping as a unit onto their own line when space runs out. */
+  return `${note}${why}<div class="actions chat-needs-acts"><span class="chat-needs-answer">${primary.join("")}</span><span class="chat-needs-aside">${followUp}${open}</span></div>`;
 }
 function tradeoff(it) {
   if (!decidedInInbox(it) || !it.why) return "";
   return `<details class="chat-needs-why"><summary>${ic("scale", "ic14")}Tradeoff${ic("chev-right", "ic14 chat-needs-chev")}</summary><p>${esc(it.why)}</p>${it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : ""}</details>`;
 }
-/* An ask answered here (a one-tap question or an inline approval) shows what the choice weighs, the same context
-   Inbox shows, right above its controls. */
+/* An ask answered here (a one-tap question) shows what the choice weighs, the same context Inbox shows, right above
+   its controls. */
+const whyHtml = (it) => `<p>${esc(it.why).replace(/\bT-A\d+\b/g, workRef)}</p>`;
 function choiceContext(it) {
-  if (decidedInInbox(it) || it.handled || !it.why) return "";
+  if (decidedInInbox(it) || it.handled || !it.why || decisionFacts(it)) return "";
   const rec = it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : "";
-  return `<div class="chat-needs-context"><p>${esc(it.why).replace(/\bT-A\d+\b/g, workRef)}</p>${rec}</div>`;
+  return `<div class="chat-needs-context">${whyHtml(it)}${rec}</div>`;
+}
+/* Where scope and risk already state the decision (an inline approval), the card leads with them and the buttons;
+   the recommendation and the longer reasoning, which repeat the message and those facts, follow as one disclosure
+   ("Jules recommends: … ›"), so scope, risk and the action are in the first view at 375 px. */
+function factsFollowUp(it) {
+  if (decidedInInbox(it) || it.handled || !it.why || !decisionFacts(it)) return "";
+  const label = it.rec ? `<span class="chat-needs-rec">${esc(it.rec)}</span>` : `<span>Why ${esc(M[it.from].name)} asks</span>`;
+  return `<details class="chat-needs-why chat-needs-more"><summary>${ic("info", "ic14")}${label}${ic("chev-right", "ic14 chat-needs-chev")}</summary>${whyHtml(it)}</details>`;
 }
 /* The risk fact an inline approval rests on, from the item's own impact and audit data: its risk level and what it
    cannot touch (data, spend, rollback), e.g. "Low risk · Zero production or customer data". */
@@ -113,8 +150,8 @@ function needsCardHtml(it, msgId, where = {}) {
     ${needsHead(it)}
     <h3 class="chat-needs-q" id="${titleId}" tabindex="-1">${esc(it.what)}</h3>
     ${meta ? `<p class="chat-needs-meta">${meta}</p>` : ""}
-    ${tradeoff(it)}${choiceContext(it)}${decisionFacts(it)}
-    ${needsActions(it, where)}
+    ${tradeoff(it)}${decisionFacts(it)}${choiceContext(it)}
+    ${needsActions(it, where)}${factsFollowUp(it)}
   </section>`;
 }
 /* Where a low-risk ask's answerable card is: the message carrying it, outside agents' conversations. */

@@ -3,7 +3,7 @@
 //! families (an older replacement-HQ snapshot never downgrades a newer local task), so it lives
 //! here, above both, rather than in either family.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use org_store::{Actor, Change, DurablePath, Engine, Id, Operation, Refusal, Stream, UnitOfWork};
 
@@ -11,7 +11,8 @@ use crate::organization::features::{invalid, operation, Op};
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::{self, OfficeRole};
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records as task_records;
+
+mod tasks;
 
 /// Applies authoritative `state/` file updates replicated from HQ onto a satellite's own
 /// `org-store` acceptance journal and projection (`TASK-52` / `S1`).
@@ -19,6 +20,17 @@ use crate::tasks::records as task_records;
 pub struct ApplyReplicatedFiles {
     /// List of `(durable_path_str, Some(bytes) for put / None for delete)`.
     pub files: Vec<(String, Option<Vec<u8>>)>,
+    /// HQ ingesting a satellite's work: each task folder file is written in the folder HQ's
+    /// own projection names for its task, so a team HQ moved meanwhile keeps its tasks
+    /// together (`MoveTeam`, `doc-77`). Never set for HQ's authoritative batches, whose
+    /// paths already follow the chains they carry.
+    #[serde(default)]
+    pub rehome_tasks: bool,
+    /// The effective revision the whole replicated set this batch is one part of brings
+    /// each of its tasks to (a snapshot applied in several batches, whose `task.md` and
+    /// history are in different ones), so a part is never judged stale alone (`doc-79`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub task_revisions: BTreeMap<Id, u64>,
 }
 
 impl ApplyReplicatedFiles {
@@ -31,10 +43,20 @@ impl ApplyReplicatedFiles {
         E::Tx: OrganizationRead + TasksRead,
     {
         let _ = uow.next(Stream::Organization)?;
-        let stale_tasks = collect_stale_replicated_tasks(uow.view(), &self.files);
+        let rehomed;
+        let files = if self.rehome_tasks {
+            rehomed = tasks::rehome(uow.view(), &self.files)?;
+            &rehomed
+        } else {
+            &self.files
+        };
+        let stale_tasks = tasks::stale_tasks(uow.view(), files, &self.task_revisions);
+        let leftovers = tasks::relocation_leftovers(uow.view(), files, &stale_tasks)?;
+        let mut removals = tasks::Removals::new(&leftovers.relocated);
         let mut change = Change::new(Op::ApplyReplicatedFiles.ack());
         let mut deferred_hq_offices: Vec<(DurablePath, Vec<u8>)> = Vec::new();
-        for (raw_path, content) in &self.files {
+        let mut after_writes: Vec<DurablePath> = Vec::new();
+        for (raw_path, content) in files {
             if !raw_path.starts_with("state/") && !raw_path.starts_with("messaging/") {
                 return invalid("replicated files must stay strictly under state/ or messaging/");
             }
@@ -42,7 +64,7 @@ impl ApplyReplicatedFiles {
                 .map_err(|_| Refusal::invalid("invalid replicated durable path"))?;
             match content {
                 Some(bytes) => {
-                    if should_skip_stale_work_file(uow.view(), &path, bytes, &stale_tasks) {
+                    if tasks::is_stale_file(&path, &stale_tasks) {
                         continue;
                     }
                     // During D25 HQ replacement, a new HQ office file may sort lexicographically
@@ -58,72 +80,25 @@ impl ApplyReplicatedFiles {
                         change = change.put(path, bytes.clone());
                     }
                 }
-                None => change = change.remove(path),
+                None => match removals.of(uow.view(), &path)? {
+                    tasks::Removal::Now => change = change.remove(path),
+                    tasks::Removal::AfterWrites => after_writes.push(path),
+                    tasks::Removal::Kept => {}
+                },
             }
         }
         for (path, bytes) in deferred_hq_offices {
             change = change.put(path, bytes);
         }
+        // Files the batch left in a folder it moved a task out of follow the task; the old
+        // folder is emptied once the new one stands, so a removal never takes the moved
+        // task's records (`doc-77`).
+        for (path, bytes) in leftovers.puts {
+            change = change.put(path, bytes);
+        }
+        for path in after_writes.into_iter().chain(leftovers.removes) {
+            change = change.remove(path);
+        }
         Ok(change)
-    }
-}
-
-/// Identifies task IDs whose committed local revision is already >= the incoming replicated
-/// task revision for the same owning `office_code` so an older replacement-HQ snapshot never
-/// downgrades a local task while leaving higher-numbered immutable events behind (`TASK-52` P10-#4).
-fn collect_stale_replicated_tasks(
-    view: &impl TasksRead,
-    files: &[(String, Option<Vec<u8>>)],
-) -> BTreeSet<Id> {
-    let mut stale = BTreeSet::new();
-    for (raw_path, content) in files {
-        let Some(bytes) = content else {
-            continue;
-        };
-        let Ok(path) = DurablePath::parse(raw_path) else {
-            continue;
-        };
-        let Some(task_records::Kind::Task(tid)) = task_records::kind_of(&path) else {
-            continue;
-        };
-        let Ok(incoming) = serde_json::from_slice::<task_records::TaskRecord>(bytes) else {
-            continue;
-        };
-        if let Ok(Some(local)) = view.task(&tid) {
-            if local.office_code == incoming.office_code
-                && local.meta.revision > incoming.meta.revision
-            {
-                stale.insert(tid);
-            }
-        }
-    }
-    stale
-}
-
-fn should_skip_stale_work_file(
-    view: &impl TasksRead,
-    path: &DurablePath,
-    bytes: &[u8],
-    stale_tasks: &BTreeSet<Id>,
-) -> bool {
-    match task_records::kind_of(path) {
-        Some(task_records::Kind::OfficeTaskCounter(code)) => {
-            let incoming_num = serde_json::from_slice::<serde_json::Value>(bytes)
-                .ok()
-                .and_then(|v| v.get("last_number").and_then(serde_json::Value::as_u64));
-            matches!(
-                (incoming_num, view.office_task_counter(&code)),
-                (Some(in_num), Ok(Some(local))) if local.last_number >= in_num
-            )
-        }
-        Some(
-            task_records::Kind::Task(tid)
-            | task_records::Kind::Checklist(tid)
-            | task_records::Kind::Comment(tid, _)
-            | task_records::Kind::Watchers(tid)
-            | task_records::Kind::Links(tid)
-            | task_records::Kind::Event(tid, _),
-        ) => stale_tasks.contains(&tid),
-        None => false,
     }
 }

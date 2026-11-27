@@ -200,11 +200,9 @@ fn restrictive_umask_child() {
     };
     let root = std::env::current_dir().unwrap();
     let mask: libc::mode_t = mask.parse().unwrap();
-    // SAFETY: only this isolated helper's process-wide umask changes; the main test runner
+    // Only this isolated helper's process-wide umask changes; the main test runner
     // never changes its umask while other tests/threads create files.
-    unsafe {
-        libc::umask(mask);
-    }
+    org_platform::posix::set_umask(mask);
     // No directories need creating here: even an owner-masking umask must leave the
     // newly O_EXCL-created regular file at0600 through its pinned descriptor.
     let mut file_only = plan(&root);

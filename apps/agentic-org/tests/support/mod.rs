@@ -85,8 +85,7 @@ pub fn private_program(built: &Path) -> PathBuf {
 /// this first and returns when it is `false`: the reason is printed, and the same test runs
 /// as an ordinary user in CI on both systems (GitHub's runners are not root).
 pub fn may_run_the_service(test: &str) -> bool {
-    // SAFETY: no arguments and no side effects; it cannot fail.
-    if unsafe { libc::geteuid() } == 0 {
+    if org_platform::posix::effective_uid() == 0 {
         eprintln!(
             "{test}: SKIPPED as root: the service refuses to run as root; run the tests as an \
              ordinary user (CI does)"
@@ -458,8 +457,8 @@ impl TestHome {
             .filter(|f| f[0] == "orphan")
         {
             if let Ok(pid) = fields[3].parse::<libc::pid_t>() {
-                // SAFETY: signals a process the fake started for this test.
-                unsafe { libc::kill(pid, libc::SIGKILL) };
+                // Signals a process the fake started for this test.
+                let _ = org_platform::posix::kill(pid, libc::SIGKILL);
             }
         }
     }
@@ -676,8 +675,7 @@ pub fn eventually(timeout: Duration, what: &str, mut check: impl FnMut() -> bool
 
 /// Whether a process exists (a reaped child doesn't).
 pub fn alive(pid: u32) -> bool {
-    // SAFETY: signal 0 only checks the pid.
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    org_platform::posix::process_exists(pid as libc::pid_t)
 }
 
 /// A small blocking org-proto client.

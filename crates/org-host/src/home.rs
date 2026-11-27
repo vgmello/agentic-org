@@ -118,15 +118,13 @@ pub(crate) fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
 
 /// The effective user id of this process.
 pub(crate) fn euid() -> u32 {
-    // SAFETY: geteuid has no preconditions and can't fail.
-    unsafe { libc::geteuid() }
+    org_platform::posix::effective_uid()
 }
 
 /// The effective group id of this process.
 #[cfg(test)]
 pub(crate) fn egid() -> u32 {
-    // SAFETY: getegid has no preconditions and can't fail.
-    unsafe { libc::getegid() }
+    org_platform::posix::effective_gid()
 }
 
 /// The longest socket path this system takes, in bytes (`org_platform::dirs`).
@@ -264,30 +262,8 @@ pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
 
 /// The home folder (`pw_dir`) of the account `uid`, if it is absolute.
 fn account_home(uid: u32) -> Option<PathBuf> {
-    use std::ffi::CStr;
-    use std::os::unix::ffi::OsStrExt;
-
-    let mut buf = vec![0 as libc::c_char; 4096];
-    loop {
-        // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
-        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
-        let mut found: *mut libc::passwd = std::ptr::null_mut();
-        // SAFETY: `entry`, `buf` (of the length given) and `found` are valid for the call,
-        // which writes the strings `entry` points to into `buf`.
-        let rc =
-            unsafe { libc::getpwuid_r(uid, &mut entry, buf.as_mut_ptr(), buf.len(), &mut found) };
-        if rc == libc::ERANGE && buf.len() < 1 << 20 {
-            buf.resize(buf.len() * 2, 0);
-            continue;
-        }
-        if rc != 0 || found.is_null() || entry.pw_dir.is_null() {
-            return None;
-        }
-        // SAFETY: `pw_dir` is a NUL-terminated string inside `buf`, which is still alive.
-        let dir = unsafe { CStr::from_ptr(entry.pw_dir) };
-        let dir = PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes()));
-        return dir.is_absolute().then_some(dir);
-    }
+    let home = org_platform::posix::account_by_uid(uid).ok()??.home?;
+    home.is_absolute().then_some(home)
 }
 
 /// `host.lock`, held (an exclusive `flock`) for as long as this value lives.
@@ -630,27 +606,25 @@ mod tests {
         let held = HostLock::acquire(&layout).unwrap();
         // An explicit byte releases the child even if other forks inherit socket copies.
         let (mut release, wait) = std::os::unix::net::UnixStream::pair().unwrap();
-        let (release_fd, wait_fd) = (release.as_raw_fd(), wait.as_raw_fd());
-        // SAFETY: the child uses only async-signal-safe close/read/_exit, retaining the lock fd.
-        let pid = unsafe { libc::fork() };
-        if pid == 0 {
-            // SAFETY: close the parent's socket and wait until its post-drop reacquire attempt.
-            unsafe {
-                libc::close(release_fd);
-                let mut byte = 0u8;
-                let read = libc::read(wait_fd, (&mut byte as *mut u8).cast(), 1);
-                libc::_exit(if read == 1 && byte == 1 { 0 } else { 42 });
-            }
-        }
-        assert!(pid > 0, "fork failed");
+        // The child closes the parent's socket and, retaining the lock fd, waits until its
+        // post-drop reacquire attempt.
+        let pid = org_platform::posix::testing::fork_child(
+            org_platform::posix::testing::ForkedChild::HoldUntilByte {
+                close: release.as_raw_fd(),
+                wait: wait.as_raw_fd(),
+            },
+        )
+        .expect("fork");
         drop(wait);
         drop(held);
         // Assert while the child still holds the fd; catch only to guarantee cleanup on failure.
         let checked = std::panic::catch_unwind(|| {
             let reopened = HostLock::acquire(&layout);
-            let mut status = 0;
-            // SAFETY: query only our child without waiting or releasing its descriptor.
-            assert_eq!(unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) }, 0);
+            // Query only our child without waiting or releasing its descriptor.
+            assert_eq!(
+                org_platform::posix::wait_pid(pid, libc::WNOHANG).unwrap(),
+                None
+            );
             assert!(
                 reopened.is_ok(),
                 "HostLock drop must release the lock even with an inherited fd: {:?}",
@@ -660,12 +634,9 @@ mod tests {
         let released = std::io::Write::write_all(&mut release, &[1]);
         drop(release);
         // Reap before assertions so the regression failure never leaves a child behind.
-        let mut status = 0;
-        // SAFETY: wait only for the child this test created.
-        let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+        let status = org_platform::posix::reap(pid);
         released.unwrap();
-        assert_eq!(waited, pid);
-        assert_eq!(status, 0);
+        assert_eq!(status.unwrap(), 0);
         if let Err(panic) = checked {
             std::panic::resume_unwind(panic);
         }
@@ -676,9 +647,7 @@ mod tests {
         use std::os::fd::AsRawFd;
         let dir = tempfile::tempdir().unwrap();
         let held = HostLock::acquire(&Layout::new(dir.path())).unwrap();
-        // SAFETY: F_GETFD only reads the flags of an fd this test owns.
-        let flags = unsafe { libc::fcntl(held._file.as_raw_fd(), libc::F_GETFD) };
-        assert!(flags >= 0 && flags & libc::FD_CLOEXEC != 0, "{flags}");
+        assert!(org_platform::posix::is_close_on_exec(held._file.as_raw_fd()).unwrap());
     }
 
     #[test]

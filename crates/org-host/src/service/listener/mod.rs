@@ -277,14 +277,11 @@ fn accept_loop(
 
 /// Whether `listener` has a connection waiting, within `wait`.
 fn readable(listener: &UnixListener, wait: Duration) -> bool {
-    let mut fd = libc::pollfd {
-        fd: listener.as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    let ms = libc::c_int::try_from(wait.as_millis()).unwrap_or(libc::c_int::MAX);
-    // SAFETY: polls one valid pollfd, owned by this frame, for at most `ms`.
-    unsafe { libc::poll(&mut fd, 1, ms) > 0 }
+    let mut slot = [org_platform::posix::poll_slot(
+        listener.as_raw_fd(),
+        libc::POLLIN,
+    )];
+    org_platform::posix::poll(&mut slot, Some(wait)).is_ok_and(|ready| ready > 0)
 }
 
 /// Who a peer of `host.sock` was admitted as.

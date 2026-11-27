@@ -275,8 +275,8 @@ fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_comple
         assert!(std::time::Instant::now() < deadline, "the worker never ran");
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
-    // SAFETY: SIGKILL to the disposable worker this test started.
-    assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+    // SIGKILL to the disposable worker this test started.
+    org_platform::posix::kill(pid, libc::SIGKILL).unwrap();
     while controller.driving_now() != 0 {
         assert!(
             std::time::Instant::now() < deadline,

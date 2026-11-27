@@ -617,11 +617,14 @@ fn actual_host_stop_leaves_no_create_worker_that_ignores_its_closed_stdin() {
         pid.is_some()
     });
     let pid = pid.unwrap();
-    // SAFETY: signal 0 only checks the pid.
-    assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "the worker is running");
+    // Signal 0 only checks the pid.
+    assert!(
+        org_platform::posix::process_exists(pid),
+        "the worker is running"
+    );
     drop(host);
-    // SAFETY: signal 0 only checks the pid.
-    let left = unsafe { libc::kill(pid, 0) } == 0;
+    // Signal 0 only checks the pid.
+    let left = org_platform::posix::process_exists(pid);
     assert!(!left, "the create's worker outlived the host's stop");
     assert!(!linked_on_disk(&base, &operation), "it never reported");
     assert_no_process_left(&base);

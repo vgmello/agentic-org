@@ -357,32 +357,24 @@ mod development {
         // Standard-library sockets retain CLOEXEC; a byte releases the child even if
         // another fork briefly inherits a socket, so the test never depends on EOF.
         let (mut release, wait) = std::os::unix::net::UnixStream::pair().unwrap();
-        let (release_fd, wait_fd) = (release.as_raw_fd(), wait.as_raw_fd());
-        // SAFETY: the child only uses async-signal-safe close/read/_exit before exiting.
-        let pid = unsafe { libc::fork() };
-        if pid == 0 {
-            // SAFETY: close the parent's socket, then retain the inherited custody fd
-            // until the parent has attempted its post-drop reopen and sends one byte.
-            unsafe {
-                libc::close(release_fd);
-                let mut byte = 0u8;
-                let read = libc::read(wait_fd, (&mut byte as *mut u8).cast(), 1);
-                libc::_exit(if read == 1 && byte == 1 { 0 } else { 42 });
-            }
-        }
-        assert!(pid > 0, "fork failed");
+        // The child closes the parent's socket, then retains the inherited custody fd until
+        // the parent has attempted its post-drop reopen and sends one byte.
+        let pid = org_platform::posix::testing::fork_child(
+            org_platform::posix::testing::ForkedChild::HoldUntilByte {
+                close: release.as_raw_fd(),
+                wait: wait.as_raw_fd(),
+            },
+        )
+        .expect("fork");
         drop(wait);
         drop(store);
         let reopened = f.open(A);
         let released = std::io::Write::write_all(&mut release, &[1]);
         drop(release);
         // Reap before assertions so the regression failure never leaves a child behind.
-        let mut status = 0;
-        // SAFETY: wait only for the child this test created.
-        let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+        let status = org_platform::posix::reap(pid);
         released.unwrap();
-        assert_eq!(waited, pid);
-        assert_eq!(status, 0);
+        assert_eq!(status.unwrap(), 0);
         assert!(
             reopened.is_ok(),
             "parent drop must release custody lock even with an inherited fd: {:?}",
@@ -527,8 +519,7 @@ mod development {
         fs::remove_file(&path).unwrap();
         use std::os::unix::ffi::OsStrExt;
         let raw = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-        // SAFETY: live, NUL-terminated temporary fixture path.
-        assert_eq!(unsafe { libc::mkfifo(raw.as_ptr(), 0o600) }, 0);
+        org_platform::posix::make_fifo(&raw, 0o600).unwrap();
         assert_eq!(s.load(&n).unwrap_err(), Error::Unsafe);
         assert!(s.put(&n, &Value::new(vec![]).unwrap()).is_err());
         assert!(s.delete(&n).is_err());
@@ -660,13 +651,11 @@ mod development {
             store
                 .put(&name, &Value::new(b"old".to_vec()).unwrap())
                 .unwrap();
-            // SAFETY: this exact-test child is isolated from the parent's parallel tests.
-            let prior = unsafe { libc::umask(0o400) };
+            // This exact-test child is isolated from the parent's parallel tests.
+            let prior = org_platform::posix::set_umask(0o400);
             let result = store.put(&name, &Value::new(b"new".to_vec()).unwrap());
-            // SAFETY: restore the process mask before assertions and fixture cleanup.
-            unsafe {
-                libc::umask(prior);
-            }
+            // Restore the process mask before assertions and fixture cleanup.
+            org_platform::posix::set_umask(prior);
             result.unwrap();
             assert_eq!(
                 fs::metadata(f.dir(A).join("registry")).unwrap().mode() & 0o7777,

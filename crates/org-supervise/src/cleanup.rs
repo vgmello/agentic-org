@@ -1,8 +1,8 @@
 //! Socket cleanup while the owned leader is still unreaped.
+use org_platform::posix;
 use std::ffi::CString;
 use std::fmt;
 use std::io;
-use std::os::fd::AsRawFd;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 
@@ -56,39 +56,21 @@ impl SocketCleanup {
         files::private_directory(&parent)?;
         let leaf = CString::new(path.file_name().unwrap().as_encoded_bytes())
             .map_err(|_| invalid("NUL in cleanup path"))?;
-        let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: held private parent dirfd; no leaf symlink is followed.
-        if unsafe {
-            libc::fstatat(
-                parent.as_raw_fd(),
-                leaf.as_ptr(),
-                info.as_mut_ptr(),
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        } != 0
-        {
-            let error = io::Error::last_os_error();
-            return if error.kind() == io::ErrorKind::NotFound {
-                Ok(false)
-            } else {
-                Err(error)
-            };
-        }
-        // SAFETY: successful fstatat initialized the record.
-        let info = unsafe { info.assume_init() };
+        // Held private parent dirfd; no leaf symlink is followed.
+        let info = match posix::status_at(&parent, &leaf, libc::AT_SYMLINK_NOFOLLOW) {
+            Ok(info) => info,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
         socket_owned(&info, crate::files::effective_uid())?;
         // The pinned current-UID/0700 parent narrows the window, not atomic. Deliberate
-        // same-UID leaf replacement is outside v1's threat model (D-B22/D-B33).
-        // SAFETY: literal leaf relative to held private parent, verified own-UID socket.
-        if unsafe { libc::unlinkat(parent.as_raw_fd(), leaf.as_ptr(), 0) } != 0 {
-            let error = io::Error::last_os_error();
-            return if error.kind() == io::ErrorKind::NotFound {
-                Ok(false)
-            } else {
-                Err(error)
-            };
+        // same-UID leaf replacement is outside v1's threat model (D-B22/D-B33). The literal
+        // leaf is relative to the held private parent and a verified own-UID socket.
+        match posix::remove_at(&parent, &leaf, 0) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
         }
-        Ok(true)
     }
 }
 
@@ -244,9 +226,16 @@ mod tests {
 
     #[test]
     fn foreign_uid_socket_policy_is_refused_without_privileged_fixtures() {
-        // No chown/root fixture: policy uses the same stat record as real fstatat.
-        // SAFETY: stat is a plain C record; initialized policy fields are set below.
-        let mut info: libc::stat = unsafe { std::mem::zeroed() };
+        // No chown/root fixture: policy uses the same stat record as real fstatat, taken of
+        // a socket of this test's own and then given another owner.
+        let directory = tempfile::tempdir().unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(directory.path().join("s")).unwrap();
+        let mut info = posix::status_at(
+            std::fs::File::open(directory.path()).unwrap(),
+            c"s",
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+        .unwrap();
         info.st_mode = libc::S_IFSOCK | 0o600;
         info.st_uid = 42;
         assert!(socket_owned(&info, 43).is_err());

@@ -5,7 +5,7 @@ import { bindBoardTips } from "./board-tip.js";
 import { own, route } from "../shell/router.js";
 import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
-import { workDetailContext } from "./task-context.js";
+import { savedTaskContext, workDetailContext } from "./task-context.js";
 
 /* Work with a pending owner ask (a fix waiting for your approval) is never archived out of sight */
 function isArchivedWork(w) {
@@ -1618,6 +1618,8 @@ function parseSavedWorkTask(key) {
     const ids = resolveSavedWorkIds(data.id, data.ref);
     if (!ids) return null;
     const { title, description, proj, who, status, pri, etaHours, createdAt, kind, criteria, ideationComments, materializedFromIdeation, requestedBy } = data;
+    /* The task's context snapshot (Chat excerpt, files, page links), validated entry by entry. */
+    const context = savedTaskContext(data.context);
     return {
       ...ids, title,
       description: typeof description === "string" ? description.slice(0, 4000) : "",
@@ -1627,6 +1629,7 @@ function parseSavedWorkTask(key) {
       ...(Array.isArray(ideationComments) ? { ideationComments } : {}),
       ...(materializedFromIdeation ? { materializedFromIdeation: true } : {}),
       ...(requestedBy ? { requestedBy } : {}),
+      ...(context.length ? { context } : {}),
     };
   } catch (e) {
     return null;

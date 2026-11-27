@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::federation_link::{
     collect_pending_work_paths_checked, deterministic_uuid_v7, SatelliteSyncSession,
 };
+use org_office::tasks::replica::SnapshotTasks;
 use org_office::Office;
 use org_sync::organization::{install_snapshot, ValidatedSnapshot};
 use org_sync_proto::{Codec, Digest, Epoch, Position};
@@ -27,6 +28,10 @@ use super::{
 
 struct BoundedBatchCommitter<'a> {
     office: &'a Office,
+    /// The snapshot's tasks: each batch names the effective revision the whole snapshot
+    /// brings its tasks to, so a batch holding a task's `task.md` apart from its later
+    /// history is never judged stale alone (`doc-79`).
+    tasks: &'a SnapshotTasks,
     hq_office_id: &'a str,
     operation_id: &'a str,
     single_commit_mode: bool,
@@ -38,12 +43,14 @@ struct BoundedBatchCommitter<'a> {
 impl<'a> BoundedBatchCommitter<'a> {
     fn new(
         office: &'a Office,
+        tasks: &'a SnapshotTasks,
         hq_office_id: &'a str,
         operation_id: &'a str,
         single_commit_mode: bool,
     ) -> Self {
         Self {
             office,
+            tasks,
             hq_office_id,
             operation_id,
             single_commit_mode,
@@ -81,8 +88,11 @@ impl<'a> BoundedBatchCommitter<'a> {
                 self.hq_office_id, self.operation_id
             ))
         };
+        let revisions = self
+            .tasks
+            .revisions_of(batch.iter().map(|(p, _)| p.as_str()));
         self.office
-            .apply_replicated_state_files(&op_id, batch)
+            .apply_replicated_snapshot_batch(&op_id, batch, revisions)
             .map_err(|e| format!("failed applying snapshot batch {idx} to satellite store: {e}"))
     }
 }
@@ -201,6 +211,7 @@ fn apply_staged_deletions(
     office: &Office,
     staged: &StagedSnapshotImport,
     pending_work_paths: &BTreeSet<String>,
+    protected_tasks: &BTreeSet<String>,
     committer: &mut BoundedBatchCommitter<'_>,
 ) -> Result<(), String> {
     // Propagate local state scan errors so a failed scan can never leave buffered writes
@@ -208,13 +219,21 @@ fn apply_staged_deletions(
     let local_paths = office.list_local_state_paths().map_err(|e| {
         format!("failed listing local state paths for snapshot reconciliation: {e}")
     })?;
+    // Local task files are never removed (a satellite's own tasks may not be at HQ yet),
+    // except the copies a snapshot moved to another folder (`MoveTeam`, `doc-77`) of a task
+    // whose incoming files were applied (not one the satellite protected).
+    let mut relocated = org_office::relocated_task_paths(&local_paths, &staged.incoming_paths);
+    relocated.retain(|path| {
+        org_office::task_id_for_work_path(path).is_none_or(|tid| !protected_tasks.contains(&tid))
+    });
     let mut deletes: Vec<String> = local_paths
         .into_iter()
         .filter(|existing| {
             !staged.incoming_paths.contains(existing)
                 && !pending_work_paths.contains(existing)
-                && !org_office::is_immutable_state_path(existing)
-                && !existing.starts_with("state/work/")
+                && (relocated.contains(existing)
+                    || (!org_office::is_immutable_state_path(existing)
+                        && org_office::task_id_for_work_path(existing).is_none()))
         })
         .collect();
     deletes.sort_by(|a, b| {
@@ -255,6 +274,7 @@ pub(crate) fn sync_initial_snapshot_paged(
         && staged.org_core_bytes <= MAX_NATIVE_BATCH_BYTES;
     let mut committer = BoundedBatchCommitter::new(
         &session.office,
+        &staged.tasks,
         session.hq_peer.office_id.as_str(),
         operation_id,
         single_commit_mode,
@@ -270,6 +290,7 @@ pub(crate) fn sync_initial_snapshot_paged(
         &session.office,
         &staged,
         &pending_work_paths,
+        &protected_tasks,
         &mut committer,
     )?;
     // Explicitly require an empty committed buffer before installing the checkpoint (`TASK-52` P26-#1).

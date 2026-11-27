@@ -937,8 +937,8 @@ fn hardlinked_world_readable_and_special_control_files_are_refused() {
     fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
     fs::remove_file(&config).unwrap();
     let fifo = std::ffi::CString::new(config.as_os_str().as_encoded_bytes()).unwrap();
-    // SAFETY: creates only a test-owned temporary FIFO with a valid path.
-    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    // Creates only a test-owned temporary FIFO.
+    org_platform::posix::make_fifo(&fifo, 0o600).unwrap();
     assert!(fixture
         .registry
         .reserve(Some("lab"), &fixture.root("lab"))

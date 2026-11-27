@@ -1,10 +1,10 @@
 //! Validate owned socket shape and flags before typed adoption.
 use super::invalid;
 #[cfg(not(test))]
-use libc::{fcntl, getsockname, getsockopt};
+use crate::socket::listening;
+use crate::socket::peer_closed;
 #[cfg(not(test))]
-use org_platform::socket::listening;
-use org_platform::socket::peer_closed;
+use libc::{fcntl, getsockname, getsockopt};
 use std::io;
 use std::mem;
 use std::net::TcpListener;

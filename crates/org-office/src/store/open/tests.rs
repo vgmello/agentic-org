@@ -28,6 +28,9 @@ mod crashes;
 mod local;
 mod messaging;
 mod messaging_catchup;
+mod task_numbering;
+mod task_replicas;
+mod task_storage;
 mod tasks;
 
 pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];

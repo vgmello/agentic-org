@@ -132,8 +132,10 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
     let office = crate::Office::for_test(TestOffice::default());
     let owner = office.owner_member_id().to_owned();
     let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+    let root_team_id = root_team.clone();
 
-    // Create a task + comment under `state/work/tasks/...` and a process doc under `state/processes/...`.
+    // Create a task + comment under `state/teams/<root>/work/tasks/...` (with its history under
+    // `state/work-history/tasks/...`) and a process doc under `state/processes/...`.
     let task_id = "01900000-0000-7000-8000-000000009001".to_owned();
     let created = office
         .task_create(
@@ -199,13 +201,52 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
     let state_dir = office.durable_root().join("state");
     let imported = validate_state_dir(&state_dir, "https://example.test/acme.git", "org/state")
         .expect("org containing tasks, comments, and process docs must pass Git import validation");
+    let task_folder = format!("state/teams/{root_team_id}/work/tasks/{task_id}/");
+    for file in [
+        "task.md",
+        "comments/01900000-0000-7000-8000-000000009004.md",
+    ] {
+        assert!(
+            imported
+                .files
+                .keys()
+                .any(|p| p.as_str() == format!("{task_folder}{file}")),
+            "expected {file} in validated import"
+        );
+    }
+    for revision in [1, 2] {
+        let event = format!("state/work-history/tasks/{task_id}/{revision}.json");
+        assert!(
+            imported.files.keys().any(|p| p.as_str() == event),
+            "expected {event} in validated import"
+        );
+    }
     assert!(
-        imported
+        !imported
             .files
             .keys()
-            .any(|p| p.as_str().starts_with("state/work/tasks/")),
-        "expected task files in validated import"
+            .any(|p| p.as_str().starts_with("state/work/")),
+        "nothing is written under the flat pre-v1 layout"
     );
+    // A tampered history event fails the import closed, naming the event.
+    let tampered = tempfile::tempdir().unwrap();
+    copy_tree(&state_dir, tampered.path());
+    let event = tampered
+        .path()
+        .join(format!("work-history/tasks/{task_id}/2.json"));
+    let text = fs::read_to_string(&event).unwrap();
+    fs::write(&event, text.replace("comment_added", "comment_hidden")).unwrap();
+    match validate_state_dir(
+        tampered.path(),
+        "https://example.test/acme.git",
+        "org/state",
+    ) {
+        Err(ImportError::InvalidFile { path, reason }) => {
+            assert_eq!(path, format!("state/work-history/tasks/{task_id}/2.json"));
+            assert!(reason.contains("payload_sha256"), "{reason}");
+        }
+        other => panic!("expected the tampered event refused, got {other:?}"),
+    }
     assert!(
         imported
             .files

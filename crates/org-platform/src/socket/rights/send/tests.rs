@@ -1,5 +1,5 @@
 use super::*;
-use crate::rights::{DatagramReceiver, StreamReceiver};
+use crate::socket::rights::{DatagramReceiver, StreamReceiver};
 use std::cell::{Cell, RefCell};
 use std::io::{Read, Write};
 use std::os::fd::AsFd;
@@ -508,13 +508,13 @@ fn a_blocking_socket_still_sends_nonblocking_under_the_deadline() {
 /// stream fails with `EPIPE` and raises no signal. Elsewhere the caller owns `SIGPIPE`.
 #[test]
 fn a_closed_stream_does_not_raise_sigpipe() {
-    if !org_platform::socket::SEND_SUPPRESSES_SIGPIPE {
+    if !crate::socket::SEND_SUPPRESSES_SIGPIPE {
         return;
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "rights::send::tests::sigpipe_child",
+            "socket::rights::send::tests::sigpipe_child",
             "--nocapture",
             "--test-threads=1",
         ])
@@ -575,4 +575,19 @@ fn invalid_buffer_sizes_and_non_socket_descriptors_are_refused() {
     let file = std::fs::File::open("/dev/null").unwrap();
     let error = set_buffer_sizes(file.as_fd(), 64 * 1024).unwrap_err();
     assert_eq!(error.raw_os_error(), Some(libc::ENOTSOCK));
+}
+
+#[test]
+#[should_panic(expected = "control space is too small for the descriptors")]
+fn a_message_is_never_built_past_its_control_space() {
+    let (a, b) = UnixStream::pair().unwrap();
+    let fds = [a.as_raw_fd(), b.as_raw_fd(), a.as_raw_fd()];
+    // Storage for all three, but a space that claims room for one only.
+    let mut control = control_buffer(control_space(fds.len()).unwrap()).unwrap();
+    let mut data = libc::iovec {
+        iov_base: std::ptr::null_mut(),
+        iov_len: 0,
+    };
+    let short = control_space(1).unwrap();
+    let _ = rights_message(&mut data, &mut control, short, &fds);
 }

@@ -43,11 +43,9 @@ fn release_crash_child_entry() {
     let bundle = DirectoryBundle::with_policy(&input.root.join("input"), &policy, &keys).unwrap();
     let mut store = ReleaseStore::with_policy(&input.root.join("store"), policy, keys).unwrap();
     let kill = || {
-        // SAFETY: kill only this explicitly marked disposable child, never an
-        // externally supplied PID. SIGKILL creates no core dump.
-        unsafe {
-            libc::kill(libc::getpid(), libc::SIGKILL);
-        }
+        // Kill only this explicitly marked disposable child, never an externally supplied
+        // PID. SIGKILL creates no core dump.
+        let _ = org_platform::posix::kill(std::process::id() as libc::pid_t, libc::SIGKILL);
         panic!("SIGKILL unexpectedly returned");
     };
     let result = store.install_directory_with(&bundle, synthetic_platform, |step| {

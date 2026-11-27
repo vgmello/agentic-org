@@ -127,8 +127,7 @@ pub fn log(message: &str) {
 /// a write, or in anything else, could hold up.
 pub fn end_process(message: &str) -> ! {
     log(message);
-    // SAFETY: `_exit` ends the process at once and never returns.
-    unsafe { libc::_exit(0) }
+    org_platform::posix::exit_immediately(0)
 }
 
 #[cfg(test)]

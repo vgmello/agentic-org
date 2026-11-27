@@ -33,6 +33,14 @@ function lastActivity(ch) {
   const times = ch.msgs.flatMap((m) => [m.time, ...(m.thread || []).map((r) => r.time)]);
   return times.length ? Math.max(...times.map(sentDate)) : 0;
 }
+/* A conversation's last activity in a few characters: "09:33" today, "Yesterday", else "Nov 24". */
+function lastActiveLabel(ch) {
+  const t = lastActivity(ch);
+  if (!t) return "";
+  const d = new Date(t), days = Math.round((new Date(NOW).setHours(0, 0, 0, 0) - new Date(t).setHours(0, 0, 0, 0)) / DAY_MS);
+  if (days <= 0) return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return days === 1 ? "Yesterday" : `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
 const activeToday = (ch) => NOW.getTime() - lastActivity(ch) <= DAY_MS;
 const newestFirst = (a, b) => lastActivity(CH[b]) - lastActivity(CH[a]);
 /* Agents' conversations one agent is in, newest first. */
@@ -85,19 +93,29 @@ function snippet(text, q) {
   const i = text.toLowerCase().indexOf(q), from = Math.max(0, i - 16), to = Math.min(text.length, i + q.length + 24);
   return `${from ? "…" : ""}${text.slice(from, to).trim()}${to < text.length ? "…" : ""}`;
 }
+const TASK_REF = /\bT-A\d+\b/g;
+/* A task reference the messages make that the query names: "t-a121" or "T-A12" (a prefix with its digits). */
+const looksLikeTask = (q) => /^t-a\d+$/.test(q);
+function taskReason(ch, q) {
+  if (!looksLikeTask(q)) return null;
+  const tasks = allTexts(ch).flatMap((t) => t.match(TASK_REF) || []);
+  const task = tasks.find((t) => t.toLowerCase() === q) || tasks.find((t) => t.toLowerCase().startsWith(q));
+  return task ? `mentions ${task}` : null;
+}
 /* What an agents' conversation's messages matched: a task id by name, otherwise the words around the match. */
 function textReason(ch, q) {
   const text = allTexts(ch).find((t) => t.toLowerCase().includes(q));
   if (!text) return null;
-  const task = (text.match(/\bT-A\d+\b/g) || []).find((t) => t.toLowerCase().includes(q));
+  const task = (text.match(TASK_REF) || []).find((t) => t.toLowerCase().includes(q));
   return task ? `mentions ${task}` : `“${snippet(text, q)}”`;
 }
 /* Why a conversation matches the filter: "" when its name, topic or people match (the row shows that), the project's
-   name, or (agents' conversations only) what its messages say; null when it does not match. */
+   name, a task its messages mention (every kind of conversation), or (agents' conversations only) any words its
+   messages say; null when it does not match. */
 function matchReason(ch, q) {
   if (conversationNames(ch).includes(q)) return "";
   if (projectName(ch).toLowerCase().includes(q)) return `in ${projectName(ch)}`;
-  return ch.kind === "a2a" ? textReason(ch, q) : null;
+  return taskReason(ch, q) ?? (ch.kind === "a2a" ? textReason(ch, q) : null);
 }
 const findConversations = (q) => Object.keys(CH).filter((k) => matchReason(CH[k], q) !== null);
 /* Recipients for a new message, people first, then agents; existing DMs are included and simply reopen. */
@@ -110,6 +128,7 @@ export {
   activeToday,
   agentConversations,
   lastActivity,
+  lastActiveLabel,
   matchReason,
   newestFirst,
   sentAt,

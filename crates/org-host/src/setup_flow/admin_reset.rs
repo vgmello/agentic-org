@@ -175,9 +175,28 @@ pub(super) fn reset_for(
     name: Option<&str>,
     paths: impl FnOnce() -> Result<Paths, String>,
 ) -> Result<AdminResetLink, HostCliError> {
+    reset_with(account, name, || {
+        as_account(account, || registered_with_origin(&paths()?, name))
+    })
+}
+
+/// What the lookup of the service user's instance finds ([`registered_with_origin`]).
+pub(super) type Found = (
+    crate::instance::setup::Record,
+    String,
+    std::path::PathBuf,
+    org_host_control::listen::ListenOrigin,
+);
+
+/// [`reset_for`] with the lookup given: [`as_account`]'s child in production, or the lookup
+/// itself where this process cannot fork (a test, whose harness runs other threads).
+pub(super) fn reset_with(
+    account: Account,
+    name: Option<&str>,
+    find: impl FnOnce() -> Result<Found, String>,
+) -> Result<AdminResetLink, HostCliError> {
     let reset = || -> Result<AdminResetLink, HostCliError> {
-        let (_record, id, socket, origin) =
-            as_account(account, || registered_with_origin(&paths()?, name))?;
+        let (_record, id, socket, origin) = find()?;
         let result = within(RESET_WITHIN, move || {
             let wire = connect_verified(&socket, &id, |stream| {
                 crate::human::verify_service_host(stream, account.uid)

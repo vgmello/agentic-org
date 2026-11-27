@@ -10,6 +10,11 @@
 //! a folder. The organization family (`organization_family`) holds the organization's
 //! rules; `rules` reads the native protocol's organization commands.
 
+// No unsafe code but one call: the SQLite engine's deferred-reference counter, which rusqlite
+// does not wrap (`store/sqlite/references.rs`, the one exception `tests/rust_hygiene.rs` of
+// `org-platform` allows). Every other crate but the platform's forbids unsafe code.
+#![deny(unsafe_code)]
+
 pub mod accounting;
 /// Attachments: blobs, media validation, staging, the shared family and the private space.
 pub mod attachments;
@@ -100,9 +105,9 @@ pub use model::{NewOffice, OfficeInfo, OfficeRole};
 pub use office::{
     ack_message_relay_and_enqueue_receipt_checked, admit_relay_item_if_active,
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
-    is_immutable_state_path, is_peer_revoked, is_stale_snapshot_task_entry,
-    promote_pending_removed_origin_withdrawals, publish_message_journal_relay_for_dest_checked,
-    register_peer_session_stop, resolve_employee_office, run_if_peer_active,
+    is_immutable_state_path, is_peer_revoked, promote_pending_removed_origin_withdrawals,
+    publish_message_journal_relay_for_dest_checked, register_peer_session_stop,
+    relocated_task_paths, resolve_employee_office, run_if_peer_active,
     strip_org_core_employee_refs_typed, task_id_for_work_path, ApprovedSatelliteCert,
     ConsistentStateSnapshot, CreateInvitationParams, CreateInvitationResult, Custody, DataRoots,
     ExportedSnapshotPages, HqTlsIdentity, InvitationPollStatus, InvitationStatus,

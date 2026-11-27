@@ -784,14 +784,6 @@ fn reopen_marker_writer(root: &Path, input: &Input) -> Arc<Writers> {
     Writers::open(custody, db, &input.instance, &instance_root).unwrap()
 }
 
-extern "C" fn stop_marker_child(_: libc::c_int) {
-    // SAFETY: kill/getpid are async-signal-safe; stop only this disposable child
-    // when the OS reports the production write's file-size limit.
-    unsafe {
-        libc::kill(libc::getpid(), libc::SIGSTOP);
-    }
-}
-
 #[test]
 fn marker_interruption_child() {
     use std::io::Read;
@@ -805,12 +797,12 @@ fn marker_interruption_child() {
             rlim_cur: limit,
             rlim_max: limit,
         };
-        // SAFETY: this disposable child alone refuses regular-file writes beyond
-        // the chosen offset; pipe output remains available to the parent.
-        unsafe {
-            libc::signal(libc::SIGXFSZ, stop_marker_child as *const () as usize);
-            assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limit), 0);
-        }
+        // This disposable child alone refuses regular-file writes beyond the chosen offset,
+        // and stops when the OS reports the production write's file-size limit; pipe output
+        // remains available to the parent.
+        org_platform::posix::stop_on_signal(libc::SIGXFSZ).unwrap();
+        org_platform::posix::set_resource_limit(org_platform::posix::Resource::FileSize, limit)
+            .unwrap();
         println!("MARKER_BOUNDARY_REACHED");
         std::io::stdout().flush().unwrap();
     }
@@ -930,18 +922,12 @@ fn marker_write_failure_and_sigkill_resume_original_checkpoint_without_partial_p
 fn await_marker_write_stop(pid: u32) {
     let until = std::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let mut status = 0;
-        // SAFETY: poll only the owned test child's stop state; WUNTRACED does
-        // not reap the stopped process that the parent will subsequently kill.
-        let result = unsafe {
-            libc::waitpid(
-                pid as libc::pid_t,
-                &mut status,
-                libc::WUNTRACED | libc::WNOHANG,
-            )
-        };
-        if result != 0 {
-            assert_eq!(result, pid as libc::pid_t);
+        // Poll only the owned test child's stop state; WUNTRACED does not reap the stopped
+        // process that the parent will subsequently kill.
+        let result =
+            org_platform::posix::wait_pid(pid as libc::pid_t, libc::WUNTRACED | libc::WNOHANG)
+                .unwrap();
+        if let Some(status) = result {
             assert!(libc::WIFSTOPPED(status));
             assert_eq!(libc::WSTOPSIG(status), libc::SIGSTOP);
             break;

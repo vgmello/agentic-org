@@ -2274,14 +2274,14 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
         "unexpected branch: {}",
         prepared.worktree.branch
     );
-    // AC #2: No local task.json mutation and zero work_outbox pollution on sat1.
+    // AC #2: No local `task.md` mutation and zero work_outbox pollution on sat1.
     assert_eq!(sat1.sync_status().unwrap().pending_work_count, 0);
     assert_eq!(
         sat1.task_inspect(&task_id).unwrap().unwrap().task.revision,
         1
     );
 
-    // AC #4: Satellite agent commits in worktree and runs git.push without mutating HQ task.json.
+    // AC #4: Satellite agent commits in worktree and runs git.push without mutating HQ `task.md`.
     let wt_dir = std::path::PathBuf::from(&prepared.worktree.worktree_path);
     std::fs::write(wt_dir.join("satellite.txt"), "from sat1\n").unwrap();
     run_git(&wt_dir, &["add", "satellite.txt"]);

@@ -1330,10 +1330,10 @@ async function checkChatThreads(page: Page) {
 async function checkChatContext(page: Page) {
   const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
   await nav("#/chat/dm-ada");
-  await page.locator(".chat-context .chat-wait-full .chat-more-btn").click();
+  await page.locator(".chat-context .chat-more-btn").click();
   const more = page.locator("#menu-chat-more-ctx");
   await more.waitFor();
-  assert.deepEqual(await more.getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/inbox/in4"], "Ada's other requests link to their Inbox records");
+  assert.deepEqual(await more.getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/inbox/in1", "#/inbox/in4"], "Ada's other requests link to their Inbox records");
   await page.keyboard.press("Escape");
   await nav("#/chat/platform");
   await page.locator('.msg[data-mid="p2"]').hover();
@@ -1541,16 +1541,15 @@ async function checkDrawerChoice(page: Page) {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 }
-/* Ada's other requests at a constrained width: one compact control opening the full list. */
+/* Ada's requests at a constrained width: "1 request here", then one "2 in Inbox" control opening the full list. */
 async function checkCompactRequests(page: Page) {
   await page.setViewportSize({ width: 1024, height: 768 });
   await navTo(page, "#/chat/dm-ada");
-  const compact = page.locator(".chat-context .chat-wait-compact .chat-more-btn");
-  assert.equal(await compact.innerText(), "2 other requests");
-  assert.equal(await page.locator(".chat-context .chat-wait-full").isVisible(), false);
+  const compact = page.locator(".chat-context .chat-more-btn");
+  assert.equal(await compact.innerText(), "2 in Inbox");
   assert.equal(await page.locator(".chat").evaluate((el) => el.classList.contains("ctx-overflow")), false, "The context line fits");
   await compact.click();
-  const hrefs = await page.locator("#menu-chat-more-ctx-compact").getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  const hrefs = await page.locator("#menu-chat-more-ctx").getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
   assert.equal(hrefs.length, 2);
   assert.ok(hrefs.includes("#/inbox/in4"));
   await page.keyboard.press("Escape");
@@ -1565,9 +1564,13 @@ async function checkShortScreens(page: Page) {
   const landing = await page.evaluate(() => {
     const s = document.querySelector(".thread .msgs")!, sr = s.getBoundingClientRect();
     const first = s.querySelector(":scope > .chat-thread-count + .msg")!.getBoundingClientRect();
-    return { firstReplyVisible: first.top >= sr.top && first.top < sr.bottom - 24, askAbove: s.scrollTop > 0 };
+    const sum = s.querySelector(":scope > .chat-thread-sum")!.getBoundingClientRect();
+    return { firstReplyVisible: first.top >= sr.top && first.top < sr.bottom - 24, askSummaryAbove: sum.top >= sr.top && sum.bottom <= first.top };
   });
-  assert.ok(landing.firstReplyVisible && landing.askAbove, `Reply count lands on the replies (${JSON.stringify(landing)})`);
+  assert.ok(landing.firstReplyVisible && landing.askSummaryAbove, `A narrow thread shows its replies under a compact summary of the ask (${JSON.stringify(landing)})`);
+  assert.match(await page.locator(".thread .chat-thread-sum").innerText(), /Needs you · Approve publishing[\s\S]*3 replies/, "The summary names the ask and counts the replies");
+  await page.locator(".thread [data-act=chat-thread-root]").click();
+  assert.equal(await page.locator(".thread .chat-thread-root").isVisible(), true, "Show full message opens the ask in place");
   await page.locator(".thread [data-act=thread-close]").click();
   await page.setViewportSize({ width: 420, height: 900 });
   await page.goto(page.url().split("#")[0] + "#/chat/agency-v1");
@@ -1763,7 +1766,7 @@ async function checkAttachFilesAndSearch(page: Page) {
   await panel.waitFor();
   assert.ok((await panel.locator(".chat-file-row").count()) >= 4, "Files lists the conversation's attachments");
   assert.match(await panel.locator(".chat-file-row").last().innerText(), /Ada · Today 09:12/, "Each file says who sent it and when");
-  await panel.getByRole("link", { name: "ia-v2-nav-before.png", exact: true }).click();
+  await panel.getByRole("link", { name: "Open source message for ia-v2-nav-before.png", exact: true }).click();
   await page.locator('.msg.is-linked[data-mid="m1"]').waitFor();
   assert.equal(await page.locator("#chat-files").count(), 0, "Following a file closes Files");
   await navTo(page, "#/chat/platform");
@@ -2151,8 +2154,15 @@ async function checkSlashCommands(page: Page) {
   await page.keyboard.press("Enter");
   await page.keyboard.type("T-A84");
   await page.keyboard.press("Control+Enter");
+  const confirm = page.locator('form[data-form="send"] .chat-assign-ask');
+  await confirm.waitFor();
+  assert.match(await confirm.innerText(), /Assign T-A84 .+ to Avery\?/, "/assign names the change before making it");
+  assert.equal(await field.inputValue(), "/assign @avery T-A84", "and nothing has changed yet");
+  assert.equal(await activeAttr(page, "data-act"), "chat-assign-confirm", "Focus moves to Assign");
+  await page.keyboard.press("Enter");
   await page.locator(".toast", { hasText: "Assigned T-A84 to Avery." }).waitFor();
   assert.equal(await field.inputValue(), "");
+  assert.equal(await activeAttr(page, "id"), "compose");
   await page.keyboard.type("/ask @row");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Can the flag go in v1.1?");
@@ -2228,13 +2238,17 @@ async function checkFilesExactReply(page: Page) {
   await viewport(page, 1440, 900);
   await navTo(page, "#/chat/agency-v1");
   await page.locator(".chat-files-btn").click();
-  const link = page.locator("#chat-files").getByRole("link", { name: "review.diff", exact: true });
+  const link = page.locator("#chat-files").getByRole("link", { name: "Open source message for review.diff", exact: true });
   const href = await link.getAttribute("href");
   assert.match(href!, /^#\/chat\/agency-v1\/m2-r\d+$/, "A reply's file links to that reply");
   await link.click();
   await page.waitForURL((u) => u.hash === href);
-  const reply = page.locator(`aside.thread .msgs > .msg.is-linked[data-mid="${href!.split("/").pop()}"]`);
+  const mid = href!.split("/").pop()!;
+  const reply = page.locator(`aside.thread .msgs > .msg[data-mid="${mid}"]`);
   await reply.waitFor();
+  /* The mark can be brief (a re-render redraws the thread), so wait, every frame, for the landing itself: the reply
+     taking focus, which stays. */
+  await page.waitForFunction((m) => document.activeElement?.matches(`aside.thread .msgs > .msg[data-mid="${m}"]`) ?? false, mid, { polling: "raf" });
   assert.match(await reply.innerText(), /review\.diff/);
   assert.equal(await activeAttr(page, "data-mid"), href!.split("/").pop(), "Focus lands on the reply");
   assert.match(await activeAttr(page, "aria-label") ?? "", /^Linked reply from You/);
@@ -2253,9 +2267,11 @@ async function checkTaskContextAttachments(page: Page) {
   await page.locator("#compose").press("Control+Enter");
   const dlg = page.locator("#work-task-dialog");
   assert.match(await dlg.locator(".stc-ctx-preview").innerText(), /You: Attached: palette\.pdf/, "The preview names the file");
-  await dlg.getByRole("button", { name: /^Show \d+ messages$/ }).click();
+  assert.match(await dlg.locator(".stc-ctx-toggle").innerText(), /^Show \d+ messages · 1 file$/, "The collapsed excerpt counts its files");
+  await dlg.getByRole("button", { name: /^Show \d+ messages · 1 file$/ }).click();
   const file = dlg.locator(".stc-ctx-lines li").last().locator(".stc-ctx-files a");
-  assert.equal(await file.innerText(), "palette.pdf");
+  assert.equal(await dlg.locator(".stc-ctx-lines li").last().locator(".ctx-file-name").innerText(), "palette.pdf");
+  assert.equal(await file.innerText(), "Open source message");
   assert.equal(await file.getAttribute("href"), `#/chat/design/${mid}`, "and links its message");
   await dlg.getByRole("button", { name: "Create as-is" }).click();
   await dlg.waitFor({ state: "detached" });
@@ -2308,7 +2324,10 @@ async function checkApprovalFacts(page: Page) {
   const card = page.locator('.msg[data-mid="m3"] .chat-needs');
   const facts = await card.locator(".chat-needs-facts li").allInnerTexts();
   assert.deepEqual(facts, ["Scope: Local test sandbox only · ends after the security run", "Risk: Low risk · Zero production or customer data"]);
-  assert.match(await card.locator(".chat-needs-context").innerText(), /No live customer or company data/, "Approvals show their context too");
+  const why = card.locator("details.chat-needs-more");
+  assert.equal(await why.getAttribute("open"), null, "The longer reasoning, which repeats the facts, is folded");
+  assert.equal(await why.locator("summary").innerText(), "Jules recommends: allow for testing only.", "behind the recommendation, which stays in view");
+  assert.match(await why.evaluate((e) => e.textContent!), /No live customer or company data/, "and still there to read");
   const [f, a] = await Promise.all([card.locator(".chat-needs-facts").boundingBox(), card.locator(".actions").boundingBox()]);
   assert.ok(f && a && f.y + f.height <= a.y, "The facts sit above the buttons");
   const ratio = await page.locator('.msg[data-mid="m2"] .chat-needs-route').evaluate(textContrast);
@@ -2351,16 +2370,17 @@ async function checkListRail(page: Page) {
   await viewport(page, 1440, 900);
 }
 const openDmHash = (who: string) => `#/chat/dm-${who}`;
-/* At 800 px a DM's header keeps the actionable status: "Waiting on you · 2". */
+/* At 800 px a DM's header keeps the actionable status, in the same words as Details. */
 async function checkCompactStatus(page: Page) {
   await viewport(page, 800, 800);
   await navTo(page, "#/chat/dm-ada");
   const summary = page.locator(".chat-ctx-summary");
   await summary.waitFor();
-  assert.match(await summary.innerText(), /^Waiting on you · \d+$/, "The summary is the short status");
+  assert.equal(await summary.innerText(), "1 request here · 2 in Inbox", "The summary leads with the request here");
   assert.ok(await summary.evaluate((e) => e.scrollWidth <= e.clientWidth + 1), "and is not cut off");
   await page.locator(".chat-details-btn").click();
   assert.match(await page.locator("#chat-details").innerText(), /Engineering Manager/, "Role moves to Details");
+  assert.match(await page.locator("#chat-details .chat-status").innerText(), /^1 request here · 2 in Inbox$/, "Details agrees with the summary");
   await page.locator(".chat-details-btn").click();
   await viewport(page, 1440, 900);
 }
@@ -2417,6 +2437,252 @@ async function checkChatRound8(page: Page) {
   await checkTaskContextAttachments(page);
   await checkRouteContrastThemes(page);
 }
+/* ---------------------------------------------------------------- Chat round 9 (TASK-195) */
+const composeHint = (page: Page) => page.locator('form[data-form="send"] .chat-compose-hint');
+/* Indented text is prose; /assign changes nothing until Assign is chosen. */
+async function checkCommandBoundaries(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/general");
+  const field = page.locator("#compose");
+  await field.fill(" /assign @rowan T-A121");
+  await field.press("Control+Enter");
+  assert.match(await lastMessageText(page), /\/assign @Rowan T-A121/, "Indented text sends as a message");
+  assert.equal(await page.locator(".chat-assign-ask").count(), 0, "and is never a command");
+  assert.equal(await field.inputValue(), "");
+  await field.fill("/assign @rowan T-A121");
+  await field.press("Control+Enter");
+  const ask = page.locator(".chat-assign-ask");
+  assert.match(await ask.innerText(), /Assign T-A121 .+ from Kai to Rowan\?/, "The confirmation names from whom and to whom");
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  assert.equal(await page.locator(".chat-assign-ask").count(), 0);
+  assert.equal(await field.inputValue(), "/assign @rowan T-A121", "Cancel keeps the command");
+  assert.equal(await activeAttr(page, "id"), "compose");
+  await field.press("Control+Enter");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".chat-assign-ask").count(), 0, "Escape withdraws it too");
+  await field.fill("/assign @kai T-A121");
+  await field.press("Control+Enter");
+  assert.match(await composeHint(page).innerText(), /T-A121 is already assigned to Kai/, "Nothing changed before an explicit Assign");
+  await field.fill("/assign @rowan T-A121");
+  await field.press("Control+Enter");
+  await field.press("End");
+  await page.keyboard.type("4");
+  assert.equal(await page.locator(".chat-assign-ask").count(), 0, "Editing the command withdraws the confirmation");
+  await field.fill("");
+}
+/* A mention list whose caret has left its token never writes over the words the caret moved to. */
+async function checkMentionCaret(page: Page) {
+  const field = page.locator("#compose");
+  await field.fill("");
+  await field.click();
+  await page.keyboard.type("ship it today @ma");
+  await page.locator("#compose-assist").waitFor();
+  await field.evaluate((f: HTMLTextAreaElement) => f.setSelectionRange(5, 5));
+  await page.keyboard.press("Enter");
+  assert.equal(await field.inputValue(), "ship it today @ma", "Selecting with the caret outside the token changes nothing");
+  assert.equal(await page.locator("#compose-assist").count(), 0, "and closes the list");
+  await field.press("End");
+  await page.keyboard.type("y");
+  await page.locator("#compose-assist").waitFor();
+  await page.keyboard.press("Home");
+  await page.locator("#compose-assist").waitFor({ state: "detached" });
+  assert.equal(await field.getAttribute("aria-expanded"), "false", "Moving the caret out of the token closes the list");
+  await field.fill("ping @mayx now");
+  await field.evaluate((f: HTMLTextAreaElement) => { f.setSelectionRange(9, 9); f.dispatchEvent(new Event("input", { bubbles: true })); });
+  await page.locator("#compose-assist").waitFor();
+  await page.keyboard.press("Enter");
+  assert.match(await field.inputValue(), /^ping @\w+ now$/, "Completing inside a token replaces only that token");
+  await field.fill("");
+}
+/* Armed denial replaces the whole action row; Approve is gone until it is disarmed. */
+async function checkDenyArmed(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/agency-v1");
+  const card = page.locator('.msg[data-mid="m3"] .chat-needs');
+  await card.locator('[data-act="deny-arm"]').click();
+  const group = card.getByRole("group", { name: "Confirm denial" });
+  await group.waitFor();
+  assert.equal(await card.locator('[data-act="handle"]').count(), 0, "Allow test access is not on screen while denial is armed");
+  assert.deepEqual(await group.getByRole("button").allInnerTexts(), ["Confirm denial", "Keep request open"]);
+  assert.equal(await activeAttr(page, "id"), "deny-msg-in5", "Focus starts in the optional reason, inside the group");
+  await group.getByRole("button", { name: "Keep request open" }).click();
+  assert.equal(await activeAttr(page, "data-act"), "deny-arm", "Keep request open returns to Deny");
+  await card.getByRole("button", { name: "Allow test access" }).waitFor();
+}
+/* Ada's DM leads with the request answerable here, linked to its card, then the ones in Inbox. */
+async function checkAdaHeader(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/dm-ada");
+  const here = page.locator(".chat-context .chat-here-link");
+  assert.equal(await here.innerText(), "1 request here");
+  assert.equal(await here.getAttribute("href"), "#/chat/dm-ada/x3", "linked to the hand-off card");
+  assert.equal(await page.locator(".chat-context .chat-more-btn").innerText(), "2 in Inbox");
+  assert.ok(await page.locator(".chat-context .chat-status").evaluate((s) => s.textContent!.indexOf("here") < s.textContent!.indexOf("Inbox")), "Here comes first");
+}
+/* Back closes the image viewer first and returns focus to its thumbnail, in the stream and in a thread. */
+async function viewerBack(page: Page, scope: string, mid: string) {
+  await page.locator(`${scope} .msg[data-mid="${mid}"] .chat-att-img`).first().click();
+  await page.locator("dialog.chat-lightbox").waitFor();
+  const hash = await page.evaluate(() => location.hash);
+  await page.goBack();
+  await page.locator("dialog.chat-lightbox").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => location.hash), hash, `Back closes the viewer (${scope}) and stays in the conversation`);
+  assert.equal(await activeAttr(page, "data-act"), "chat-att-view", "Focus returns to the thumbnail");
+  assert.equal(await activeAttr(page, "data-id"), mid);
+}
+async function checkViewerBack(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m1"] .chat-att-img').first().waitFor();
+  await viewerBack(page, ".chmain", "m1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const form = page.locator('aside.thread form[data-form="thread-send"]');
+  await form.locator(".chat-att-input").setInputFiles([{ name: "shot.png", mimeType: "image/png", buffer: PNG_1PX }]);
+  await waitUploads(page);
+  await form.locator("#thread-compose").press("Control+Enter");
+  const tile = page.locator("aside.thread .msgs > .msg:last-child .chat-att-img");
+  await tile.waitFor();
+  await viewerBack(page, "aside.thread", (await page.locator("aside.thread .msgs > .msg:last-child").getAttribute("data-mid"))!);
+  assert.equal(await page.locator("aside.thread").count(), 1, "The thread stays open");
+  await page.goBack();
+  await page.locator("aside.thread").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => location.hash), "#/chat/agency-v1", "The next Back closes the thread");
+}
+/* Find a conversation: a task reference finds channels and DMs too. */
+async function checkFindTaskRef(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/general");
+  await page.locator("#chat-find").fill("T-A121");
+  const why = (href: string) => page.locator(`#chat-nav a[href="${href}"] .chat-row-why`).innerText();
+  assert.match(await why("#/chat/agency-v1"), /^, ?mentions T-A121$|mentions T-A121/, "A channel that discusses T-A121 is found");
+  assert.match(await why("#/chat/a2a-ada-tomas"), /mentions T-A121/);
+  await page.locator("#chat-find").fill("");
+}
+/* An older open pair leads its section, labelled as outside the window, with its last-active time; a closed picker
+   keeps the picked names and Clear. */
+async function checkA2APicker(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/a2a-kai-rowan");
+  const labels = await page.locator(".chat-a2a-window").allInnerTexts();
+  assert.deepEqual(labels, ["Older than 24h", "Last 24 hours"], "The older pair leads the section, not under Last 24 hours");
+  const current = page.locator(".chat-a2a-window").nth(0).locator("xpath=following-sibling::ul[1]//a");
+  assert.equal(await current.getAttribute("href"), "#/chat/a2a-kai-rowan");
+  assert.equal(await current.locator(".chat-row-when").innerText(), "Yesterday", "It says when the pair last spoke");
+  await page.locator("#chat-a2a-filter-btn").click();
+  await page.keyboard.type("ro");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#chat-a2a-filter").count(), 0, "The picker closes");
+  const active = page.locator(".chat-a2a-active");
+  assert.match(await active.innerText(), /Rowan/, "The picked agent stays named");
+  await active.getByRole("button", { name: "Clear the agent filter" }).click();
+  assert.equal(await page.locator(".chat-a2a-active").count(), 0);
+  assert.equal(await activeAttr(page, "id"), "chat-a2a-filter-btn", "Clear returns focus to Filter");
+}
+/* 320–375: jumps are as wide as their labels, share one row at 320 ("Latest") and never clip; Jules's scope, risk and action are in the first
+   view at 375; the thread's resize edge is a 24 px target with a slim grip. */
+async function bothJumps(page: Page) {
+  return page.evaluate(async () => {
+    const s = document.querySelector(".chmain .msgs[data-ch]") as HTMLElement;
+    const btns = () => [...document.querySelectorAll('[data-act="chat-asks-jump"], [data-act="chat-latest-jump"]')] as HTMLElement[];
+    for (let y = 0; y <= s.scrollHeight; y += 24) {
+      s.scrollTop = y;
+      s.dispatchEvent(new Event("scroll"));
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (btns().every((b) => !b.hidden)) {
+        return btns().map((b) => { const r = b.getBoundingClientRect(), t = b.querySelector("span")!; return { top: r.top, left: r.left, right: r.right, clipped: t.scrollWidth > t.clientWidth + 1 }; });
+      }
+    }
+    return null;
+  });
+}
+async function checkNarrowRound9(page: Page) {
+  await viewport(page, 320, 700);
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator("#compose").waitFor();
+  const at320 = await bothJumps(page);
+  assert.ok(at320, "Both jumps show at 320");
+  assert.ok(at320!.every((b) => !b.clipped && b.left >= 0 && b.right <= 320), `No label is clipped at 320 (${JSON.stringify(at320)})`);
+  assert.ok(Math.abs(at320![0].top - at320![1].top) < 1 && at320![0].right <= at320![1].left, `Both jumps fit one row at 320 (${JSON.stringify(at320)})`);
+  const head = await page.locator("#main .chat > .chhead").evaluate((h) => [...h.querySelectorAll(".chat-list-btn, .chat-actions > .btn")]
+    .filter((b) => (b as HTMLElement).offsetParent).map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }));
+  assert.ok(head.every(([l, r], i) => l >= 0 && r <= 320 && (i === 0 || l >= head[i - 1][1] - 1)), `Header controls never overlap at 320 (${JSON.stringify(head)})`);
+  await viewport(page, 375, 667);
+  await reloadAt(page, "#/chat/agency-v1");
+  const card = page.locator('.msg[data-mid="m3"] .chat-needs');
+  await card.waitFor();
+  await page.waitForTimeout(500);
+  const fold = await page.locator(".chmain .msgs[data-ch]").evaluate((s) => s.getBoundingClientRect().bottom);
+  for (const sel of [".chat-needs-facts", '[data-act="handle"]', '[data-act="deny-arm"]']) {
+    const box = await card.locator(sel).boundingBox();
+    assert.ok(box && box.y >= 0 && box.y + box.height <= fold + 1, `${sel} is in the first view at 375 (${box?.y}+${box?.height} vs ${fold})`);
+  }
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const sep = page.locator('aside.thread [role="separator"]');
+  await sep.waitFor();
+  const hit = await sep.evaluate((el) => ({ w: el.getBoundingClientRect().width, grip: getComputedStyle(el, "::before").width }));
+  assert.deepEqual(hit, { w: 24, grip: "6px" }, "A 24 px hit area with a slim grip");
+  await page.locator("aside.thread [data-act=thread-close]").click();
+}
+async function checkChatRound9(page: Page) {
+  await checkCommandBoundaries(page);
+  await checkMentionCaret(page);
+  await checkDenyArmed(page);
+  await checkAdaHeader(page);
+  await checkViewerBack(page);
+  await checkFindTaskRef(page);
+  await checkA2APicker(page);
+  await checkNarrowRound9(page);
+}
+/* Work reload: a task made from Chat keeps its context snapshot, with exact message and file references; a source
+   that can no longer open (a message from an earlier session, a conversation that is gone) says so; a tampered,
+   unsafe entry is dropped while the rest load. */
+const savedTasks = (page: Page) => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("agentic-org.v6.task."))
+  .map((key) => ({ key, t: JSON.parse(localStorage.getItem(key)!) })));
+async function reloadAt(page: Page, hash: string) {
+  await navTo(page, hash);
+  await page.reload();
+  await page.locator("#main h1").first().waitFor();
+}
+async function checkWorkContextReload(page: Page) {
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator("#compose").fill("/task Ship the release notes");
+  await page.locator("#compose").press("Control+Enter");
+  const dlg = page.locator("#work-task-dialog");
+  await dlg.getByRole("button", { name: "Create as-is" }).click();
+  await dlg.waitFor({ state: "detached" });
+  const all = await savedTasks(page);
+  const made = all.find((x) => x.t.title === "Ship the release notes")!.t;
+  const design = all.find((x) => x.t.context?.[0]?.source?.ch === "design")!;
+  await page.evaluate((key) => {
+    const t = JSON.parse(localStorage.getItem(key)!);
+    t.context.push({ kind: "conversation", title: "Unsafe", href: "javascript:alert(1)", source: { ch: "general" } },
+      { kind: "conversation", title: "Gone channel", href: "#/chat/nope", preview: "", source: { ch: "nope", msg: "z9" }, messages: [] });
+    localStorage.setItem(key, JSON.stringify(t));
+  }, design.key);
+  await reloadAt(page, `#/work?item=${made.ref}`);
+  const panel = page.locator("#work-panel .work-ctx");
+  await panel.waitFor();
+  assert.match(await panel.innerText(), /Conversation excerpt · #agentic-org-v1/, "The excerpt survives a reload");
+  assert.equal(await panel.getByRole("link", { name: "Open source message" }).getAttribute("href"), "#/chat/agency-v1/m4", "with its exact message");
+  await panel.locator(".work-ctx-msgs summary").click();
+  const files = await panel.locator(".work-ctx-files a").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  assert.ok(files.length > 0 && files.every((h) => h === "#/chat/agency-v1/m1"), `and each file links its exact message (${files})`);
+  assert.equal(await panel.locator(".work-ctx-gone").count(), 0, "Sources that open say nothing extra");
+  await reloadAt(page, `#/work?item=${design.t.ref}`);
+  const items = page.locator("#work-panel .work-ctx .work-ctx-item");
+  await items.first().waitFor();
+  assert.equal(await items.count(), 2, "The unsafe entry is dropped; the rest load");
+  assert.match(await items.nth(0).locator(".work-ctx-links").innerText(), /Source unavailable/, "A message from an earlier session says it can't open");
+  await items.nth(0).locator("summary").click();
+  assert.match(await items.nth(0).locator(".work-ctx-files").innerText(), /palette\.pdf\s+Message unavailable/, "Its file keeps its name and says why it has no link");
+  assert.equal(await items.nth(1).locator("a").count(), 0, "A conversation that is gone is not a link");
+  assert.match(await items.nth(1).innerText(), /Gone channel\s+Source unavailable/);
+  assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
   await checkChatRecords(page);
@@ -2441,6 +2707,9 @@ async function checkChat(page: Page) {
   await checkComposerAssists(page);
   await page.reload();
   await checkChatRound8(page);
+  await page.reload();
+  await checkChatRound9(page);
+  await checkWorkContextReload(page);
 }
 
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {

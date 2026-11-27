@@ -1,11 +1,11 @@
 use super::account::{
-    account_by_id, account_by_name, account_name, become_account, in_child, plain_account_name,
-    service_account, user_name, Account, LOOKUP_WITHIN,
+    account_by_id, account_by_name, account_name, become_account, child_answer, decode_answer,
+    in_child, plain_account_name, service_account, user_name, Account, LOOKUP_WITHIN,
 };
 use super::adapters::{release_pin, CredentialDirectory, Platform};
 use super::address::{address_free, choose_port, loopback, port_free, port_held_elsewhere};
 use super::admin_reset::{
-    admin_reset, answer_reset, reset_for, reset_needs_root, reset_over, NOT_A_TERMINAL,
+    admin_reset, answer_reset, reset_needs_root, reset_over, reset_with, NOT_A_TERMINAL,
 };
 use super::credentials::{
     check_mounted_store, credential_directory, development_folder, development_keys,
@@ -976,7 +976,10 @@ fn roots_reset_escapes_what_a_failed_lookup_of_the_service_users_instance_says()
         uid: crate::home::euid(),
         gid: crate::home::egid(),
     };
-    let refused = reset_for(me, None, || Ok(paths)).unwrap_err().message;
+    // The lookup as root's child would run it (`as_account`), here in this process: a fork
+    // is refused while the harness runs other threads.
+    let lookup = || super::wire::registered_with_origin(&paths, None);
+    let refused = reset_with(me, None, lookup).unwrap_err().message;
     assert!(refused.contains("is unavailable"), "{refused}");
     assert!(
         !refused.contains(char::is_control) && refused.contains("data\\u{1b}]0;pwned\\u{7}"),
@@ -995,8 +998,7 @@ fn a_fifo_is_refused_as_a_configuration_and_as_a_data_folder_without_waiting() {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     let fifo = |path: &Path| {
         let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
-        // SAFETY: a NUL-terminated path.
-        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        org_platform::posix::make_fifo(&name, 0o600).unwrap();
     };
     // Each call runs on its own thread, so a wait fails the test instead of hanging it.
     let within = |what: &str, call: Box<dyn FnOnce() -> String + Send>| {
@@ -2252,42 +2254,44 @@ fn a_service_that_never_answers_does_not_hold_the_command() {
 }
 
 /// X5 review, fourth round, P2-9 and F4: the lookup runs in a child process and only its
-/// answer comes back: what `work` returns, its refusal, a child that does not end
-/// and an identity that cannot be taken are all answers, and the child never returns into
-/// the caller. (Without root the child keeps this process's identity.)
+/// answer comes back: what `work` returns, its refusal and an identity that cannot be taken
+/// are all answers. The fork itself (the answer read back, a child that does not end or says
+/// too much killed, a child that never returns into the caller) is the platform's, tested in
+/// a process with one thread (`org-platform`'s `single_threaded_fork`); this test's process
+/// has the harness's threads, so the lookup refuses to fork at all here. (Without root the
+/// child keeps this process's identity.)
 #[test]
 fn the_lookup_runs_in_a_child_and_only_its_answer_comes_back() {
-    let me = std::process::id();
-    let pid: Result<u32, String> = in_child(|| Ok(()), || Ok(std::process::id()), LOOKUP_WITHIN);
-    assert_ne!(pid.unwrap(), me, "the work ran in this process");
+    fn answer(
+        become_child: impl FnOnce() -> Result<(), String>,
+        work: impl FnOnce() -> Result<u32, String>,
+    ) -> Result<u32, String> {
+        let mut written = Vec::new();
+        child_answer(become_child, work, &mut written);
+        decode_answer(&written)
+    }
+    assert_eq!(answer(|| Ok(()), || Ok(7)), Ok(7));
     assert_eq!(
-        in_child(
-            || Ok(()),
-            || Err::<u32, _>("no record".into()),
-            LOOKUP_WITHIN
-        ),
+        answer(|| Ok(()), || Err("no record".into())),
         Err("no record".into())
     );
     assert_eq!(
-        in_child(
-            || Err("not that user".into()),
-            || -> Result<u32, String> { panic!("ran") },
-            LOOKUP_WITHIN
-        ),
+        answer(|| Err("not that user".into()), || panic!("ran")),
         Err("not that user".into())
     );
-    let started = Instant::now();
-    let slow = in_child(
-        || Ok(()),
-        || -> Result<u32, String> {
-            std::thread::sleep(Duration::from_secs(30));
-            Ok(1)
-        },
-        Duration::from_millis(300),
-    )
-    .unwrap_err();
-    assert!(slow.contains("did not end within"), "{slow}");
-    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(
+        answer(|| Ok(()), || panic!("the work failed")),
+        Err("the lookup failed".into())
+    );
+    assert_eq!(
+        decode_answer::<u32>(b"{\"Ok\":"),
+        Err("the lookup did not answer".into())
+    );
+    let refused = in_child(|| Ok(()), || Ok(std::process::id()), LOOKUP_WITHIN).unwrap_err();
+    assert!(
+        refused.starts_with("finding the service user's instance: cannot fork a process with"),
+        "{refused}"
+    );
     // The process this test runs in is not root: becoming its own account changes nothing.
     assert_eq!(
         become_account(Account {

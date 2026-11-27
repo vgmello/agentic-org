@@ -1,5 +1,7 @@
 use std::ffi::CString;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{BorrowedFd, OwnedFd};
+
+use org_platform::posix;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 
@@ -36,22 +38,14 @@ fn undo(made: Vec<(OwnedFd, CString)>) {
         let mut deepest = true;
         for (parent, name) in made.into_iter().rev() {
             if deepest {
-                // SAFETY: valid descriptor and NUL-terminated names; errors are ignored.
-                unsafe {
-                    let store = libc::openat(
-                        parent.as_raw_fd(),
-                        name.as_ptr(),
-                        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                    );
-                    if store >= 0 {
-                        libc::unlinkat(store, c".lock".as_ptr(), 0);
-                        libc::close(store);
-                    }
+                // Errors are ignored: what cannot be removed stays.
+                if let Ok(store) = open_directory(Some(&parent), &name) {
+                    let _ = posix::remove_at(&store, c".lock", 0);
                 }
                 deepest = false;
             }
-            // SAFETY: as above; a directory that is not empty stays.
-            unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) };
+            // A directory that is not empty stays.
+            let _ = posix::remove_at(&parent, &name, libc::AT_REMOVEDIR);
         }
     }
 }
@@ -59,18 +53,8 @@ fn undo(made: Vec<(OwnedFd, CString)>) {
 /// Whether `directory` certainly has no entry `name` (of any kind, a link not
 /// followed): only an answer that it does not exist says so.
 pub(super) fn lacks(directory: BorrowedFd<'_>, name: &std::ffi::CStr) -> bool {
-    // SAFETY: plain data that fstatat fills in.
-    let mut found: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: an open directory, a NUL-terminated name and a writable stat.
-    let status = unsafe {
-        libc::fstatat(
-            directory.as_raw_fd(),
-            name.as_ptr(),
-            &mut found,
-            libc::AT_SYMLINK_NOFOLLOW,
-        )
-    };
-    status != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT)
+    posix::status_at(directory, name, libc::AT_SYMLINK_NOFOLLOW)
+        .is_err_and(|error| error.raw_os_error() == Some(libc::ENOENT))
 }
 
 /// `name` as a directory, below `parent` or (without one) as a whole path: never a
@@ -78,28 +62,14 @@ pub(super) fn lacks(directory: BorrowedFd<'_>, name: &std::ffi::CStr) -> bool {
 /// refused at once (a FIFO is not opened and waited on).
 pub(super) fn open_directory(parent: Option<&OwnedFd>, name: &CString) -> std::io::Result<OwnedFd> {
     let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-    // SAFETY: `name` is NUL-terminated and `parent`, when given, is an open directory.
-    let fd = unsafe {
-        match parent {
-            Some(parent) => libc::openat(parent.as_raw_fd(), name.as_ptr(), flags),
-            None => libc::open(name.as_ptr(), flags),
-        }
-    };
-    if fd < 0 {
-        return Err(std::io::Error::last_os_error());
+    match parent {
+        Some(parent) => posix::open_at(parent, name, flags, 0),
+        None => posix::open(name, flags, 0),
     }
-    // SAFETY: `fd` is a new descriptor owned only here.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
 fn status(fd: BorrowedFd<'_>) -> std::io::Result<libc::stat> {
-    // SAFETY: stat is plain data that fstat fills in; zeroed is a valid start.
-    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: an open descriptor and a writable stat.
-    if unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(stat)
+    posix::status(fd)
 }
 
 /// Makes the directories of `path` that are missing, below ancestors judged first (see
@@ -120,8 +90,7 @@ pub(super) fn make(
         .map(|root| status(root).map(|found| (found.st_dev, found.st_ino)))
         .transpose()
         .map_err(|e| format!("the data root: {e}"))?;
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    let user = unsafe { libc::geteuid() };
+    let user = posix::effective_uid();
     let judge = |at: &Path, fd: &OwnedFd| -> Result<(), String> {
         let found = status(fd.as_fd()).map_err(|e| os(at, e))?;
         let rule = if Some((found.st_dev, found.st_ino)) == data {
@@ -155,9 +124,8 @@ pub(super) fn make(
             }
             Ok(next) => next,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // SAFETY: an open, judged parent and a NUL-terminated single name.
-                if unsafe { libc::mkdirat(current.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-                    let error = std::io::Error::last_os_error();
+                // An open, judged parent and a NUL-terminated single name.
+                if let Err(error) = posix::make_directory_at(&current, &name, 0o700) {
                     undo(made);
                     return Err(os(&at, error));
                 }
@@ -169,10 +137,8 @@ pub(super) fn make(
                         next
                     }
                     (parent, opened) => {
-                        // SAFETY: as above; the directory this call just made.
-                        unsafe {
-                            libc::unlinkat(current.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR)
-                        };
+                        // The directory this call just made.
+                        let _ = posix::remove_at(&current, &name, libc::AT_REMOVEDIR);
                         undo(made);
                         return Err(parent.err().or(opened.err()).unwrap_or_default());
                     }

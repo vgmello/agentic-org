@@ -122,6 +122,19 @@ pub fn decode_document(bytes: &[u8]) -> Result<(Reader, String), RecordError> {
     Ok((Reader::new(fields, String::new()), document.body.to_owned()))
 }
 
+/// The front matter and the body of a bounded source document (`selected-task-resources/1`):
+/// read through `org_docs::SourceDoc`, so the front matter is at most 64 KiB, the body at
+/// most 8 MiB and the root a block mapping.
+pub fn decode_source_document(bytes: &[u8]) -> Result<(Reader, String), RecordError> {
+    let document = org_docs::SourceDoc::parse(text(bytes)?)
+        .map_err(|e| RecordError::new("", e.to_string()))?;
+    let fields = document.front_matter().clone();
+    Ok((
+        Reader::new(fields, String::new()),
+        document.body().to_owned(),
+    ))
+}
+
 /// Takes the fields of one mapping, each exactly once. `finish` refuses what is left, so
 /// a record has no unknown field and no missing one.
 pub struct Reader {
@@ -169,6 +182,19 @@ impl Reader {
         number.ok_or_else(|| self.error(key, "not a whole number"))
     }
 
+    /// A whole number, or null.
+    pub fn optional_number(&mut self, key: &str) -> Result<Option<u64>, RecordError> {
+        match self.take(key)? {
+            Value::Null => Ok(None),
+            value => {
+                let number = value.as_u64().filter(|n| *n <= i64::MAX as u64);
+                number
+                    .map(Some)
+                    .ok_or_else(|| self.error(key, "not a whole number or null"))
+            }
+        }
+    }
+
     pub fn flag(&mut self, key: &str) -> Result<bool, RecordError> {
         let value = self.take(key)?;
         value
@@ -189,6 +215,15 @@ impl Reader {
             )),
         });
         readers.collect()
+    }
+
+    /// A nested mapping, or null.
+    pub fn optional_mapping(&mut self, key: &str) -> Result<Option<Reader>, RecordError> {
+        match self.take(key)? {
+            Value::Null => Ok(None),
+            Value::Object(fields) => Ok(Some(Reader::new(fields, format!("{}.", self.path(key))))),
+            _ => Err(self.error(key, "not a mapping or null")),
+        }
     }
 
     /// A list of strings.

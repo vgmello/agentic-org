@@ -10,8 +10,6 @@
 
 use std::fs;
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -637,37 +635,14 @@ struct Terminal {
 
 impl Terminal {
     fn start(mut command: Command) -> Self {
-        let (mut master, mut slave) = (-1, -1);
-        // SAFETY: openpty only writes the two descriptors; no name, termios or size.
-        let opened = unsafe {
-            libc::openpty(
-                &mut master,
-                &mut slave,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        };
-        assert_eq!(opened, 0, "openpty: {}", std::io::Error::last_os_error());
-        // SAFETY: both descriptors are new and owned only here.
-        let (master, slave) =
-            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
-        // SAFETY: a plain flag change on a descriptor this function owns.
-        unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
+        let (master, slave) = org_platform::posix::testing::open_pseudo_terminal()
+            .unwrap_or_else(|error| panic!("openpty: {error}"));
         command
             .stdin(Stdio::from(slave.try_clone().unwrap()))
             .stdout(Stdio::from(slave.try_clone().unwrap()))
             .stderr(Stdio::from(slave));
-        // SAFETY: between fork and exec only async-signal-safe calls: a new session, and
-        // the terminal on standard input as its controlling terminal.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        // A new session, with the terminal on standard input as its controlling terminal.
+        org_platform::posix::testing::with_controlling_terminal(&mut command);
         let child = command.spawn().unwrap();
         drop(command);
         let master = std::fs::File::from(master);
