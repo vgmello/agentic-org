@@ -202,19 +202,13 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
 }
 .board .bcard .board-owner-label a:hover { text-decoration-color: currentColor; }
 .board .bcard .board-kind { position: relative; z-index: 1; display: inline-flex; flex: none; margin-inline-start: -2px; color: var(--bd-muted); }
-/* The team: its dot by default. The slot takes no room when the line is full (so it never pushes the icons to a new
-   line) and grows into the free space; the name shows there, cut short if it must, while the card is hovered or holds
-   keyboard focus. Touch has no hover, so it stays a dot there and a tap shows the tooltip. */
+/* The team: only its dot, named by its tooltip. The slot takes no room when the line is full (so it never pushes the
+   icons to a new line). */
 .board .bcard .board-team { display: flex; flex: 1 1 0; min-width: 7px; }
 .board .bcard .board-team-tag {
   position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; min-width: 7px; max-width: 100%;
   padding: 0; border: 0; border-radius: 0; font-size: var(--fs-xs); color: var(--bd-muted);
 }
-.board .bcard .board-team-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-@media (hover: hover) {
-  .board .bcard:hover .board-team-name { position: static; width: auto; height: auto; clip: auto; min-width: 0; text-overflow: ellipsis; }
-}
-.board .bcard:has(:focus-visible) .board-team-name { position: static; width: auto; height: auto; clip: auto; min-width: 0; text-overflow: ellipsis; }
 .board .bcard .board-facts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; margin-inline-start: auto; min-width: 0; }
 .board .bcard .board-need .board-need-sep { font-weight: 600; opacity: .8; }
 

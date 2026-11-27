@@ -6,6 +6,7 @@ import { own, route } from "../shell/router.js";
 import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
 import { savedTaskContext, workDetailContext } from "./task-context.js";
+import { clearFacets, facetValues, filterMenu, hasFacetFilters, matchesFacets, singleValue } from "./work-filter.js";
 
 /* Work with a pending owner ask (a fix waiting for your approval) is never archived out of sight */
 function isArchivedWork(w) {
@@ -55,8 +56,8 @@ function workDisplayTrigger(listLayout) {
   const mode = S.workBoardStages === "detailed" ? "Status" : "Stages";
   return { icon: "adjustments", label: `Work display, ${mode} columns`, text: "Display", sub: mode };
 }
-/* New sits right after the views in the DOM at every width, so its place in the toolbar and in the Tab order agree:
-   beside the views when they share a row (320px), and before the view controls on wider screens */
+/* New task is the page's one primary action, at the end of the title row as on Projects (a project or team Work tab
+   keeps it after the views). Calendar is a toolbar link right after Display; at 320px it moves into Display. */
 const workNewTaskButton = () => `<button class="btn primary" id="work-new-task" type="button" data-act="work-new-task" aria-label="New task">${ic("plus", "ic16")}New<span class="work-new-word">task</span></button>`;
 const workCalendarLink = () => `<a class="btn ghost menu-textbtn work-cal-btn" href="#/calendar" aria-label="Calendar" title="Calendar">${ic("calendar-check", "ic16")}<span>Calendar</span></a>`;
 const scopedWorkQueries = new Map();
@@ -112,9 +113,7 @@ function isRequestedMineScope(type, id) {
 }
 
 function scopedWorkHasFilters(type) {
-  return S.scopedWorkStatus !== "all"
-    || (type !== "project" && S.scopedWorkProject !== "all")
-    || (type === "project" && S.scopedWorkTeam !== "all");
+  return hasFacetFilters(scopedWorkFacets(type));
 }
 
 function normalizeScopedWorkState(key, value) {
@@ -123,14 +122,13 @@ function normalizeScopedWorkState(key, value) {
   }
 }
 
+/* The scope's items before any facet: archived visibility and search applied (the Filter menu counts from these) */
+function scopedWorkSearchItems(items, query = "", archivedOnly = false) {
+  return (archivedOnly ? items.filter(isArchivedWork) : visibleWorkItems(items)).filter((w) => !query || workMatches(w, query));
+}
 function scopedWorkBaseItems(type, items, query = "", archivedOnly = false) {
-  const { scopedWorkStatus: status, scopedWorkProject: project, scopedWorkTeam: team } = S;
-  return (archivedOnly ? items.filter(isArchivedWork) : visibleWorkItems(items)).filter((w) => {
-    if (status !== "all" && w.status !== status) return false;
-    if (type !== "project" && project !== "all" && w.proj !== project) return false;
-    if (type === "project" && team !== "all" && (workTeam(w) ?? "none") !== team) return false;
-    return !query || workMatches(w, query);
-  });
+  const facets = scopedWorkFacets(type);
+  return scopedWorkSearchItems(items, query, archivedOnly).filter((w) => matchesFacets(facets, w));
 }
 
 function scopedWorkPresetItems(items, view, type, id) {
@@ -151,28 +149,36 @@ function scopedWorkGrouping(type) {
   return { allowed, group, subgroup };
 }
 
-/* Active filters in words: the Filter trigger always says "Filter" and adds a single value ("Filter  Fixed") when it
-   fits; its accessible name and the board's summary name every value */
-function filterParts(filters) {
-  return filters.filter(([, v]) => v).map(([name, v]) => `${name}: ${v}`);
-}
+/* Filter facets (work-filter.js): several values per facet, each facet narrowing the others. Priority is the one each
+   item shows (set, else inferred), the same rule as the Priority sort. */
 const teamName = (team) => (team === "none" ? "No team" : TEAMS[team]?.name);
-function workFilterValues() {
-  return [["Status", S.workStatus !== "all" && S.workStatus], ["Project", S.workProject !== "all" && P[S.workProject]?.name], ["Team", S.workTeam !== "all" && teamName(S.workTeam)]];
+const memberOrder = () => ["you", ...Object.keys(M).filter((id) => id !== "you").sort((a, b) => M[a].name.localeCompare(M[b].name))];
+const FILTER_FACETS = {
+  Status: { value: (w) => w.status, name: (v) => v, options: () => [...new Set([...BOARD_STATUS_ORDER, ...ALL_STATUSES])] },
+  Project: { value: (w) => w.proj, name: (v) => P[v]?.name, options: () => Object.keys(P) },
+  Team: { value: (w) => workTeam(w) ?? "none", name: teamName, options: () => [...Object.keys(TEAMS), "none"] },
+  Assignee: { value: (w) => (M[w.who] ? w.who : "none"), name: (v) => (v === "none" ? "Unassigned" : M[v]?.name), options: () => [...memberOrder(), "none"] },
+  Priority: { value: (w) => displayedPriority(w).word, name: (v) => v, options: () => ["Urgent", "Critical", "High", "Medium", "Normal", "Low", "Minor"] },
+};
+const facetsFor = (prefix, labels) => labels.map((label) => ({ label, state: prefix + label, ...FILTER_FACETS[label] }));
+const WORK_FACETS = facetsFor("work", ["Status", "Project", "Team", "Assignee", "Priority"]);
+/* A scope never filters by itself: a project's Work has no Project facet, a person's or agent's none for Assignee */
+const SCOPED_FACET_LABELS = {
+  project: ["Status", "Team", "Assignee", "Priority"],
+  team: ["Status", "Project", "Assignee", "Priority"],
+  agent: ["Status", "Project", "Priority"],
+  person: ["Status", "Project", "Priority"],
+};
+const scopedWorkFacets = (type) => facetsFor("scopedWork", SCOPED_FACET_LABELS[type] ?? SCOPED_FACET_LABELS.team);
+/* Active filters in words for the board's summary ("Status: New, Blocked") */
+function filterParts(facets) {
+  return facetValues(facets).filter(([, v]) => v).map(([name, v]) => `${name}: ${v}`);
 }
-function scopedWorkFilterValues(type) {
-  return [["Status", S.scopedWorkStatus !== "all" && S.scopedWorkStatus],
-    ["Project", type !== "project" && S.scopedWorkProject !== "all" && P[S.scopedWorkProject]?.name],
-    ["Team", type === "project" && S.scopedWorkTeam !== "all" && teamName(S.scopedWorkTeam)]];
-}
-function filterTrigger(values) {
-  const active = values.filter(([, v]) => v);
-  const one = active.length === 1 ? active[0] : null;
-  return {
-    icon: "filter", text: "Filter", active: active.length > 0,
-    label: one ? `Filter work, ${one[0]} ${one[1]}` : active.length ? `Filter work, ${active.length} active: ${active.map(([name, v]) => `${name} ${v}`).join(", ")}` : "Filter work",
-    sub: one ? one[1] : "", count: active.length > 1 ? active.length : 0,
-  };
+/* Clear filters: every facet on the current Work surface (and Work's own search) */
+function clearWorkFilterState(scopedType = null) {
+  if (scopedType) { clearFacets(scopedWorkFacets(scopedType)); return; }
+  clearFacets(WORK_FACETS);
+  S.workQuery = "";
 }
 
 /* Zero results from filters or search always offer the way back, and say when hidden history matches */
@@ -194,13 +200,9 @@ function scopedWorkEmptyText(type, id, view, query) {
   return "No active work here right now.";
 }
 
-function scopedWorkMenus(type) {
-  const filterGroups = [
-    ["scopedWorkStatus", "Status", [["all", "All statuses"], ...ALL_STATUSES.map((s) => [s, s])]],
-    ...(type !== "project" ? [["scopedWorkProject", "Project", [["all", "All projects"], ...Object.entries(P).map(([id, p]) => [id, p.name])]]] : []),
-    ...(type === "project" ? [["scopedWorkTeam", "Team", [["all", "All teams"], ...Object.entries(TEAMS).map(([id, t]) => [id, t.name]), ["none", "No team"]]]] : []),
-  ];
-  const filter = showMenu("scoped-work-filter", filterGroups, filterTrigger(scopedWorkFilterValues(type)));
+function scopedWorkMenus(type, items, query) {
+  const archived = S.workShowArchived ? [] : scopedWorkSearchItems(items, query, true);
+  const filter = filterMenu("scoped-work-filter", scopedWorkFacets(type), scopedWorkSearchItems(items, query), archived);
   const listLayout = S.scopedWorkLayout === "list";
   const { allowed, group, subgroup } = scopedWorkGrouping(type);
   const display = showMenu("scoped-work-display", [
@@ -216,6 +218,7 @@ function scopedWorkMenus(type) {
     ...workDisplayTrigger(listLayout),
     active: isWorkDisplayActive(listLayout, group, subgroup, S.scopedWorkSort, workSortOrder(S.scopedWorkLayout, S.scopedWorkSort, S.scopedWorkOrder)),
     footer: workDisplayFooter(listLayout),
+    popover: true,
   });
   return `<div class="queue-controls" role="group" aria-label="Work view controls">${scopedWorkSearch().toggle}${filter}${display}</div>`;
 }
@@ -243,7 +246,7 @@ function scopedWorkToolbar(type, id, items) {
       </div>
       ${type === "project" || type === "team" ? workNewTaskButton() : ""}
       ${workLayoutToggle("scopedWorkLayout")}
-      ${scopedWorkMenus(type)}
+      ${scopedWorkMenus(type, items, query)}
       ${workArchivedChip(S.scopedWorkLayout)}
     </div>
   </div>`;
@@ -270,7 +273,7 @@ function scopedWorkResults({ type, id, key, items }) {
   if (!filtered.length) return workEmpty(scopedWorkEmptyText(type, id, view, query), isFiltered, { archived });
   const hideOwner = type === "agent" || type === "person";
   if (S.scopedWorkLayout === "board") {
-    const summary = filterParts(scopedWorkFilterValues(type));
+    const summary = filterParts(scopedWorkFacets(type));
     return board(filtered, { hideOwner, hideProject: type === "project", needsYouView: view === "needs-me", sortKey: S.scopedWorkSort, order: S.scopedWorkOrder, filtered: isFiltered, summary, query, archived, emptyText: scopedWorkEmptyText(type, id, view, query) });
   }
   const { group, subgroup } = scopedWorkGrouping(type);
@@ -601,15 +604,17 @@ function boardKind(id) {
 }
 function boardOwner(w) {
   if (!w.who || !M[w.who]) return `<span class="board-assignee">${av(null, 24)} <span class="board-owner-label">Unassigned</span></span>`;
-  return `<span class="board-assignee">${av(w.who, 24)} <span class="board-owner-label">${mlink(w.who)}</span> ${boardKind(w.who)}</span>`;
+  return `<span class="board-assignee">${av(w.who, 24)} <span class="board-owner-label">${boardPersonLink(w.who)}</span> ${boardKind(w.who)}</span>`;
 }
-/* The team is its colour dot; the name is in the dot's tooltip and accessible name, and shows beside the dot while the
-   card is hovered or has keyboard focus (board.css). On touch it stays a dot; a tap on it shows the tooltip. */
+/* A person's name links to their page and carries data-person, so the global person panel can open from it */
+const boardPersonLink = (id) => (M[id].owner ? esc(M[id].name) : `<a class="alink" href="#/members/${esc(id)}" data-person="${esc(id)}">${esc(M[id].name)}</a>`);
+/* The team is its colour dot only (owner, round 14: no name reveal on hover); the name is the dot's tooltip and
+   accessible name. On touch a tap on the dot shows the tooltip. */
 function boardTeam(w) {
   const team = workTeam(w);
   if (!team) return "";
   const name = esc(TEAMS[team].name);
-  return `<span class="board-team"><span class="work-team board-team-tag" role="img" tabindex="-1" aria-label="${name}" data-icon-tip="${name}" data-tip-when-clipped><span class="board-team-name" aria-hidden="true">${name}</span></span></span>`;
+  return `<span class="board-team"><span class="work-team board-team-tag" role="img" tabindex="-1" aria-label="${name}" data-icon-tip="${name}"></span></span>`;
 }
 /* The assignee row: avatar, name, kind icon and team dot, with the card's icons right-aligned on the same line. When the
    line is too narrow the icons wrap under it, still right-aligned, so the name is never cut short for them. */
@@ -739,16 +744,14 @@ function boardColumnHtml(stage, tasks, opts) {
   return `<section class="bcol" id="${esc(laneId(stage))}"${collapsed} aria-label="${esc(`${stage}, ${count.text}${history}`)}">${boardColumnHead(stage, count)}${list}</section>`;
 }
 const laneId = (stage) => "bcol-" + stage.replace(/\s+/g, "-").toLowerCase();
-/* Named column jump: chips when they fit, a picker when they don't (always on phones). Shown whenever lanes overflow.
-   Its label says "Columns", or the column mode ("Stages") when the toolbar has no room to show it. */
+/* Phones show one lane at a time, so a named picker switches lanes there (owner, round 14: no column chips at any
+   width; wider screens scroll the board). Its label says "Columns", or the column mode ("Stages") when the toolbar has
+   no room to show it. */
 function boardLaneNav(columns) {
   const mode = S.workBoardStages === "detailed" ? "Status" : "Stages";
-  const lanes = columns.map(([stage, tasks]) => [stage, laneCount(stage, tasks).text]);
-  const chips = lanes.map(([stage, count], i) => `<button type="button" data-act="board-lane" data-v="${i}" aria-controls="${esc(laneId(stage))}"${i === 0 ? ' aria-current="true"' : ""}>${esc(stage)} <span class="cnt">${esc(count)}</span></button>`).join("");
-  const options = lanes.map(([stage, count], i) => `<option value="${i}">${esc(stage)} (${esc(count)})</option>`).join("");
-  return `<nav class="board-lanes" aria-label="Board columns" data-fit="chips">
+  const options = columns.map(([stage, tasks], i) => `<option value="${i}">${esc(stage)} (${esc(laneCount(stage, tasks).text)})</option>`).join("");
+  return `<nav class="board-lanes" aria-label="Board columns">
     <span class="board-lanes-label" aria-hidden="true"><span class="board-lanes-word">Columns</span><span class="board-lanes-mode">${mode}</span></span>
-    <div class="board-lane-chips">${chips}</div>
     <label class="board-lane-pick"><span class="sr-only">Jump to board column, ${mode} columns</span><select class="field" data-board-lane>${options}</select>${ic("chev-down", "ic16")}</label>
   </nav>`;
 }
@@ -792,12 +795,6 @@ function revealBoardTop(el) {
   const offset = el.getBoundingClientRect().top - content.getBoundingClientRect().top;
   if (offset < 0) content.scrollTop += offset;
 }
-/* Chips when every lane name fits on one row; otherwise the picker */
-function fitBoardLanes(nav) {
-  const chips = nav.querySelector(".board-lane-chips");
-  nav.dataset.fit = "chips";
-  nav.dataset.fit = chips.scrollWidth > chips.clientWidth + 1 ? "picker" : "chips";
-}
 /* The jump target is current while it is in view; once it has been reached and scrolled away, the lead lane is */
 function currentLaneIndex(board, cols, lead, inView) {
   const target = board.dataset.jump ? cols.findIndex((col) => col.id === board.dataset.jump) : -1;
@@ -813,17 +810,12 @@ function syncBoardLanes(board, nav) {
   if (!nav || !cols.length) return;
   const overflow = board.scrollWidth > board.clientWidth + 1;
   nav.toggleAttribute("data-overflow", overflow);
-  if (overflow) fitBoardLanes(nav);
   const view = board.getBoundingClientRect();
   const inView = cols.map((col) => {
     const r = col.getBoundingClientRect();
     return Math.min(r.right, view.right) - Math.max(r.left, view.left) >= r.width * 0.6;
   });
   const current = currentLaneIndex(board, cols, leadLaneIndex(board, cols), inView);
-  nav.querySelectorAll(".board-lane-chips button").forEach((chip, i) => {
-    chip.toggleAttribute("data-in-view", inView[i]);
-    if (i === current) chip.setAttribute("aria-current", "true"); else chip.removeAttribute("aria-current");
-  });
   /* Leave an option the person is still browsing alone */
   const select = nav.querySelector("select");
   if (select && !("pending" in select.dataset)) select.value = String(current);
@@ -1401,7 +1393,7 @@ const WORK_SORTS = [["default", "Original order"], ["title", "Title"], ["priorit
 const BOARD_SORTS = [["default", "Attention first"], ["priority", "Priority"], ["eta", "ETA"], ["title", "Title"]];
 const TASK_PRIORITIES = ["Low", "Medium", "High"];
 const WORK_TASK_STORE = "agentic-org.v6.task.";
-Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all", workSort: "default", workOrder: "asc" });
+Object.assign(S, { workQuery: "", workStatus: [], workProject: [], workTeam: [], workAssignee: [], workPriority: [], workSort: "default", workOrder: "asc" });
 
 function workSelection() {
   const params = qs();
@@ -1443,7 +1435,7 @@ function workPresetItems(items, view) {
 }
 
 function workHasFilters() {
-  return S.workStatus !== "all" || S.workProject !== "all" || S.workTeam !== "all";
+  return hasFacetFilters(WORK_FACETS);
 }
 
 function workMatches(w, query) {
@@ -1452,15 +1444,13 @@ function workMatches(w, query) {
   ].some((value) => value?.toLowerCase().includes(query));
 }
 
-function workFilteredItems(archivedOnly = false) {
+/* Work's items before any facet: archived visibility and search applied (the Filter menu counts from these) */
+function workSearchItems(archivedOnly = false) {
   const query = canonicalWorkRef(S.workQuery).toLowerCase();
-  const { workStatus: status, workProject: project, workTeam: team } = S;
-  return (archivedOnly ? W.filter(isArchivedWork) : visibleWorkItems(W)).filter((w) => {
-    if (status !== "all" && w.status !== status) return false;
-    if (project !== "all" && w.proj !== project) return false;
-    if (team !== "all" && (workTeam(w) ?? "none") !== team) return false;
-    return !query || workMatches(w, query);
-  });
+  return (archivedOnly ? W.filter(isArchivedWork) : visibleWorkItems(W)).filter((w) => !query || workMatches(w, query));
+}
+function workFilteredItems(archivedOnly = false) {
+  return workSearchItems(archivedOnly).filter((w) => matchesFacets(WORK_FACETS, w));
 }
 
 /* Ascending priority is highest first, so the default direction puts the most important work on top. List and Board
@@ -1486,7 +1476,7 @@ function workResults(filtered, { view, group, subgroup }) {
   const archived = S.workShowArchived ? 0 : workPresetItems(workFilteredItems(true), view).length;
   if (!items.length) return workEmpty(text, isFiltered, { archived });
   const query = canonicalWorkRef(S.workQuery).toLowerCase();
-  const summary = filterParts(workFilterValues());
+  const summary = filterParts(WORK_FACETS);
   return S.workLayout === "board" ? board(items, { needsYouView: view === "needs-me", sortKey: S.workSort, order: S.workOrder, filtered: isFiltered, summary, query, archived, emptyText: text }) : workList(items, {
     groupBy: WORK_GROUP_FIELDS[group], subgroupBy: WORK_GROUP_FIELDS[subgroup], filtered: isFiltered,
   });
@@ -1501,11 +1491,7 @@ function refreshWorkResults(focus) {
 }
 
 function workViewControls(group, subgroup) {
-  const filter = showMenu("work-filter", [
-    ["workStatus", "Status", [["all", "All statuses"], ...ALL_STATUSES.map((status) => [status, status])]],
-    ["workProject", "Project", [["all", "All projects"], ...Object.entries(P).map(([id, project]) => [id, project.name])]],
-    ["workTeam", "Team", [["all", "All teams"], ...Object.entries(TEAMS).map(([id, team]) => [id, team.name]), ["none", "No team"]]],
-  ], filterTrigger(workFilterValues()));
+  const filter = filterMenu("work-filter", WORK_FACETS, workSearchItems(), S.workShowArchived ? [] : workSearchItems(true));
   const listLayout = S.workLayout === "list";
   const display = showMenu("work-display", [
     ...(listLayout ? [["workGroup", "Group by", [["none", "No grouping"], ...WORK_GROUPS]]] : []),
@@ -1520,6 +1506,7 @@ function workViewControls(group, subgroup) {
     ...workDisplayTrigger(listLayout),
     active: isWorkDisplayActive(listLayout, group, subgroup, S.workSort, workSortOrder(S.workLayout, S.workSort, S.workOrder)),
     footer: workDisplayFooter(listLayout, true),
+    popover: true,
   });
   return `<div class="queue-controls" role="group" aria-label="Work view controls">${searchToggle("work-search", "Search work", S.workQuery)}${filter}${display}</div>`;
 }
@@ -1543,21 +1530,21 @@ function pageWork() {
       </div>
       ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group, selection.subgroup)}
+      ${workCalendarLink()}
       ${workArchivedChip(S.workLayout)}
-      <div class="work-tb-end">${workCalendarLink()}</div>
     </div>
   </header>${workWorkspace(workResults(filtered, selection), W, searchRow("work-search", "Search work", S.workQuery, "Search work… (Esc to close)", "work-search-row"))}`;
 }
 
 function openWorkTask(trigger) {
-  const status = STATUSES.task.includes(S.workStatus) ? S.workStatus : STATUSES.task[0];
+  const status = STATUSES.task.includes(singleValue("workStatus")) ? singleValue("workStatus") : STATUSES.task[0];
   const projects = Object.entries(P).filter(([, project]) => !project.archived);
   const form = `<dialog class="work-task-dialog" id="work-task-dialog" aria-labelledby="work-task-title">
     <h2 id="work-task-title">New task</h2>
     <form class="work-task-form" data-form="work-create">
       <label>Title<input class="field" name="title" required maxlength="160" autofocus></label>
       <label>Description <textarea class="field" name="description" rows="4" maxlength="4000"></textarea></label>
-      <label>Project<select class="field" name="project">${projects.map(([id, project]) => `<option value="${esc(id)}"${id === S.workProject ? " selected" : ""}>${esc(project.name)}</option>`).join("")}</select></label>
+      <label>Project<select class="field" name="project">${projects.map(([id, project]) => `<option value="${esc(id)}"${id === singleValue("workProject") ? " selected" : ""}>${esc(project.name)}</option>`).join("")}</select></label>
       <div class="work-task-fields">
         <label>Assignee<select class="field" name="assignee">
           ${memberIds().map((id) => `<option value="${esc(id)}"${id === "you" ? " selected" : ""}>${esc(M[id].name)}</option>`).join("")}
@@ -1774,6 +1761,7 @@ async function createWorkTask(form) {
 
 export {
   boardItemHref,
+  clearWorkFilterState,
   focusRevealedWork,
   shownWorkIds,
   mountWorkToolbar,

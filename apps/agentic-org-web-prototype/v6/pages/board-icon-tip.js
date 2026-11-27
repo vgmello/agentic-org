@@ -26,17 +26,10 @@ function place(el, target) {
   el.style.left = `${Math.round(left)}px`;
 }
 
-/* A target marked [data-tip-when-clipped] (the team dot) shows its tooltip only while its own text is hidden or cut
-   short; once the name shows in full beside the dot, the tooltip would only repeat it */
-function textShown(target) {
-  const text = target.firstElementChild;
-  return Boolean(text) && text.getBoundingClientRect().width > 1 && text.scrollWidth <= text.clientWidth;
-}
-const tipNeeded = (target) => !target.hasAttribute("data-tip-when-clipped") || !textShown(target);
 
 function show(target) {
   clearTimeout(timer);
-  if (!target.isConnected || !tipNeeded(target)) return;
+  if (!target.isConnected) return;
   const el = tipElement();
   owner = target;
   el.textContent = target.dataset.iconTip;
