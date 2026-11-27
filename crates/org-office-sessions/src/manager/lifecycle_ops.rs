@@ -217,6 +217,15 @@ pub(super) fn reap_cleared_handle(
         return Ok(());
     }
     mgr.bindings.revoke(employee_id, None);
+    let cleared_approvals = {
+        let mut st = old.state.lock().unwrap_or_else(|p| p.into_inner());
+        let had = !st.pending_approvals.is_empty();
+        st.pending_approvals.clear();
+        had
+    };
+    if cleared_approvals {
+        mgr.notify_approval_changed();
+    }
     if let Some((pid, _)) = old
         .active_permit
         .lock()

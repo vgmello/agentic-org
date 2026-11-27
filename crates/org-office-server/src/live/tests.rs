@@ -305,3 +305,17 @@ fn the_session_stream_feeds_activity_only_and_lets_go_of_a_dropped_feed() {
         "the bridge let go of the dropped feed"
     );
 }
+
+#[test]
+fn record_inbox_changed_advances_revision_and_wakes_subscribers() {
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&wakes);
+    let live = LiveEvents::new(Box::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    assert_eq!(live.mailbox_head(), 0);
+    live.record_inbox_changed();
+    live.record_inbox_changed();
+    assert_eq!(live.mailbox_head(), 2);
+    assert_eq!(wakes.load(Ordering::SeqCst), 2);
+}

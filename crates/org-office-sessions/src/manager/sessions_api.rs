@@ -437,35 +437,57 @@ impl SessionManager {
     ) -> Result<SessionView, ApiError> {
         self.authorize_owner_only_inner(actor_member_id, hq_attested_owner)?;
         let decision = parse_decision(decision_str, reason)?;
-        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(handle) = reg.live.get(employee_id) else {
-            return Err(ApiError::new(
-                ErrorCode::NotFound,
-                "no live session for this agent",
-            ));
+        let (view, removed) = {
+            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(handle) = reg.live.get(employee_id) else {
+                return Err(ApiError::new(
+                    ErrorCode::NotFound,
+                    "no live session for this agent",
+                ));
+            };
+            let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            let pending = guard
+                .pending_approvals
+                .iter()
+                .find(|p| p.approval_id == approval_id)
+                .cloned()
+                .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "approval request not found"))?;
+            if decision_str == "allow_always" && pending.escalation != "none" {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "allow_always is forbidden for escalated approval requests; use allow_once or deny",
+                ));
+            }
+            let allow_always_tool = (decision_str == "allow_always"
+                && pending.escalation == "none")
+                .then_some(pending.tool);
+            if handle
+                .tx
+                .send(PumpCommand::AnswerApproval {
+                    approval_id: approval_id.to_owned(),
+                    decision,
+                    allow_always_tool: allow_always_tool.clone(),
+                })
+                .is_err()
+            {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "the agent's session ended before the approval could be delivered",
+                ));
+            }
+            // Remove the approval immediately under the state lock so concurrent reads (`inbox.list`)
+            // and duplicate clicks see the decision right away, while keeping `WaitingApproval` until
+            // the pump delivers `Control::Answer` so mid-turn staging never races ahead of it.
+            let removed = crate::pump::remove_pending_approval_locked(
+                &mut guard,
+                approval_id,
+                allow_always_tool.as_deref(),
+            );
+            (guard.to_view(), removed)
         };
-        let guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-        let pending = guard
-            .pending_approvals
-            .iter()
-            .find(|p| p.approval_id == approval_id)
-            .cloned()
-            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "approval request not found"))?;
-        if decision_str == "allow_always" && pending.escalation != "none" {
-            return Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "allow_always is forbidden for escalated approval requests; use allow_once or deny",
-            ));
+        if removed {
+            self.notify_approval_changed();
         }
-        let allow_always_tool = (decision_str == "allow_always" && pending.escalation == "none")
-            .then_some(pending.tool);
-        let view = guard.to_view();
-        drop(guard);
-        let _ = handle.tx.send(PumpCommand::AnswerApproval {
-            approval_id: approval_id.to_owned(),
-            decision,
-            allow_always_tool,
-        });
         Ok(view)
     }
 }

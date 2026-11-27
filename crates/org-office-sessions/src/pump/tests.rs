@@ -111,6 +111,7 @@ fn test_pump_ctx(
             stage_mid_turn_wakes: None,
             on_mid_turn_delivered: None,
             is_sandbox_topology_stale: None,
+            on_approval_changed: None,
         },
         stop_epoch: 0,
         partition: None,
@@ -652,4 +653,69 @@ fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
         .collect();
     assert_eq!(texts, ["steer-d", "ordinary-3"]);
     assert_eq!(st.queued_turns, 2);
+}
+
+#[test]
+fn approval_hook_fires_on_cancel_and_interrupted_turn_clearance() {
+    use org_agent_runtime::SessionEvent;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    ctx.hooks.on_approval_changed = Some(Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let mut loop_state = PumpLoopState::new(false);
+
+    let req1 = ApprovalRequest::new(
+        ApprovalId::new("a-cancel-1"),
+        org_agent_runtime::ApprovalKind::Unknown,
+        org_agent_runtime::Escalation::None,
+        "mystery_tool",
+        serde_json::json!({}),
+    );
+    let req2 = ApprovalRequest::new(
+        ApprovalId::new("a-interrupt-2"),
+        org_agent_runtime::ApprovalKind::Unknown,
+        org_agent_runtime::Escalation::None,
+        "mystery_tool",
+        serde_json::json!({}),
+    );
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(req1),
+        &ctx,
+        &mut loop_state,
+    );
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(req2),
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+    // Runtime cancellation clears only the cancelled ID and fires the hook.
+    super::events::handle_event(
+        &SessionEvent::ApprovalCancelled {
+            id: ApprovalId::new("a-cancel-1"),
+        },
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    assert_eq!(ctx.state.lock().unwrap().pending_approvals.len(), 1);
+
+    // Interrupting the turn clears the remaining approval and fires the hook.
+    loop_state.interrupt_sent = true;
+    super::events::handle_event(
+        &SessionEvent::TurnEnded {
+            outcome: org_agent_runtime::TurnOutcome::Interrupted,
+            errors: Vec::new(),
+        },
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 4);
+    assert!(ctx.state.lock().unwrap().pending_approvals.is_empty());
 }

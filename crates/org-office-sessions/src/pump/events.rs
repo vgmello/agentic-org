@@ -13,7 +13,7 @@ use crate::subagents::BackgroundKind;
 use crate::turn_attachments::{is_provider_image_rejection_error, purge_turn_dir};
 
 use super::activity::track_activity;
-use super::approval::handle_approval_request;
+use super::approval::{handle_approval_request, notify_approval_changed};
 use super::queue::{dedup_attachment_ids, merge_queued_turns, QueuedTurn};
 use super::{
     persist_turn_update, FailoverRequest, PumpContext, PumpLoopState, SessionRuntimeState,
@@ -102,9 +102,7 @@ pub(super) fn apply_outputs(
                 // Coarse live activity comes from the redacted event only (`TASK-103`).
                 track_activity(ctx, &event, loop_state.interrupt_sent);
                 let ctrl = if let Some(raw_req) = unredacted_approval {
-                    let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
-                    state.watchdog.record_activity(Instant::now());
-                    handle_approval_request(&mut state, &raw_req, &refs)
+                    apply_unredacted_approval(ctx, &raw_req, &refs)
                 } else {
                     handle_event(&event, ctx, loop_state)
                 };
@@ -119,6 +117,24 @@ pub(super) fn apply_outputs(
             apply_outputs(outs, stdin, ctx, loop_state, session);
         }
     }
+}
+
+fn apply_unredacted_approval(
+    ctx: &PumpContext,
+    raw_req: &org_agent_runtime::ApprovalRequest,
+    active_tokens: &[&str],
+) -> Option<Control> {
+    let (ctrl, escalated) = {
+        let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.watchdog.record_activity(Instant::now());
+        let before = state.pending_approvals.len();
+        let ctrl = handle_approval_request(&mut state, raw_req, active_tokens);
+        (ctrl, state.pending_approvals.len() > before)
+    };
+    if escalated {
+        notify_approval_changed(ctx);
+    }
+    ctrl
 }
 
 pub(super) fn handle_event(
@@ -218,7 +234,11 @@ pub(super) fn handle_event(
         SessionEvent::TurnEnded {
             outcome, errors, ..
         } => {
-            handle_turn_ended(&mut state, loop_state, ctx, outcome, errors);
+            let cleared = handle_turn_ended(&mut state, loop_state, ctx, outcome, errors);
+            drop(state);
+            if cleared {
+                notify_approval_changed(ctx);
+            }
         }
         SessionEvent::StartFailed { reason } => {
             state.last_error = Some(format!("start failed: {reason:?}"));
@@ -254,9 +274,21 @@ pub(super) fn handle_event(
         }
         SessionEvent::ToolStarted { .. } => {
             loop_state.had_external_effect = true;
-            return handle_tool_or_approval_event(&mut state, loop_state, event);
+            let (ctrl, changed) = handle_tool_or_approval_event(&mut state, loop_state, event);
+            drop(state);
+            if changed {
+                notify_approval_changed(ctx);
+            }
+            return ctrl;
         }
-        other => return handle_tool_or_approval_event(&mut state, loop_state, other),
+        other => {
+            let (ctrl, changed) = handle_tool_or_approval_event(&mut state, loop_state, other);
+            drop(state);
+            if changed {
+                notify_approval_changed(ctx);
+            }
+            return ctrl;
+        }
     }
     None
 }
@@ -265,7 +297,7 @@ pub(super) fn handle_tool_or_approval_event(
     state: &mut SessionRuntimeState,
     loop_state: &mut PumpLoopState,
     event: &SessionEvent,
-) -> Option<Control> {
+) -> (Option<Control>, bool) {
     match event {
         SessionEvent::ToolStarted {
             tool_use_id,
@@ -293,8 +325,13 @@ pub(super) fn handle_tool_or_approval_event(
             );
         }
         SessionEvent::Usage(usage) => state.backgrounds.record_usage(usage),
-        SessionEvent::ApprovalRequested(req) => return handle_approval_request(state, req, &[]),
+        SessionEvent::ApprovalRequested(req) => {
+            let before = state.pending_approvals.len();
+            let ctrl = handle_approval_request(state, req, &[]);
+            return (ctrl, state.pending_approvals.len() > before);
+        }
         SessionEvent::ApprovalCancelled { id } => {
+            let before = state.pending_approvals.len();
             state
                 .pending_approvals
                 .retain(|p| p.approval_id != id.as_str());
@@ -302,10 +339,11 @@ pub(super) fn handle_tool_or_approval_event(
                 state.state = SessionState::Running;
                 loop_state.mid_turn_dirty = true;
             }
+            return (None, state.pending_approvals.len() < before);
         }
         _ => {}
     }
-    None
+    (None, false)
 }
 
 pub(super) fn handle_turn_ended(
@@ -314,7 +352,7 @@ pub(super) fn handle_turn_ended(
     ctx: &PumpContext,
     outcome: &org_agent_runtime::TurnOutcome,
     errors: &[String],
-) {
+) -> bool {
     // Immediately purge every ephemeral turn-scoped `0400` attachment file staged for this turn
     // (including any mid-turn deliveries) as soon as the turn finishes (`TASK-98.3` AC #3).
     purge_active_turn_attachments(ctx, loop_state);
@@ -347,12 +385,16 @@ pub(super) fn handle_turn_ended(
     let failover_blocked_recovery = !interrupted
         && !retried_text_only
         && evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
-    if interrupted {
+    let cleared_approvals = if interrupted {
+        let had = !state.pending_approvals.is_empty();
         state.pending_approvals.clear();
         if state.state == SessionState::WaitingApproval {
             state.state = SessionState::Running;
         }
-    }
+        had
+    } else {
+        false
+    };
     // A turn queued behind this one keeps the session busy until it is dispatched.
     state.settle_idle();
     persist_turn_update(ctx, |rec| {
@@ -371,6 +413,7 @@ pub(super) fn handle_turn_ended(
             rec.accepted_commands = mem_cmds;
         }
     });
+    cleared_approvals
 }
 
 /// Maps a finished turn to a pool failover reason (`doc-88` §7). A turn that completed without
