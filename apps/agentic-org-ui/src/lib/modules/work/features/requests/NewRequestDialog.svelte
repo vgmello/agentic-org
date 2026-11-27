@@ -11,11 +11,10 @@
 		DialogTitle
 	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/proto';
+	import { REQUEST_LIMITS, toAppError, WORK_LIMITS } from '$lib/proto';
 	import { newId } from '$lib/modules/organization/commands';
 	import { isFormer } from '$lib/modules/organization/model';
-	import type { OrgSnapshot, RequestKind, WorkAccepted, WorkItemSummary } from '$lib/proto';
-	import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
+	import type { Member, OrgSnapshot, RequestKind, WorkAccepted, WorkItemSummary } from '$lib/proto';
 	import type { WorkDraft } from '$lib/modules/work';
 	import { nameOf } from '$lib/modules/work/people';
 	import {
@@ -28,7 +27,6 @@
 		withHandle,
 		withoutHandle
 	} from '$lib/modules/work/requests-view';
-	import type { Member } from '$lib/proto';
 
 	/**
 	 * New request (RQS-2 to RQS-5): the words are enough. The kind, project and who scopes it are suggested and can be
@@ -387,6 +385,7 @@
 							data-testid="at-matches"
 						>
 							{#each completions as m, i (m.id)}
+								<!-- listbox option keyboard selection handled by controlling textarea -->
 								<!-- svelte-ignore a11y_click_events_have_key_events -->
 								<li
 									id="at-opt-{i}"

@@ -7,6 +7,7 @@ use super::bad_input;
 use super::chat_routes;
 use super::cost_routes;
 use super::create_outcome;
+use super::doc_routes;
 use super::failure;
 use super::git_routes;
 use super::hiring_routes;
@@ -374,6 +375,7 @@ impl ApiBackend for SessionApi {
             Route::Notes(route) => return note_routes::prepare(route, bytes),
             Route::Git(route) => return git_routes::prepare(route, bytes),
             Route::Process(route) => return process_routes::prepare(route, bytes),
+            Route::Docs(route) => return doc_routes::prepare(route, bytes),
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
             Route::OfficeFederation(route) => return office_routes::prepare(route, bytes),
@@ -501,6 +503,12 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::Docs(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(doc_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
             Call::Cost(call) => AsyncDispatch::Async {
                 future: Box::pin(
                     async move { WebReply::Json(cost_routes::execute(&self, call).await) },
@@ -559,7 +567,7 @@ impl ApiBackend for SessionApi {
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
             Call::Tasks(_) | Call::Notes(_) => unreachable!("dispatched asynchronously"),
             Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
-            Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
+            Call::Process(_) | Call::Docs(_) => unreachable!("dispatched asynchronously"),
             Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
             Call::Provider(_) => unreachable!("Call::Provider is dispatched asynchronously"),
             Call::OfficeFederation(_) | Call::Attachments(_) => {

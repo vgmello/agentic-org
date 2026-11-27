@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import type { TaskTimeBreakdown } from '$lib/home/model';
+	import type { TaskTimeBreakdown } from '$lib/modules/home/model';
 
 	interface Props {
 		taskTime: TaskTimeBreakdown;

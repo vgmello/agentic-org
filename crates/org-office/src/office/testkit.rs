@@ -227,19 +227,26 @@ pub struct TestSatellite {
 
 impl TestSatellite {
     pub fn new() -> Self {
+        Self::joined_to(
+            "0195a000-0000-7000-8000-0000000000e1",
+            "0195a000-0000-7000-8000-0000000000e3",
+        )
+    }
+
+    /// A satellite of the organization `org` whose HQ is the office `hq`, so an HQ test
+    /// office's replicated `state/` applies onto it.
+    pub fn joined_to(org: &str, hq: &str) -> Self {
         use org_pki::cert::{
             build_org_ca_cert, issue_satellite_cert_from_pubkey, sign_satellite_key_pop,
             IssueSatelliteCertParams,
         };
-        const ORG: &str = "0195a000-0000-7000-8000-0000000000e1";
         const SATELLITE: &str = "0195a000-0000-7000-8000-0000000000e2";
-        const HQ: &str = "0195a000-0000-7000-8000-0000000000e3";
         const INVITATION: &str = "0195a000-0000-7000-8000-0000000000e4";
         let id = |text: &str| org_store::Id::parse(text).expect("a test id");
         let dir = tempfile::tempdir().expect("a temporary directory");
         let root = dir.path().canonicalize().expect("a real path");
         let folder = root.join("home/offices").join(SATELLITE);
-        let data = root.join("data").join(ORG);
+        let data = root.join("data").join(org);
         let roots = DataRoots {
             durable: data.join("durable"),
             runtime: data.join("runtime"),
@@ -250,7 +257,7 @@ impl TestSatellite {
         let custody = Custody {
             identity: org_store::OfficeIdentity {
                 instance_id: id("0195a000-0000-7000-8000-0000000000e5"),
-                organization_id: id(ORG),
+                organization_id: id(org),
                 office_id: id(SATELLITE),
                 journal_incarnation: id("0195a000-0000-7000-8000-0000000000e6"),
                 writer_epoch: 1,
@@ -260,14 +267,14 @@ impl TestSatellite {
         };
         let now_unix = (org_store::Clock::now(&org_store::SystemClock).0 / 1000) as i64;
         let ca_key = org_pki::SigningKey::generate().expect("a CA key");
-        let ca = build_org_ca_cert(&ca_key, ORG, now_unix).expect("a CA certificate");
+        let ca = build_org_ca_cert(&ca_key, org, now_unix).expect("a CA certificate");
         let tls = org_pki::SigningKey::generate().expect("a satellite key");
-        let pop = sign_satellite_key_pop(&tls, ORG, SATELLITE, INVITATION).expect("a proof");
+        let pop = sign_satellite_key_pop(&tls, org, SATELLITE, INVITATION).expect("a proof");
         let cert = issue_satellite_cert_from_pubkey(
             &ca_key,
             &ca.cert_der,
             &IssueSatelliteCertParams {
-                org_id: ORG,
+                org_id: org,
                 office_id: SATELLITE,
                 invitation_id: INVITATION,
                 subject_pub_key_uncompressed: &tls.public_key(),
@@ -285,11 +292,11 @@ impl TestSatellite {
                     office_id: SATELLITE.into(),
                     office_name: "Test Satellite".into(),
                     role: OfficeRole::Satellite,
-                    org_id: ORG.into(),
+                    org_id: org.into(),
                     org_name: "Acme".into(),
                 },
                 operation_id: "0195a000-0000-7000-8000-0000000000e8".into(),
-                hq_office_id: HQ.into(),
+                hq_office_id: hq.into(),
                 hq_addresses: vec!["127.0.0.1:9443".into()],
                 epoch: 1,
                 ca_cert_der: ca.cert_der,
@@ -303,7 +310,7 @@ impl TestSatellite {
         .expect("a test satellite");
         Self {
             office,
-            hq_office_id: HQ.into(),
+            hq_office_id: hq.into(),
             folder,
             roots,
             custody,

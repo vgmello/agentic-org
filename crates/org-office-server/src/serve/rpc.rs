@@ -1,5 +1,5 @@
-//! Office service ports: federation, providers, costs, processes, search, Git, tasks and
-//! attachments.
+//! Office service ports: federation, providers, costs, processes, documentation, search, Git,
+//! tasks and attachments.
 
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
@@ -102,6 +102,30 @@ pub(super) fn processes_rpc(
     };
     if let Some(processes) = &shared.ports.processes {
         if let Some(response) = processes(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
+pub(super) fn docs_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::doc_calls::is_doc_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(docs) = &shared.ports.docs {
+        if let Some(response) = docs(Some(member), request) {
             return Some(response);
         }
     }

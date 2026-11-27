@@ -13,9 +13,7 @@ export interface ProjectFrameProject {
 	readonly stale?: StaleCopy;
 }
 
-export interface ProjectFrameContext<
-	TProject extends ProjectFrameProject = ProjectFrameProject
-> {
+export interface ProjectFrameContext<TProject extends ProjectFrameProject = ProjectFrameProject> {
 	readonly organizationId: string;
 	readonly projectId: string;
 	/** The project as the frame last read it; tabs render only once it has loaded. */

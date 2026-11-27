@@ -40,3 +40,23 @@ fn shared_file_records_apply_after_the_projects_and_members_they_name() {
         SnapshotPathClass::ModelProfilesAndProjects
     );
 }
+
+#[test]
+fn project_documentation_applies_after_the_projects_and_employees_it_names() {
+    use super::filters::{classify_replicated_snapshot_path, SnapshotPathClass};
+    let project = "0195a000-0000-7000-8000-0000000000a1";
+    for rel in [
+        "docs/index.yaml",
+        "docs/overview.md",
+        "docs/guides/setup.md",
+        "docs/media/architecture.png",
+        "docs/media/architecture.png.yaml",
+    ] {
+        let path = format!("state/projects/{project}/{rel}");
+        assert_eq!(
+            classify_replicated_snapshot_path(&path),
+            SnapshotPathClass::DependentExecutionDocsAndBudgets,
+            "{path}"
+        );
+    }
+}

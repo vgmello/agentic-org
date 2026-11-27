@@ -165,6 +165,9 @@ pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send +
 /// Dispatches C5 organization processes, standards, and built-in skills RPCs (`TASK-44`).
 pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches the project documentation tree's `docs.*` RPCs (`TASK-55`).
+pub type DocsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// Dispatches unified cross-entity `search.query` (`TASK-91`).
 pub type SearchFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
@@ -217,6 +220,9 @@ pub struct OfficePorts {
     pub git: Option<GitFn>,
     /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).
     pub processes: Option<ProcessesFn>,
+    /// The project documentation tree's `docs.*` dispatcher (`TASK-55`). `None`: they answer
+    /// `unknown_method`.
+    pub docs: Option<DocsFn>,
     /// Unified cross-entity search (`TASK-91`). `None`: `search.query` answers
     /// `unknown_method`.
     pub search: Option<SearchFn>,

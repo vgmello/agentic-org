@@ -1,45 +1,3 @@
-<script module lang="ts">
-	const COMMENT_DRAFTS_SESSION_KEY = 'agentic-org.inbox.commentDrafts';
-	let memoryCommentDrafts: Record<string, string> = {};
-	let hasMemoryCommentDrafts = false;
-
-	function readPersistedCommentDrafts(): Record<string, string> {
-		if (hasMemoryCommentDrafts) return { ...memoryCommentDrafts };
-		hasMemoryCommentDrafts = true;
-		if (typeof window === 'undefined') return { ...memoryCommentDrafts };
-		try {
-			const raw = window.sessionStorage.getItem(COMMENT_DRAFTS_SESSION_KEY);
-			if (!raw) return { ...memoryCommentDrafts };
-			const parsed: unknown = JSON.parse(raw);
-			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-				return { ...memoryCommentDrafts };
-			}
-			const clean: Record<string, string> = {};
-			for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-				if (typeof v === 'string') clean[k] = v;
-			}
-			memoryCommentDrafts = clean;
-			return { ...clean };
-		} catch {
-			return { ...memoryCommentDrafts };
-		}
-	}
-
-	function writePersistedCommentDrafts(next: Record<string, string>): void {
-		hasMemoryCommentDrafts = true;
-		memoryCommentDrafts = { ...next };
-		if (typeof window === 'undefined') return;
-		try {
-			window.sessionStorage.setItem(
-				COMMENT_DRAFTS_SESSION_KEY,
-				JSON.stringify(memoryCommentDrafts)
-			);
-		} catch {
-			// Keep authoritative in-memory drafts when sessionStorage is unavailable or over quota.
-		}
-	}
-</script>
-
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
@@ -64,6 +22,7 @@
 	import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { inboxApi } from '../../api';
+	import { readInboxCommentDrafts, writeInboxCommentDrafts } from '../../device-comments';
 	import type { InboxItem, InboxScope } from '../../types';
 	import InboxDetailPane from './InboxDetailPane.svelte';
 	import InboxNotificationsSplit from './InboxNotificationsSplit.svelte';
@@ -178,7 +137,7 @@
 	// Keyed by `${organizationId}:${itemId}` so drafts never leak across items or organizations.
 	let denyDrafts = $state<Record<string, string>>({});
 	let replyDrafts = $state<Record<string, string>>({});
-	let commentDrafts = $state<Record<string, string>>(readPersistedCommentDrafts());
+	let commentDrafts = $state<Record<string, string>>(readInboxCommentDrafts());
 	let nowMs = $state(Date.now());
 	let searchInputEl = $state<HTMLInputElement | null>(null);
 	let snoozeDialog = $state<ReturnType<typeof InboxSnoozeDialog>>();
@@ -322,7 +281,7 @@
 	function updateCommentDraft(itemId: string, value: string) {
 		const next = { ...commentDrafts, [draftKey(organizationId, itemId)]: value };
 		commentDrafts = next;
-		writePersistedCommentDrafts(next);
+		writeInboxCommentDrafts(next);
 	}
 
 	function clearCommentDraft(orgId: string, itemId: string) {
@@ -331,7 +290,7 @@
 			const next = { ...commentDrafts };
 			delete next[key];
 			commentDrafts = next;
-			writePersistedCommentDrafts(next);
+			writeInboxCommentDrafts(next);
 		}
 	}
 

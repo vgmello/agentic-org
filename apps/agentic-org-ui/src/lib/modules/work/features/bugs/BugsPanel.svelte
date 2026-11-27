@@ -83,7 +83,7 @@
 			class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-danger-text"
 			role="alert"
 		>
-			{loadError} <button class="underline" onclick={load}>Try again</button>
+			{loadError} <button type="button" class="underline" onclick={load}>Try again</button>
 		</p>
 	{:else if all === undefined}
 		<p class="text-sm/6 text-fg-muted">Loading bugs…</p>

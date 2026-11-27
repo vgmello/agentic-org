@@ -43,4 +43,4 @@ function rejectReason(file, count) {
   return "";
 }
 
-export { LIMIT_TEXT, MAX_FILE_BYTES, PICKER_ACCEPT, altOf, fileFacts, fileIcon, fmtSize, isImage, rejectReason, typeLabel };
+export { LIMIT_TEXT, MAX_FILE_BYTES, PICKER_ACCEPT, altOf, fileFacts, fileIcon, fileIconName, fmtSize, isImage, rejectReason, typeLabel };

@@ -3,6 +3,8 @@ import { orgChartBody, orgSummary } from "./org-chart.js";
 import { CH, KNOWLEDGE, M, NOTES, OFFICES, OPEN, P, TEAMS, W } from "../data.js";
 import { activityEventTime, activityTimeline, formatTelemetryHours } from "./activity.js";
 import { agentRailHtml, agentSessionAvailability, getConsoleSession } from "./agent-profile.js";
+import { agentConversationsTab } from "./agent-conversations.js";
+import { agentConversations } from "./chat-model.js";
 import { INSIGHT_COMPLETIONS, INSIGHT_DAY, INSIGHT_TODAY, insightBuckets, insightChart, insightCompletions, insightDayLabel, insightInRange, insightMedian } from "./insights.js";
 import { conversationPreview, memberRows } from "./projects.js";
 import { healthMark, notFound } from "./settings.js";
@@ -245,12 +247,13 @@ function agentKnowledgeTab(id, m) {
   return `<div class="section" style="padding-bottom:16px"><h2 class="sr-only">Knowledge documents</h2><div class="callout">${ic("folder", "ic20")}<span>Reference material in <code>${esc(m.setup.home)}/knowledge/</code> and shared project briefs. Select an item to inspect its contents.</span></div></div><ul class="rows" role="list">${rows}</ul>`;
 }
 
-function agentTabContent(id, tab, m, avail, myW, myActs) {
+function agentTabContent(id, tab, m, avail, myW, myActs, sub) {
   if (tab === "overview") return { controls: "", leftBody: agentOverviewTab(id, m, avail, myW, myActs) };
   if (tab === "tasks") {
     return { controls: "", leftBody: scopedWorkToolbar("agent", id, myW) + scopedWorkWorkspace() };
   }
   if (tab === "sessions") return { controls: "", leftBody: `<div id="agent-sessions-root" data-agent="${id}"></div>` };
+  if (tab === "conversations") return { controls: "", leftBody: agentConversationsTab(id, sub) };
   if (tab === "journal") {
     const n = NOTES[id] || NOTES.default(id);
     return { controls: "", leftBody: `<div class="section"><h2 class="sr-only">Daily journal</h2><div class="callout" style="margin-bottom:20px">${ic("lock", "ic20")}<span>Read-only daily work log from <code>${esc(m.setup.home)}/journal/</code>. ${esc(m.name)} records progress at the end of each session.</span></div><div class="journal">${n.journal.map((j) => `<article><h2>${esc(j.d)}</h2><ul>${j.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></article>`).join("")}</div></div>` };
@@ -279,7 +282,7 @@ function memberActionsHtml(id, m, agent, owner, tab) {
       <div class="menu-wrap"><button class="btn outline icon" type="button" data-act="menu" data-id="more" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-more" aria-label="More actions for ${esc(m.name)}" title="More actions">${ic("ellipsis", "ic20")}</button><div class="menu" id="menu-more" role="menu" hidden>${more}</div></div>`;
 }
 
-const AGENT_TAB_ALIASES = { work: "tasks", notes: "memory", activity: "sessions", conversations: "sessions" };
+const AGENT_TAB_ALIASES = { work: "tasks", notes: "memory", activity: "sessions" };
 
 function memberMetaFacts(id, m, owner) {
   if (owner) return `<span>Owner</span>${SEP}<span>Not a member of any team</span>`;
@@ -288,20 +291,21 @@ function memberMetaFacts(id, m, owner) {
   return joinSep([`<span>${kindWord(id)}</span>`, teams, mgr]);
 }
 
-function agentMemberView(id, resolvedTab, m, myW, myActs) {
-  const tabs = [["", "Overview"], ["tasks", "Tasks", `${myW.filter(OPEN).length} open`], ["sessions", "Sessions"], ["journal", "Journal"], ["memory", "Memory"], ["knowledge", "Knowledge"], ["settings", "Settings"]];
-  const { controls, leftBody } = agentTabContent(id, resolvedTab, m, agentSessionAvailability(id), myW, myActs);
+function agentMemberView(id, resolvedTab, m, myW, myActs, sub) {
+  const tabs = [["", "Overview"], ["tasks", "Tasks", `${myW.filter(OPEN).length} open`], ["sessions", "Sessions"], ["conversations", "Conversations", agentConversations(id).length], ["journal", "Journal"], ["memory", "Memory"], ["knowledge", "Knowledge"], ["settings", "Settings"]];
+  const { controls, leftBody } = agentTabContent(id, resolvedTab, m, agentSessionAvailability(id), myW, myActs, sub);
   const body = `<div class="agent-shell" id="agent-shell" data-agent="${id}" data-tab="${resolvedTab}"><div class="agent-main">${leftBody}</div>${agentRailHtml(id, resolvedTab)}</div>`;
   return { tabs, controls, body };
 }
 
-function pageMember(id, tab) {
+/* `sub` is the part of the address after the tab: the open conversation on Conversations. */
+function pageMember(id, tab, sub) {
   const m = M[id]; if (!m) return notFound();
   const agent = m.kind === "agent", owner = !!m.owner;
   const resolvedTab = agent ? (AGENT_TAB_ALIASES[tab] || tab || "overview") : (tab || "overview");
   const myW = W.filter((w) => w.who === id), myActs = acts().filter((a) => a.who === id);
   const { tabs, controls, body } = agent
-    ? agentMemberView(id, resolvedTab, m, myW, myActs)
+    ? agentMemberView(id, resolvedTab, m, myW, myActs, sub)
     : personMemberView(id, resolvedTab, m, owner, myW, myActs);
   const actions = memberActionsHtml(id, m, agent, owner, resolvedTab);
   const line = owner ? "Runs Agentic Org" : statusLine(id);

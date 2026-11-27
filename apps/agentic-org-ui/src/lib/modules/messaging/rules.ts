@@ -70,7 +70,6 @@ export const refuse = (code: ChatErrorCode, message: string): never => {
 	throw { source: 'api', code, message } satisfies ChatRefusal;
 };
 
-
 export const slug = (text: string): string =>
 	text
 		.normalize('NFKD')

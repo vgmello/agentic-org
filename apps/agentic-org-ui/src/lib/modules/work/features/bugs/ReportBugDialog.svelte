@@ -123,7 +123,7 @@
 		steps,
 		environment
 	});
-	// svelte-ignore state_referenced_locally
+	/* copilot dependency is injected once on mount */ // svelte-ignore state_referenced_locally
 	const flow = createDraftFlow(copilot, 'bug.from_sentence', (next) => {
 		phase = next;
 		if (next.kind === 'ready') {

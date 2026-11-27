@@ -29,6 +29,7 @@ mod organization;
 pub(crate) mod private_notes;
 pub(crate) mod private_notes_copy;
 mod processes;
+mod project_docs;
 mod projects;
 pub(crate) mod providers;
 mod receipts;
