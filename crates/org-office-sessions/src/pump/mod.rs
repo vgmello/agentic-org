@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use org_agent_runtime::{Decision, Frame, LineFramer, PermissionPolicy, ToolName};
 use org_office::organization_family::records::PermissionPreset;
-use org_proto::sessions::{PendingApprovalView, SessionState, SessionView};
+use org_proto::sessions::{SessionState, SessionView};
 use org_supervise::StopMode;
 
 use crate::binding::RunBindingRegistry;
@@ -31,8 +31,9 @@ mod tests;
 mod turn;
 
 use activity::settle_activity_idle;
-use approval::check_and_handle_stall;
-pub(crate) use approval::finalize_child;
+pub use approval::is_allow_always_eligible;
+use approval::{begin_pump_teardown, check_and_handle_stall};
+pub(crate) use approval::{finalize_child, remove_pending_approval_locked, PendingApprovalEntry};
 use commands::{
     drain_commands, enqueue_background_wakes, mark_active_permit_release_pending,
     release_active_permit,
@@ -149,6 +150,9 @@ pub(crate) type SandboxTopologyStaleHook = Arc<dyn Fn() -> bool + Send + Sync>;
 pub(crate) type SuspendedHook =
     Arc<dyn Fn(&str, Vec<String>, Option<String>, Option<String>) -> bool + Send + Sync>;
 
+/// Notified outside state locks whenever this run's pending tool approvals change (`TASK-102`).
+pub(crate) type ApprovalChangedHook = Arc<dyn Fn() + Send + Sync>;
+
 pub(crate) struct PumpHooks {
     pub has_open_required_asks: Option<OpenRequiredAsksHook>,
     pub on_turn_ended: Option<TurnEndedHook>,
@@ -163,6 +167,7 @@ pub(crate) struct PumpHooks {
     pub stage_mid_turn_wakes: Option<StageMidTurnWakesHook>,
     pub on_mid_turn_delivered: Option<MidTurnDeliveredHook>,
     pub is_sandbox_topology_stale: Option<SandboxTopologyStaleHook>,
+    pub on_approval_changed: Option<ApprovalChangedHook>,
 }
 
 pub(crate) struct SessionRuntimeState {
@@ -184,7 +189,7 @@ pub(crate) struct SessionRuntimeState {
     pub last_reply: Option<String>,
     pub last_error: Option<String>,
     pub backgrounds: BackgroundRegistry,
-    pub pending_approvals: Vec<PendingApprovalView>,
+    pub pending_approvals: Vec<PendingApprovalEntry>,
     pub policy: PermissionPolicy,
     pub preset: PermissionPreset,
     pub allowed_tools: Option<Vec<ToolName>>,
@@ -237,7 +242,11 @@ impl SessionRuntimeState {
             last_reply: self.last_reply.clone(),
             last_error: self.last_error.clone(),
             background_tasks: self.backgrounds.views(),
-            pending_approvals: self.pending_approvals.clone(),
+            pending_approvals: self
+                .pending_approvals
+                .iter()
+                .map(|entry| entry.view.clone())
+                .collect(),
             usage: self.backgrounds.usage(),
             suspended_on_asks: self.suspended_on_asks.clone(),
             waiting_for_member_id: self.waiting_for_member_id.clone(),
@@ -548,17 +557,7 @@ pub(crate) fn run_pump(
     // Drop the command receiver and mark state Stopping BEFORE child teardown so concurrent
     // callers (`reserve_start_or_send`) can never push turns into a dead pump (`High #3`).
     drop(commands);
-    {
-        let mut guard = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
-        // Turns still queued die with the pump (a preserved failover carries its own objective).
-        guard.queued_turns = 0;
-        if !matches!(
-            guard.state,
-            SessionState::StallLocked | SessionState::RecoveryRequired
-        ) {
-            guard.state = SessionState::Stopping;
-        }
-    }
+    begin_pump_teardown(&ctx);
     // Whatever the turn was doing is over with the run.
     settle_activity_idle(&ctx);
 

@@ -5,9 +5,11 @@ use org_proto::inbox::{InboxCounts, InboxItem, InboxKind, InboxPosition, InboxSt
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+mod approvals_source;
 mod hint;
 mod list;
 mod org_source;
+pub(crate) use approvals_source::PendingApprovalsInboxSource;
 pub(crate) use hint::Hint;
 
 /// HQ's real source registration and the clock also used by hint delivery.

@@ -44,6 +44,7 @@ mod affinity;
 mod agent_os_sandbox_tests;
 #[cfg(test)]
 mod agy_socket_mount_tests;
+mod approvals;
 mod auth_guards;
 mod chief_of_staff;
 mod environment;
@@ -70,6 +71,7 @@ mod views;
 mod warm;
 mod worktree_refresh;
 
+pub use approvals::{ApprovalChangeHook, PendingToolApproval};
 pub(crate) use environment::task_process_context;
 #[cfg(test)]
 pub(crate) use environment::SessionEnvInput;
@@ -438,6 +440,7 @@ pub struct SessionManager {
     pub(crate) hibernation: hibernation::HibernationState,
     pub(crate) task_worktree_preparer: Mutex<Option<Arc<dyn TaskWorktreePreparer>>>,
     watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
+    pub(crate) approval_change_hook: Arc<Mutex<Option<ApprovalChangeHook>>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
     self_ref: Mutex<Option<std::sync::Weak<SessionManager>>>,
@@ -504,6 +507,7 @@ impl SessionManager {
             hibernation: hibernation::HibernationState::default(),
             task_worktree_preparer: Mutex::new(None),
             watch_notice_provider: Mutex::new(None),
+            approval_change_hook: Arc::new(Mutex::new(None)),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),
             self_ref: Mutex::new(None),

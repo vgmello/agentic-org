@@ -54,11 +54,12 @@ pub use credentials::{
 pub use external::{ExternalLeaseRecord, EXTERNAL_LEASE_VERSION};
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{
-    LocalOsSandbox, PreparedWorktreeNotice, SandboxConfinementMode, SandboxPlan,
-    SandboxPrepareContext, SandboxRunner, SandboxVerifyContext, SessionManager,
-    SessionManagerConfig, TaskWorktreePreparer, WorktreeSandboxRefreshOutcome,
-    MID_TURN_SANDBOX_REFRESH_HINT,
+    ApprovalChangeHook, LocalOsSandbox, PendingToolApproval, PreparedWorktreeNotice,
+    SandboxConfinementMode, SandboxPlan, SandboxPrepareContext, SandboxRunner,
+    SandboxVerifyContext, SessionManager, SessionManagerConfig, TaskWorktreePreparer,
+    WorktreeSandboxRefreshOutcome, MID_TURN_SANDBOX_REFRESH_HINT,
 };
+pub use pump::is_allow_always_eligible;
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,
     SessionAffinityEntry, SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT,

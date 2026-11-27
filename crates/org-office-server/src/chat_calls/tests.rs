@@ -80,8 +80,12 @@ impl LiveOfficeFixture {
             Box::new(move || live_wake.notify()),
             owner_id.clone(),
         ));
-        let hq = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
         let sessions = start_session_manager(Arc::clone(&office), &socket);
+        let hq = crate::office_runtime::hq_inbox_with_sessions(
+            Arc::clone(&office),
+            Some(Arc::clone(&sessions)),
+        )
+        .unwrap();
         let channel_watcher = Arc::new(crate::watcher::ChannelWatcher::production(
             Arc::clone(&office),
             Some(Arc::clone(&sessions)),

@@ -48,8 +48,10 @@ pub(crate) fn reap_live_handle(
         .thread
         .take()
         .is_none_or(|thread| thread.join().is_ok());
-    let (needs_recovery, run_id, session_id, runtime_session_id, view) = {
+    let (needs_recovery, run_id, session_id, runtime_session_id, view, cleared_approvals) = {
         let mut st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        let cleared_approvals = !st.pending_approvals.is_empty();
+        st.pending_approvals.clear();
         let needs_recovery =
             !joined_ok || st.recovery_required || st.state == SessionState::RecoveryRequired;
         if needs_recovery {
@@ -62,8 +64,12 @@ pub(crate) fn reap_live_handle(
             st.session_id.clone(),
             st.runtime_session_id.clone(),
             st.to_view(),
+            cleared_approvals,
         )
     };
+    if cleared_approvals {
+        mgr.notify_approval_changed();
+    }
     let mut permit_released = false;
     if let Some((pid, _)) = handle
         .active_permit

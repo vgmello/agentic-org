@@ -414,7 +414,11 @@ impl LiveOfficeNode {
             None
         };
 
-        let hq_inbox = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
+        let hq_inbox = crate::office_runtime::hq_inbox_with_sessions(
+            Arc::clone(&office),
+            Some(Arc::clone(&sessions)),
+        )
+        .unwrap();
         let ports = build_office_ports(
             Arc::clone(&office),
             Arc::clone(&sessions),

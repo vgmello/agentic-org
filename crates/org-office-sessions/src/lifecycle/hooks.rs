@@ -92,18 +92,7 @@ impl SessionManager {
         let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
             build_permit_hooks(self, employee_id, route_digest, oauth_expires_at_ms);
 
-        let rl_office = Arc::clone(&self.office);
-        let rl_hq_permits = self.config.hq_permits.clone();
-        let on_rate_limit: RateLimitHook = Arc::new(move |conn_id, resets_at| {
-            let _ = rl_office.record_connection_cooldown_internal(conn_id, None, resets_at, None);
-            crate::router::report_cooldown_any(
-                &rl_office,
-                rl_hq_permits.as_deref(),
-                conn_id,
-                resets_at,
-                Some("rate_limited"),
-            );
-        });
+        let on_rate_limit = build_rate_limit_hook(self);
 
         let failover_weak = self.weak_self();
         let on_failover: FailoverHook = Arc::new(move |req| {
@@ -137,8 +126,39 @@ impl SessionManager {
             stage_mid_turn_wakes: (!partitioned).then_some(stage_mid_turn_wakes),
             on_mid_turn_delivered: (!partitioned).then_some(on_mid_turn_delivered),
             is_sandbox_topology_stale,
+            on_approval_changed: Some(build_approval_changed_hook(&self.approval_change_hook)),
         }
     }
+}
+
+fn build_approval_changed_hook(
+    slot: &Arc<Mutex<Option<crate::manager::ApprovalChangeHook>>>,
+) -> crate::pump::ApprovalChangedHook {
+    let approval_hook = Arc::clone(slot);
+    Arc::new(move || {
+        let cb = approval_hook
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(cb) = cb {
+            cb();
+        }
+    })
+}
+
+fn build_rate_limit_hook(mgr: &SessionManager) -> RateLimitHook {
+    let rl_office = Arc::clone(&mgr.office);
+    let rl_hq_permits = mgr.config.hq_permits.clone();
+    Arc::new(move |conn_id, resets_at| {
+        let _ = rl_office.record_connection_cooldown_internal(conn_id, None, resets_at, None);
+        crate::router::report_cooldown_any(
+            &rl_office,
+            rl_hq_permits.as_deref(),
+            conn_id,
+            resets_at,
+            Some("rate_limited"),
+        );
+    })
 }
 
 /// The turn-end hook: settles the turn's usage and budget holds, then hands queued wakes on.

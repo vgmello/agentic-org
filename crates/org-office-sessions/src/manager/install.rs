@@ -544,16 +544,26 @@ pub(super) fn abort_post_spawn_shutdown(
         reason: "office shutdown".into(),
     });
     let joined_ok = thread.join().is_ok();
-    let (cancelled_run_id, recovery_required, view) = {
+    let (cancelled_run_id, recovery_required, view, cleared_approvals) = {
         let mut st = runtime_state.lock().unwrap_or_else(|p| p.into_inner());
+        let cleared_approvals = !st.pending_approvals.is_empty();
+        st.pending_approvals.clear();
         let recovery_required =
             !joined_ok || st.recovery_required || st.state == SessionState::RecoveryRequired;
         if recovery_required {
             st.recovery_required = true;
             st.state = SessionState::RecoveryRequired;
         }
-        (st.run_id.clone(), recovery_required, st.to_view())
+        (
+            st.run_id.clone(),
+            recovery_required,
+            st.to_view(),
+            cleared_approvals,
+        )
     };
+    if cleared_approvals {
+        mgr.notify_approval_changed();
+    }
     record_aborted_view(mgr, emp_id, view);
     if let Some((pid, _)) = active_permit
         .lock()

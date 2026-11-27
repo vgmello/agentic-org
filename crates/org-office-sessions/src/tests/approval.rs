@@ -603,3 +603,172 @@ fn task126_approval_bridge_blocks_canonical_deny_bypasses_trailing_slash_symlink
         crate::preset::EscalationDisposition::AutoDeny { .. }
     ));
 }
+
+fn add_test_non_owner(office: &Office, owner_id: &str, team_id: &str) -> String {
+    let member_id = new_uuid_v7();
+    office
+        .submit_org(
+            owner_id,
+            org_office::rules::OrgCommand::MemberAddPerson(org_proto::org::MemberAddPersonParams {
+                command_id: new_uuid_v7(),
+                member_id: member_id.clone(),
+                name: "Bob NonOwner".into(),
+                contact: None,
+                handle: Some("bob-nonowner".into()),
+                home_team_id: Some(team_id.to_owned()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    member_id
+}
+
+fn wait_for_pending_approvals(
+    manager: &SessionManager,
+    owner_id: &str,
+    expected: usize,
+) -> Vec<crate::PendingToolApproval> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let list = manager.pending_approvals_for(owner_id).unwrap();
+        if list.len() == expected {
+            return list;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    manager.pending_approvals_for(owner_id).unwrap()
+}
+
+fn build_hook_test_manager(
+    office: &Arc<Office>,
+    bin_dir: &Path,
+    sock_dir: &Path,
+) -> SessionManager {
+    let fake_claude = write_fake_cli(
+        bin_dir,
+        "claude",
+        r#"#!/bin/sh
+read init_line
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ada-hook"],"current_permission_mode":"default","pid":1236,"version":"2.1.311"}}}'
+read user_line
+echo '{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000003","permissionMode":"default"}'
+echo '{"type":"control_request","request_id":"apr-hook-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"agent-os inbox --body Bearer secret_tok_999;id"}}}'
+echo '{"type":"control_request","request_id":"apr-hook-2","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":{"api_key":"synthetic-key-42"}}}'
+echo '{"type":"control_request","request_id":"apr-hook-3","request":{"subtype":"can_use_tool","tool_name":"mystery_tool","input":{"token":"synthetic-stop-tok"}}}'
+read d1
+read d2
+read d3
+echo '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
+"#,
+    );
+    let mut registry = RuntimeRegistry::production();
+    registry.register(
+        Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()),
+        Some(fake_claude),
+    );
+    let mut cfg = SessionManagerConfig::production(sock_dir.join("office.sock"));
+    cfg.runtimes = registry;
+    cfg.helper_dir = Some(bin_dir.to_path_buf());
+    SessionManager::new(Arc::clone(office), cfg)
+}
+
+fn assert_approval_lifecycle_transitions(
+    manager: &SessionManager,
+    owner_id: &str,
+    emp_id: &str,
+    hook_hits: &std::sync::atomic::AtomicUsize,
+) {
+    use std::sync::atomic::Ordering;
+
+    let before_approve = hook_hits.load(Ordering::SeqCst);
+    manager
+        .decide_approval(owner_id, emp_id, "apr-hook-1", "allow_once", None)
+        .expect("approve succeeded");
+    assert!(hook_hits.load(Ordering::SeqCst) > before_approve);
+    assert_eq!(manager.pending_approvals_for(owner_id).unwrap().len(), 2);
+
+    let before_deny = hook_hits.load(Ordering::SeqCst);
+    manager
+        .decide_approval(
+            owner_id,
+            emp_id,
+            "apr-hook-2",
+            "deny",
+            Some("not needed".into()),
+        )
+        .expect("deny succeeded");
+    assert!(hook_hits.load(Ordering::SeqCst) > before_deny);
+    assert_eq!(
+        manager.pending_approvals_for(owner_id).unwrap()[0].approval_id,
+        "apr-hook-3"
+    );
+
+    let before_stop = hook_hits.load(Ordering::SeqCst);
+    manager
+        .stop_session(emp_id, "owner stopped")
+        .expect("stop succeeded");
+    assert!(hook_hits.load(Ordering::SeqCst) > before_stop);
+    assert!(manager.pending_approvals_for(owner_id).unwrap().is_empty());
+}
+
+#[test]
+fn task102_pending_approvals_for_enforces_owner_auth_redacts_and_fires_hook_on_lifecycle() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let _ = org_platform::process::harden_self();
+    let office: Arc<Office> = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let non_owner_id = add_test_non_owner(&office, &owner_id, &root_team_id);
+    let (emp_id, _conn_id) = hire_agent_with_runtime(
+        &office,
+        &owner_id,
+        &root_team_id,
+        "anthropic",
+        "claude",
+        "ada-hook",
+        "claude-sonnet-4-6",
+    );
+
+    let bin_dir = tempfile::tempdir().unwrap();
+    let sock_dir = tempfile::tempdir().unwrap();
+    let manager = build_hook_test_manager(&office, bin_dir.path(), sock_dir.path());
+    let hook_hits = Arc::new(AtomicUsize::new(0));
+    let hook_counter = Arc::clone(&hook_hits);
+    manager.set_approval_change_hook(Arc::new(move || {
+        hook_counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    assert!(manager.pending_approvals_for(&owner_id).unwrap().is_empty());
+
+    manager
+        .start_session(
+            &owner_id,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: emp_id.clone(),
+                instruction: Some("Trigger approvals".into()),
+                workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+            },
+        )
+        .expect("session started");
+
+    let list = wait_for_pending_approvals(&manager, &owner_id, 3);
+    assert_eq!(list.len(), 3, "all three pending approvals must surface");
+    assert!(hook_hits.load(Ordering::SeqCst) >= 3);
+    for entry in &list {
+        let rendered = format!("{entry:?}");
+        for secret in ["secret_tok_999", "synthetic-key-42", "synthetic-stop-tok"] {
+            assert!(!rendered.contains(secret), "{rendered}");
+        }
+    }
+    for unauthorized in [&non_owner_id, &emp_id] {
+        let err = manager
+            .pending_approvals_for(unauthorized)
+            .expect_err("non-owner caller must be refused");
+        assert_eq!(err.code, org_proto::ErrorCode::NotAuthorized);
+    }
+
+    assert_approval_lifecycle_transitions(&manager, &owner_id, &emp_id, &hook_hits);
+}
