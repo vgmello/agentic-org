@@ -243,7 +243,7 @@ pub(super) fn ensure_pre_pump_isolation(
     meta: PrePumpHandleMeta,
 ) -> Result<VerifiedPrePump, ApiError> {
     let active_employees = mgr.active_or_starting_employee_ids();
-    let sandbox_pre_raced = mgr
+    let verify_err = mgr
         .sandbox_runner
         .verify_before_spawn(
             &SandboxVerifyContext {
@@ -253,9 +253,9 @@ pub(super) fn ensure_pre_pump_isolation(
             },
             &meta.sandbox_plan,
         )
-        .is_err();
+        .err();
     let shutting_down = is_admissions_closed(mgr);
-    if !shutting_down && !sandbox_pre_raced {
+    if !shutting_down && verify_err.is_none() {
         return Ok(VerifiedPrePump {
             spawned,
             session,
@@ -280,16 +280,12 @@ pub(super) fn ensure_pre_pump_isolation(
             ),
         ));
     }
-    Err(if sandbox_pre_raced {
-        ApiError::new(
-            ErrorCode::Conflict,
-            "a newly started sibling agent was not masked in this sandbox; retry launch",
-        )
-    } else {
-        ApiError::new(
+    Err(match (shutting_down, verify_err) {
+        (false, Some(err)) => err,
+        _ => ApiError::new(
             ErrorCode::Unavailable,
             "office session manager is shutting down",
-        )
+        ),
     })
 }
 
@@ -464,7 +460,7 @@ fn record_aborted_view(mgr: &SessionManager, emp_id: &str, view: SessionView) {
         .insert(emp_id.to_owned(), view);
 }
 
-/// Registers a started handle, or tears it down when admissions closed, a `bwrap` sibling
+/// Registers a started handle, or tears it down when admissions closed, a sandboxed sibling
 /// raced in unmasked, or an explicit stop (pause, offboard, owner stop) was accepted or
 /// refused since the start slot was reserved (`stop_epoch` moved, `TASK-190`). The epoch check,
 /// the insert and the slot release are one `registry` critical section, so a stop either sees

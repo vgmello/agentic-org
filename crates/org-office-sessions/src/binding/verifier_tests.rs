@@ -111,6 +111,26 @@ fn local_peer_pid_verifier_enforces_token_peer_descendant_and_revocation() {
 }
 
 #[test]
+fn local_peer_pid_verifier_checks_external_binding_liveness_and_revocation() {
+    let reg = RunBindingRegistry::new();
+    let verifier: Arc<dyn RunBindingVerifier> = Arc::new(LocalPeerPidVerifier::new(reg.clone()));
+
+    assert!(!verifier.has_active_external("emp-1", "ext-1"));
+    reg.issue_external("emp-1", "ext-1", u64::MAX).unwrap();
+    assert!(verifier.has_active_external("emp-1", "ext-1"));
+    assert!(!verifier.has_active_external("emp-1", "ext-other"));
+    assert!(!verifier.has_active_external("emp-other", "ext-1"));
+
+    // Expired external binding fails closed.
+    reg.issue_external("emp-expired", "ext-expired", 1).unwrap();
+    assert!(!verifier.has_active_external("emp-expired", "ext-expired"));
+
+    // Revoking external binding immediately flips liveness to false.
+    assert!(reg.revoke_external("emp-1", Some("ext-1")));
+    assert!(!verifier.has_active_external("emp-1", "ext-1"));
+}
+
+#[test]
 fn local_peer_pid_verifier_hot_path_latency_within_doc7_budget() {
     const ITERATIONS: usize = 1_000;
     const MAX_MEDIAN: Duration = Duration::from_millis(1);

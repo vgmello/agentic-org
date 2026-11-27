@@ -18,6 +18,7 @@ struct RecordingSandboxRunner {
     stale_calls: AtomicUsize,
     fail_enforce: AtomicBool,
     fail_verify: AtomicBool,
+    fail_verify_on_call: AtomicUsize,
     stale: AtomicBool,
     adapted_marker: Mutex<Option<PermissionMode>>,
 }
@@ -32,6 +33,7 @@ impl RecordingSandboxRunner {
             stale_calls: AtomicUsize::new(0),
             fail_enforce: AtomicBool::new(false),
             fail_verify: AtomicBool::new(false),
+            fail_verify_on_call: AtomicUsize::new(0),
             stale: AtomicBool::new(false),
             adapted_marker: Mutex::new(None),
         }
@@ -59,11 +61,17 @@ impl SandboxRunner for RecordingSandboxRunner {
         _ctx: &SandboxVerifyContext<'_>,
         _plan: &SandboxPlan,
     ) -> Result<(), org_proto::ApiError> {
-        self.verify_calls.fetch_add(1, Ordering::SeqCst);
+        let call = self.verify_calls.fetch_add(1, Ordering::SeqCst) + 1;
         if self.fail_verify.load(Ordering::SeqCst) {
             return Err(org_proto::ApiError::new(
                 org_proto::ErrorCode::Conflict,
                 "mock sandbox rejected pre-spawn verification",
+            ));
+        }
+        if self.fail_verify_on_call.load(Ordering::SeqCst) == call {
+            return Err(org_proto::ApiError::new(
+                org_proto::ErrorCode::Unavailable,
+                "custom pre-pump verification failure",
             ));
         }
         Ok(())
@@ -90,8 +98,16 @@ impl SandboxRunner for RecordingSandboxRunner {
     }
 }
 
-#[test]
-fn custom_sandbox_runner_flows_through_launch_adapt_verify_and_staleness() {
+struct CustomSandboxFixture {
+    owner_id: String,
+    agent_id: String,
+    runner: Arc<RecordingSandboxRunner>,
+    mgr: SessionManager,
+    _bin_dir: tempfile::TempDir,
+    _sock_dir: tempfile::TempDir,
+}
+
+fn custom_sandbox_fixture() -> CustomSandboxFixture {
     let _ = org_platform::process::harden_self();
     let office = Arc::new(Office::for_test(TestOffice::default()));
     let owner_id = office.owner_member_id().to_owned();
@@ -108,12 +124,7 @@ fn custom_sandbox_runner_flows_through_launch_adapt_verify_and_staleness() {
 
     let bin_dir = tempfile::tempdir().unwrap();
     let script_path = bin_dir.path().join("warm-scripted-agent");
-    let script = r#"#!/bin/sh
-echo '{"kind":"ready"}'
-while IFS= read -r line; do
-  printf '{"kind":"reply","text":"ack"}\n'
-done
-"#;
+    let script = "#!/bin/sh\necho '{\"kind\":\"ready\"}'\nwhile IFS= read -r line; do\n  printf '{\"kind\":\"reply\",\"text\":\"ack\"}\\n'\ndone\n";
     fs::write(&script_path, script).unwrap();
     fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -131,76 +142,30 @@ done
         cfg,
         Arc::clone(&runner) as Arc<dyn SandboxRunner>,
     );
+    CustomSandboxFixture {
+        owner_id,
+        agent_id,
+        runner,
+        mgr,
+        _bin_dir: bin_dir,
+        _sock_dir: sock_dir,
+    }
+}
 
-    // 1. Failing `enforce_sibling_isolation` aborts before `prepare_launch`.
-    runner.fail_enforce.store(true, Ordering::SeqCst);
-    let err = mgr
-        .start_session(
-            &owner_id,
-            &MemberSessionStartParams {
-                command_id: new_uuid_v7(),
-                employee_id: agent_id.clone(),
-                instruction: Some("blocked by enforce".into()),
-                workspace: None,
-            },
-        )
-        .unwrap_err();
-    assert_eq!(err.code, org_proto::ErrorCode::Conflict);
-    assert_eq!(runner.enforce_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(runner.prepare_calls.load(Ordering::SeqCst), 0);
-    assert!(!mgr.registry.lock().unwrap().starting.contains(&agent_id));
-    runner.fail_enforce.store(false, Ordering::SeqCst);
+fn start_params(employee_id: &str, instruction: &str) -> MemberSessionStartParams {
+    MemberSessionStartParams {
+        command_id: new_uuid_v7(),
+        employee_id: employee_id.to_owned(),
+        instruction: Some(instruction.to_owned()),
+        workspace: None,
+    }
+}
 
-    // 2. Failing `verify_before_spawn` aborts launch and leaves no live handle or leaked slot.
-    runner.fail_verify.store(true, Ordering::SeqCst);
-    let err = mgr
-        .start_session(
-            &owner_id,
-            &MemberSessionStartParams {
-                command_id: new_uuid_v7(),
-                employee_id: agent_id.clone(),
-                instruction: Some("blocked by verify".into()),
-                workspace: None,
-            },
-        )
-        .unwrap_err();
-    assert_eq!(err.code, org_proto::ErrorCode::Conflict);
-    assert_eq!(runner.prepare_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(runner.adapt_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(runner.verify_calls.load(Ordering::SeqCst), 1);
-    assert!(mgr.registry.lock().unwrap().live.is_empty());
-    assert!(!mgr.registry.lock().unwrap().starting.contains(&agent_id));
-    runner.fail_verify.store(false, Ordering::SeqCst);
-
-    // 3. Happy path flows through enforce -> prepare -> adapt -> verify (pre-spawn + pre-pump)
-    //    -> is_plan_stale (registration).
-    let started = mgr
-        .start_session(
-            &owner_id,
-            &MemberSessionStartParams {
-                command_id: new_uuid_v7(),
-                employee_id: agent_id.clone(),
-                instruction: Some("turn 1".into()),
-                workspace: None,
-            },
-        )
-        .expect("launch succeeds via custom SandboxRunner");
-    assert_eq!(started.employee_id, agent_id);
-    assert_eq!(
-        *runner.adapted_marker.lock().unwrap(),
-        Some(PermissionMode::Ask)
-    );
-    assert_eq!(runner.prepare_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(runner.adapt_calls.load(Ordering::SeqCst), 2);
-    // 1 failed + 2 succeeded (pre-spawn & pre-pump).
-    assert_eq!(runner.verify_calls.load(Ordering::SeqCst), 3);
-    assert!(runner.stale_calls.load(Ordering::SeqCst) >= 1);
-
-    // Wait for Turn 1 to reach Idle.
+fn wait_for_idle(mgr: &SessionManager, owner_id: &str, agent_id: &str) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         if mgr
-            .inspect_session(&owner_id, Some(&agent_id))
+            .inspect_session(owner_id, Some(agent_id))
             .unwrap()
             .session
             .state
@@ -211,128 +176,176 @@ done
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(
-        mgr.inspect_session(&owner_id, Some(&agent_id))
+        mgr.inspect_session(owner_id, Some(agent_id))
             .unwrap()
             .session
             .state,
         SessionState::Idle
     );
-
-    // 4. Mark plan stale for warm reuse check, then allow the fresh relaunch to register.
-    runner.stale.store(true, Ordering::SeqCst);
-    // Flip stale back after warm freshness sees it? Even cleaner: verify `is_plan_stale` causes
-    // warm recycle — wait, if stale stays true at registration, registration will abort cleanly
-    // with Conflict proving BOTH warm recycle AND registration staleness flowed through the trait!
-    let stale_err = mgr
-        .start_session(
-            &owner_id,
-            &MemberSessionStartParams {
-                command_id: new_uuid_v7(),
-                employee_id: agent_id.clone(),
-                instruction: Some("turn 2 while stale".into()),
-                workspace: None,
-            },
-        )
-        .unwrap_err();
-    assert_eq!(stale_err.code, org_proto::ErrorCode::Conflict);
-    // Warm handle was recycled and a fresh cold launch ran `prepare_launch` a 3rd time!
-    assert_eq!(runner.prepare_calls.load(Ordering::SeqCst), 3);
-    mgr.stop_all("test_done");
 }
 
 #[test]
-fn local_os_sandbox_selects_modes_prunes_denies_and_verifies_siblings() {
+fn custom_sandbox_runner_aborts_on_enforce_and_pre_spawn_verify_failures() {
+    let fx = custom_sandbox_fixture();
+
+    // 1. Failing `enforce_sibling_isolation` aborts before `prepare_launch`.
+    fx.runner.fail_enforce.store(true, Ordering::SeqCst);
+    let err = fx
+        .mgr
+        .start_session(&fx.owner_id, &start_params(&fx.agent_id, "blocked enforce"))
+        .unwrap_err();
+    assert_eq!(err.code, org_proto::ErrorCode::Conflict);
+    assert_eq!(fx.runner.enforce_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fx.runner.prepare_calls.load(Ordering::SeqCst), 0);
+    assert!(!fx
+        .mgr
+        .registry
+        .lock()
+        .unwrap()
+        .starting
+        .contains(&fx.agent_id));
+    fx.runner.fail_enforce.store(false, Ordering::SeqCst);
+
+    // 2. Failing `verify_before_spawn` aborts launch and leaves no live handle or leaked slot.
+    fx.runner.fail_verify.store(true, Ordering::SeqCst);
+    let err = fx
+        .mgr
+        .start_session(&fx.owner_id, &start_params(&fx.agent_id, "blocked verify"))
+        .unwrap_err();
+    assert_eq!(err.code, org_proto::ErrorCode::Conflict);
+    assert_eq!(fx.runner.prepare_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fx.runner.adapt_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fx.runner.verify_calls.load(Ordering::SeqCst), 1);
+    assert!(fx.mgr.registry.lock().unwrap().live.is_empty());
+    assert!(!fx
+        .mgr
+        .registry
+        .lock()
+        .unwrap()
+        .starting
+        .contains(&fx.agent_id));
+}
+
+#[test]
+fn custom_sandbox_runner_propagates_pre_pump_verify_error() {
+    let fx = custom_sandbox_fixture();
+
+    // Call 1 (pre-spawn in launch.rs) succeeds; call 2 (pre-pump in install.rs) returns a custom
+    // `Unavailable` ApiError that must be preserved verbatim on non-shutdown abort.
+    fx.runner.fail_verify_on_call.store(2, Ordering::SeqCst);
+    let err = fx
+        .mgr
+        .start_session(
+            &fx.owner_id,
+            &start_params(&fx.agent_id, "blocked pre-pump verify"),
+        )
+        .unwrap_err();
+    assert_eq!(err.code, org_proto::ErrorCode::Unavailable);
+    assert_eq!(err.message, "custom pre-pump verification failure");
+    assert_eq!(fx.runner.verify_calls.load(Ordering::SeqCst), 2);
+    assert!(fx.mgr.registry.lock().unwrap().live.is_empty());
+    assert!(!fx
+        .mgr
+        .registry
+        .lock()
+        .unwrap()
+        .starting
+        .contains(&fx.agent_id));
+}
+
+#[test]
+fn custom_sandbox_runner_adapts_spec_and_recycles_stale_warm_handle() {
+    let fx = custom_sandbox_fixture();
+
+    // 1. Happy path flows through enforce -> prepare -> adapt -> verify (pre-spawn + pre-pump)
+    //    -> is_plan_stale (registration).
+    let started = fx
+        .mgr
+        .start_session(&fx.owner_id, &start_params(&fx.agent_id, "turn 1"))
+        .expect("launch succeeds via custom SandboxRunner");
+    assert_eq!(started.employee_id, fx.agent_id);
+    assert_eq!(
+        *fx.runner.adapted_marker.lock().unwrap(),
+        Some(PermissionMode::Ask)
+    );
+    assert_eq!(fx.runner.prepare_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fx.runner.adapt_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fx.runner.verify_calls.load(Ordering::SeqCst), 2);
+    assert!(fx.runner.stale_calls.load(Ordering::SeqCst) >= 1);
+
+    wait_for_idle(&fx.mgr, &fx.owner_id, &fx.agent_id);
+
+    // 2. Marking the plan stale triggers warm-handle recycle and registration staleness abort.
+    fx.runner.stale.store(true, Ordering::SeqCst);
+    let stale_err = fx
+        .mgr
+        .start_session(
+            &fx.owner_id,
+            &start_params(&fx.agent_id, "turn 2 while stale"),
+        )
+        .unwrap_err();
+    assert_eq!(stale_err.code, org_proto::ErrorCode::Conflict);
+    assert_eq!(fx.runner.prepare_calls.load(Ordering::SeqCst), 2);
+    fx.mgr.stop_all("test_done");
+}
+
+#[test]
+fn local_os_sandbox_selects_modes_and_verifies_siblings() {
     let office = Arc::new(Office::for_test(TestOffice::default()));
     let sock_dir = office.durable_root().join("run-sock");
     fs::create_dir_all(&sock_dir).unwrap();
     let office_socket = sock_dir.join("office.sock");
     let me = office.owner_member_id().to_owned();
     let sandbox = LocalOsSandbox;
+    let make_ctx = |sandbox_enabled, uses_linux_bwrap_sandbox| SandboxPrepareContext {
+        office: &office,
+        office_socket: &office_socket,
+        agent_os_state_roots: &[],
+        employee_id: &me,
+        sandbox_enabled,
+        host_profile: org_agent_runtime::RuntimeHostProfile {
+            uses_linux_bwrap_sandbox,
+            ..org_agent_runtime::RuntimeHostProfile::default()
+        },
+    };
 
-    // 1. Unsandboxed mode.
-    let unsandboxed = sandbox
-        .prepare_launch(&SandboxPrepareContext {
-            office: &office,
-            office_socket: &office_socket,
-            agent_os_state_roots: &[],
-            employee_id: &me,
-            sandbox_enabled: false,
-            host_profile: org_agent_runtime::RuntimeHostProfile {
-                uses_linux_bwrap_sandbox: true,
-                ..org_agent_runtime::RuntimeHostProfile::default()
-            },
-        })
-        .unwrap();
+    let unsandboxed = sandbox.prepare_launch(&make_ctx(false, true)).unwrap();
     assert_eq!(unsandboxed.mode(), SandboxConfinementMode::Unsandboxed);
     assert!(unsandboxed.masked_siblings().is_none());
     assert!(!unsandboxed.prunes_absent_denies());
     assert!(!sandbox.is_plan_stale(&office, &me, &unsandboxed));
 
-    // 2. Host-native mode (sandboxed runtime that does not use Linux bwrap).
-    let host_native = sandbox
-        .prepare_launch(&SandboxPrepareContext {
-            office: &office,
-            office_socket: &office_socket,
-            agent_os_state_roots: &[],
-            employee_id: &me,
-            sandbox_enabled: true,
-            host_profile: org_agent_runtime::RuntimeHostProfile {
-                uses_linux_bwrap_sandbox: false,
-                ..org_agent_runtime::RuntimeHostProfile::default()
-            },
-        })
-        .unwrap();
+    let host_native = sandbox.prepare_launch(&make_ctx(true, false)).unwrap();
     assert_eq!(host_native.mode(), SandboxConfinementMode::HostNative);
     assert!(host_native.masked_siblings().is_none());
     assert!(!host_native.prunes_absent_denies());
     assert!(!sandbox.is_plan_stale(&office, &me, &host_native));
 
-    // 3. Linux bwrap mode (when platform lacks Unix-socket path filtering, e.g., Linux).
-    let bwrap_plan = sandbox
-        .prepare_launch(&SandboxPrepareContext {
-            office: &office,
-            office_socket: &office_socket,
-            agent_os_state_roots: &[],
-            employee_id: &me,
-            sandbox_enabled: true,
-            host_profile: org_agent_runtime::RuntimeHostProfile {
-                uses_linux_bwrap_sandbox: true,
-                ..org_agent_runtime::RuntimeHostProfile::default()
-            },
-        })
-        .unwrap();
+    let bwrap_plan = sandbox.prepare_launch(&make_ctx(true, true)).unwrap();
     if !org_platform::confinement::unix_socket_path_filter_supported() {
         assert_eq!(bwrap_plan.mode(), SandboxConfinementMode::LinuxBwrap);
         assert!(bwrap_plan.prunes_absent_denies());
         assert!(bwrap_plan.masked_siblings().is_some());
         assert!(!sandbox.is_plan_stale(&office, &me, &bwrap_plan));
-        // Verification passes when no unmasked sibling is active.
+        let verify_ctx = |active_employees| SandboxVerifyContext {
+            office: &office,
+            employee_id: &me,
+            active_employees,
+        };
         sandbox
-            .verify_before_spawn(
-                &SandboxVerifyContext {
-                    office: &office,
-                    employee_id: &me,
-                    active_employees: &[],
-                },
-                &bwrap_plan,
-            )
+            .verify_before_spawn(&verify_ctx(&[]), &bwrap_plan)
             .unwrap();
-        // Verification fails closed when an unmasked sibling is active/starting.
         let unmasked = vec!["emp-raced-sibling".to_owned()];
         let err = sandbox
-            .verify_before_spawn(
-                &SandboxVerifyContext {
-                    office: &office,
-                    employee_id: &me,
-                    active_employees: &unmasked,
-                },
-                &bwrap_plan,
-            )
+            .verify_before_spawn(&verify_ctx(&unmasked), &bwrap_plan)
             .unwrap_err();
         assert_eq!(err.code, org_proto::ErrorCode::Conflict);
     }
+}
 
-    // 4. `adapt_session_spec` only prunes absent denies when `plan.prunes_absent_denies()` is true.
+#[test]
+fn local_os_sandbox_prunes_absent_denies_only_when_plan_requests_it() {
+    let sandbox = LocalOsSandbox;
     let dir = tempfile::tempdir().unwrap();
     let ws = SpecPath::try_from(dir.path().to_str().unwrap()).unwrap();
     let absent = org_agent_runtime::PathPattern::try_from(
@@ -378,7 +391,7 @@ fn local_os_sandbox_selects_modes_prunes_denies_and_verifies_siblings() {
     };
 
     let mut native_spec = make_spec();
-    sandbox.adapt_session_spec(&host_native, &mut native_spec);
+    sandbox.adapt_session_spec(&SandboxPlan::host_native(), &mut native_spec);
     assert_eq!(native_spec.sandbox.deny_read.len(), 1);
     assert_eq!(native_spec.permission_mode, PermissionMode::AcceptEdits);
 

@@ -286,7 +286,7 @@ fn reap_stale_bwrap_handle(
         mgr,
         &other_id,
         handle,
-        Some("bwrap_sibling_isolation_refresh"),
+        Some("sandbox_isolation_refresh"),
         ReapMode::FailClosedRestore {
             conflict_message: format!(
                 "could not verify teardown of stale sandboxed session `{other_id}` before starting `{starting_emp_id}`; resolve recovery on `{other_id}` first"

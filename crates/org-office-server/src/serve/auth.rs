@@ -26,6 +26,16 @@ impl LaunchAuth {
     }
 }
 
+/// Which authority verified an [`Binding::External`] connection, so per-call liveness and
+/// revocation enforce 1:1 against the exact authority that granted the bind (`TASK-233`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ExternalAuthority {
+    /// Granted by [`org_office_sessions::RunBindingVerifier::verify_binding`].
+    Verifier,
+    /// Granted by [`super::external::ExternalAuthPort::verify`].
+    ExternalAuth,
+}
+
 /// Who a connection is, as far as the socket knows.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Binding {
@@ -36,8 +46,13 @@ pub(crate) enum Binding {
     /// the office socket without one.
     Member { id: String, via_grant: bool },
     /// Bound as an agent through an external (BYOA) lease's fast token (`TASK-137`): `id` is the
-    /// agent, `session_id` the lease. Never via a grant; limited to collaboration calls.
-    External { id: String, session_id: String },
+    /// agent, `session_id` the lease, and `authority` the port that granted it. Never via a grant;
+    /// limited to collaboration calls.
+    External {
+        id: String,
+        session_id: String,
+        authority: ExternalAuthority,
+    },
 }
 
 impl Binding {

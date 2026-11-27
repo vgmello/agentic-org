@@ -311,8 +311,8 @@ pub(super) fn acquire_live_handle_permit(
 /// Turn-end drain of queued wakes into the live warm session (`TASK-115`, `TASK-170`).
 ///
 /// Three phases so the employee lock is never held across the warm-permit acquisition (an HQ
-/// permit RPC on satellites, plus worktree and bare-repository digest walks) or the bwrap sibling
-/// topology scan: claim under the lock, send without it, then commit under the lock against a
+/// permit RPC on satellites, plus worktree and bare-repository digest walks) or the sandbox
+/// staleness check: claim under the lock, send without it, then commit under the lock against a
 /// fresh read of the queue so wakes enqueued meanwhile are never lost. The per-employee
 /// [`DispatchWakeGuard`] stays held throughout, so no other dispatcher or mid-turn stager can claim
 /// the same items in between. A wake withdrawn while the permit RPC runs may still reach the

@@ -4,6 +4,9 @@
 //! Isolates local Unix socket peer PID ancestry (`libc::pid_t`) behind a thin trait so server
 //! request dispatch and connection binding stay transport- and OS-neutral.
 
+use std::num::NonZeroU32;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use super::{ActiveRunBinding, BindingRejection, RunBindingRegistry};
 
 /// Transport-neutral identity of a connected peer presented to [`RunBindingVerifier`].
@@ -11,11 +14,12 @@ use super::{ActiveRunBinding, BindingRejection, RunBindingRegistry};
 /// Local Unix sockets convert the kernel peer PID once at the accept boundary via
 /// [`PeerIdentity::from_raw_pid`]; request routing and binding layers never reference
 /// `libc::pid_t`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PeerIdentity {
     /// A peer on the local host identified by its positive OS process ID (`None` when the
     /// transport supplies no peer PID).
-    LocalPid(Option<u32>),
+    LocalPid(Option<NonZeroU32>),
 }
 
 impl PeerIdentity {
@@ -26,19 +30,26 @@ impl PeerIdentity {
 
     /// Converts a signed process ID (`i32`), failing closed to `None` for non-positive values.
     pub fn from_pid(pid: Option<i32>) -> Self {
-        Self::LocalPid(pid.and_then(|p| u32::try_from(p).ok()).filter(|&p| p > 0))
+        Self::LocalPid(
+            pid.and_then(|p| u32::try_from(p).ok())
+                .and_then(NonZeroU32::new),
+        )
     }
 
     /// Converts a platform `libc::pid_t` at the local socket accept boundary, failing closed to
     /// `None` for non-positive values.
     pub fn from_raw_pid(pid: Option<libc::pid_t>) -> Self {
-        Self::LocalPid(pid.and_then(|p| u32::try_from(p).ok()).filter(|&p| p > 0))
+        Self::LocalPid(
+            pid.and_then(|p| u32::try_from(p).ok())
+                .and_then(NonZeroU32::new),
+        )
     }
 
     /// Returns the positive local OS PID when present.
     pub const fn local_pid(&self) -> Option<u32> {
         match self {
-            Self::LocalPid(pid) => *pid,
+            Self::LocalPid(Some(pid)) => Some(pid.get()),
+            Self::LocalPid(None) => None,
         }
     }
 
@@ -86,6 +97,20 @@ pub trait RunBindingVerifier: Send + Sync {
 
     /// Whether `employee_id` currently holds an active managed run binding.
     fn has_active(&self, employee_id: &str) -> bool;
+
+    /// Whether `employee_id` currently holds an active external lease binding for `session_id`.
+    /// Defaults to `false` (fail closed) for verifiers that only verify managed runs.
+    fn has_active_external(&self, _employee_id: &str, _session_id: &str) -> bool {
+        false
+    }
+}
+
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .unwrap_or(u64::MAX)
 }
 
 /// Local-OS [`RunBindingVerifier`] backed by [`RunBindingRegistry`]: constant-time token check
@@ -134,5 +159,10 @@ impl RunBindingVerifier for LocalPeerPidVerifier {
 
     fn has_active(&self, employee_id: &str) -> bool {
         self.registry.has_active(employee_id)
+    }
+
+    fn has_active_external(&self, employee_id: &str, session_id: &str) -> bool {
+        self.registry
+            .external_active(employee_id, session_id, current_time_ms())
     }
 }

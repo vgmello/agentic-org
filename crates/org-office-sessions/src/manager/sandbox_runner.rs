@@ -20,6 +20,7 @@ use super::spec::{apply_linux_claude_bwrap_pruning, is_linux_bwrap_sandbox};
 use super::SessionManager;
 
 /// Confinement mode selected by a [`SandboxRunner`] for a session launch.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxConfinementMode {
     /// Session runs without OS sandbox confinement (`sandbox_enabled == false`).

@@ -6,7 +6,7 @@ use org_office_sessions::{PeerIdentity, VerifiedRunBinding};
 use org_proto::msg::{json_string_len, MsgBind, MsgBindResult, MAX_HANDLE_BYTES, OFFICE_SENDER};
 use org_proto::{AgentStatus, ErrorCode, MemberKind, Request, Response};
 
-use super::auth::Binding;
+use super::auth::{Binding, ExternalAuthority};
 use super::held::Control;
 use super::shared::Shared;
 use super::wire::{bind_error, internal};
@@ -17,8 +17,21 @@ pub(super) fn lookup_live_binding(
     control: &Control,
 ) -> Option<Lookup> {
     let run_revoked = match binding {
+        Binding::External {
+            id,
+            session_id,
+            authority: ExternalAuthority::Verifier,
+        } => shared
+            .ports
+            .run_binding_verifier
+            .as_ref()
+            .is_none_or(|verifier| !verifier.has_active_external(id, session_id)),
         // An external connection lives exactly as long as its lease's fast token (RAM-only).
-        Binding::External { id, session_id } => shared
+        Binding::External {
+            id,
+            session_id,
+            authority: ExternalAuthority::ExternalAuth,
+        } => shared
             .ports
             .external_auth
             .as_ref()
@@ -109,8 +122,8 @@ fn bind_member(
             "a connection cannot bind as the office",
         ));
     }
-    // Step 2: the member. A lookup that fails, an unknown member and one that cannot message are
-    // all `not_authorized`, and say no more.
+    // Step 2: the member. A lookup that fails, an unknown member, a person (binds only via
+    // grants), and a member that cannot message are all `not_authorized`, and say no more.
     let refused = || {
         bind_error(
             id,
@@ -118,66 +131,63 @@ fn bind_member(
             "this office cannot bind this member",
         )
     };
-    let Some(found) = bindable(shared, handle) else {
+    let Some(found) = bindable(shared, handle).filter(|m| m.kind != MemberKind::Person) else {
         return Err(refused());
     };
-    // A person binds only through a grant, never on this socket, and is refused as an unknown
-    // member would be.
-    if found.kind == MemberKind::Person {
+    let Some(binding) = verify_member_binding(shared, &found, session_token, peer) else {
         return Err(refused());
-    }
-    if let Some(verifier) = &shared.ports.run_binding_verifier {
-        match verifier.verify_binding(&found.id, session_token, peer) {
-            Ok(VerifiedRunBinding::Managed(_)) => {}
-            Ok(VerifiedRunBinding::External {
-                employee_id,
-                session_id,
-            }) if employee_id == found.id => {
-                return Ok((
-                    Binding::External {
-                        id: employee_id.clone(),
-                        session_id,
-                    },
-                    Some(employee_id),
-                ));
-            }
-            Ok(VerifiedRunBinding::External { .. }) => {
-                return Err(refused());
-            }
-            Err(_) => {
-                let external = shared
-                    .ports
-                    .external_auth
-                    .as_ref()
-                    .and_then(|port| port.verify(&found.id, session_token));
-                let Some(session_id) = external else {
-                    return Err(refused());
-                };
-                return Ok((
-                    Binding::External {
-                        id: found.id.clone(),
-                        session_id,
-                    },
-                    Some(found.id),
-                ));
-            }
-        }
-    } else if session_token.is_some()
-        || found
-            .agent
-            .as_ref()
-            .is_some_and(|profile| profile.run_mode.is_some())
-    {
-        return Err(refused());
-    }
-    let member_id = found.id;
-    Ok((
-        Binding::Member {
-            id: member_id.clone(),
+    };
+    Ok((binding, Some(found.id)))
+}
+
+fn verify_member_binding(
+    shared: &Shared,
+    found: &org_proto::Member,
+    session_token: Option<&str>,
+    peer: &PeerIdentity,
+) -> Option<Binding> {
+    let Some(verifier) = &shared.ports.run_binding_verifier else {
+        let disallowed = session_token.is_some()
+            || found
+                .agent
+                .as_ref()
+                .is_some_and(|profile| profile.run_mode.is_some());
+        return (!disallowed).then(|| Binding::Member {
+            id: found.id.clone(),
             via_grant: false,
-        },
-        Some(member_id),
-    ))
+        });
+    };
+    match verifier.verify_binding(&found.id, session_token, peer) {
+        Ok(VerifiedRunBinding::Managed(active))
+            if active.employee_id == found.id && !active.is_external() =>
+        {
+            Some(Binding::Member {
+                id: found.id.clone(),
+                via_grant: false,
+            })
+        }
+        Ok(VerifiedRunBinding::External {
+            employee_id,
+            session_id,
+        }) if employee_id == found.id => Some(Binding::External {
+            id: employee_id,
+            session_id,
+            authority: ExternalAuthority::Verifier,
+        }),
+        Ok(VerifiedRunBinding::Managed(_) | VerifiedRunBinding::External { .. }) => None,
+        Err(_) => {
+            let session_id = shared
+                .ports
+                .external_auth
+                .as_ref()
+                .and_then(|port| port.verify(&found.id, session_token))?;
+            Some(Binding::External {
+                id: found.id.clone(),
+                session_id,
+                authority: ExternalAuthority::ExternalAuth,
+            })
+        }
+    }
 }
 
 /// The member `handle` names if a connection may act as it: a person or the owner, or an agent

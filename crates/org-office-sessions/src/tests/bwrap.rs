@@ -423,7 +423,7 @@ fn task166_recycle_stale_warm_handle_fails_closed_and_updates_existing_active_tu
         &mgr,
         &hr_agent_id,
         "run-a",
-        "bwrap_sibling_topology_changed",
+        "sandbox_topology_changed",
     ));
     let bg_handles = std::mem::take(&mut mgr.registry.lock().unwrap().bg_workers);
     for h in bg_handles {

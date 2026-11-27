@@ -131,8 +131,6 @@ pub(super) fn merge_stop_preserve(current: Option<bool>, reason: &str) -> Option
             | "pool_reroute"
             | "sandbox_isolation_refresh"
             | "sandbox_topology_changed"
-            | "bwrap_sibling_isolation_refresh"
-            | "bwrap_sibling_topology_changed"
     ))
 }
 
