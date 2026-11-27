@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use org_office::organization_family::records::BuiltinKey;
-use org_office::{EngineChoice, Key, Office, TestOffice};
+use org_office::{Key, Office, TestOffice};
 
 use super::a2a_messaging::{enroll_satellite, sat_custody, wait_until, LiveOfficeNode};
 
@@ -35,19 +35,24 @@ fn rebuilt(
     std::fs::remove_dir_all(&roots.runtime).unwrap();
     std::fs::create_dir_all(&roots.runtime).unwrap();
     let instance = custody.identity.instance_id.as_str().to_owned();
-    Office::open(folder, Some(key), &instance, roots, custody).unwrap()
+    Office::open(
+        folder,
+        Some(key),
+        &instance,
+        roots,
+        custody,
+        org_office_sqlite::sqlite_backend(),
+    )
+    .unwrap()
 }
 
 #[test]
 fn an_older_organizations_tess_reaches_its_satellite_once_and_survives_rebuilds() {
     let hq_dir = tempfile::tempdir().unwrap();
     let hq_root = hq_dir.path().canonicalize().unwrap();
-    org_office_sqlite::install();
     let (hq_office, hq_roots, hq_custody, hq_key) = Office::for_test_with_real_ca_in(
         &hq_root,
-        TestOffice {
-            engine: EngineChoice::Sqlite,
-        },
+        TestOffice::sqlite(org_office_sqlite::sqlite_backend()),
     );
     let hq = Arc::new(hq_office);
     let owner = hq.owner_member_id().to_owned();

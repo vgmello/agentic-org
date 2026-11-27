@@ -147,71 +147,11 @@ impl Office {
     /// generates the CA; with the records an earlier attempt committed, it must verify and
     /// return them unchanged. Returns once the creation is durable and its files are
     /// written, with `office.json` written last.
-    pub fn provision_hq(
-        folder: impl Into<PathBuf>,
-        new: &NewOffice,
-        key: Key,
-        binding: &Binding,
-        roots: DataRoots,
-        custody: Custody,
-        material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
-    ) -> Result<Office, OfficeError> {
-        Self::seed_with(
-            folder.into(),
-            new,
-            Some(key),
-            binding,
-            roots,
-            custody,
-            SeedMode::Create,
-            material,
-            Options::production(),
-        )
-    }
-
-    /// Opens an existing organization from validated Git repository files (`TASK-39` / R1) as a
-    /// new HQ office, writing all imported state records and a fresh HQ CA in Entry 1 of the new
-    /// journal incarnation. `load_import` runs only if Entry 1 has not already committed locally,
-    /// so crash recovery after Entry 1 never requires reaching the remote Git repository again.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "public HQ import entry point accepts explicit folder, descriptor, key, binding, roots, custody, recovery, and loader"
-    )]
-    pub fn import_hq(
-        folder: impl Into<PathBuf>,
-        new: &NewOffice,
-        key: Key,
-        binding: &Binding,
-        roots: DataRoots,
-        custody: Custody,
-        load_import: impl FnOnce() -> Result<(ImportedOrganization, Option<Creator>), OfficeError>
-            + 'static,
-        material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
-    ) -> Result<Office, OfficeError> {
-        let office = Self::seed_with(
-            folder.into(),
-            new,
-            Some(key),
-            binding,
-            roots,
-            custody,
-            SeedMode::Import(Box::new(load_import)),
-            material,
-            Options::production(),
-        )?;
-        // An organization exported before the built-in Chief of Staff existed gets her now,
-        // not at the next open (`TASK-80.1`). Best effort, as at open: a failure leaves the
-        // organization as imported, and the next open tries again.
-        let _ = office.ensure_chief_of_staff();
-        Ok(office)
-    }
-
-    /// [`Self::provision_hq`] with an explicit [`crate::OfficeStorageBackend`].
     #[expect(
         clippy::too_many_arguments,
         reason = "public HQ provisioning entry point accepts explicit folder, descriptor, key, binding, roots, custody, backend, and CA material"
     )]
-    pub fn provision_hq_with_backend(
+    pub fn provision_hq(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
         key: Key,
@@ -230,8 +170,46 @@ impl Office {
             custody,
             SeedMode::Create,
             material,
-            Options::with_backend(backend),
+            Options::production(backend),
         )
+    }
+
+    /// Opens an existing organization from validated Git repository files (`TASK-39` / R1) as a
+    /// new HQ office, writing all imported state records and a fresh HQ CA in Entry 1 of the new
+    /// journal incarnation. `load_import` runs only if Entry 1 has not already committed locally,
+    /// so crash recovery after Entry 1 never requires reaching the remote Git repository again.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "public HQ import entry point accepts explicit folder, descriptor, key, binding, roots, custody, backend, loader, and CA material"
+    )]
+    pub fn import_hq(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        binding: &Binding,
+        roots: DataRoots,
+        custody: Custody,
+        backend: std::sync::Arc<dyn crate::store::backend::OfficeStorageBackend>,
+        load_import: impl FnOnce() -> Result<(ImportedOrganization, Option<Creator>), OfficeError>
+            + 'static,
+        material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
+    ) -> Result<Office, OfficeError> {
+        let office = Self::seed_with(
+            folder.into(),
+            new,
+            Some(key),
+            binding,
+            roots,
+            custody,
+            SeedMode::Import(Box::new(load_import)),
+            material,
+            Options::production(backend),
+        )?;
+        // An organization exported before the built-in Chief of Staff existed gets her now,
+        // not at the next open (`TASK-80.1`). Best effort, as at open: a failure leaves the
+        // organization as imported, and the next open tries again.
+        let _ = office.ensure_chief_of_staff();
+        Ok(office)
     }
 
     #[expect(
@@ -347,8 +325,7 @@ impl Office {
         let ca_digest =
             super::satellite::read_ca_digest_for_open(&roots.durable, &info, &info.office_id);
         let companions = super::open_companion_stores(super::CompanionOpenSpec {
-            engine: options.engine,
-            backend: options.backend.as_ref(),
+            engine: &options.engine,
             roots: &roots,
             info: &info,
             identity: &here,

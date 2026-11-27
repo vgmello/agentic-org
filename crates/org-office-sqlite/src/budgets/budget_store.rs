@@ -6,8 +6,8 @@ use org_proto::budgets::{BudgetPeriodKind, BudgetScopeKind};
 use org_proto::ApiError;
 use rusqlite::{params, OptionalExtension};
 
-use org_office::budgets::{BudgetAggregate, BudgetStore};
-use org_office::OfficeError;
+use org_budgets::BudgetError;
+use org_budgets::{BudgetAggregate, BudgetStore};
 
 use super::guards::{check_target_and_revision_under_lock, validate_aggregate_sqlite_bounds};
 use super::load::load_aggregate_from_db;
@@ -19,7 +19,7 @@ impl BudgetStore for SqliteBudgetStore {
         &self,
         agg: &BudgetAggregate,
         employee_kinds: &[(String, &'static str)],
-    ) -> Result<Result<(), ApiError>, OfficeError> {
+    ) -> Result<Result<(), ApiError>, BudgetError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, &agg.budget.organization_id)?;
         // Validate integer bounds, target uniqueness, and monotonic revision under the writer
@@ -34,14 +34,14 @@ impl BudgetStore for SqliteBudgetStore {
         // Stage and verify all SQLite CHECK, UNIQUE, trigger, and deferred FK constraints inside
         // an uncommitted transaction BEFORE publishing `aggregate.v1.json` so a rejected
         // aggregate can never brick future office reopens (`TASK-97` / Final Gate #1).
-        let tx = conn.transaction().map_err(OfficeError::storage)?;
+        let tx = conn.transaction().map_err(BudgetError::storage)?;
         project_aggregate(&tx, agg, employee_kinds)?;
         let fk_violation: Option<String> = tx
             .query_row("PRAGMA foreign_key_check", [], |r| r.get(0))
             .optional()
-            .map_err(OfficeError::storage)?;
+            .map_err(BudgetError::storage)?;
         if let Some(table) = fk_violation {
-            return Err(OfficeError::storage(std::io::Error::other(format!(
+            return Err(BudgetError::storage(std::io::Error::other(format!(
                 "budget projection foreign_key_check failed on table `{table}`"
             ))));
         }
@@ -49,7 +49,7 @@ impl BudgetStore for SqliteBudgetStore {
             self.needs_reconcile.store(true, Ordering::Release);
             return Err(err);
         }
-        if let Err(err) = tx.commit().map_err(OfficeError::storage) {
+        if let Err(err) = tx.commit().map_err(BudgetError::storage) {
             self.needs_reconcile.store(true, Ordering::Release);
             return Err(err);
         }
@@ -60,7 +60,7 @@ impl BudgetStore for SqliteBudgetStore {
         &self,
         org_id: &str,
         budget_id: &str,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         load_aggregate_from_db(&conn, org_id, budget_id)
@@ -74,7 +74,7 @@ impl BudgetStore for SqliteBudgetStore {
         agent_id: Option<&str>,
         release_id: Option<&str>,
         period_kind: BudgetPeriodKind,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let found: Option<String> = match scope_kind {
@@ -85,7 +85,7 @@ impl BudgetStore for SqliteBudgetStore {
                     |r| r.get(0),
                 )
                 .optional()
-                .map_err(OfficeError::storage)?,
+                .map_err(BudgetError::storage)?,
             BudgetScopeKind::Agent => conn
                 .query_row(
                     "SELECT id FROM budgets WHERE organization_id=?1 AND scope_kind='agent' AND agent_id=?2 AND period_kind=?3",
@@ -93,7 +93,7 @@ impl BudgetStore for SqliteBudgetStore {
                     |r| r.get(0),
                 )
                 .optional()
-                .map_err(OfficeError::storage)?,
+                .map_err(BudgetError::storage)?,
             BudgetScopeKind::Release => conn
                 .query_row(
                     "SELECT id FROM budgets WHERE organization_id=?1 AND scope_kind='release' AND release_id=?2",
@@ -101,7 +101,7 @@ impl BudgetStore for SqliteBudgetStore {
                     |r| r.get(0),
                 )
                 .optional()
-                .map_err(OfficeError::storage)?,
+                .map_err(BudgetError::storage)?,
             _ => None,
         };
         match found {
@@ -110,19 +110,19 @@ impl BudgetStore for SqliteBudgetStore {
         }
     }
 
-    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
+    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, BudgetError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let mut stmt = conn
             .prepare(
                 "SELECT id FROM budgets WHERE organization_id=?1 ORDER BY created_at ASC, id ASC",
             )
-            .map_err(OfficeError::storage)?;
+            .map_err(BudgetError::storage)?;
         let ids: Vec<String> = stmt
             .query_map([org_id], |r| r.get(0))
-            .map_err(OfficeError::storage)?
+            .map_err(BudgetError::storage)?
             .collect::<Result<_, _>>()
-            .map_err(OfficeError::storage)?;
+            .map_err(BudgetError::storage)?;
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(agg) = load_aggregate_from_db(&conn, org_id, &id)? {

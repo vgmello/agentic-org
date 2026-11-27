@@ -88,9 +88,9 @@ fn checklist_on_disk(b: &Bench, chain: &[u64], task: &str) -> Vec<Id> {
 
 #[test]
 fn an_echo_of_a_child_only_change_never_reverts_a_later_local_one() {
-    for engine in ENGINES {
-        let mut hq = Bench::new(engine);
-        let mut sat = Bench::new(engine);
+    for engine in engines() {
+        let mut hq = Bench::new(engine.clone());
+        let mut sat = Bench::new(engine.clone());
         let task = hq.create(Some(TEAM_B), None);
         assert_eq!(sat.create(Some(TEAM_B), None).id, task.id);
         // The satellite's first step (revision 2) reached HQ, which echoes it back...
@@ -127,9 +127,9 @@ fn an_echo_of_a_child_only_change_never_reverts_a_later_local_one() {
 
 #[test]
 fn a_snapshot_part_with_older_history_applies_when_the_whole_snapshot_is_newer() {
-    for engine in ENGINES {
-        let mut hq = Bench::new(engine);
-        let mut sat = Bench::new(engine);
+    for engine in engines() {
+        let mut hq = Bench::new(engine.clone());
+        let mut sat = Bench::new(engine.clone());
         let task = hq.create(Some(TEAM_B), None);
         assert_eq!(sat.create(Some(TEAM_B), None).id, task.id);
         let first = add_step(&mut hq, &task.id, "Step one");
@@ -171,9 +171,9 @@ fn a_snapshot_part_with_older_history_applies_when_the_whole_snapshot_is_newer()
 
 #[test]
 fn a_child_only_snapshot_part_older_than_the_local_task_is_skipped() {
-    for engine in ENGINES {
-        let mut hq = Bench::new(engine);
-        let mut sat = Bench::new(engine);
+    for engine in engines() {
+        let mut hq = Bench::new(engine.clone());
+        let mut sat = Bench::new(engine.clone());
         let task = hq.create(Some(TEAM_B), None);
         assert_eq!(sat.create(Some(TEAM_B), None).id, task.id);
         let first = add_step(&mut hq, &task.id, "Step one");
@@ -216,8 +216,8 @@ fn before_the_move(
     engine: EngineChoice,
     newer_here: bool,
 ) -> (Bench, Bench, String, String, Batch) {
-    let mut hq = Bench::new(engine);
-    let mut sat = Bench::new(engine);
+    let mut hq = Bench::new(engine.clone());
+    let mut sat = Bench::new(engine.clone());
     let shared = hq.create(Some(TEAM_B), None);
     assert_eq!(sat.create(Some(TEAM_B), None).id, shared.id);
     if newer_here {
@@ -238,7 +238,7 @@ fn before_the_move(
 }
 
 fn assert_moved(sat: &mut Bench, shared: &str, offline: &str, revisions: [u64; 2]) {
-    let engine = sat.engine;
+    let engine = sat.engine.clone();
     sat.store().sync().unwrap();
     for (task, old, new) in [
         (
@@ -284,8 +284,8 @@ fn assert_moved(sat: &mut Bench, shared: &str, offline: &str, revisions: [u64; 2
 
 #[test]
 fn a_satellite_applying_a_move_relocates_its_offline_tasks_hq_never_named() {
-    for engine in ENGINES {
-        let (_hq, mut sat, shared, offline, batch) = before_the_move(engine, false);
+    for engine in engines() {
+        let (_hq, mut sat, shared, offline, batch) = before_the_move(engine.clone(), false);
         let revisions = [
             sat.task(&shared).unwrap().meta.revision,
             sat.task(&offline).unwrap().meta.revision,
@@ -297,8 +297,8 @@ fn a_satellite_applying_a_move_relocates_its_offline_tasks_hq_never_named() {
 
 #[test]
 fn a_move_arriving_in_pieces_moves_every_task_with_its_team() {
-    for engine in ENGINES {
-        let (hq, mut sat, shared, offline, batch) = before_the_move(engine, true);
+    for engine in engines() {
+        let (hq, mut sat, shared, offline, batch) = before_the_move(engine.clone(), true);
         let revisions = [
             sat.task(&shared).unwrap().meta.revision,
             sat.task(&offline).unwrap().meta.revision,

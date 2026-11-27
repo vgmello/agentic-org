@@ -12,7 +12,7 @@ use org_proto::hiring::{
 use org_proto::org::{MemberAddPersonParams, OrgChange, TeamCreateParams, TeamSetLeadParams};
 use org_proto::{ApiError, Call, CallError, ErrorCode, Request};
 
-use super::{Site, CREATOR, ENGINES, HR, TEAM_A, TEAM_B, TOP_TEAM};
+use super::{engines, Site, CREATOR, HR, TEAM_A, TEAM_B, TOP_TEAM};
 use org_office::organization_family::{chief_of_staff_id, records::BuiltinKey};
 use org_office::rules::OrgCommand;
 use org_office::Office;
@@ -135,10 +135,9 @@ fn update(n: u32, id: &str, version: u64) -> AgentUpdateParams {
 
 #[test]
 fn the_bootstrap_takes_a_numbered_handle_when_every_preferred_one_is_held() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         office.forget_chief_of_staff_for_test().unwrap();
         assert_eq!(office.chief_of_staff().unwrap(), None);
         let holders = [
@@ -158,7 +157,7 @@ fn the_bootstrap_takes_a_numbered_handle_when_every_preferred_one_is_held() {
         assert_eq!(ensured.handle, "tess-cos-2", "{engine:?}");
         assert_eq!(ensured.employee_id.as_str(), tess_id());
         office.close().unwrap();
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         let tess = office.chief_of_staff().unwrap().expect("Tess");
         assert_eq!(tess.handle, "tess-cos-2");
         assert_eq!(office.ensure_chief_of_staff().unwrap(), None, "idempotent");
@@ -168,10 +167,9 @@ fn the_bootstrap_takes_a_numbered_handle_when_every_preferred_one_is_held() {
 
 #[test]
 fn only_the_owner_manages_a_built_in_member_not_even_the_lead_of_her_team() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let tess = tess_id();
         // A person who is not the owner leads Team #1, where Tess and the HR lead live.
         add_person(&office, 10, LEAD, "lena", TOP_TEAM);
@@ -292,10 +290,9 @@ fn only_the_owner_manages_a_built_in_member_not_even_the_lead_of_her_team() {
 
 #[test]
 fn a_lead_may_hire_through_tess_only_into_the_teams_they_may_hire_into() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         add_team(&office, 20, TEAM_A, "Platform");
         add_team(&office, 21, TEAM_B, "Design");
         add_person(&office, 22, LEAD_A, "lea", TEAM_A);
@@ -356,9 +353,8 @@ fn a_lead_may_hire_through_tess_only_into_the_teams_they_may_hire_into() {
 
 #[test]
 fn hr_is_never_open_to_tess_whatever_her_own_hiring_power() {
-    org_office_sqlite::install();
     let site = Site::new();
-    let office = site.provision(ENGINES[1]).unwrap();
+    let office = site.provision(org_office::EngineChoice::Memory).unwrap();
     let tess = tess_id();
     assert!(office.load_employee(&tess).unwrap().unwrap().may_hire);
     for target in ["hr", "@hr", " @HR ", HR] {
@@ -406,9 +402,8 @@ fn hr_is_never_open_to_tess_whatever_her_own_hiring_power() {
 
 #[test]
 fn her_role_reads_chief_of_staff_and_her_bootstrap_replays_as_a_member_upsert() {
-    org_office_sqlite::install();
     let site = Site::new();
-    let office = site.provision(ENGINES[1]).unwrap();
+    let office = site.provision(org_office::EngineChoice::Memory).unwrap();
     let tess = tess_id();
     let snapshot = office.org_snapshot().unwrap();
     let member = snapshot

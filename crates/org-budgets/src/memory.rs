@@ -6,8 +6,7 @@ use std::sync::Mutex;
 use org_proto::budgets::{BudgetPeriodKind, BudgetScopeKind};
 use org_proto::ApiError;
 
-use super::{BudgetAggregate, BudgetStore};
-use crate::error::OfficeError;
+use crate::{BudgetAggregate, BudgetError, BudgetStore};
 
 type BudgetMap = BTreeMap<(String, String), BudgetAggregate>;
 
@@ -22,10 +21,10 @@ impl MemoryBudgetStore {
         Self::default()
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, BudgetMap>, OfficeError> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, BudgetMap>, BudgetError> {
         self.inner
             .lock()
-            .map_err(|_| OfficeError::Invalid("memory budget store poisoned"))
+            .map_err(|_| BudgetError::Invalid("memory budget store poisoned"))
     }
 }
 
@@ -34,7 +33,7 @@ impl BudgetStore for MemoryBudgetStore {
         &self,
         agg: &BudgetAggregate,
         _employee_kinds: &[(String, &'static str)],
-    ) -> Result<Result<(), ApiError>, OfficeError> {
+    ) -> Result<Result<(), ApiError>, BudgetError> {
         let mut map = self.lock()?;
         map.insert(
             (agg.budget.organization_id.clone(), agg.budget.id.clone()),
@@ -47,7 +46,7 @@ impl BudgetStore for MemoryBudgetStore {
         &self,
         org_id: &str,
         budget_id: &str,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         let map = self.lock()?;
         Ok(map.get(&(org_id.to_owned(), budget_id.to_owned())).cloned())
     }
@@ -60,7 +59,7 @@ impl BudgetStore for MemoryBudgetStore {
         agent_id: Option<&str>,
         release_id: Option<&str>,
         period_kind: BudgetPeriodKind,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         let map = self.lock()?;
         Ok(map
             .values()
@@ -75,7 +74,7 @@ impl BudgetStore for MemoryBudgetStore {
             .cloned())
     }
 
-    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
+    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, BudgetError> {
         let map = self.lock()?;
         Ok(map
             .iter()

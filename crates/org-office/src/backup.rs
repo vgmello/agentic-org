@@ -30,40 +30,46 @@ use std::sync::{Arc, Mutex};
 use org_store::{CustodyError, JournalHead, OfficeIdentity, SystemClock, WriterAuthority};
 
 use crate::error::OfficeError;
-use crate::store::backend::installed_sqlite_backend;
+use crate::store::backend::OfficeStorageBackend;
 use crate::store::open::{
     open_accounting, open_budgets, open_providers, open_store, EmployeesList, EngineChoice,
     OfficeStore, OfficesCount, ProjectsList, StoreConfig,
 };
 
 /// Writes a transactionally consistent copy of `source` (`<durable>/private/task-notes.db`)
-/// to `target`, delegating to the installed SQLite storage backend.
-pub fn snapshot_task_notes(source: &Path, target: &Path) -> Result<(), OfficeError> {
-    installed_sqlite_backend()
-        .map_err(OfficeError::storage)?
-        .snapshot_task_notes(source, target)
+/// to `target`, delegating to the explicitly injected storage backend.
+pub fn snapshot_task_notes(
+    backend: &dyn OfficeStorageBackend,
+    source: &Path,
+    target: &Path,
+) -> Result<(), OfficeError> {
+    backend.snapshot_task_notes(source, target)
 }
 
 /// Runs SQLite integrity and schema verification on a copied private task notes database.
-pub fn check_task_notes(path: &Path) -> Result<(), OfficeError> {
-    installed_sqlite_backend()
-        .map_err(OfficeError::storage)?
-        .check_task_notes(path)
+pub fn check_task_notes(
+    backend: &dyn OfficeStorageBackend,
+    path: &Path,
+) -> Result<(), OfficeError> {
+    backend.check_task_notes(path)
 }
 
 /// Writes a transactionally consistent copy of `source` (`<durable>/private/user-space.db`)
-/// to `target`, delegating to the installed SQLite storage backend.
-pub fn snapshot_user_space(source: &Path, target: &Path) -> Result<(), OfficeError> {
-    installed_sqlite_backend()
-        .map_err(OfficeError::storage)?
-        .snapshot_user_space(source, target)
+/// to `target`, delegating to the explicitly injected storage backend.
+pub fn snapshot_user_space(
+    backend: &dyn OfficeStorageBackend,
+    source: &Path,
+    target: &Path,
+) -> Result<(), OfficeError> {
+    backend.snapshot_user_space(source, target)
 }
 
 /// Runs SQLite integrity and schema verification on a copied private file space database.
-pub fn check_user_space(path: &Path) -> Result<(), OfficeError> {
-    installed_sqlite_backend()
-        .map_err(OfficeError::storage)?
-        .check_user_space(path)
+pub fn check_user_space(
+    backend: &dyn OfficeStorageBackend,
+    path: &Path,
+) -> Result<(), OfficeError> {
+    backend.check_user_space(path)
 }
 
 /// What a disposable rebuild opens.
@@ -93,10 +99,11 @@ pub struct RebuildReport {
     pub projects: usize,
 }
 
-/// Rebuilds every projection of `spec`'s office on its disposable runtime root, runs `read`
-/// on the open store (a caller's own queries), and closes everything.
+/// Rebuilds every projection of `spec`'s office on its disposable runtime root using `backend`,
+/// runs `read` on the open store (a caller's own queries), and closes everything.
 pub fn rebuild_disposable<R>(
     spec: &DisposableRebuild,
+    backend: Arc<dyn OfficeStorageBackend>,
     read: impl FnOnce(&OfficeStore) -> Result<R, OfficeError>,
 ) -> Result<(RebuildReport, R), OfficeError> {
     if spec.durable_root == spec.runtime_root
@@ -110,8 +117,9 @@ pub fn rebuild_disposable<R>(
     let custody = Arc::new(PinnedCustody {
         head: Mutex::new(spec.pinned.clone()),
     });
+    let engine = EngineChoice::Sqlite(backend);
     let config = StoreConfig::new(
-        EngineChoice::Sqlite,
+        engine.clone(),
         spec.durable_root.clone(),
         spec.runtime_root.clone(),
         spec.identity.clone(),
@@ -122,7 +130,7 @@ pub fn rebuild_disposable<R>(
     let report = report(&store)?;
     let answer = read(&store)?;
     store.close().map_err(OfficeError::storage)?;
-    open_companions(spec)?;
+    open_companions(spec, &engine)?;
     check_office_local_state(spec)?;
     Ok((report, answer))
 }
@@ -151,36 +159,17 @@ fn report(store: &OfficeStore) -> Result<RebuildReport, OfficeError> {
 /// The companion stores rebuild their own projections under the runtime root when opened:
 /// accounting, budgets, and the provider pool, which reads the restored provider connection
 /// bindings and execution-authority files.
-fn open_companions(spec: &DisposableRebuild) -> Result<(), OfficeError> {
+fn open_companions(spec: &DisposableRebuild, engine: &EngineChoice) -> Result<(), OfficeError> {
     let office = spec.identity.office_id.as_str();
     let org = spec.identity.organization_id.as_str();
     let durable: &Path = &spec.durable_root;
     let runtime: &Path = &spec.runtime_root;
-    drop(open_accounting(
-        EngineChoice::Sqlite,
-        None,
-        durable,
-        runtime,
-        office,
-        org,
-    )?);
+    drop(open_accounting(engine, durable, runtime, office, org)?);
     drop(open_budgets(
-        EngineChoice::Sqlite,
-        None,
-        durable,
-        runtime,
-        office,
-        org,
-        spec.is_hq,
+        engine, durable, runtime, office, org, spec.is_hq,
     )?);
     drop(open_providers(
-        EngineChoice::Sqlite,
-        None,
-        durable,
-        runtime,
-        office,
-        org,
-        spec.is_hq,
+        engine, durable, runtime, office, org, spec.is_hq,
     )?);
     Ok(())
 }

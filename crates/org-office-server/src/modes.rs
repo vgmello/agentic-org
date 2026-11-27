@@ -1,6 +1,7 @@
 //! The discard, create and open launch modes: writer custody first, then the office, then serving.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::failure::{emit, fail, fail_with};
 use crate::hq_creation;
@@ -9,7 +10,7 @@ use crate::office_runtime::{
     admit, first_line, serve_office_with_runtimes, socket_path, ServeOfficeRequest,
 };
 use crate::startup::Control;
-use org_office::Office;
+use org_office::{Office, OfficeStorageBackend};
 use org_office_launch::{office_dir, FailCode, FirstLine, OfficeFile, ServerEvent};
 use org_office_sessions::RuntimeRegistry;
 use org_proto::OfficeRole;
@@ -69,6 +70,7 @@ pub(crate) fn create_and_serve(
     home: &Path,
     runtime: &Path,
     runtimes: RuntimeRegistry,
+    backend: Arc<dyn OfficeStorageBackend>,
 ) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Create, None) {
         Ok(first) => first,
@@ -153,6 +155,7 @@ pub(crate) fn create_and_serve(
         admitted.custody,
         recovery,
         import_source.as_deref(),
+        backend,
     );
     let office = match created {
         Ok(office) => office,
@@ -197,6 +200,7 @@ pub(crate) fn open_and_serve(
     runtime: &Path,
     id: &str,
     runtimes: RuntimeRegistry,
+    backend: Arc<dyn OfficeStorageBackend>,
 ) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Start, Some(id)) {
         Ok(first) => first,
@@ -228,7 +232,6 @@ pub(crate) fn open_and_serve(
     };
     // The office checks the admission's organization and roots against its creation intent,
     // and binds the host-authoritative current organization owner (which may have been handed over).
-    org_office_sqlite::install();
     let opened = Office::open_as_owner(
         folder,
         key,
@@ -236,6 +239,7 @@ pub(crate) fn open_and_serve(
         admitted.roots,
         admitted.custody,
         &admitted.admission.owner_member,
+        backend,
     );
     let office = match opened {
         Ok(office) => office,

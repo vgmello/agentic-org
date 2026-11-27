@@ -10,7 +10,7 @@ use org_agent_cli::external_auth::client::{self, Target};
 use org_agent_cli::external_auth::store::{TokenFile, WorkspaceBinding, WorkspaceState};
 use org_agent_cli::Binding;
 use org_client::Client;
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::external_auth::{
     AuthExchange, AuthLoginPoll, AuthLoginPollParams, AuthLoginRequest, AuthLoginRequestParams,
     AuthLoginRequestResult, AuthWhoami, ChallengePurpose, ExternalLoginState, ExternalSessionView,
@@ -37,10 +37,9 @@ struct World {
 }
 
 fn world() -> World {
-    org_office_sqlite::install();
-    let office = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let office = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = office.owner_member_id().to_owned();
     let team_id = office.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = office.info().office_id.clone();

@@ -5,7 +5,7 @@ use std::path::Path;
 use org_proto::costs::UsageRecordView;
 use rusqlite::{params, Connection};
 
-use org_office::OfficeError;
+use org_accounting::AccountingError;
 
 use super::checkpoint_sync::sync_checkpoints_for_reconciled_records;
 use super::files::{
@@ -26,7 +26,7 @@ pub(super) fn reconcile_durable_conn(
     office_id: &str,
     org_id: &str,
     flush_before_reconcile: bool,
-) -> Result<ReconcileMetadata, OfficeError> {
+) -> Result<ReconcileMetadata, AccountingError> {
     let prices = load_durable_prices(durable_root, flush_before_reconcile)?;
     let all_records = load_durable_usage_records(durable_root, org_id, flush_before_reconcile)?;
     let mut checkpoints = load_durable_checkpoints(durable_root)?;
@@ -55,7 +55,7 @@ pub(super) fn reconcile_durable_conn(
     if !sub_snapshots.is_empty() {
         sync_usage_dir_and_parent(local_usage_dir)?;
     }
-    let tx = conn.transaction().map_err(OfficeError::storage)?;
+    let tx = conn.transaction().map_err(AccountingError::storage)?;
     // Rebuild the organization's projection tables cleanly from the durable archive so any
     // truncated/lost trailing JSONL record cannot linger in SQLite and mask a coverage gap
     // (`TASK-97` / Final Gate Finding #2).
@@ -63,27 +63,27 @@ pub(super) fn reconcile_durable_conn(
         "DELETE FROM usage_records WHERE organization_id=?1",
         [org_id],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     tx.execute(
         "DELETE FROM staged_usage_records WHERE organization_id=?1",
         [org_id],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     tx.execute(
         "DELETE FROM usage_stream_checkpoints WHERE organization_id=?1",
         [org_id],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     tx.execute(
         "DELETE FROM model_prices WHERE organization_id=?1",
         [org_id],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     tx.execute(
         "DELETE FROM subscription_usage_snapshots WHERE organization_id=?1",
         [org_id],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     for price in &prices {
         insert_price_row_ignore(&tx, org_id, price)?;
     }
@@ -99,7 +99,7 @@ pub(super) fn reconcile_durable_conn(
     for snap in &sub_snapshots {
         upsert_subscription_usage_row(&tx, org_id, snap)?;
     }
-    tx.commit().map_err(OfficeError::storage)?;
+    tx.commit().map_err(AccountingError::storage)?;
     Ok(ReconcileMetadata {
         verified_streams,
         verified_prefixes,
@@ -115,7 +115,7 @@ fn reconcile_usage_row(
     org_id: &str,
     rec: &UsageRecordView,
     chain_sha256: Option<&str>,
-) -> Result<(), OfficeError> {
+) -> Result<(), AccountingError> {
     let mut stmt = tx
         .prepare(
             "SELECT json_payload FROM usage_records \
@@ -125,7 +125,7 @@ fn reconcile_usage_row(
                (origin_office_id=?3 AND producer_id=?4 AND source_sequence=?6)\
              )",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     let matches: Vec<String> = stmt
         .query_map(
             params![
@@ -138,18 +138,18 @@ fn reconcile_usage_row(
             ],
             |r| r.get(0),
         )
-        .map_err(OfficeError::storage)?
+        .map_err(AccountingError::storage)?
         .collect::<Result<_, _>>()
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     if !matches.is_empty() {
         if matches.len() == 1 {
             let existing: UsageRecordView =
-                serde_json::from_str(&matches[0]).map_err(OfficeError::storage)?;
+                serde_json::from_str(&matches[0]).map_err(AccountingError::storage)?;
             if existing == *rec {
                 return Ok(());
             }
         }
-        return Err(OfficeError::Invalid(
+        return Err(AccountingError::Invalid(
             "conflicting usage record detected during durable replay",
         ));
     }

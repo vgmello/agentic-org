@@ -9,8 +9,10 @@ use org_office_launch::{
 /// `--inspect-import`: reads one JSON request line from `control.from_host`, clones and
 /// validates the organization's Git state branch read-only via `org_office::import`, and writes
 /// one JSON [`InspectImportResponse`] line to `control.to_host`.
-pub(crate) fn inspect_import(mut control: ControlPipe) -> i32 {
-    org_office_sqlite::install();
+pub(crate) fn inspect_import(
+    mut control: ControlPipe,
+    backend: &dyn org_office::OfficeStorageBackend,
+) -> i32 {
     use std::io::{BufRead, BufReader, Read, Write};
     let mut line = String::new();
     let read_res = BufReader::new(&mut control.from_host)
@@ -29,6 +31,7 @@ pub(crate) fn inspect_import(mut control: ControlPipe) -> i32 {
         Some(req) => match org_office::import::clone_and_validate_state(
             &req.repository_remote_url,
             &req.state_branch,
+            backend,
         ) {
             Ok(imported) => InspectImportResponse::Ok {
                 preview: Box::new(InspectImportPreview {

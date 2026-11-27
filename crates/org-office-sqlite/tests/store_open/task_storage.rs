@@ -63,14 +63,14 @@ impl Bench {
     /// top team, and a project owned by the top team.
     pub(super) fn new(engine: EngineChoice) -> Self {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         assert_eq!(
             create_organization(&store, 1).unwrap().outcome,
             Outcome::Completed
         );
         let bench = Self {
             place,
-            engine,
+            engine: engine.clone(),
             store: Some(store),
             here: identity(),
             next: 1,
@@ -244,21 +244,21 @@ impl Bench {
     /// An orderly stop and a new opening.
     pub(super) fn reopen_clean(&mut self) {
         self.store.take().expect("open").close().expect("closed");
-        self.store = Some(self.place.reopen(self.engine));
+        self.store = Some(self.place.reopen(self.engine.clone()));
     }
 
     /// A kill: no close, no clean-stop marker.
     pub(super) fn reopen_after_crash(&mut self) {
         self.store().sync().expect("synced");
         drop(self.store.take());
-        self.store = Some(self.place.reopen(self.engine));
+        self.store = Some(self.place.reopen(self.engine.clone()));
     }
 
     /// An orderly stop, the projection deleted, and a rebuild from the files and journal.
     pub(super) fn rebuild(&mut self) {
         self.store.take().expect("open").close().expect("closed");
         let _ = std::fs::remove_dir_all(self.place.runtime());
-        self.store = Some(self.place.reopen(self.engine));
+        self.store = Some(self.place.reopen(self.engine.clone()));
     }
 
     /// An orderly stop and the projection deleted, the store not reopened.
@@ -305,8 +305,8 @@ pub(super) fn team_folder(chain: &[u64]) -> String {
 
 #[test]
 fn task_files_follow_the_data_contract_layout_and_nothing_is_written_under_state_work() {
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         let deep = b.create(Some(TEAM_C), None);
         let project = b.create(None, Some(PROJECT));
         b.child_changes(&deep);
@@ -354,8 +354,8 @@ fn task_files_follow_the_data_contract_layout_and_nothing_is_written_under_state
 
 #[test]
 fn the_counter_reserves_blocks_durably_and_jumps_past_them_after_an_unclean_stop() {
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         let first = b.create(Some(TEAM_B), None);
         let first_op = uid(b.next - 1);
         let second = b.create(Some(TEAM_B), None);
@@ -397,8 +397,8 @@ fn the_counter_reserves_blocks_durably_and_jumps_past_them_after_an_unclean_stop
 
 #[test]
 fn child_only_changes_never_rewrite_task_md_and_a_rebuild_keeps_the_effective_revision() {
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         let task = b.create(Some(TEAM_B), None);
         let task = b.update(&task, 1).unwrap();
         assert_eq!(task.revision, 2);
@@ -444,9 +444,9 @@ fn child_only_changes_never_rewrite_task_md_and_a_rebuild_keeps_the_effective_re
 
 #[test]
 fn a_rebuild_refuses_a_tampered_event_a_history_gap_or_task_md_ahead_of_its_history() {
-    for engine in ENGINES {
+    for engine in engines() {
         for damage in ["tamper", "gap", "ahead"] {
-            let mut b = Bench::new(engine);
+            let mut b = Bench::new(engine.clone());
             let task = b.create(Some(TEAM_B), None);
             let task = b.update(&task, 1).unwrap();
             b.update(&task, 2).unwrap();
@@ -475,7 +475,7 @@ fn a_rebuild_refuses_a_tampered_event_a_history_gap_or_task_md_ahead_of_its_hist
                 Some(text) => std::fs::write(b.durable(&path), text).unwrap(),
                 None => std::fs::remove_file(b.durable(&path)).unwrap(),
             }
-            let opened = open_store(&b.place.config(engine, Opening::Existing));
+            let opened = open_store(&b.place.config(engine.clone(), Opening::Existing));
             let error = opened.err().map(|e| e.to_string());
             assert!(
                 error.is_some(),
@@ -496,8 +496,8 @@ fn a_rebuild_refuses_a_tampered_event_a_history_gap_or_task_md_ahead_of_its_hist
 
 #[test]
 fn move_team_moves_every_projectless_task_folder_of_the_subtree_in_one_entry() {
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         let on_b = b.create(Some(TEAM_B), None);
         let on_c = b.create(Some(TEAM_C), None);
         let on_d = b.create(Some(TEAM_D), None);
@@ -699,10 +699,10 @@ pub(super) fn move_b_under_d(store: &OfficeStore) {
 
 #[test]
 fn a_satellite_applying_a_move_keeps_its_own_newer_files_with_the_moved_task() {
-    for engine in ENGINES {
+    for engine in engines() {
         // Two offices in the same state: HQ and a satellite that has seen all of it.
-        let mut hq = Bench::new(engine);
-        let mut sat = Bench::new(engine);
+        let mut hq = Bench::new(engine.clone());
+        let mut sat = Bench::new(engine.clone());
         let task = hq.create(Some(TEAM_C), None);
         assert_eq!(sat.create(Some(TEAM_C), None).id, task.id);
         hq.child_changes(&task);
@@ -751,9 +751,9 @@ fn a_satellite_applying_a_move_keeps_its_own_newer_files_with_the_moved_task() {
 
 #[test]
 fn hq_writes_a_satellite_change_made_before_a_move_into_the_moved_folder() {
-    for engine in ENGINES {
-        let mut hq = Bench::new(engine);
-        let mut sat = Bench::new(engine);
+    for engine in engines() {
+        let mut hq = Bench::new(engine.clone());
+        let mut sat = Bench::new(engine.clone());
         let task = hq.create(Some(TEAM_B), None);
         assert_eq!(sat.create(Some(TEAM_B), None).id, task.id);
         move_b_under_d(hq.store());

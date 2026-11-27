@@ -21,7 +21,7 @@ use org_proto::org::{
 };
 use org_proto::{ApiError, Call, CallError, ErrorCode, Request};
 
-use super::{Site, CREATOR, ENGINES, HR, TEAM_A, TEAM_B, TOP_TEAM};
+use super::{engines, Site, CREATOR, HR, TEAM_A, TEAM_B, TOP_TEAM};
 use org_office::organization_family::features::HIRE_DENIED;
 use org_office::rules::OrgCommand;
 use org_office::Office;
@@ -89,10 +89,9 @@ fn base_proposal(name: &str, handle: &str) -> HireProposalWire {
 
 #[test]
 fn c2_roles_provider_two_step_hire_fail_retry_and_private_home() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
 
         // 1. Role catalog create, update, list, inspect.
         let created: EntityOpResult = call_c2::<RoleCreate>(
@@ -287,7 +286,7 @@ fn c2_roles_provider_two_step_hire_fail_retry_and_private_home() {
         // 7. Delete runtime/ and reopen: every role, hire, agent, and execution rebuilds.
         drop(office);
         let _ = std::fs::remove_dir_all(site.runtime_folder());
-        let reopened = site.open(engine).unwrap();
+        let reopened = site.open(engine.clone()).unwrap();
         let listed: HrHireListResult =
             call_c2::<HrHireList>(&reopened, CREATOR, &HrHireListParams::default()).unwrap();
         assert_eq!(listed.hires.len(), 2);
@@ -324,10 +323,9 @@ fn c2_roles_provider_two_step_hire_fail_retry_and_private_home() {
 
 #[test]
 fn c2_authorization_hire_1_through_6_and_hr_message_guard() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
 
         // Add person Ada (default may_hire = true) and hire Agent 1 (default may_hire = false).
         org_write(
@@ -569,10 +567,9 @@ fn c2_authorization_hire_1_through_6_and_hr_message_guard() {
 
 #[test]
 fn c2_agent_lifecycle_move_team_relocation_and_hr_protection() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
 
         org_write(
             &office,
@@ -778,7 +775,7 @@ fn c2_agent_lifecycle_move_team_relocation_and_hr_protection() {
         // Delete runtime/ and rebuild after MoveTeam + MoveAgent + OffboardAgent!
         drop(office);
         let _ = std::fs::remove_dir_all(site.runtime_folder());
-        let reopened = site.open(engine).unwrap();
+        let reopened = site.open(engine.clone()).unwrap();
         assert_eq!(
             call_c2::<AgentExecutionGet>(
                 &reopened,
@@ -850,10 +847,9 @@ fn quick_hire(
 
 #[test]
 fn c2_hire_2_whitespace_hire_4_hire_7_and_cross_subtree_move() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         setup_three_teams(&office);
         org_write(
             &office,
@@ -965,10 +961,9 @@ fn verify_hire_7_ancestor_director(office: &Office) {
 
 #[test]
 fn c2_bounds_stalled_giveup_revoked_confirm_and_role_name_lookup() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         verify_bounds_role_lookup_and_giveup(&office);
         verify_confirm_after_hirer_revoked(&office);
     }
@@ -1169,12 +1164,11 @@ fn verify_confirm_after_hirer_revoked(office: &Office) {
 
 #[test]
 fn role_inspect_prefers_exact_id_over_colliding_key() {
-    org_office_sqlite::install();
     const ROLE_A: &str = "01900000-0000-7000-8000-0000000000a1";
     const ROLE_B: &str = "01900000-0000-7000-8000-0000000000b2";
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         call_c2::<RoleCreate>(
             &office,
             CREATOR,
@@ -1266,11 +1260,10 @@ fn execution_file(site: &Site) -> String {
 /// same way on SQLite and on Memory.
 #[test]
 fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_refused() {
-    org_office_sqlite::install();
     let mut seen = Vec::new();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         call_c2::<ProviderConnectionCreate>(
             &office,
             CREATOR,
@@ -1353,7 +1346,7 @@ fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_ref
         }
         drop(office);
         let _ = std::fs::remove_dir_all(site.runtime_folder());
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         assert_eq!(effort_of(&office), (Some("max".into()), 6));
 
         // A full replacement without an effort clears it: no key in the file any more.
@@ -1363,7 +1356,7 @@ fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_ref
         assert!(!execution_file(&site).contains("effort"));
         drop(office);
         let _ = std::fs::remove_dir_all(site.runtime_folder());
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         assert_eq!(effort_of(&office), (None, 7));
         seen.push(execution_file(&site));
     }
@@ -1377,9 +1370,8 @@ fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_ref
 /// never followed.
 #[test]
 fn an_existing_open_agent_home_is_made_owner_only_and_a_linked_one_is_refused() {
-    org_office_sqlite::install();
     let site = Site::new();
-    let office = site.provision(ENGINES[1]).unwrap();
+    let office = site.provision(org_office::EngineChoice::Memory).unwrap();
     let mode = |path: &std::path::Path| {
         std::fs::symlink_metadata(path)
             .unwrap()

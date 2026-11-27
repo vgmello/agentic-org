@@ -53,10 +53,7 @@ mod tx;
 pub mod user_space;
 
 pub use accounting::SqliteAccountingStore;
-pub use backend::{
-    install, open_office, open_office_as_owner, open_sqlite_projection, provision_hq_office,
-    sqlite_backend, SqliteStorageBackend,
-};
+pub use backend::{open_sqlite_projection, sqlite_backend, SqliteStorageBackend};
 pub use budgets::SqliteBudgetStore;
 pub use private_notes::SqlitePrivateNotesStore;
 pub use private_notes_copy::{

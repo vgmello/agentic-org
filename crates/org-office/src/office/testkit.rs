@@ -28,9 +28,18 @@ pub const OPERATION: &str = "01563e3a-b5d3-7d67-9931-87bee64c0af5";
 pub const CA_SEED: u8 = 1;
 
 /// What [`Office::for_test`] makes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct TestOffice {
     pub engine: EngineChoice,
+}
+
+impl TestOffice {
+    /// Builds a [`TestOffice`] configured with an explicitly injected SQLite storage backend.
+    pub fn sqlite(backend: Arc<dyn crate::store::backend::OfficeStorageBackend>) -> Self {
+        Self {
+            engine: EngineChoice::Sqlite(backend),
+        }
+    }
 }
 
 impl Default for TestOffice {
@@ -119,7 +128,6 @@ pub fn options(engine: EngineChoice) -> Options {
     Options {
         engine,
         clock: Arc::new(FixedClock(CREATION_AT)),
-        backend: None,
         testing: Default::default(),
         before_final_checks: None,
     }
@@ -292,7 +300,7 @@ impl TestSatellite {
         )
         .expect("a satellite certificate");
         let key = Key::from_bytes([0x5a; 32]);
-        let mut opts = options(engine);
+        let mut opts = options(engine.clone());
         opts.clock = Arc::new(org_store::SystemClock);
         let office = Office::provision_satellite_with(
             folder.clone(),
@@ -348,7 +356,7 @@ impl TestSatellite {
         std::fs::remove_dir_all(&roots.runtime).expect("the runtime root goes");
         std::fs::create_dir_all(&roots.runtime).expect("a fresh runtime root");
         let instance = custody.identity.instance_id.to_string();
-        let mut opts = options(engine);
+        let mut opts = options(engine.clone());
         opts.clock = Arc::new(org_store::SystemClock);
         let office = Office::open_with(
             folder.clone(),

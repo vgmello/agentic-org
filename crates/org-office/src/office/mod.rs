@@ -156,14 +156,12 @@ pub(crate) fn tls_dir(durable_root: &Path, office_id: &str) -> PathBuf {
         .join("tls")
 }
 
-/// What the office composes its store from besides the request: production uses SQLite
-/// and the wall clock; tests choose.
+/// What the office composes its store from besides the request: production uses an explicitly
+/// injected SQLite backend and the wall clock; tests choose.
 #[derive(Clone)]
 pub struct Options {
     pub engine: EngineChoice,
     pub clock: Arc<dyn Clock>,
-    /// Optional explicit storage backend overriding the installed process default.
-    pub backend: Option<Arc<dyn OfficeStorageBackend>>,
     #[cfg(any(test, feature = "testkit"))]
     pub testing: crate::store::open::Testing,
     /// Runs once a creation is durable and its files are written, before the final checks
@@ -173,11 +171,10 @@ pub struct Options {
 }
 
 impl Options {
-    pub(crate) fn production() -> Self {
+    pub(crate) fn production(backend: Arc<dyn OfficeStorageBackend>) -> Self {
         Self {
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(backend),
             clock: Arc::new(SystemClock),
-            backend: None,
             #[cfg(any(test, feature = "testkit"))]
             testing: Default::default(),
             #[cfg(any(test, feature = "testkit"))]
@@ -185,23 +182,22 @@ impl Options {
         }
     }
 
-    pub(crate) fn with_backend(backend: Arc<dyn OfficeStorageBackend>) -> Self {
-        Self {
-            backend: Some(backend),
-            ..Self::production()
-        }
-    }
-
     fn config(&self, roots: &DataRoots, custody: &Custody) -> StoreConfig {
+        #[cfg_attr(
+            not(any(test, feature = "testkit")),
+            allow(
+                unused_mut,
+                reason = "test and testkit builds attach store testing hooks below"
+            )
+        )]
         let mut config = StoreConfig::new(
-            self.engine,
+            self.engine.clone(),
             roots.durable.clone(),
             roots.runtime.clone(),
             custody.identity.clone(),
             Arc::clone(&custody.authority),
             Arc::clone(&self.clock),
         );
-        config.backend = self.backend.clone();
         #[cfg(any(test, feature = "testkit"))]
         {
             config.testing = self.testing.clone();

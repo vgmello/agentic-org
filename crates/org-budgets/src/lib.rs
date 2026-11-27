@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Consumer-owned port and domain contract for `L3` task, agent (daily/monthly), and release
 //! budgets, 80/100 notices, one-time 20% extensions, and independent execution holds
 //! (`TASK-53`, `doc-92`, `doc-51`, `FC-089..093`, `ASK-8`).
@@ -6,18 +8,21 @@
 //! and projected into isolated 0700/0600 `<runtime>/<office-id>/protected/budgets.db`
 //! (`budgets-schema.sql`), never plaintext `office.db`.
 
+pub mod error;
 pub mod eval;
 pub mod memory;
+#[cfg(test)]
+mod tests;
+
+pub use error::BudgetError;
 
 use org_proto::budgets::{
     BudgetHoldState, BudgetPeriodKind, BudgetPolicyState, BudgetScopeKind, BudgetStage,
     BudgetStateSummary, BudgetTimeZoneSource, BudgetUnit, BudgetView,
 };
 use org_proto::costs::CompletenessStatus;
-use org_proto::ApiError;
+use org_proto::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
-
-use crate::error::OfficeError;
 
 /// Canonical `budgets` target metadata + `current_revision` pointer (`doc-92`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -261,6 +266,51 @@ impl BudgetAggregate {
     }
 }
 
+/// Checks `operation_id` replay against recorded budget events AFTER caller authorization passes.
+pub fn check_operation_replay(
+    agg: &BudgetAggregate,
+    operation_id: &str,
+    caller_id: &str,
+    action: &str,
+    req_hash: &str,
+) -> Result<bool, ApiError> {
+    let Some(ev) = agg.events.iter().find(|e| e.operation_id == operation_id) else {
+        return Ok(false);
+    };
+    let parsed: serde_json::Value =
+        serde_json::from_str(&ev.payload_json).unwrap_or(serde_json::Value::Null);
+    let same_actor = ev.actor_id.as_deref() == Some(caller_id);
+    let same_action = parsed.get("action").and_then(|v| v.as_str()) == Some(action);
+    let same_hash = parsed.get("request_hash").and_then(|v| v.as_str()) == Some(req_hash);
+    if same_actor && same_action && same_hash {
+        Ok(true)
+    } else {
+        Err(ApiError::new(
+            ErrorCode::Conflict,
+            "operation_id reused with different actor, action, or parameters",
+        ))
+    }
+}
+
+/// Marks every open period on `agg` as `kept_paused`.
+pub fn mark_open_periods_kept_paused(agg: &mut BudgetAggregate) {
+    for p in &mut agg.periods {
+        if p.state == "open" {
+            p.kept_paused = true;
+        }
+    }
+}
+
+/// Resolves all open `budget_reached` notices on `agg` at `now_utc`.
+pub fn resolve_reached_notices(agg: &mut BudgetAggregate, now_utc: &str) {
+    for n in &mut agg.notices {
+        if n.kind == "budget_reached" && n.delivery_state != "resolved" {
+            n.delivery_state = "resolved".into();
+            n.resolved_at = Some(now_utc.to_owned());
+        }
+    }
+}
+
 fn compute_state_summary(
     scope: BudgetScopeKind,
     policy_state: BudgetPolicyState,
@@ -322,13 +372,13 @@ pub trait BudgetStore: Send + Sync {
         &self,
         agg: &BudgetAggregate,
         employee_kinds: &[(String, &'static str)],
-    ) -> Result<Result<(), ApiError>, OfficeError>;
+    ) -> Result<Result<(), ApiError>, BudgetError>;
 
     fn get_by_id(
         &self,
         org_id: &str,
         budget_id: &str,
-    ) -> Result<Option<BudgetAggregate>, OfficeError>;
+    ) -> Result<Option<BudgetAggregate>, BudgetError>;
 
     fn find_by_target(
         &self,
@@ -338,9 +388,9 @@ pub trait BudgetStore: Send + Sync {
         agent_id: Option<&str>,
         release_id: Option<&str>,
         period_kind: BudgetPeriodKind,
-    ) -> Result<Option<BudgetAggregate>, OfficeError>;
+    ) -> Result<Option<BudgetAggregate>, BudgetError>;
 
-    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError>;
+    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, BudgetError>;
 }
 
 impl<S: BudgetStore + ?Sized> BudgetStore for std::sync::Arc<S> {
@@ -348,7 +398,7 @@ impl<S: BudgetStore + ?Sized> BudgetStore for std::sync::Arc<S> {
         &self,
         agg: &BudgetAggregate,
         employee_kinds: &[(String, &'static str)],
-    ) -> Result<Result<(), ApiError>, OfficeError> {
+    ) -> Result<Result<(), ApiError>, BudgetError> {
         (**self).save_aggregate(agg, employee_kinds)
     }
 
@@ -356,7 +406,7 @@ impl<S: BudgetStore + ?Sized> BudgetStore for std::sync::Arc<S> {
         &self,
         org_id: &str,
         budget_id: &str,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         (**self).get_by_id(org_id, budget_id)
     }
 
@@ -368,7 +418,7 @@ impl<S: BudgetStore + ?Sized> BudgetStore for std::sync::Arc<S> {
         agent_id: Option<&str>,
         release_id: Option<&str>,
         period_kind: BudgetPeriodKind,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         (**self).find_by_target(
             org_id,
             scope_kind,
@@ -379,7 +429,7 @@ impl<S: BudgetStore + ?Sized> BudgetStore for std::sync::Arc<S> {
         )
     }
 
-    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
+    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, BudgetError> {
         (**self).list_all(org_id)
     }
 }
@@ -401,9 +451,9 @@ impl<S: BudgetStore> BudgetStore for SatelliteReadOnlyBudgetStore<S> {
         &self,
         _agg: &BudgetAggregate,
         _employee_kinds: &[(String, &'static str)],
-    ) -> Result<Result<(), ApiError>, OfficeError> {
+    ) -> Result<Result<(), ApiError>, BudgetError> {
         Ok(Err(ApiError::new(
-            org_proto::ErrorCode::NotAuthorized,
+            ErrorCode::NotAuthorized,
             "budget policies are HQ-authoritative; modify budgets on HQ",
         )))
     }
@@ -412,7 +462,7 @@ impl<S: BudgetStore> BudgetStore for SatelliteReadOnlyBudgetStore<S> {
         &self,
         org_id: &str,
         budget_id: &str,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         self.inner.get_by_id(org_id, budget_id)
     }
 
@@ -424,7 +474,7 @@ impl<S: BudgetStore> BudgetStore for SatelliteReadOnlyBudgetStore<S> {
         agent_id: Option<&str>,
         release_id: Option<&str>,
         period_kind: BudgetPeriodKind,
-    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+    ) -> Result<Option<BudgetAggregate>, BudgetError> {
         self.inner.find_by_target(
             org_id,
             scope_kind,
@@ -435,7 +485,7 @@ impl<S: BudgetStore> BudgetStore for SatelliteReadOnlyBudgetStore<S> {
         )
     }
 
-    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
+    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, BudgetError> {
         self.inner.list_all(org_id)
     }
 }

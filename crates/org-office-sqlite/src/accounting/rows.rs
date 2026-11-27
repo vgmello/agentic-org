@@ -3,15 +3,15 @@
 use org_proto::costs::{ModelPriceView, UsageRecordView};
 use rusqlite::{params, Connection};
 
-use org_office::accounting::{StoredSubscriptionUsageSnapshot, UsageStreamCheckpoint};
-use org_office::OfficeError;
+use org_accounting::AccountingError;
+use org_accounting::{StoredSubscriptionUsageSnapshot, UsageStreamCheckpoint};
 
 pub(super) fn upsert_subscription_usage_row(
     conn: &Connection,
     org_id: &str,
     snap: &StoredSubscriptionUsageSnapshot,
-) -> Result<(), OfficeError> {
-    let payload = serde_json::to_string(snap).map_err(OfficeError::storage)?;
+) -> Result<(), AccountingError> {
+    let payload = serde_json::to_string(snap).map_err(AccountingError::storage)?;
     conn.execute(
         "INSERT INTO subscription_usage_snapshots \
          (organization_id, connection_id, office_id, status, collected_at, fresh_until, json_payload) \
@@ -30,7 +30,7 @@ pub(super) fn upsert_subscription_usage_row(
             &payload,
         ],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     Ok(())
 }
 
@@ -38,14 +38,14 @@ pub(super) fn insert_price_row(
     tx: &rusqlite::Transaction<'_>,
     org_id: &str,
     price: &ModelPriceView,
-) -> Result<(), OfficeError> {
-    let payload = serde_json::to_string(price).map_err(OfficeError::storage)?;
+) -> Result<(), AccountingError> {
+    let payload = serde_json::to_string(price).map_err(AccountingError::storage)?;
     tx.execute(
         "INSERT INTO model_prices(organization_id, id, provider, model, effective_from, json_payload) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![org_id, &price.id, &price.provider, &price.model, &price.effective_from, payload],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     Ok(())
 }
 
@@ -53,14 +53,14 @@ pub(super) fn insert_price_row_ignore(
     tx: &rusqlite::Transaction<'_>,
     org_id: &str,
     price: &ModelPriceView,
-) -> Result<(), OfficeError> {
-    let payload = serde_json::to_string(price).map_err(OfficeError::storage)?;
+) -> Result<(), AccountingError> {
+    let payload = serde_json::to_string(price).map_err(AccountingError::storage)?;
     tx.execute(
         "INSERT OR IGNORE INTO model_prices(organization_id, id, provider, model, effective_from, json_payload) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![org_id, &price.id, &price.provider, &price.model, &price.effective_from, payload],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     Ok(())
 }
 
@@ -69,7 +69,7 @@ pub(super) fn insert_usage_row_strict(
     org_id: &str,
     rec: &UsageRecordView,
     chain_sha256: Option<&str>,
-) -> Result<(), OfficeError> {
+) -> Result<(), AccountingError> {
     insert_usage_sql(tx, org_id, rec, chain_sha256, "INSERT INTO usage_records")
 }
 
@@ -79,8 +79,8 @@ fn insert_usage_sql(
     rec: &UsageRecordView,
     chain_sha256: Option<&str>,
     verb: &str,
-) -> Result<(), OfficeError> {
-    let payload = serde_json::to_string(rec).map_err(OfficeError::storage)?;
+) -> Result<(), AccountingError> {
+    let payload = serde_json::to_string(rec).map_err(AccountingError::storage)?;
     let sql = format!(
         "{verb}(organization_id, id, origin_office_id, producer_id, source_event_id, \
          source_sequence, occurred_at, payload_sha256, chain_sha256, supersedes_id, json_payload) \
@@ -102,7 +102,7 @@ fn insert_usage_sql(
             payload,
         ],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     Ok(())
 }
 
@@ -110,8 +110,8 @@ pub(super) fn insert_staged_usage_row(
     tx: &rusqlite::Transaction<'_>,
     org_id: &str,
     rec: &UsageRecordView,
-) -> Result<(), OfficeError> {
-    let payload = serde_json::to_string(rec).map_err(OfficeError::storage)?;
+) -> Result<(), AccountingError> {
+    let payload = serde_json::to_string(rec).map_err(AccountingError::storage)?;
     tx.execute(
         "INSERT INTO staged_usage_records(\
          organization_id, id, origin_office_id, producer_id, source_event_id, \
@@ -128,14 +128,14 @@ pub(super) fn insert_staged_usage_row(
             payload,
         ],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     Ok(())
 }
 
 pub(super) fn upsert_checkpoint_row(
     tx: &rusqlite::Transaction<'_>,
     cp: &UsageStreamCheckpoint,
-) -> Result<(), OfficeError> {
+) -> Result<(), AccountingError> {
     tx.execute(
         "INSERT INTO usage_stream_checkpoints(\
          organization_id, origin_office_id, producer_id, high_water_sequence, head_sha256, \
@@ -157,6 +157,6 @@ pub(super) fn upsert_checkpoint_row(
             &cp.checkpointed_at,
         ],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(AccountingError::storage)?;
     Ok(())
 }

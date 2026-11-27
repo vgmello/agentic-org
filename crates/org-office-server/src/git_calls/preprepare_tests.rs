@@ -444,9 +444,8 @@ struct TestHarness {
 }
 
 fn build_harness(fake_claude: Option<PathBuf>, wire_sessions_on_tasks: bool) -> TestHarness {
-    org_office_sqlite::install();
     let office = Arc::new(Office::for_test(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
     }));
     let owner = office.owner_member_id().to_owned();
     let root_team = office.org_snapshot().unwrap().teams[0].id.clone();

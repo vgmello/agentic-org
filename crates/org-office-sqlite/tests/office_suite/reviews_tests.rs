@@ -55,7 +55,12 @@ fn next_uuid() -> String {
     )
 }
 
-const ENGINES: [EngineChoice; 2] = [EngineChoice::Memory, EngineChoice::Sqlite];
+fn engines() -> [EngineChoice; 2] {
+    [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ]
+}
 const OID_BASE: &str = "1111111111111111111111111111111111111111";
 const OID_HEAD1: &str = "2222222222222222222222222222222222222222";
 const OID_HEAD2: &str = "3333333333333333333333333333333333333333";
@@ -82,8 +87,7 @@ struct Fx {
 
 fn options(engine: EngineChoice) -> Options {
     Options {
-        backend: None,
-        engine,
+        engine: engine.clone(),
         clock: Arc::new(FixedClock(CREATION_AT)),
         testing: Default::default(),
         before_final_checks: None,
@@ -187,7 +191,7 @@ fn fixture(engine: EngineChoice) -> Fx {
         roots.clone(),
         custody.clone(),
         |_| record(CA_SEED),
-        options(engine),
+        options(engine.clone()),
     )
     .unwrap();
     let owner = office.owner_member_id().to_owned();
@@ -269,7 +273,7 @@ fn fixture(engine: EngineChoice) -> Fx {
         folder,
         roots,
         custody,
-        engine,
+        engine: engine.clone(),
         office,
         owner,
         person,
@@ -317,14 +321,14 @@ fn reopen(fx: Fx) -> Result<Fx, OfficeError> {
         &identity().instance_id.to_string(),
         roots.clone(),
         custody.clone(),
-        options(engine),
+        options(engine.clone()),
     )?;
     Ok(Fx {
         _tmp,
         folder,
         roots,
         custody,
-        engine,
+        engine: engine.clone(),
         office,
         owner,
         person,
@@ -671,9 +675,8 @@ fn assert_rebuild_parity(fx: Fx, review_id: &str, engine: EngineChoice) {
 
 #[test]
 fn full_lifecycle_anchors_and_rebuild_parity() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let review_id = next_uuid();
         let params = code_request_params(&fx, review_id.clone(), &fx.contributing_agent, true);
         let created = fx
@@ -747,15 +750,14 @@ fn full_lifecycle_anchors_and_rebuild_parity() {
             .unwrap();
         assert_eq!(v1.review.status, ReviewStatus::ChangesRequested);
         run_round2_blocker_approval_and_close(&fx, blocker_id, v1.review.revision);
-        assert_rebuild_parity(fx, &review_id, engine);
+        assert_rebuild_parity(fx, &review_id, engine.clone());
     }
 }
 
 #[test]
 fn target_kinds_routing_modes_and_list_filters() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let doc_rev = fx
             .office
             .review_request(
@@ -919,9 +921,8 @@ fn target_kinds_routing_modes_and_list_filters() {
 
 #[test]
 fn independence_and_session_mode_invariants() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let self_err = fx
             .office
             .review_request(
@@ -1000,9 +1001,8 @@ fn independence_and_session_mode_invariants() {
 
 #[test]
 fn concurrency_atomicity_and_idempotency() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let req_params = code_request_params(&fx, next_uuid(), &fx.contributing_agent, true);
         let first = fx
             .office
@@ -1156,9 +1156,8 @@ fn concurrency_atomicity_and_idempotency() {
 
 #[test]
 fn counter_durability_across_reopen_and_fail_closed_when_behind() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let r1 = fx
             .office
             .review_request(
@@ -1232,7 +1231,7 @@ fn counter_durability_across_reopen_and_fail_closed_when_behind() {
                 &identity().instance_id.to_string(),
                 roots.clone(),
                 custody.clone(),
-                options(engine),
+                options(engine.clone()),
             )
             .unwrap();
             Fx {
@@ -1240,7 +1239,7 @@ fn counter_durability_across_reopen_and_fail_closed_when_behind() {
                 folder,
                 roots,
                 custody,
-                engine,
+                engine: engine.clone(),
                 office,
                 owner,
                 person,
@@ -1272,9 +1271,8 @@ fn counter_durability_across_reopen_and_fail_closed_when_behind() {
 
 #[test]
 fn security_project_scoping_and_unrouted_verdict() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let created = fx
             .office
             .review_request(
@@ -1366,9 +1364,8 @@ fn security_project_scoping_and_unrouted_verdict() {
 
 #[test]
 fn security_inactive_and_unknown_callers() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let created = fx
             .office
             .review_request(
@@ -1451,9 +1448,8 @@ fn security_inactive_and_unknown_callers() {
 
 #[test]
 fn route_cannot_bypass_open_blocker_and_resets_readded_verdict() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let created = fx
             .office
             .review_request(
@@ -1578,9 +1574,8 @@ fn route_cannot_bypass_open_blocker_and_resets_readded_verdict() {
 
 #[test]
 fn pass2_security_and_resubmit_invariants() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         // P1-1: outsider cannot probe another project's task_id via review_request.
         let mut probe = code_request_params(&fx, next_uuid(), &fx.outsider_agent, false);
         probe.project_id = None;

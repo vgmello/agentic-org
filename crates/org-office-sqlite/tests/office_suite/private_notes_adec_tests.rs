@@ -697,8 +697,10 @@ fn assert_ancestor_lead_touches_nothing(a: &Adec) {
 
 #[test]
 fn team_and_ancestor_leads_never_remove_or_publish_an_agents_decision() {
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
         let a = adec_fixture(engine);
         assert_ancestor_lead_touches_nothing(&a);
     }
@@ -708,7 +710,6 @@ fn team_and_ancestor_leads_never_remove_or_publish_an_agents_decision() {
 /// `Unavailable` before any caller lookup or validation, so the request goes to HQ instead.
 #[test]
 fn a_satellite_refuses_every_private_note_call_as_unavailable() {
-    org_office_sqlite::install();
     let satellite = org_office::TestSatellite::new();
     let office = &satellite.office;
     let actor = next_uuid();
@@ -775,8 +776,10 @@ fn a_satellite_refuses_every_private_note_call_as_unavailable() {
 
 #[test]
 fn adec_decisions_recall_and_isolation_on_memory_and_sqlite() {
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
         let a = adec_fixture(engine);
         let seeded = assert_creation_rules(&a);
         assert_recall_filters_and_pages(&a, &seeded);

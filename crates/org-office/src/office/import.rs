@@ -15,13 +15,14 @@ use crate::organization::import::{
     ImportError, ImportedOrganization, PrivateTempDir,
 };
 use crate::organization::records;
-use crate::store::open::validate_imported_files;
+use crate::store::{backend::OfficeStorageBackend, open::validate_imported_files};
 
 fn validate_files_map(
     files: BTreeMap<DurablePath, Vec<u8>>,
     remote_url: &str,
     state_branch: &str,
     commit_oid: Option<String>,
+    backend: &dyn OfficeStorageBackend,
 ) -> Result<ImportedOrganization, ImportError> {
     let org_path = records::organization_path();
     let org_bytes = files
@@ -35,7 +36,7 @@ fn validate_files_map(
             path: org_path.as_str().to_owned(),
             reason: e.to_string(),
         })?;
-    let summary = validate_imported_files(&org_record.id, &files)?;
+    let summary = validate_imported_files(&org_record.id, &files, backend)?;
     Ok(ImportedOrganization {
         summary,
         repository_remote_url: remote_url.to_owned(),
@@ -54,9 +55,10 @@ pub fn validate_state_dir(
     state_root: &Path,
     remote_url: &str,
     state_branch: &str,
+    backend: &dyn OfficeStorageBackend,
 ) -> Result<ImportedOrganization, ImportError> {
     let files = collect_state_files(state_root)?;
-    validate_files_map(files, remote_url, state_branch, None)
+    validate_files_map(files, remote_url, state_branch, None, backend)
 }
 
 /// Clones `state_branch` from `remote_url` into a bare temporary repository (no working-tree
@@ -65,6 +67,7 @@ pub fn validate_state_dir(
 pub fn clone_and_validate_state(
     remote_url: &str,
     state_branch: &str,
+    backend: &dyn OfficeStorageBackend,
 ) -> Result<ImportedOrganization, ImportError> {
     check_git_source(remote_url, state_branch)?;
     let staging = PrivateTempDir::create("org-import")?;
@@ -104,5 +107,5 @@ pub fn clone_and_validate_state(
     )?;
     let blobs = parse_ls_tree_entries(&tree_bytes)?;
     let files = read_git_blobs(&repo_dir, &blobs, staging.path())?;
-    validate_files_map(files, remote_url, state_branch, Some(commit_oid))
+    validate_files_map(files, remote_url, state_branch, Some(commit_oid), backend)
 }

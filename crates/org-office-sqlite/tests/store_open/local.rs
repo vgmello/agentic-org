@@ -72,9 +72,9 @@ fn runtime_folder(place: &Place) -> PathBuf {
 /// `ca-key.v1.json` atomically to local security storage outside `durable/recovery/`.
 #[test]
 fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         let created = create_organization(&store, 1).unwrap();
         assert_eq!(created.outcome, Outcome::Completed, "{engine:?}");
         store.sync().unwrap();
@@ -123,9 +123,9 @@ fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
 /// The CA material is part of what a creation's retry is matched on.
 #[test]
 fn a_creation_retry_with_regenerated_ca_material_conflicts_and_with_the_same_answers() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         let organization = identity().organization_id;
         let created = create_organization(&store, 1).unwrap();
         let again = create_organization_with(&store, 1, ca_material(&organization, CA));
@@ -135,7 +135,7 @@ fn a_creation_retry_with_regenerated_ca_material_conflicts_and_with_the_same_ans
         store.close().unwrap();
 
         // After a restart too: the receipt is matched, nothing is decided again.
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         let again = create_organization_with(&store, 1, ca_material(&organization, CA));
         assert_eq!(again, Ok(created), "{engine:?}");
         let regenerated = create_organization_with(&store, 1, ca_material(&organization, 2));
@@ -149,9 +149,9 @@ fn a_creation_retry_with_regenerated_ca_material_conflicts_and_with_the_same_ans
 /// organization, is refused before admission: nothing is recorded.
 #[test]
 fn ca_material_that_breaks_a_rule_is_refused_and_records_nothing() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         let organization = identity().organization_id;
         let mut compressed = ca_material(&organization, CA);
         compressed.public_key[0] = 2;
@@ -184,9 +184,9 @@ fn ca_material_that_breaks_a_rule_is_refused_and_records_nothing() {
 /// `durable/recovery/` holds it in either raw or hex form.
 #[test]
 fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         create_team(&store, 2, 0x21).unwrap();
         store.sync().unwrap();
@@ -224,9 +224,9 @@ fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
 /// projection the store had: the marker is not a source.
 #[test]
 fn a_rebuild_with_the_ca_records_and_the_marker_equals_the_projection_it_replaces() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         create_team(&store, 2, 0x21).unwrap();
         store.sync().unwrap();
@@ -235,12 +235,12 @@ fn a_rebuild_with_the_ca_records_and_the_marker_equals_the_projection_it_replace
         let snapshot = store.read(owner).unwrap().0;
         store.close().unwrap();
         assert!(marker_file(&place).is_file(), "{engine:?}");
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
         }
 
         // The memory engine rebuilds at every opening.
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(store.stopped_cleanly(), "{engine:?}");
         assert_eq!(store.dump(), dump, "{engine:?}");
         assert_eq!(directory(&store), read, "{engine:?}");
@@ -254,9 +254,9 @@ fn a_rebuild_with_the_ca_records_and_the_marker_equals_the_projection_it_replace
 /// names it.
 #[test]
 fn an_unowned_file_in_the_offices_local_folder_fails_the_rebuild_and_is_named() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
         let material = ca_material(&identity().organization_id, CA);
@@ -265,10 +265,10 @@ fn an_unowned_file_in_the_offices_local_folder_fails_the_rebuild_and_is_named() 
             .unwrap();
         let stray = local_folder(&place).join("security/ca-key.v2.json");
         std::fs::write(&stray, b"{}\n").unwrap();
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
         }
-        let refused = open_store(&place.config(engine, Opening::Existing));
+        let refused = open_store(&place.config(engine.clone(), Opening::Existing));
         let error = refused.err().expect("the rebuild is refused").to_string();
         let path = format!(
             "local/offices/{}/security/ca-key.v2.json",
@@ -284,10 +284,10 @@ fn an_unowned_file_in_the_offices_local_folder_fails_the_rebuild_and_is_named() 
         let mut bytes = std::fs::read(&key).unwrap();
         bytes.pop();
         std::fs::write(&key, bytes).unwrap();
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             let _ = std::fs::remove_dir_all(runtime_folder(&place));
         }
-        let refused = open_store(&place.config(engine, Opening::Existing));
+        let refused = open_store(&place.config(engine.clone(), Opening::Existing));
         let error = refused.err().expect("the rebuild is refused").to_string();
         let path = ca_key_path(&identity().office_id).to_string();
         assert!(error.contains(&path), "{engine:?}: {error}");
@@ -299,9 +299,9 @@ fn an_unowned_file_in_the_offices_local_folder_fails_the_rebuild_and_is_named() 
 /// remain refused.
 #[test]
 fn office_git_credential_files_survive_store_rebuild_while_stray_security_files_fail() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
         let material = ca_material(&identity().organization_id, CA);
@@ -312,20 +312,20 @@ fn office_git_credential_files_survive_store_rebuild_while_stray_security_files_
         std::fs::write(sec.join("git-https-helper"), "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::write(sec.join("git-ssh-key"), "PRIVATE KEY BYTES").unwrap();
         std::fs::write(sec.join("git-known-hosts"), "github.com ssh-ed25519 AAAA\n").unwrap();
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
         }
-        let reopened = open_store(&place.config(engine, Opening::Existing))
+        let reopened = open_store(&place.config(engine.clone(), Opening::Existing))
             .expect("rebuild must exclude office Git credential files");
         reopened.close().unwrap();
 
         // Stray sibling under security/ must still fail the rebuild.
         let stray = sec.join("ca-key.v2.json");
         std::fs::write(&stray, b"{}\n").unwrap();
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
         }
-        let err = open_store(&place.config(engine, Opening::Existing))
+        let err = open_store(&place.config(engine.clone(), Opening::Existing))
             .err()
             .expect("stray security file must still be refused")
             .to_string();
@@ -338,9 +338,9 @@ fn office_git_credential_files_survive_store_rebuild_while_stray_security_files_
 /// unowned stray sibling files in `local/offices/<id>/` must still fail closed.
 #[test]
 fn office_local_companion_paths_survive_store_rebuild_while_stray_sibling_fails() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
 
@@ -353,20 +353,20 @@ fn office_local_companion_paths_survive_store_rebuild_while_stray_sibling_fails(
         std::fs::write(local.join("repositories/repo-1.json"), b"{}\n").unwrap();
         std::fs::write(local.join("close-recovery/deadbeef.json"), b"{}\n").unwrap();
 
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
         }
-        let reopened = open_store(&place.config(engine, Opening::Existing)).expect(
+        let reopened = open_store(&place.config(engine.clone(), Opening::Existing)).expect(
             "rebuild must exclude hq-owner.v1.json, watcher, repositories & close-recovery",
         );
         reopened.close().unwrap();
 
         let stray = local.join("stray-unowned.v1.json");
         std::fs::write(&stray, b"{}\n").unwrap();
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
         }
-        let err = open_store(&place.config(engine, Opening::Existing))
+        let err = open_store(&place.config(engine.clone(), Opening::Existing))
             .err()
             .expect("stray file under local/offices/<id>/ must still fail rebuild")
             .to_string();
@@ -378,9 +378,9 @@ fn office_local_companion_paths_survive_store_rebuild_while_stray_sibling_fails(
 /// the next opening and removed by it; absent after a drop, a kill or a failed close.
 #[test]
 fn an_orderly_close_leaves_the_marker_and_the_next_opening_reports_it_once() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         assert!(!store.stopped_cleanly(), "{engine:?}: a new office");
         create_organization(&store, 1).unwrap();
         create_team(&store, 2, 0x21).unwrap();
@@ -392,7 +392,7 @@ fn an_orderly_close_leaves_the_marker_and_the_next_opening_reports_it_once() {
         );
         assert_eq!(String::from_utf8(marker).unwrap(), expected, "{engine:?}");
 
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(store.stopped_cleanly(), "{engine:?}");
         assert!(
             !marker_file(&place).exists(),
@@ -401,12 +401,12 @@ fn an_orderly_close_leaves_the_marker_and_the_next_opening_reports_it_once() {
         // Dropped, as a kill is: no marker, and the next opening is told so.
         drop(store);
         assert!(!marker_file(&place).exists(), "{engine:?}");
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(!store.stopped_cleanly(), "{engine:?}");
 
         // Killed at a crash point while deciding: no marker either.
         store.close().unwrap();
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(store.stopped_cleanly(), "{engine:?}");
         place.faults.arm(CrashPoint::DuringDecide, 1);
         assert!(create_team(&store, 3, 0x22).is_err(), "{engine:?}");
@@ -414,7 +414,7 @@ fn an_orderly_close_leaves_the_marker_and_the_next_opening_reports_it_once() {
         drop(store);
         place.faults.revive();
         assert!(!marker_file(&place).exists(), "{engine:?}");
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(!store.stopped_cleanly(), "{engine:?}");
         store.close().unwrap();
     }
@@ -424,14 +424,14 @@ fn an_orderly_close_leaves_the_marker_and_the_next_opening_reports_it_once() {
 /// it is removed all the same.
 #[test]
 fn a_marker_that_does_not_match_the_opened_journal_is_not_clean() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
         let marker = |text: String| {
             std::fs::write(marker_file(&place), text).unwrap();
-            let store = place.reopen(engine);
+            let store = place.reopen(engine.clone());
             let clean = store.stopped_cleanly();
             assert!(!marker_file(&place).exists(), "{engine:?}");
             store.close().unwrap();
@@ -459,16 +459,16 @@ fn a_marker_that_does_not_match_the_opened_journal_is_not_clean() {
 /// An opening that fails leaves the marker for the next one.
 #[test]
 fn an_opening_that_fails_leaves_the_marker() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
         place.custody.close();
-        assert!(open_store(&place.config(engine, Opening::Existing)).is_err());
+        assert!(open_store(&place.config(engine.clone(), Opening::Existing)).is_err());
         assert!(marker_file(&place).is_file(), "{engine:?}");
         place.custody.reopen();
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(store.stopped_cleanly(), "{engine:?}");
         store.close().unwrap();
     }
@@ -477,9 +477,9 @@ fn an_opening_that_fails_leaves_the_marker() {
 /// A store that stopped reports why, and its close fails and leaves no marker.
 #[test]
 fn a_fatal_store_reports_its_fault_and_its_close_leaves_no_marker() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         store.sync().unwrap();
         assert_eq!(store.fatal(), None, "{engine:?}");
@@ -496,7 +496,7 @@ fn a_fatal_store_reports_its_fault_and_its_close_leaves_no_marker() {
         assert!(store.close().is_err(), "{engine:?}");
         assert!(!marker_file(&place).exists(), "{engine:?}");
         place.faults.revive();
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(!store.stopped_cleanly(), "{engine:?}");
         assert_eq!(store.fatal(), None, "{engine:?}");
         store.close().unwrap();
@@ -507,9 +507,9 @@ fn a_fatal_store_reports_its_fault_and_its_close_leaves_no_marker() {
 /// HR lead an active agent placed on the HQ office with its profile populated.
 #[test]
 fn the_snapshot_of_the_golden_creation() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         let read = DirectorySnapshot { owner: id(CREATOR) };
         let (snapshot, _) = store.read(read).unwrap();
@@ -694,9 +694,9 @@ fn put_person(store: &OfficeStore, op: u64, chain: &[u64], person: u64, status: 
 
 #[test]
 fn team_create_answers_committed_and_a_retry_gets_the_same_answer() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         let creator = id(CREATOR).to_string();
         let request = params(1, 0x21, Some(TOP_TEAM));
@@ -740,7 +740,7 @@ fn team_create_answers_committed_and_a_retry_gets_the_same_answer() {
 
         // After a restart the retry still answers the original.
         store.close().unwrap();
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert_eq!(wire_create(&store, &creator, &request), Ok(committed));
         store.close().unwrap();
     }
@@ -748,9 +748,9 @@ fn team_create_answers_committed_and_a_retry_gets_the_same_answer() {
 
 #[test]
 fn team_create_refusals_carry_the_protocols_codes() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         let creator = id(CREATOR).to_string();
         let ask = |member: &str, request: TeamCreateParams| wire_create(&store, member, &request);
@@ -808,9 +808,9 @@ fn team_create_refusals_carry_the_protocols_codes() {
 /// Each refusal is unrecorded and takes no generation.
 #[test]
 fn only_the_owner_creates_a_team_even_under_a_team_another_person_leads() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         let creator = id(CREATOR).to_string();
         let ask = |member: &str, request: TeamCreateParams| wire_create(&store, member, &request);
@@ -862,14 +862,14 @@ fn only_the_owner_creates_a_team_even_under_a_team_another_person_leads() {
 #[test]
 fn an_unreadable_marker_is_not_clean_and_is_removed_without_being_followed() {
     // An empty folder: on both engines, the memory one rebuilding past it.
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
         std::fs::remove_file(marker_file(&place)).unwrap();
         std::fs::create_dir(marker_file(&place)).unwrap();
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert!(!store.stopped_cleanly(), "{engine:?}");
         assert!(!marker_file(&place).exists(), "{engine:?}");
         store.close().unwrap();
@@ -878,7 +878,7 @@ fn an_unreadable_marker_is_not_clean_and_is_removed_without_being_followed() {
     // A link and a file over the size limit, on SQLite, whose projection needs no rebuild
     // (a rebuild refuses both as it refuses any such object under `durable/`).
     let place = Place::new();
-    let store = place.create(EngineChoice::Sqlite);
+    let store = place.create(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     create_organization(&store, 1).unwrap();
     store.close().unwrap();
     let target = place.root.join("elsewhere");
@@ -886,7 +886,7 @@ fn an_unreadable_marker_is_not_clean_and_is_removed_without_being_followed() {
     std::fs::write(&target, real).unwrap();
     std::fs::remove_file(marker_file(&place)).unwrap();
     std::os::unix::fs::symlink(&target, marker_file(&place)).unwrap();
-    let store = place.reopen(EngineChoice::Sqlite);
+    let store = place.reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     assert!(!store.stopped_cleanly());
     assert!(std::fs::symlink_metadata(marker_file(&place)).is_err());
     assert_eq!(std::fs::read_to_string(&target).unwrap(), real);
@@ -895,7 +895,7 @@ fn an_unreadable_marker_is_not_clean_and_is_removed_without_being_followed() {
     let oversize = std::fs::File::create(marker_file(&place)).unwrap();
     oversize.set_len(org_store::MAX_FILE_BYTES + 1).unwrap();
     drop(oversize);
-    let store = place.reopen(EngineChoice::Sqlite);
+    let store = place.reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     assert!(!store.stopped_cleanly());
     assert!(!marker_file(&place).exists());
     store.close().unwrap();
@@ -904,7 +904,10 @@ fn an_unreadable_marker_is_not_clean_and_is_removed_without_being_followed() {
     std::fs::remove_file(marker_file(&place)).unwrap();
     std::fs::create_dir(marker_file(&place)).unwrap();
     std::fs::write(marker_file(&place).join("kept"), b"x").unwrap();
-    let refused = open_store(&place.config(EngineChoice::Sqlite, Opening::Existing));
+    let refused = open_store(&place.config(
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+        Opening::Existing,
+    ));
     let error = refused.err().expect("refused").to_string();
     assert!(error.contains("clean-stop marker"), "{error}");
     assert!(marker_file(&place).join("kept").is_file());

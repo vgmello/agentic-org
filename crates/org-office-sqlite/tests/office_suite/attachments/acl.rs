@@ -45,9 +45,8 @@ fn list_private(
 
 #[test]
 fn a_staged_upload_is_not_found_for_everyone_but_its_uploader() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let begun = office
             .attachment_upload_begin(
@@ -170,9 +169,8 @@ fn a_staged_upload_is_not_found_for_everyone_but_its_uploader() {
 
 #[test]
 fn the_same_bytes_twice_are_one_blob_and_two_attachments_with_their_own_acls() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let bytes = b"quarterly,numbers\n1,2\n";
         let first = upload(office, &fx.person, "q.csv", "text/csv", bytes).unwrap();
@@ -244,9 +242,8 @@ fn the_same_bytes_twice_are_one_blob_and_two_attachments_with_their_own_acls() {
 
 #[test]
 fn re_attaching_needs_read_on_the_source_and_write_on_the_target() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(office, &fx.owner, "brand.md", "text/markdown", b"# Brand").unwrap();
         let org_file = attach_upload(
@@ -357,9 +354,8 @@ fn re_attaching_needs_read_on_the_source_and_write_on_the_target() {
 
 #[test]
 fn the_private_space_is_its_persons_alone_and_never_an_agents() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(
             office,
@@ -488,7 +484,7 @@ fn the_private_space_is_its_persons_alone_and_never_an_agents() {
         assert!(layout::private_blobs(durable).join("sha256").is_dir());
         assert!(!layout::shared_blobs(durable).join("sha256").exists());
         assert!(!durable.join("state/files").exists());
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             let db = durable.join("private/user-space.db");
             assert!(db.is_file());
             use std::os::unix::fs::PermissionsExt;
@@ -502,7 +498,6 @@ fn the_private_space_is_its_persons_alone_and_never_an_agents() {
 
 #[test]
 fn a_satellite_has_no_private_space_and_writes_shared_files_only_through_its_outbox() {
-    org_office_sqlite::install();
     let sat = org_office::TestSatellite::new();
     let office = &sat.office;
     let durable = office.durable_root().to_path_buf();
@@ -549,7 +544,6 @@ fn a_satellite_has_no_private_space_and_writes_shared_files_only_through_its_out
 
 #[test]
 fn an_unknown_or_inactive_caller_is_refused_before_anything_is_read() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let stranger = next_uuid();
     let refused = list_private(&fx.office, &stranger, None).unwrap_err();
@@ -571,7 +565,6 @@ fn an_unknown_or_inactive_caller_is_refused_before_anything_is_read() {
 
 #[test]
 fn a_list_whose_scope_contradicts_its_target_kind_is_refused_not_reinterpreted() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let staged = upload(&fx.office, &fx.person, "mine.txt", "text/plain", b"mine").unwrap();
     attach_upload(
@@ -651,8 +644,8 @@ fn delivery_read_refuses_user_private_unauthorized_dm_and_enforces_chief_of_staf
     use org_proto::chat::{ChatSendParams, DmOpenParams};
     use org_proto::org::MemberRemoveParams;
 
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let tess = office
             .chief_of_staff()

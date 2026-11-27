@@ -18,6 +18,8 @@ required-features = ["testkit"]
 base64.workspace = true
 # Only `attachments::testkit::sample_png`: test fixture PNG encoding.
 image = { workspace = true, optional = true }
+org-accounting = { path = "../org-accounting" }
+org-budgets = { path = "../org-budgets" }
 org-docs = { path = "../org-docs" }
 org-media = { path = "../org-media", features = ["sanitize"] }
 org-pki = { path = "../org-pki" }

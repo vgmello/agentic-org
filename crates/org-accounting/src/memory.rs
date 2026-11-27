@@ -6,11 +6,10 @@ use std::sync::Mutex;
 use org_proto::costs::{CostPriceListParams, ModelPriceView, UsageRecordView};
 use org_proto::{ApiError, ErrorCode};
 
-use super::{
-    same_price_semantics, AccountingStore, StoredSubscriptionUsageSnapshot, UsageCoverageSummary,
-    UsageStreamCheckpoint, VerifiedStreamWatermark,
+use crate::{
+    same_price_semantics, AccountingError, AccountingStore, StoredSubscriptionUsageSnapshot,
+    UsageCoverageSummary, UsageStreamCheckpoint, VerifiedStreamWatermark,
 };
-use crate::error::OfficeError;
 
 #[derive(Default)]
 struct State {
@@ -34,10 +33,10 @@ impl MemoryAccountingStore {
         Self::default()
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, State>, OfficeError> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, State>, AccountingError> {
         self.inner
             .lock()
-            .map_err(|_| OfficeError::Invalid("memory accounting store poisoned"))
+            .map_err(|_| AccountingError::Invalid("memory accounting store poisoned"))
     }
 }
 
@@ -46,7 +45,7 @@ impl AccountingStore for MemoryAccountingStore {
         &self,
         org_id: &str,
         price: ModelPriceView,
-    ) -> Result<Result<ModelPriceView, ApiError>, OfficeError> {
+    ) -> Result<Result<ModelPriceView, ApiError>, AccountingError> {
         let mut s = self.lock()?;
         if let Some(existing) = s.prices.get(&(org_id.to_owned(), price.id.clone())) {
             if same_price_semantics(existing, &price) {
@@ -78,7 +77,7 @@ impl AccountingStore for MemoryAccountingStore {
         &self,
         org_id: &str,
         params: &CostPriceListParams,
-    ) -> Result<Vec<ModelPriceView>, OfficeError> {
+    ) -> Result<Vec<ModelPriceView>, AccountingError> {
         let s = self.lock()?;
         let mut out: Vec<ModelPriceView> = s
             .prices
@@ -105,7 +104,7 @@ impl AccountingStore for MemoryAccountingStore {
         provider: &str,
         model: &str,
         occurred_at: &str,
-    ) -> Result<Option<ModelPriceView>, OfficeError> {
+    ) -> Result<Option<ModelPriceView>, AccountingError> {
         let s = self.lock()?;
         let occ_ms = org_proto::parse_rfc3339_ms(occurred_at);
         let best = s
@@ -133,7 +132,7 @@ impl AccountingStore for MemoryAccountingStore {
         &self,
         org_id: &str,
         mut record: UsageRecordView,
-    ) -> Result<Result<(UsageRecordView, bool), ApiError>, OfficeError> {
+    ) -> Result<Result<(UsageRecordView, bool), ApiError>, AccountingError> {
         let mut s = self.lock()?;
         let src_key = (
             org_id.to_owned(),
@@ -189,7 +188,7 @@ impl AccountingStore for MemoryAccountingStore {
             .saturating_add(1);
         let prev_chain = prev_cp.and_then(|cp| cp.chain_sha256.as_deref());
         record.source_sequence = next_seq;
-        let next_chain = super::chain_usage_stream_head(prev_chain, &record);
+        let next_chain = crate::chain_usage_stream_head(prev_chain, &record);
         s.chain_by_seq.insert(
             (
                 org_id.to_owned(),
@@ -218,7 +217,11 @@ impl AccountingStore for MemoryAccountingStore {
         Ok(Ok((record, false)))
     }
 
-    fn get_usage(&self, org_id: &str, id: &str) -> Result<Option<UsageRecordView>, OfficeError> {
+    fn get_usage(
+        &self,
+        org_id: &str,
+        id: &str,
+    ) -> Result<Option<UsageRecordView>, AccountingError> {
         let s = self.lock()?;
         Ok(s.records.get(&(org_id.to_owned(), id.to_owned())).cloned())
     }
@@ -229,7 +232,7 @@ impl AccountingStore for MemoryAccountingStore {
         origin_office_id: &str,
         producer_id: &str,
         source_event_id: &str,
-    ) -> Result<Option<UsageRecordView>, OfficeError> {
+    ) -> Result<Option<UsageRecordView>, AccountingError> {
         let s = self.lock()?;
         let key = (
             org_id.to_owned(),
@@ -243,12 +246,12 @@ impl AccountingStore for MemoryAccountingStore {
             .cloned())
     }
 
-    fn is_superseded(&self, org_id: &str, id: &str) -> Result<bool, OfficeError> {
+    fn is_superseded(&self, org_id: &str, id: &str) -> Result<bool, AccountingError> {
         let s = self.lock()?;
         Ok(s.superseded.contains(&(org_id.to_owned(), id.to_owned())))
     }
 
-    fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, OfficeError> {
+    fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, AccountingError> {
         let s = self.lock()?;
         let mut out: Vec<UsageRecordView> = s
             .records
@@ -264,7 +267,7 @@ impl AccountingStore for MemoryAccountingStore {
         Ok(out)
     }
 
-    fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, OfficeError> {
+    fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, AccountingError> {
         let s = self.lock()?;
         let mut as_of: Option<String> = None;
         let mut watermarks: Vec<VerifiedStreamWatermark> = Vec::new();
@@ -288,7 +291,7 @@ impl AccountingStore for MemoryAccountingStore {
         let checkpoint_ref = (!watermarks.is_empty())
             .then(|| serde_json::to_string(&watermarks))
             .transpose()
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         Ok(UsageCoverageSummary {
             incomplete_streams: 0,
             coverage_as_of: as_of,
@@ -300,7 +303,7 @@ impl AccountingStore for MemoryAccountingStore {
         &self,
         org_id: &str,
         prior: &VerifiedStreamWatermark,
-    ) -> Result<bool, OfficeError> {
+    ) -> Result<bool, AccountingError> {
         if prior.high_water_sequence == 0 {
             return Ok(true);
         }
@@ -337,7 +340,7 @@ impl AccountingStore for MemoryAccountingStore {
         &self,
         org_id: &str,
         mut snapshot: StoredSubscriptionUsageSnapshot,
-    ) -> Result<(), OfficeError> {
+    ) -> Result<(), AccountingError> {
         let mut s = self.lock()?;
         let key = (org_id.to_owned(), snapshot.connection_id.clone());
         let existing = s.subscription_usage.get(&key);
@@ -346,9 +349,9 @@ impl AccountingStore for MemoryAccountingStore {
                 return Ok(());
             }
         }
-        super::merge_prior_for_unavailable(&mut snapshot, existing);
-        if super::validate_stored_snapshot(&snapshot).is_err() {
-            return Err(OfficeError::Invalid(
+        crate::merge_prior_for_unavailable(&mut snapshot, existing);
+        if crate::validate_stored_snapshot(&snapshot).is_err() {
+            return Err(AccountingError::Invalid(
                 "merged subscription usage snapshot exceeds validation bounds",
             ));
         }
@@ -359,7 +362,7 @@ impl AccountingStore for MemoryAccountingStore {
     fn list_subscription_usage(
         &self,
         org_id: &str,
-    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, OfficeError> {
+    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, AccountingError> {
         let s = self.lock()?;
         let mut out: Vec<StoredSubscriptionUsageSnapshot> = s
             .subscription_usage
@@ -375,7 +378,7 @@ impl AccountingStore for MemoryAccountingStore {
         &self,
         org_id: &str,
         connection_id: &str,
-    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError> {
+    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, AccountingError> {
         let s = self.lock()?;
         Ok(s.subscription_usage
             .get(&(org_id.to_owned(), connection_id.to_owned()))

@@ -7,11 +7,11 @@ use org_proto::costs::{CostPriceListParams, ModelPriceView, UsageRecordView};
 use org_proto::{ApiError, ErrorCode};
 use rusqlite::{params, OptionalExtension};
 
-use org_office::accounting::{
+use org_accounting::AccountingError;
+use org_accounting::{
     same_price_semantics, AccountingStore, StoredSubscriptionUsageSnapshot, UsageCoverageSummary,
     UsageStreamCheckpoint, VerifiedStreamWatermark,
 };
-use org_office::OfficeError;
 
 use super::files::{
     read_durable_snapshot_if_present, sync_usage_dir_and_parent, write_durable_subscription_usage,
@@ -30,7 +30,7 @@ impl AccountingStore for SqliteAccountingStore {
         &self,
         org_id: &str,
         price: ModelPriceView,
-    ) -> Result<Result<ModelPriceView, ApiError>, OfficeError> {
+    ) -> Result<Result<ModelPriceView, ApiError>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         if let Some(existing_json) = conn
@@ -40,10 +40,10 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| r.get::<_, String>(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?
+            .map_err(AccountingError::storage)?
         {
             let existing: ModelPriceView =
-                serde_json::from_str(&existing_json).map_err(OfficeError::storage)?;
+                serde_json::from_str(&existing_json).map_err(AccountingError::storage)?;
             if same_price_semantics(&existing, &price) {
                 return Ok(Ok(existing));
             }
@@ -58,7 +58,7 @@ impl AccountingStore for SqliteAccountingStore {
                 params![org_id, &price.provider, &price.model, &price.effective_from],
                 |r| r.get(0),
             )
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         if dup {
             return Ok(Err(ApiError::new(
                 ErrorCode::AlreadyExists,
@@ -69,10 +69,10 @@ impl AccountingStore for SqliteAccountingStore {
             self.needs_reconcile.store(true, Ordering::Release);
             return Err(err);
         }
-        let proj = (|| -> Result<(), OfficeError> {
-            let tx = conn.transaction().map_err(OfficeError::storage)?;
+        let proj = (|| -> Result<(), AccountingError> {
+            let tx = conn.transaction().map_err(AccountingError::storage)?;
             insert_price_row(&tx, org_id, &price)?;
-            tx.commit().map_err(OfficeError::storage)?;
+            tx.commit().map_err(AccountingError::storage)?;
             Ok(())
         })();
         if let Err(err) = proj {
@@ -86,7 +86,7 @@ impl AccountingStore for SqliteAccountingStore {
         &self,
         org_id: &str,
         params: &CostPriceListParams,
-    ) -> Result<Vec<ModelPriceView>, OfficeError> {
+    ) -> Result<Vec<ModelPriceView>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let mut stmt = conn
@@ -94,14 +94,14 @@ impl AccountingStore for SqliteAccountingStore {
                 "SELECT json_payload FROM model_prices WHERE organization_id=?1 \
                  ORDER BY provider ASC, model ASC, effective_from DESC",
             )
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let rows = stmt
             .query_map([org_id], |r| r.get::<_, String>(0))
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let mut out = Vec::new();
         for row in rows {
-            let p: ModelPriceView = serde_json::from_str(&row.map_err(OfficeError::storage)?)
-                .map_err(OfficeError::storage)?;
+            let p: ModelPriceView = serde_json::from_str(&row.map_err(AccountingError::storage)?)
+                .map_err(AccountingError::storage)?;
             if params.provider.as_deref().is_none_or(|pr| p.provider == pr)
                 && params.model.as_deref().is_none_or(|m| p.model == m)
             {
@@ -117,7 +117,7 @@ impl AccountingStore for SqliteAccountingStore {
         provider: &str,
         model: &str,
         occurred_at: &str,
-    ) -> Result<Option<ModelPriceView>, OfficeError> {
+    ) -> Result<Option<ModelPriceView>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let mut stmt = conn
@@ -126,14 +126,14 @@ impl AccountingStore for SqliteAccountingStore {
                  WHERE organization_id=?1 AND provider=?2 AND model=?3 \
                  ORDER BY effective_from DESC, id DESC",
             )
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let occ_ms = org_proto::parse_rfc3339_ms(occurred_at);
         let rows = stmt
             .query_map(params![org_id, provider, model], |r| r.get::<_, String>(0))
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         for row in rows {
-            let p: ModelPriceView = serde_json::from_str(&row.map_err(OfficeError::storage)?)
-                .map_err(OfficeError::storage)?;
+            let p: ModelPriceView = serde_json::from_str(&row.map_err(AccountingError::storage)?)
+                .map_err(AccountingError::storage)?;
             let eligible = match (org_proto::parse_rfc3339_ms(&p.effective_from), occ_ms) {
                 (Some(ef), Some(oc)) => ef <= oc,
                 _ => p.effective_from.as_str() <= occurred_at,
@@ -149,7 +149,7 @@ impl AccountingStore for SqliteAccountingStore {
         &self,
         org_id: &str,
         mut record: UsageRecordView,
-    ) -> Result<Result<(UsageRecordView, bool), ApiError>, OfficeError> {
+    ) -> Result<Result<(UsageRecordView, bool), ApiError>, AccountingError> {
         let mut state = self.lock()?;
         self.ensure_reconciled(&mut state, org_id)?;
         if let Some(res) = check_existing_usage(&state.conn, org_id, &record)? {
@@ -181,7 +181,7 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let (prev_chain, write_zero_anchor) = match existing_cp {
             Some((hw, head_sha, chain_sha)) => {
                 let verified_match = state.verified_streams.get(&stream_key).filter(|h| {
@@ -207,7 +207,7 @@ impl AccountingStore for SqliteAccountingStore {
                         params![org_id, &record.origin_office_id, &record.producer_id],
                         |r| r.get(0),
                     )
-                    .map_err(OfficeError::storage)?;
+                    .map_err(AccountingError::storage)?;
                 if uncheckpointed_rows {
                     return Ok(Err(ApiError::new(
                         ErrorCode::Conflict,
@@ -236,11 +236,10 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?
+            .map_err(AccountingError::storage)?
             .flatten();
         record.source_sequence = cur_seq.map_or(0, |v| v.max(0) as u64).saturating_add(1);
-        let next_chain =
-            org_office::accounting::chain_usage_stream_head(prev_chain.as_deref(), &record);
+        let next_chain = org_accounting::chain_usage_stream_head(prev_chain.as_deref(), &record);
         let cp = UsageStreamCheckpoint {
             organization_id: org_id.to_owned(),
             origin_office_id: record.origin_office_id.clone(),
@@ -257,11 +256,11 @@ impl AccountingStore for SqliteAccountingStore {
             self.needs_reconcile.store(true, Ordering::Release);
             return Err(err);
         }
-        let proj = (|| -> Result<(), OfficeError> {
-            let tx = state.conn.transaction().map_err(OfficeError::storage)?;
+        let proj = (|| -> Result<(), AccountingError> {
+            let tx = state.conn.transaction().map_err(AccountingError::storage)?;
             insert_usage_row_strict(&tx, org_id, &record, cp.chain_sha256.as_deref())?;
             upsert_checkpoint_row(&tx, &cp)?;
-            tx.commit().map_err(OfficeError::storage)?;
+            tx.commit().map_err(AccountingError::storage)?;
             Ok(())
         })();
         if let Err(err) = proj {
@@ -280,7 +279,11 @@ impl AccountingStore for SqliteAccountingStore {
         Ok(Ok((record, false)))
     }
 
-    fn get_usage(&self, org_id: &str, id: &str) -> Result<Option<UsageRecordView>, OfficeError> {
+    fn get_usage(
+        &self,
+        org_id: &str,
+        id: &str,
+    ) -> Result<Option<UsageRecordView>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let found: Option<String> = conn
@@ -290,9 +293,9 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         found
-            .map(|s| serde_json::from_str(&s).map_err(OfficeError::storage))
+            .map(|s| serde_json::from_str(&s).map_err(AccountingError::storage))
             .transpose()
     }
 
@@ -302,7 +305,7 @@ impl AccountingStore for SqliteAccountingStore {
         origin_office_id: &str,
         producer_id: &str,
         source_event_id: &str,
-    ) -> Result<Option<UsageRecordView>, OfficeError> {
+    ) -> Result<Option<UsageRecordView>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let found: Option<String> = conn
@@ -313,13 +316,13 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         found
-            .map(|s| serde_json::from_str(&s).map_err(OfficeError::storage))
+            .map(|s| serde_json::from_str(&s).map_err(AccountingError::storage))
             .transpose()
     }
 
-    fn is_superseded(&self, org_id: &str, id: &str) -> Result<bool, OfficeError> {
+    fn is_superseded(&self, org_id: &str, id: &str) -> Result<bool, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         conn.query_row(
@@ -327,10 +330,10 @@ impl AccountingStore for SqliteAccountingStore {
             params![org_id, id],
             |r| r.get(0),
         )
-        .map_err(OfficeError::storage)
+        .map_err(AccountingError::storage)
     }
 
-    fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, OfficeError> {
+    fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let mut stmt = conn
@@ -341,21 +344,21 @@ impl AccountingStore for SqliteAccountingStore {
                                    WHERE c.organization_id=u.organization_id AND c.supersedes_id=u.id) \
                  ORDER BY u.occurred_at DESC, u.id DESC",
             )
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let rows = stmt
             .query_map([org_id], |r| r.get::<_, String>(0))
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(
-                serde_json::from_str(&row.map_err(OfficeError::storage)?)
-                    .map_err(OfficeError::storage)?,
+                serde_json::from_str(&row.map_err(AccountingError::storage)?)
+                    .map_err(AccountingError::storage)?,
             );
         }
         Ok(out)
     }
 
-    fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, OfficeError> {
+    fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         // O(streams) coverage from in-memory `staged_streams` + `verified_streams` + per-stream
@@ -381,7 +384,7 @@ impl AccountingStore for SqliteAccountingStore {
         let checkpoint_ref = (!verified_watermarks.is_empty())
             .then(|| serde_json::to_string(&verified_watermarks))
             .transpose()
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         Ok(UsageCoverageSummary {
             incomplete_streams: incomplete.len() as u64,
             coverage_as_of: as_of,
@@ -393,7 +396,7 @@ impl AccountingStore for SqliteAccountingStore {
         &self,
         org_id: &str,
         prior: &VerifiedStreamWatermark,
-    ) -> Result<bool, OfficeError> {
+    ) -> Result<bool, AccountingError> {
         if prior.high_water_sequence == 0 {
             return Ok(true);
         }
@@ -432,7 +435,7 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?
+            .map_err(AccountingError::storage)?
             .flatten();
         Ok(actual_chain.as_deref() == Some(expected_chain))
     }
@@ -441,7 +444,7 @@ impl AccountingStore for SqliteAccountingStore {
         &self,
         org_id: &str,
         mut snapshot: StoredSubscriptionUsageSnapshot,
-    ) -> Result<(), OfficeError> {
+    ) -> Result<(), AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let sqlite_existing: Option<StoredSubscriptionUsageSnapshot> = conn
@@ -452,7 +455,7 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| r.get::<_, String>(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?
+            .map_err(AccountingError::storage)?
             .and_then(|raw| serde_json::from_str(&raw).ok());
         let durable_existing =
             read_durable_snapshot_if_present(&self.local_usage_dir, &snapshot.connection_id)?;
@@ -463,9 +466,9 @@ impl AccountingStore for SqliteAccountingStore {
                 // Ensure the on-disk snapshot directory entry is durably synced before
                 // promoting a disk-only snapshot into SQLite.
                 sync_usage_dir_and_parent(&self.local_usage_dir)?;
-                let tx = conn.transaction().map_err(OfficeError::storage)?;
+                let tx = conn.transaction().map_err(AccountingError::storage)?;
                 upsert_subscription_usage_row(&tx, org_id, dur)?;
-                tx.commit().map_err(OfficeError::storage)?;
+                tx.commit().map_err(AccountingError::storage)?;
             }
         }
         let winning_existing = if durable_seq >= sqlite_seq {
@@ -477,9 +480,9 @@ impl AccountingStore for SqliteAccountingStore {
         if snapshot.attempt_seq > 0 && max_existing > snapshot.attempt_seq {
             return Ok(());
         }
-        org_office::accounting::merge_prior_for_unavailable(&mut snapshot, winning_existing);
-        if org_office::accounting::validate_stored_snapshot(&snapshot).is_err() {
-            return Err(OfficeError::Invalid(
+        org_accounting::merge_prior_for_unavailable(&mut snapshot, winning_existing);
+        if org_accounting::validate_stored_snapshot(&snapshot).is_err() {
+            return Err(AccountingError::Invalid(
                 "merged subscription usage snapshot exceeds validation bounds",
             ));
         }
@@ -491,10 +494,10 @@ impl AccountingStore for SqliteAccountingStore {
             self.needs_reconcile.store(true, Ordering::Release);
             return Err(err);
         }
-        let proj = (|| -> Result<(), OfficeError> {
-            let tx = conn.transaction().map_err(OfficeError::storage)?;
+        let proj = (|| -> Result<(), AccountingError> {
+            let tx = conn.transaction().map_err(AccountingError::storage)?;
             upsert_subscription_usage_row(&tx, org_id, &snapshot)?;
-            tx.commit().map_err(OfficeError::storage)?;
+            tx.commit().map_err(AccountingError::storage)?;
             Ok(())
         })();
         if let Err(err) = proj {
@@ -507,7 +510,7 @@ impl AccountingStore for SqliteAccountingStore {
     fn list_subscription_usage(
         &self,
         org_id: &str,
-    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, OfficeError> {
+    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let mut stmt = conn
@@ -515,14 +518,14 @@ impl AccountingStore for SqliteAccountingStore {
                 "SELECT json_payload FROM subscription_usage_snapshots \
                  WHERE organization_id=?1 ORDER BY connection_id ASC",
             )
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let rows = stmt
             .query_map([org_id], |r| r.get::<_, String>(0))
-            .map_err(OfficeError::storage)?;
+            .map_err(AccountingError::storage)?;
         let mut out = Vec::new();
         for row in rows {
-            let json = row.map_err(OfficeError::storage)?;
-            out.push(serde_json::from_str(&json).map_err(OfficeError::storage)?);
+            let json = row.map_err(AccountingError::storage)?;
+            out.push(serde_json::from_str(&json).map_err(AccountingError::storage)?);
         }
         Ok(out)
     }
@@ -531,7 +534,7 @@ impl AccountingStore for SqliteAccountingStore {
         &self,
         org_id: &str,
         connection_id: &str,
-    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError> {
+    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, AccountingError> {
         let mut conn = self.lock()?;
         self.ensure_reconciled(&mut conn, org_id)?;
         let json: Option<String> = conn
@@ -542,8 +545,8 @@ impl AccountingStore for SqliteAccountingStore {
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?;
-        json.map(|raw| serde_json::from_str(&raw).map_err(OfficeError::storage))
+            .map_err(AccountingError::storage)?;
+        json.map(|raw| serde_json::from_str(&raw).map_err(AccountingError::storage))
             .transpose()
     }
 }

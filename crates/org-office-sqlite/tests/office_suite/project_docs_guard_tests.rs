@@ -15,8 +15,8 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Id, Refusal, Store, StoreError, Stream};
 
 use super::{
-    create, create_params, err, every_call, every_write, fixture, index, index_file, media_params,
-    next_uuid, offboard, ok, reopen, team, Fx, ENGINES,
+    create, create_params, engines, err, every_call, every_write, fixture, index, index_file,
+    media_params, next_uuid, offboard, ok, reopen, team, Fx,
 };
 use org_media::testkit::png;
 use org_office::project_docs::index::INDEX_MAX_BYTES;
@@ -79,7 +79,6 @@ fn update_params(fx: &Fx, doc: &str, revision: u64) -> DocsUpdateParams {
 
 #[test]
 fn a_satellite_reads_its_replicated_tree_and_refuses_every_write_as_unavailable() {
-    org_office_sqlite::install();
     let fx = fixture(EngineChoice::Memory);
     let doc = create(&fx, &fx.owner, "Runbook", Some("ops/runbook.md")).document;
     ok(fx
@@ -200,9 +199,8 @@ fn hostile_media(project: &str) -> Vec<(&'static str, DocsPutMediaParams)> {
 
 #[test]
 fn put_media_refuses_outsiders_and_inactive_callers_before_decoding_a_byte() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let stranger = next_uuid();
         offboard(&fx, &fx.contributing_agent);
         for (caller, expected) in [
@@ -237,9 +235,8 @@ fn put_media_refuses_outsiders_and_inactive_callers_before_decoding_a_byte() {
 
 #[test]
 fn agents_of_a_sub_team_of_an_owning_or_contributing_team_are_project_members() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let teams = fx.office.org_snapshot().unwrap().teams;
         let named = |name: &str| teams.iter().find(|t| t.name == name).unwrap().id.clone();
         let (core, design) = (named("Platform Core"), named("Design Ops"));
@@ -282,7 +279,6 @@ fn agents_of_a_sub_team_of_an_owning_or_contributing_team_are_project_members() 
 
 #[test]
 fn media_and_the_index_stay_inside_one_org_sync_payload_or_are_too_large() {
-    org_office_sqlite::install();
     let fx = fixture(EngineChoice::Memory);
     let put = |params| fx.office.docs_put_media(&fx.owner, params);
     // Just over the cap, decoded: refused before the decoder runs.
@@ -334,9 +330,8 @@ fn media_and_the_index_stay_inside_one_org_sync_payload_or_are_too_large() {
 
 #[test]
 fn a_current_documents_owner_is_never_cleared() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let mut params = create_params(&fx.project, "Runbook", Some("runbook.md"));
         params.status = Some(DocStatusWire::Current);
         let doc = ok(fx.office.docs_create(&fx.owning_agent, params)).document;
@@ -369,9 +364,8 @@ fn a_current_documents_owner_is_never_cleared() {
 
 #[test]
 fn an_archived_projects_tree_is_read_only_and_still_hidden_from_outsiders() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let doc = create(&fx, &fx.owner, "Handbook", Some("handbook.md")).document;
         ok(fx
             .office

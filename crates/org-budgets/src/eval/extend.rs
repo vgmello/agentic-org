@@ -5,9 +5,9 @@ use org_proto::budgets::{extended_limit, BudgetPolicyState, BudgetScopeKind};
 use org_proto::{ApiError, ErrorCode};
 use serde_json::json;
 
-use super::super::{BudgetAggregate, BudgetEventRecord};
 use super::thresholds::release_satisfied_holds;
 use super::EvalOutcome;
+use crate::{BudgetAggregate, BudgetEventRecord};
 
 /// Inputs for validating and applying a one-time +20% extension (`doc-92`).
 pub struct ExtendOnceRequest<'a> {
