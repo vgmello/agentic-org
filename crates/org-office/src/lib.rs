@@ -12,13 +12,13 @@
 
 #![forbid(unsafe_code)]
 
-pub mod accounting;
+pub use org_accounting as accounting;
 /// Attachments: blobs, media validation, staging, the shared family and the private space.
 pub mod attachments;
 /// The one Phase-1 authorization choke-point for attachments (`TASK-98.1`).
 pub mod authz;
 pub mod backup;
-pub mod budgets;
+pub use org_budgets as budgets;
 /// The stores an office keeps beside its journal, which agents' sandboxes mask.
 pub mod companion_paths;
 pub mod git;
@@ -87,9 +87,7 @@ pub mod search;
 mod store;
 /// Consumer-owned storage backend and erased engine seams implemented by external engine crates
 /// such as `org-office-sqlite` (`TASK-255`).
-pub use store::backend::{
-    install_sqlite_backend, installed_sqlite_backend, OfficeStorageBackend, PrivateNotesOpened,
-};
+pub use store::backend::{OfficeStorageBackend, PrivateNotesOpened};
 pub use store::erased::{
     BoxedSnapshot, BoxedTx, DynOfficeEngine, OfficeEngineAdapter, OfficeRead, OfficeWrite,
 };

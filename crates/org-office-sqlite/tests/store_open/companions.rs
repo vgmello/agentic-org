@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::ENGINES;
+use super::engines;
 use org_office::testkit_support::store_open::{
     open_accounting, open_budgets, open_private_notes, open_providers, open_replication,
     EngineChoice, ReplicationOpenSpec,
@@ -17,21 +17,19 @@ const INCARNATION: &str = "0195a000-0000-7000-8000-000000000004";
 
 /// Opens every companion store of `office` on `engine` and returns the folders left below
 /// the durable root, by their paths under it.
-fn companion_folders(engine: EngineChoice, office: &str) -> BTreeSet<String> {
-    org_office_sqlite::install();
+fn companion_folders(engine: &EngineChoice, office: &str) -> BTreeSet<String> {
     let dir = tempfile::tempdir().unwrap();
     let durable = dir.path().join("durable");
     let runtime = dir.path().join("runtime");
     std::fs::create_dir_all(&durable).unwrap();
     std::fs::create_dir_all(&runtime).unwrap();
     let is_hq = office == HQ;
-    open_private_notes(engine, None, &durable, &runtime, office, ORG, is_hq).unwrap();
-    open_accounting(engine, None, &durable, &runtime, office, ORG).unwrap();
-    open_budgets(engine, None, &durable, &runtime, office, ORG, is_hq).unwrap();
-    open_providers(engine, None, &durable, &runtime, office, ORG, is_hq).unwrap();
+    open_private_notes(engine, &durable, &runtime, office, ORG, is_hq).unwrap();
+    open_accounting(engine, &durable, &runtime, office, ORG).unwrap();
+    open_budgets(engine, &durable, &runtime, office, ORG, is_hq).unwrap();
+    open_providers(engine, &durable, &runtime, office, ORG, is_hq).unwrap();
     open_replication(ReplicationOpenSpec {
         engine,
-        backend: None,
         durable_root: &durable,
         runtime_root: &runtime,
         org_id: ORG,
@@ -65,7 +63,7 @@ fn folders(root: &Path) -> BTreeSet<String> {
 #[test]
 fn hq_and_satellite_companion_stores_lay_out_the_same_folders_on_every_engine() {
     for office in [HQ, SATELLITE] {
-        let [sqlite, memory] = ENGINES.map(|engine| companion_folders(engine, office));
+        let [sqlite, memory] = engines().map(|engine| companion_folders(&engine, office));
         assert_eq!(sqlite, memory, "{office}");
 
         let own = |folder: &str| format!("local/offices/{office}/{folder}");

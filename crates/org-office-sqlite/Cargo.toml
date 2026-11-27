@@ -11,6 +11,8 @@ publish.workspace = true
 testkit = ["org-office/testkit", "org-store/testkit", "org-reviews/testkit"]
 
 [dependencies]
+org-accounting = { path = "../org-accounting" }
+org-budgets = { path = "../org-budgets" }
 org-office = { path = "../org-office" }
 org-platform = { path = "../org-platform" }
 org-process = { path = "../org-process" }

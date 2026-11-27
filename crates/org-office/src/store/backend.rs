@@ -1,13 +1,14 @@
 //! Consumer-owned storage backend port for plugging external database engines (such as
-//! `org-office-sqlite`) into `org-office` without inverting the dependency direction (`TASK-255`).
+//! `org-office-sqlite`) into `org-office` without inverting the dependency direction (`TASK-255`,
+//! `TASK-282`).
 //!
-//! Callers may inject an [`OfficeStorageBackend`] explicitly on [`StoreConfig`] / `Office::*_with_backend`
-//! or install a process-wide default SQLite backend once at the composition root via
-//! [`install_sqlite_backend`]. If no backend is provided or installed, opening a SQLite store
-//! fails closed.
+//! Callers inject an explicit `Arc<dyn OfficeStorageBackend>` through [`EngineChoice::Sqlite`]
+//! and `Office::open*` / `Office::provision*` / `Office::import_hq` — no process-global singleton
+//! or ambient state exists.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use org_store::{Clock, EngineError, Id, OfficeIdentity, Opening, StoreError, WriterAuthority};
@@ -29,26 +30,56 @@ use super::erased::OfficeEngineAdapter;
 pub const PROJECTION_FILE: &str = "office.db";
 
 /// Which engine holds the projection.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone)]
 pub enum EngineChoice {
-    Sqlite,
+    /// SQLite projection + companion stores provided by an explicitly injected backend.
+    Sqlite(Arc<dyn OfficeStorageBackend>),
     /// The memory engine: tests only, never part of a production build.
     #[cfg(any(test, feature = "testkit"))]
     Memory,
 }
 
+impl fmt::Debug for EngineChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sqlite(_) => f.write_str("EngineChoice::Sqlite(..)"),
+            #[cfg(any(test, feature = "testkit"))]
+            Self::Memory => f.write_str("EngineChoice::Memory"),
+        }
+    }
+}
+
 impl EngineChoice {
-    /// The engine a configuration names. A name with no engine built in is refused: no
-    /// engine is ever chosen in another's place.
-    pub fn named(name: &str) -> Result<Self, StoreError> {
+    /// The engine a configuration names, bound to an explicit SQLite backend when `"sqlite"`
+    /// is chosen. A name with no engine built in (or `"sqlite"` without an injected backend)
+    /// is refused: no engine is ever chosen in another's place.
+    pub fn named(
+        name: &str,
+        sqlite_backend: Option<Arc<dyn OfficeStorageBackend>>,
+    ) -> Result<Self, StoreError> {
         match name {
-            "sqlite" => Ok(Self::Sqlite),
+            "sqlite" => sqlite_backend.map(Self::Sqlite).ok_or_else(|| {
+                StoreError::Invalid(
+                    "SQLite storage engine requires an explicit OfficeStorageBackend".into(),
+                )
+            }),
             #[cfg(any(test, feature = "testkit"))]
             "memory" => Ok(Self::Memory),
             _ => Err(StoreError::Invalid(format!(
                 "no storage engine named {name:?} is built into this office"
             ))),
         }
+    }
+
+    /// Whether this choice selects the SQLite backend.
+    pub fn is_sqlite(&self) -> bool {
+        matches!(self, Self::Sqlite(_))
+    }
+
+    /// Whether this choice selects the test-only memory engine.
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn is_memory(&self) -> bool {
+        matches!(self, Self::Memory)
     }
 }
 
@@ -78,8 +109,6 @@ pub struct StoreConfig {
     pub identity: OfficeIdentity,
     pub custody: Arc<dyn WriterAuthority>,
     pub clock: Arc<dyn Clock>,
-    /// Optional explicit storage backend overriding the installed process default.
-    pub backend: Option<Arc<dyn OfficeStorageBackend>>,
     /// How long appended entries may wait for a flush nobody asked for.
     pub flush_interval: Duration,
     pub opening: Opening,
@@ -104,18 +133,11 @@ impl StoreConfig {
             identity,
             custody,
             clock,
-            backend: None,
             flush_interval: Duration::from_millis(50),
             opening: Opening::Existing,
             #[cfg(any(test, feature = "testkit"))]
             testing: Testing::default(),
         }
-    }
-
-    /// Attaches an explicit [`OfficeStorageBackend`] to this configuration.
-    pub fn with_backend(mut self, backend: Arc<dyn OfficeStorageBackend>) -> Self {
-        self.backend = Some(backend);
-        self
     }
 
     /// The projection's file.
@@ -207,34 +229,4 @@ pub trait OfficeStorageBackend: Send + Sync + 'static {
 
     /// Runs integrity and schema verification on a copied private file space database.
     fn check_user_space(&self, path: &Path) -> Result<(), OfficeError>;
-}
-
-static SQLITE_BACKEND: OnceLock<Arc<dyn OfficeStorageBackend>> = OnceLock::new();
-
-/// Installs the process-wide SQLite storage backend used when [`EngineChoice::Sqlite`]
-/// is opened without an explicit backend. Called once at composition roots (for example
-/// `apps/agentic-org-office` and `org-backup`). Subsequent calls are ignored and return `false`.
-pub fn install_sqlite_backend(backend: Arc<dyn OfficeStorageBackend>) -> bool {
-    SQLITE_BACKEND.set(backend).is_ok()
-}
-
-/// Returns the installed process-wide SQLite storage backend, failing closed if none was installed.
-pub fn installed_sqlite_backend() -> Result<Arc<dyn OfficeStorageBackend>, StoreError> {
-    SQLITE_BACKEND.get().cloned().ok_or_else(|| {
-        StoreError::Invalid(
-            "SQLite storage backend is not installed; call org_office_sqlite::install() \
-             or pass an explicit OfficeStorageBackend"
-                .into(),
-        )
-    })
-}
-
-/// Resolves an explicit backend if supplied, otherwise falls back to [`installed_sqlite_backend`].
-pub(crate) fn resolve_sqlite_backend(
-    explicit: Option<&Arc<dyn OfficeStorageBackend>>,
-) -> Result<Arc<dyn OfficeStorageBackend>, StoreError> {
-    match explicit {
-        Some(backend) => Ok(Arc::clone(backend)),
-        None => installed_sqlite_backend(),
-    }
 }

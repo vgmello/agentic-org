@@ -7,11 +7,11 @@ use org_proto::budgets::{
 };
 use serde_json::json;
 
-use super::super::{
+use super::EvalOutcome;
+use crate::{
     BudgetAggregate, BudgetEventRecord, BudgetHoldRecord, BudgetNoticeRecord, BudgetPeriodRecord,
     BudgetPolicyVersion,
 };
-use super::EvalOutcome;
 
 pub(super) fn apply_thresholds_and_holds(
     agg: &mut BudgetAggregate,

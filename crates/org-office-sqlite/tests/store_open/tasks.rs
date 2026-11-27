@@ -71,7 +71,7 @@ struct Seed {
 
 fn seed_store(engine: EngineChoice) -> Seed {
     let place = Place::new();
-    let store = place.create(engine);
+    let store = place.create(engine.clone());
     let here = identity();
     let cmd = creation_command();
     let owner = cmd.creator.employee_id.clone();
@@ -516,7 +516,9 @@ fn assert_sqlite_rebuild_parity(s: Seed) {
         .join("office.db");
     s.store.close().expect("close store");
     let _ = std::fs::remove_file(&db_path);
-    let reopened = s.place.reopen(EngineChoice::Sqlite);
+    let reopened = s
+        .place
+        .reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let (inspected_res, _) = reopened
         .read(TaskInspectRead {
             task: "T-A1".into(),
@@ -548,8 +550,8 @@ fn assert_sqlite_rebuild_parity(s: Seed) {
 
 #[test]
 fn engine_independent_tasks_lifecycle_auth_checklists_comments_and_rebuild() {
-    for engine in ENGINES {
-        let s = seed_store(engine);
+    for engine in engines() {
+        let s = seed_store(engine.clone());
 
         let t1 = create_basic(
             &s.store,
@@ -610,7 +612,7 @@ fn engine_independent_tasks_lifecycle_auth_checklists_comments_and_rebuild() {
         assert_checklist_lifecycle(&s, &t1.key);
         assert_comments_watchers_and_history(&s, &t1.key);
 
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             assert_sqlite_rebuild_parity(s);
         }
     }
@@ -860,8 +862,8 @@ fn assert_files_and_dependency_removal(
 
 #[test]
 fn engine_independent_task_77_dependencies_searchable_labels_files_and_ordering() {
-    for engine in ENGINES {
-        let s = seed_store(engine);
+    for engine in engines() {
+        let s = seed_store(engine.clone());
 
         let a = create_basic(
             &s.store,
@@ -1175,8 +1177,8 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
 
 #[test]
 fn engine_independent_idempotency_replay_reuse_and_validation_bounds() {
-    for engine in ENGINES {
-        let s = seed_store(engine);
+    for engine in engines() {
+        let s = seed_store(engine.clone());
         assert_idempotency_and_noop_guards(&s);
         assert_validation_bounds_and_cap_swap(&s);
     }
@@ -1266,8 +1268,8 @@ fn register_satellite(s: &Seed, op_num: u64, office_id: &Id, name: &str) {
 
 #[test]
 fn atomic_task_write_authority_enforced_inside_unit_of_work() {
-    for engine in ENGINES {
-        let s = seed_store(engine);
+    for engine in engines() {
+        let s = seed_store(engine.clone());
         let hq_task = create_basic(
             &s.store,
             &s.here,

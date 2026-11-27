@@ -6,6 +6,9 @@ mod checkpoint;
 mod extend;
 mod thresholds;
 
+use org_accounting::{
+    record_is_api_equivalent, record_known_tokens, UsageCoverageSummary, VerifiedStreamWatermark,
+};
 use org_proto::budgets::{BudgetHoldState, BudgetPeriodKind, BudgetScopeKind, BudgetUnit};
 use org_proto::costs::{CompletenessStatus, UsageCostBasis, UsageRecordView};
 use org_proto::tz::{format_utc_bounds, local_day_bounds_utc, local_month_bounds_utc};
@@ -16,8 +19,7 @@ pub use self::checkpoint::checkpoint_ref_regressed;
 use self::checkpoint::merge_checkpoint_refs;
 pub use self::extend::{apply_extend_once, ExtendOnceRequest};
 use self::thresholds::apply_thresholds_and_holds;
-use super::{BudgetAggregate, BudgetEventRecord, BudgetPeriodRecord, BudgetPolicyVersion};
-use crate::accounting::{record_is_api_equivalent, record_known_tokens, UsageCoverageSummary};
+use crate::{BudgetAggregate, BudgetEventRecord, BudgetPeriodRecord, BudgetPolicyVersion};
 
 /// Result of evaluating one budget against effective usage records at `now_ms`.
 #[derive(Debug, Clone, Default)]
@@ -74,9 +76,7 @@ pub fn evaluate_budget(
     coverage: &UsageCoverageSummary,
     now_ms: u64,
     now_utc: &str,
-    continues: &mut dyn FnMut(
-        &crate::accounting::VerifiedStreamWatermark,
-    ) -> Result<bool, ApiError>,
+    continues: &mut dyn FnMut(&VerifiedStreamWatermark) -> Result<bool, ApiError>,
     next_id: &mut dyn FnMut() -> String,
 ) -> Result<EvalOutcome, ApiError> {
     let mut out = EvalOutcome::default();

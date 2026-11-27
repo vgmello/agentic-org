@@ -9,11 +9,16 @@ use org_office::{Office, TestOffice};
 
 #[test]
 fn validate_state_dir_accepts_valid_org_and_names_invalid_or_unknown_files() {
-    org_office_sqlite::install();
+    let backend = org_office_sqlite::SqliteStorageBackend;
     let office = Office::for_test(TestOffice::default());
     let state_dir = office.durable_root().join("state");
-    let imported = validate_state_dir(&state_dir, "https://example.test/acme.git", "org/state")
-        .expect("valid created state must pass import validation");
+    let imported = validate_state_dir(
+        &state_dir,
+        "https://example.test/acme.git",
+        "org/state",
+        &backend,
+    )
+    .expect("valid created state must pass import validation");
     assert_eq!(imported.summary.name, office.info().org_name);
     assert_eq!(imported.summary.teams_count, 1);
     assert_eq!(imported.summary.people.len(), 1);
@@ -30,8 +35,13 @@ fn validate_state_dir_accepts_valid_org_and_names_invalid_or_unknown_files() {
     let copy = tempfile::tempdir().unwrap();
     copy_tree(&state_dir, copy.path());
     fs::write(copy.path().join("rogue.txt"), b"not an org file").unwrap();
-    let err =
-        validate_state_dir(copy.path(), "https://example.test/acme.git", "org/state").unwrap_err();
+    let err = validate_state_dir(
+        copy.path(),
+        "https://example.test/acme.git",
+        "org/state",
+        &backend,
+    )
+    .unwrap_err();
     match err {
         ImportError::InvalidFile { path, .. } => assert_eq!(path, "state/rogue.txt"),
         other => panic!("expected InvalidFile naming rogue.txt, got {other:?}"),
@@ -39,8 +49,13 @@ fn validate_state_dir_accepts_valid_org_and_names_invalid_or_unknown_files() {
 
     fs::remove_file(copy.path().join("rogue.txt")).unwrap();
     fs::write(copy.path().join("organization.yaml"), b"not: [valid").unwrap();
-    let err =
-        validate_state_dir(copy.path(), "https://example.test/acme.git", "org/state").unwrap_err();
+    let err = validate_state_dir(
+        copy.path(),
+        "https://example.test/acme.git",
+        "org/state",
+        &backend,
+    )
+    .unwrap_err();
     match err {
         ImportError::InvalidFile { path, .. } => assert_eq!(path, "state/organization.yaml"),
         other => panic!("expected InvalidFile naming organization.yaml, got {other:?}"),
@@ -49,7 +64,7 @@ fn validate_state_dir_accepts_valid_org_and_names_invalid_or_unknown_files() {
 
 #[test]
 fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_files() {
-    org_office_sqlite::install();
+    let backend = org_office_sqlite::SqliteStorageBackend;
     use org_proto::processes::{
         DocumentKindWire, DocumentStatusWire, ProcessScopeWire, ProcessWriteParams,
     };
@@ -126,8 +141,13 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
 
     office.sync_store().unwrap();
     let state_dir = office.durable_root().join("state");
-    let imported = validate_state_dir(&state_dir, "https://example.test/acme.git", "org/state")
-        .expect("org containing tasks, comments, and process docs must pass Git import validation");
+    let imported = validate_state_dir(
+        &state_dir,
+        "https://example.test/acme.git",
+        "org/state",
+        &backend,
+    )
+    .expect("org containing tasks, comments, and process docs must pass Git import validation");
     let task_folder = format!("state/teams/{root_team_id}/work/tasks/{task_id}/");
     for file in [
         "task.md",
@@ -167,6 +187,7 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
         tampered.path(),
         "https://example.test/acme.git",
         "org/state",
+        &backend,
     ) {
         Err(ImportError::InvalidFile { path, reason }) => {
             assert_eq!(path, format!("state/work-history/tasks/{task_id}/2.json"));
@@ -192,7 +213,12 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
     .unwrap();
     assert!(
         matches!(
-            validate_state_dir(copy.path(), "https://example.test/acme.git", "org/state"),
+            validate_state_dir(
+                copy.path(),
+                "https://example.test/acme.git",
+                "org/state",
+                &backend,
+            ),
             Err(ImportError::InvalidFile { ref path, .. })
                 if path == "state/messaging/conversations/leaked.json"
         ),
@@ -218,6 +244,7 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
         dup_copy.path(),
         "https://example.test/acme.git",
         "org/state",
+        &backend,
     ) {
         Err(ImportError::InvalidFile { path, reason }) => {
             assert_eq!(

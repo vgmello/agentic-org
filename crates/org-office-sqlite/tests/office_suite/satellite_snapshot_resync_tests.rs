@@ -42,7 +42,12 @@ use org_office::{
 use org_office::{NewOffice, OfficeRole};
 use org_office::{ReplicatedFileBatch, SatelliteProvisionSpec};
 
-const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
+fn engines() -> [EngineChoice; 2] {
+    [
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+        EngineChoice::Memory,
+    ]
+}
 
 struct SatelliteHarness {
     hq: Office,
@@ -59,7 +64,9 @@ struct SatelliteHarness {
 
 impl SatelliteHarness {
     fn new(engine: EngineChoice) -> Self {
-        let hq = Office::for_test_with_real_ca(TestOffice { engine });
+        let hq = Office::for_test_with_real_ca(TestOffice {
+            engine: engine.clone(),
+        });
         let owner = hq.owner_member_id().to_owned();
         let org_id = hq.info().org_id.clone();
         let top_team = hq.org_snapshot().unwrap().teams[0].id.clone();
@@ -133,8 +140,7 @@ impl SatelliteHarness {
         };
         let sat_key = Key::from_bytes([0x43; 32]);
         let sat_opts = Options {
-            backend: None,
-            engine,
+            engine: engine.clone(),
             clock: Arc::new(org_store::SystemClock),
             testing: Default::default(),
             before_final_checks: None,
@@ -542,9 +548,8 @@ fn list_hires(office: &Office) -> Vec<HireRequest> {
 
 #[test]
 fn full_state_snapshot_resync_with_terminal_hire_requests_succeeds_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = SatelliteHarness::new(engine);
+    for engine in engines() {
+        let fx = SatelliteHarness::new(engine.clone());
         let (_, profile_id) = create_provider_and_profile(&fx.hq, &fx.owner, "subscription_cli");
         let (req_hired, agent_id) = hire_agent(
             &fx.hq,
@@ -623,9 +628,8 @@ fn full_state_snapshot_resync_with_terminal_hire_requests_succeeds_on_both_engin
 
 #[test]
 fn standalone_move_agent_multi_chunk_snapshot_resync_succeeds_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = SatelliteHarness::new(engine);
+    for engine in engines() {
+        let fx = SatelliteHarness::new(engine.clone());
         let team_b = create_team(&fx.hq, &fx.owner, "Team B", &fx.top_team);
         let team_d = create_team(&fx.hq, &fx.owner, "Team D", &fx.top_team);
         let (_, profile_id) = create_provider_and_profile(&fx.hq, &fx.owner, "api_key");
@@ -915,9 +919,8 @@ fn assert_tampered_terminal_hires_rejected(
 
 #[test]
 fn snapshot_resync_mutating_terminal_hire_request_fails_closed_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = SatelliteHarness::new(engine);
+    for engine in engines() {
+        let fx = SatelliteHarness::new(engine.clone());
         let (_, profile_id) = create_provider_and_profile(&fx.hq, &fx.owner, "api_key");
         let (req_hired, _) = hire_agent(
             &fx.hq,
@@ -961,7 +964,7 @@ fn snapshot_resync_mutating_terminal_hire_request_fails_closed_on_both_engines()
             &withdrawn_path,
             &failed_path,
         );
-        assert_tampered_terminal_hires_rejected(&fx.sat, engine, &base_snapshot, cases);
+        assert_tampered_terminal_hires_rejected(&fx.sat, engine.clone(), &base_snapshot, cases);
 
         assert_eq!(
             load_hire(&fx.sat, &req_hired).unwrap(),

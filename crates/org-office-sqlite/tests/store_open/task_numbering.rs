@@ -48,8 +48,8 @@ fn write_counter(b: &Bench, counter: Option<OfficeTaskCounterRecord>) {
 
 #[test]
 fn a_clean_stop_after_an_unclean_one_spends_the_reservation_before_its_marker() {
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         let first = b.create(Some(TEAM_B), None);
         // Inside the block: `committed`, so a power cut may take it back after its answer.
         let second = b.create(Some(TEAM_B), None);
@@ -92,8 +92,8 @@ fn a_clean_stop_after_an_unclean_one_spends_the_reservation_before_its_marker() 
 #[test]
 fn concurrent_creates_after_an_unclean_stop_jump_past_the_reservation_once() {
     const CREATES: u64 = 6;
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         b.create(Some(TEAM_B), None);
         b.reopen_after_crash();
         let store = Arc::new(b.store.take().expect("open"));
@@ -134,8 +134,8 @@ fn concurrent_creates_after_an_unclean_stop_jump_past_the_reservation_once() {
 
 #[test]
 fn a_missing_counter_beside_tasks_of_the_offices_code_refuses_to_create() {
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         b.create(Some(TEAM_B), None);
         b.create(Some(TEAM_B), None);
         // The office-local counter is lost; the tasks of its code are not.
@@ -157,8 +157,8 @@ fn a_missing_counter_beside_tasks_of_the_offices_code_refuses_to_create() {
 
 #[test]
 fn a_counter_behind_tasks_of_the_offices_code_refuses_to_create() {
-    for engine in ENGINES {
-        let mut b = Bench::new(engine);
+    for engine in engines() {
+        let mut b = Bench::new(engine.clone());
         for _ in 0..3 {
             b.create(Some(TEAM_B), None);
         }

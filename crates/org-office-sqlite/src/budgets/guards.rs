@@ -5,8 +5,8 @@ use org_proto::budgets::{BudgetHoldState, BudgetScopeKind};
 use org_proto::ApiError;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use org_office::budgets::BudgetAggregate;
-use org_office::OfficeError;
+use org_budgets::BudgetAggregate;
+use org_budgets::BudgetError;
 
 use super::load::load_aggregate_from_db;
 
@@ -71,7 +71,7 @@ pub(super) fn validate_aggregate_sqlite_bounds(agg: &BudgetAggregate) -> Option<
 pub(super) fn check_target_and_revision_under_lock(
     conn: &Connection,
     agg: &BudgetAggregate,
-) -> Result<Option<ApiError>, OfficeError> {
+) -> Result<Option<ApiError>, BudgetError> {
     let budget = &agg.budget;
     let existing_target_id: Option<String> = match budget.scope_kind {
         BudgetScopeKind::Task => conn
@@ -81,7 +81,7 @@ pub(super) fn check_target_and_revision_under_lock(
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?,
+            .map_err(BudgetError::storage)?,
         BudgetScopeKind::Agent => conn
             .query_row(
                 "SELECT id FROM budgets WHERE organization_id=?1 AND scope_kind='agent' AND agent_id=?2 AND period_kind=?3",
@@ -89,7 +89,7 @@ pub(super) fn check_target_and_revision_under_lock(
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?,
+            .map_err(BudgetError::storage)?,
         BudgetScopeKind::Release => conn
             .query_row(
                 "SELECT id FROM budgets WHERE organization_id=?1 AND scope_kind='release' AND release_id=?2",
@@ -97,7 +97,7 @@ pub(super) fn check_target_and_revision_under_lock(
                 |r| r.get(0),
             )
             .optional()
-            .map_err(OfficeError::storage)?,
+            .map_err(BudgetError::storage)?,
         _ => None,
     };
     if let Some(other_id) = existing_target_id {

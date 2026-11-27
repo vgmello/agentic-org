@@ -8,7 +8,7 @@ use org_proto::attachments::{ArtifactStatus, AttachmentTargetKind};
 use org_proto::ErrorCode;
 use org_store::Id;
 
-use super::{attach_upload, next_uuid, read_all, upload, Fixture, ENGINES};
+use super::{attach_upload, engines, next_uuid, read_all, upload, Fixture};
 use org_office::attachments::blobs::ContentHash;
 use org_office::attachments::media::{self, MediaType};
 use org_office::attachments::records::{self, AttachmentRecord};
@@ -66,9 +66,8 @@ pub(super) fn check(
 
 #[test]
 fn hq_binds_a_shipped_file_only_once_its_bytes_verify_and_a_retry_binds_nothing_new() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let bytes = sample_png(16, 8);
         let record = shipped(
             &fx.person,
@@ -143,7 +142,6 @@ fn hq_binds_a_shipped_file_only_once_its_bytes_verify_and_a_retry_binds_nothing_
 
 #[test]
 fn hq_refuses_a_shipped_file_its_uploader_could_not_add_or_whose_bytes_lie() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let bytes = sample_png(8, 8);
     let refused = |record: &AttachmentRecord, origin: &str| check(&fx, origin, record).unwrap_err();
@@ -238,9 +236,8 @@ fn hq_refuses_a_shipped_file_its_uploader_could_not_add_or_whose_bytes_lie() {
 
 #[test]
 fn a_satellite_fetches_shared_files_by_id_alone_and_never_a_private_one() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let secret = b"PRIVATE-BYTES-only-the-owner-may-read".to_vec();
         let staged = upload(&fx.office, &fx.owner, "secret.txt", "text/plain", &secret).unwrap();
         let private = attach_upload(
@@ -308,8 +305,7 @@ fn a_satellite_fetches_shared_files_by_id_alone_and_never_a_private_one() {
 
 #[test]
 fn the_state_snapshot_satellites_install_carries_file_records_never_their_bytes() {
-    org_office_sqlite::install();
-    let fx = Fixture::new(EngineChoice::Sqlite);
+    let fx = Fixture::new(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let marker = b"BLOB-BYTES-MARKER-never-in-a-snapshot-0042".to_vec();
     let staged = upload(&fx.office, &fx.person, "m.txt", "text/plain", &marker).unwrap();
     let shared = attach_upload(
@@ -355,15 +351,14 @@ fn the_state_snapshot_satellites_install_carries_file_records_never_their_bytes(
 
 #[test]
 fn satellite_ingest_cannot_shadow_an_existing_hq_message_file() {
-    org_office_sqlite::install();
     use org_office::attachments::remote::ShippedAttachment;
     use org_office::testkit_support::store_open::attachment_ops::{
         attachment_operation, AttachmentWrite, AttachmentWriteOp,
     };
     use org_proto::chat::ChatSendParams;
 
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let msg_bytes = b"DM-ORIGINAL-MESSAGE-FILE".to_vec();
         let staged = upload(&fx.office, &fx.owner, "dm.txt", "text/plain", &msg_bytes).unwrap();
         let sent = fx

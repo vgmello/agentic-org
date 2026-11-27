@@ -13,7 +13,7 @@ use org_proto::tz::{
 };
 use org_proto::{ApiError, ErrorCode};
 
-use super::{
+use crate::{
     default_work_type_label, record_is_api_equivalent, record_known_tokens, CostViewerScope,
     UsageCoverageSummary,
 };

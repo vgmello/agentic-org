@@ -24,15 +24,15 @@ use org_office::{
 };
 
 use super::{
-    creation_id, folders, names, team_create, tree, Site, CREATOR, ENGINES, HR, TEAM_A, TEAM_B,
+    creation_id, engines, folders, names, team_create, tree, Site, CREATOR, HR, TEAM_A, TEAM_B,
     TOP_TEAM,
 };
 
 #[test]
 fn creation_lays_out_the_same_durable_folders_on_every_engine() {
-    let [sqlite, memory] = ENGINES.map(|engine| {
+    let [sqlite, memory] = engines().map(|engine| {
         let site = Site::new();
-        site.provision(engine).unwrap().close().unwrap();
+        site.provision(engine.clone()).unwrap().close().unwrap();
         folders(&site.roots.durable)
     });
     assert!(sqlite.contains("authority/agent-execution"), "{sqlite:?}");
@@ -41,9 +41,9 @@ fn creation_lays_out_the_same_durable_folders_on_every_engine() {
 
 #[test]
 fn creation_writes_exactly_the_golden_files_and_the_ca_records() {
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let material = ca_material(&identity().organization_id, office_harness::CA_SEED);
 
         let mut expected = creation_files();
@@ -121,7 +121,9 @@ fn a_foreign_file_where_creation_writes_stops_it_and_is_named() {
         let site = Site::new();
         std::fs::create_dir_all(site.durable("state")).unwrap();
         std::fs::write(site.durable(planted), b"planted: true\n").unwrap();
-        let error = site.provision(EngineChoice::Sqlite).unwrap_err();
+        let error = site
+            .provision(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()))
+            .unwrap_err();
         if planted == "state/organization.yaml" {
             assert!(
                 matches!(
@@ -150,14 +152,18 @@ fn a_foreign_file_where_creation_writes_stops_it_and_is_named() {
 #[test]
 fn deleting_the_runtime_folder_rebuilds_an_equal_projection() {
     let site = Site::new();
-    let office = site.provision(EngineChoice::Sqlite).unwrap();
+    let office = site
+        .provision(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()))
+        .unwrap();
     let answer = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
     assert_eq!(answer.unwrap().unwrap().status, CommandStatus::Committed);
     let (dump, snapshot) = (office.dump(), office.org_snapshot().unwrap());
     office.close().unwrap();
     std::fs::remove_dir_all(site.runtime_folder()).unwrap();
 
-    let office = site.open(EngineChoice::Sqlite).unwrap();
+    let office = site
+        .open(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()))
+        .unwrap();
     assert_eq!(office.dump(), dump);
     assert_eq!(office.org_snapshot().unwrap(), snapshot);
     assert!(site.runtime_folder().join("office.db").is_file());
@@ -166,14 +172,14 @@ fn deleting_the_runtime_folder_rebuilds_an_equal_projection() {
 
 #[test]
 fn an_answered_team_survives_a_kill_and_only_a_close_is_a_clean_stop() {
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let answered = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
         let answered = answered.unwrap().unwrap();
         site.killed(office);
 
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         assert!(!office.stopped_cleanly(), "{engine:?}");
         let teams = office.org_snapshot().unwrap().teams;
         assert!(teams.iter().any(|team| team.id == TEAM_A), "{engine:?}");
@@ -181,7 +187,7 @@ fn an_answered_team_survives_a_kill_and_only_a_close_is_a_clean_stop() {
         assert_eq!(again.unwrap(), Ok(answered), "{engine:?}");
         office.close().unwrap();
 
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         assert!(office.stopped_cleanly(), "{engine:?}");
         office.close().unwrap();
     }
@@ -197,11 +203,11 @@ fn a_creation_retried_after_a_crash_point_keeps_its_ca_and_its_one_entry() {
         CrashPoint::MaterializeRenamed,
         CrashPoint::BeforeMark,
     ];
-    for engine in ENGINES {
+    for engine in engines() {
         for point in points {
             let context = format!("{engine:?} {point:?}");
             let site = Site::new();
-            let failed = site.provision_with(engine, |prior| {
+            let failed = site.provision_with(engine.clone(), |prior| {
                 site.faults.arm(point, 1);
                 prior.map_or_else(|| office_harness::record(office_harness::CA_SEED), Ok)
             });
@@ -216,7 +222,7 @@ fn a_creation_retried_after_a_crash_point_keeps_its_ca_and_its_one_entry() {
 
             let prior = Cell::new(None);
             let office = site
-                .provision_with(engine, |found| {
+                .provision_with(engine.clone(), |found| {
                     prior.set(Some(found.is_some()));
                     found.map_or_else(|| office_harness::record(9), Ok)
                 })
@@ -238,15 +244,18 @@ fn a_creation_retried_after_a_crash_point_keeps_its_ca_and_its_one_entry() {
 
 #[test]
 fn a_creation_that_dies_around_the_journal_anchor_completes_on_retry() {
-    for engine in ENGINES {
+    for engine in engines() {
         for after in [false, true] {
             let site = Site::new();
             site.faults.crash(DiskOp::Link, Target::File, 1, after);
-            assert!(site.provision(engine).is_err(), "{engine:?} {after}");
+            assert!(
+                site.provision(engine.clone()).is_err(),
+                "{engine:?} {after}"
+            );
             site.faults.revive();
             let anchor = org_store::journal_dir(&site.roots.durable, &identity());
             assert_eq!(anchor.join("anchor.json").exists(), after, "{engine:?}");
-            let office = site.provision(engine).unwrap();
+            let office = site.provision(engine.clone()).unwrap();
             assert_eq!(office.org_snapshot().unwrap().position.seq, 1);
             office.close().unwrap();
         }
@@ -309,12 +318,14 @@ fn opening_refuses_missing_or_mismatched_ca_records() {
     ];
     for (case, spoil) in cases {
         let site = Site::new();
-        site.provision(EngineChoice::Sqlite)
+        site.provision(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()))
             .unwrap()
             .close()
             .unwrap();
         spoil(&site);
-        let refused = site.open(EngineChoice::Sqlite).unwrap_err();
+        let refused = site
+            .open(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()))
+            .unwrap_err();
         assert!(
             matches!(
                 refused,
@@ -323,10 +334,13 @@ fn opening_refuses_missing_or_mismatched_ca_records() {
             "{case}: {refused:?}"
         );
         let called = Cell::new(false);
-        let retried = site.provision_with(EngineChoice::Sqlite, |prior| {
-            called.set(true);
-            prior.map_or_else(|| office_harness::record(9), Ok)
-        });
+        let retried = site.provision_with(
+            EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+            |prior| {
+                called.set(true);
+                prior.map_or_else(|| office_harness::record(9), Ok)
+            },
+        );
         assert!(retried.is_err(), "{case}");
         assert!(!called.get(), "{case}");
     }
@@ -334,9 +348,9 @@ fn opening_refuses_missing_or_mismatched_ca_records() {
 
 #[test]
 fn fatal_reports_a_flush_error() {
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         assert_eq!(office.fatal(), None);
         site.faults
             .arm(CrashPoint::FlushError(FlushSite::Segment), 1);
@@ -351,9 +365,9 @@ fn fatal_reports_a_flush_error() {
 
 #[test]
 fn the_projection_holds_no_form_of_the_ca_key() {
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let wrapped =
             ca_material(&identity().organization_id, office_harness::CA_SEED).wrapped_ca_key;
         let hex: String = wrapped.iter().map(|b| format!("{b:02x}")).collect();
@@ -380,7 +394,7 @@ fn the_projection_holds_no_form_of_the_ca_key() {
 fn the_final_checks_stop_office_json() {
     let site = Site::new();
     let (new, binding) = office_harness::request();
-    let mut options = site.options(EngineChoice::Sqlite);
+    let mut options = site.options(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let key = site.durable(local::ca_key_path(&identity().office_id).as_str());
     options.before_final_checks = Some(Arc::new(move || {
         std::fs::remove_file(&key).unwrap();
@@ -415,9 +429,9 @@ fn dry_run_command_id_window_and_operation_lookup_enforce_b2_rules() {
         format!("{hi:08x}-{mid:04x}-7000-8000-{seq:012x}")
     };
 
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let now = CREATION_AT.0;
         let before = office.org_snapshot().unwrap();
 

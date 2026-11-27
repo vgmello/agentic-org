@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use org_office::{Custody, DataRoots, EngineChoice, Key, Office, TestOffice};
+use org_office::{Custody, DataRoots, Key, Office, TestOffice};
 use org_proto::hiring::{HireProposalWire, HrHire, HrHireParams};
 use org_proto::{Outcome, Request};
 use serde::de::DeserializeOwned;
@@ -47,14 +47,11 @@ pub struct Org {
 impl Org {
     /// A new organization, seeded and stopped.
     pub fn seeded() -> Org {
-        org_office_sqlite::install();
         let tmp = tempfile::tempdir().expect("a temporary directory");
         let root = tmp.path().canonicalize().expect("a real path");
         let (office, roots, custody, key) = Office::for_test_with_real_ca_in(
             &root,
-            TestOffice {
-                engine: EngineChoice::Sqlite,
-            },
+            TestOffice::sqlite(org_office_sqlite::sqlite_backend()),
         );
         let owner = office.owner_member_id().to_owned();
         let team = office.org_snapshot().unwrap().teams[0].id.clone();
@@ -146,6 +143,7 @@ impl Org {
             self.custody.identity.instance_id.as_str(),
             self.roots.clone(),
             self.custody.clone(),
+            org_office_sqlite::sqlite_backend(),
         )
         .expect("the office opens")
     }

@@ -57,13 +57,20 @@ impl World {
             custody,
             code,
             None,
+            org_office_sqlite::sqlite_backend(),
         )
     }
 
     pub(crate) fn open(&self, key: Option<Key>) -> Result<Office, OfficeError> {
-        org_office_sqlite::install();
         let (custody, roots) = self.writer.admitted();
-        Office::open(&self.folder, key, INSTANCE, roots, custody)
+        Office::open(
+            &self.folder,
+            key,
+            INSTANCE,
+            roots,
+            custody,
+            org_office_sqlite::sqlite_backend(),
+        )
     }
 
     /// Every file under the office's folder and its data roots.

@@ -31,7 +31,12 @@ use org_office::testkit_support::store_open::EngineChoice;
 use org_office::testkit_support::Options;
 use org_office::{Custody, DataRoots, Office};
 
-pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Memory, EngineChoice::Sqlite];
+pub(super) fn engines() -> [EngineChoice; 2] {
+    [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ]
+}
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(120_000);
 
@@ -78,8 +83,7 @@ pub(super) struct Fixture {
 
 fn options(engine: EngineChoice) -> Options {
     Options {
-        backend: None,
-        engine,
+        engine: engine.clone(),
         clock: Arc::new(FixedClock(CREATION_AT)),
         testing: Default::default(),
         before_final_checks: None,
@@ -151,7 +155,6 @@ fn hire_agent(office: &Office, owner: &str, team: &str, name: &str, handle: &str
 
 impl Fixture {
     pub fn new(engine: EngineChoice) -> Self {
-        org_office_sqlite::install();
         let tmp = tempfile::tempdir().unwrap();
         let (folder, roots) = places(tmp.path());
         let custody = Custody {
@@ -167,7 +170,7 @@ impl Fixture {
             roots.clone(),
             custody.clone(),
             |_| record(CA_SEED),
-            options(engine),
+            options(engine.clone()),
         )
         .unwrap();
         let owner = office.owner_member_id().to_owned();
@@ -207,7 +210,7 @@ impl Fixture {
             folder,
             roots,
             custody,
-            engine,
+            engine: engine.clone(),
             office,
             owner,
             person,
@@ -243,7 +246,7 @@ impl Fixture {
             .runtime
             .join(identity().office_id.as_str())
             .join("office.db");
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             assert!(projection.exists());
         }
         std::fs::remove_dir_all(&roots.runtime).unwrap();
@@ -254,7 +257,7 @@ impl Fixture {
             &identity().instance_id.to_string(),
             roots.clone(),
             custody.clone(),
-            options(engine),
+            options(engine.clone()),
         )
         .unwrap();
         Self {
@@ -262,7 +265,7 @@ impl Fixture {
             folder,
             roots,
             custody,
-            engine,
+            engine: engine.clone(),
             office,
             owner: rest.0,
             person: rest.1,

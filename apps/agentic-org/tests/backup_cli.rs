@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use org_host_setup::fixture::registered_account;
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use serde_json::Value;
 
 const PASSPHRASE: &[u8] = b"correct horse battery staple\n";
@@ -43,12 +43,9 @@ impl Instance {
             .unwrap()
             .port();
         let account = registered_account(&base, None, port).unwrap();
-        org_office_sqlite::install();
         let (office, roots, _, _) = Office::for_test_with_real_ca_in(
             &root.join("t"),
-            TestOffice {
-                engine: EngineChoice::Sqlite,
-            },
+            TestOffice::sqlite(org_office_sqlite::sqlite_backend()),
         );
         let org_id = office.info().org_id.clone();
         let office_id = office.info().office_id.clone();

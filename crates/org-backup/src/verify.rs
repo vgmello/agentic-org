@@ -159,7 +159,6 @@ pub(crate) fn verify_in(
     limits: &Limits,
     work: &Path,
 ) -> Result<(Manifest, Vec<PrivateDb>, Rebuilt), BackupError> {
-    org_office_sqlite::install();
     let durable = work.join("durable");
     let runtime = work.join("runtime");
     let manifest = extract(
@@ -182,8 +181,9 @@ pub(crate) fn verify_in(
         pinned: Some(head),
         is_hq: manifest.office_role == "hq",
     };
-    let (report, ()) = rebuild_disposable(&spec, |_| Ok(()))
-        .map_err(|e| BackupError::invalid(format!("its office does not open from it: {e}")))?;
+    let (report, ()) =
+        rebuild_disposable(&spec, org_office_sqlite::sqlite_backend(), |_| Ok(()))
+            .map_err(|e| BackupError::invalid(format!("its office does not open from it: {e}")))?;
     let rebuilt = Rebuilt {
         head_ordinal: report.head_ordinal,
         stopped_cleanly: report.stopped_cleanly,
@@ -206,12 +206,15 @@ fn check_private_databases(
         if !manifest.files.iter().any(|f| f.path == path) {
             continue;
         }
-        let check = match db {
+        let check: fn(&dyn org_office::OfficeStorageBackend, &Path) -> _ = match db {
             PrivateDb::TaskNotes => check_task_notes,
             PrivateDb::UserSpace => check_user_space,
         };
-        check(&path.under(durable))
-            .map_err(|e| BackupError::invalid(format!("its {}: {e}", db.what())))?;
+        check(
+            &org_office_sqlite::SqliteStorageBackend,
+            &path.under(durable),
+        )
+        .map_err(|e| BackupError::invalid(format!("its {}: {e}", db.what())))?;
         checked.push(db);
     }
     Ok(checked)

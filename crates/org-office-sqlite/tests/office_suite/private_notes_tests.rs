@@ -66,8 +66,7 @@ pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
     };
     let (new, binding) = request();
     let options = Options {
-        backend: None,
-        engine,
+        engine: engine.clone(),
         clock: Arc::new(FixedClock(CREATION_AT)),
         testing: Default::default(),
         before_final_checks: None,
@@ -158,8 +157,7 @@ pub(super) fn rebuilt_sqlite(f: PrivateNoteFixture) -> PrivateNoteFixture {
         roots.clone(),
         custody.clone(),
         Options {
-            backend: None,
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             clock: Arc::new(FixedClock(CREATION_AT)),
             testing: Default::default(),
             before_final_checks: None,
@@ -549,9 +547,11 @@ pub(super) fn dir_contains_bytes_excluding(root: &Path, skip_dir: &Path, needle:
 
 #[test]
 fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
-        let f = seed_fixture(engine);
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let f = seed_fixture(engine.clone());
         let unpublished_secret = "UNPUBLISHED_PRIVATE_RATIONALE_XYZ987";
         let published_secret = "EXPLICITLY_PUBLISHED_RATIONALE_ABC123";
 
@@ -573,7 +573,7 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
 
         let note_id = assert_pn01_pn02_taskauth4_and_6(&f, published_secret);
         assert_pn03_pn05_pn06_and_taskauth5_7(&f, &note_id, published_secret);
-        assert_extended_security_and_replay_boundaries(&f, engine);
+        assert_extended_security_and_replay_boundaries(&f, engine.clone());
         assert_pending_publish_lock_and_paused_agent_refusal(&f);
 
         // PN-04 + ARCH-01: Zero bytes of the unpublished private note anywhere under durable/
@@ -589,7 +589,7 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
         );
 
         // PN-04 SQLite restart + task closure + ENTIRE runtime/<office-id> wipe survival!
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             assert_pn04_sqlite_restart_and_runtime_wipe_survival(f, unpub_id, unpublished_secret);
         }
     }
@@ -660,8 +660,7 @@ fn assert_pn04_sqlite_restart_and_runtime_wipe_survival(
         f.roots.clone(),
         f.custody.clone(),
         Options {
-            backend: None,
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             clock: Arc::new(FixedClock(CREATION_AT)),
             testing: Default::default(),
             before_final_checks: None,
@@ -890,7 +889,7 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
     );
 
     // (f) On SQLite Unix, durable/private directory is 0o700 and task-notes.db is 0o600.
-    if engine == EngineChoice::Sqlite {
+    if engine.is_sqlite() {
         use std::os::unix::fs::PermissionsExt;
         let private_dir = f.roots.durable.join("private");
         let db_file = private_dir.join("task-notes.db");
@@ -1056,9 +1055,11 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
 /// agent's private notes stay invisible to her, whoever her run acts for.
 #[test]
 fn the_chief_of_staff_never_reads_another_agents_private_notes() {
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
-        let f = seed_fixture(engine);
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let f = seed_fixture(engine.clone());
         let tess = f
             .office
             .chief_of_staff()
@@ -1104,11 +1105,13 @@ fn the_chief_of_staff_never_reads_another_agents_private_notes() {
 
 #[test]
 fn private_notes_never_leak_into_conflict_detail_or_events_since() {
-    org_office_sqlite::install();
     use org_proto::tasks::{PatchField, TasksUpdateParams};
 
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
-        let f = seed_fixture(engine);
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let f = seed_fixture(engine.clone());
         let initial_rev = f
             .office
             .task_inspect(&f.task_key)

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use org_proto::costs::UsageRecordView;
 
-use org_office::accounting::UsageStreamCheckpoint;
+use org_accounting::UsageStreamCheckpoint;
 
 use super::{PartitionedStreams, StagedStreamSet, VerifiedStreamHead, VerifiedStreamMap};
 
@@ -32,7 +32,7 @@ fn verify_single_stream_prefix(
             return None;
         }
         last_payload_sha = Some(rec.payload_sha256.as_str());
-        let next_c = org_office::accounting::chain_usage_stream_head(running_chain.as_deref(), rec);
+        let next_c = org_accounting::chain_usage_stream_head(running_chain.as_deref(), rec);
         prefix_chains.push((rec.id.clone(), next_c.clone()));
         running_chain = Some(next_c);
     }

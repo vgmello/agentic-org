@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::live::LiveEvents;
 use org_git::{AllowedProtocol, GitCredential, GitError};
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::git::{
     CacheStateWire, GitPushParams, RepoAttachParams, RepoRegisterParams, RepoStatusParams,
     RepositoryKindWire, WorktreeListParams, WorktreePrepareParams,
@@ -51,10 +51,9 @@ fn seed_bare_origin(dir: &Path) -> PathBuf {
 
 #[test]
 fn real_office_register_attach_prepare_commit_and_push_end_to_end() {
-    org_office_sqlite::install();
-    let office = Arc::new(Office::for_test(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let office = Arc::new(Office::for_test(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = office.owner_member_id().to_owned();
     let live = Arc::new(LiveEvents::for_owner(Box::new(|| {}), owner.clone()));
     let svc = GitService::new(Arc::clone(&office), live);

@@ -105,9 +105,8 @@ fn race_two_fields(office: &Office, actor: &str, id: &str) {
 
 #[test]
 fn an_edit_names_only_its_fields_and_concurrent_edits_of_other_fields_all_survive() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(office, &fx.agent, "plan.md", "text/markdown", b"# Plan").unwrap();
         let shared = attach_upload(
@@ -166,9 +165,8 @@ fn an_edit_names_only_its_fields_and_concurrent_edits_of_other_fields_all_surviv
 
 #[test]
 fn an_archived_projects_file_is_refused_an_edit_where_the_write_is_decided() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(office, &fx.agent, "plan.md", "text/markdown", b"# Plan").unwrap();
         let file = attach_upload(

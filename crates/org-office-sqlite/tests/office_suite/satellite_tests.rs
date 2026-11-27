@@ -42,9 +42,8 @@ fn build_satellite_custody(org_id: &str, sat_office_id: &str) -> Custody {
 
 #[test]
 fn hq_invitation_three_wrong_codes_cancels_and_approve_provisions_satellite_and_d25_reenrolls() {
-    org_office_sqlite::install();
     let hq = Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
     });
     let owner = hq.owner_member_id().to_owned();
     let org_id = hq.info().org_id.clone();
@@ -258,8 +257,7 @@ fn verify_satellite_provision_isolation_reopen_d25_and_revocation(
     let sat_custody = build_satellite_custody(org_id, &tok2.office_id);
     let sat_key = Key::from_bytes([0x22; 32]);
     let sat_opts = Options {
-        backend: None,
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
         clock: Arc::new(org_store::SystemClock),
         testing: Default::default(),
         before_final_checks: None,
@@ -439,9 +437,8 @@ fn removal_drains_in_flight_peer_activity_before_publishing_revocation_and_stops
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
     };
-    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
     }));
     let owner = hq.owner_member_id().to_owned();
     let sat_a = "0195a000-0000-7000-8000-0000000000a1";
@@ -515,9 +512,8 @@ fn removal_drains_in_flight_peer_activity_before_publishing_revocation_and_stops
 
 #[test]
 fn streaming_snapshot_export_pages_to_disk_and_honors_byte_budget() {
-    org_office_sqlite::install();
     let hq = Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
     });
     let dir_ok = tempfile::tempdir().unwrap();
     let mut observed_bytes = 0u64;
@@ -619,9 +615,8 @@ fn streaming_snapshot_export_pages_to_disk_and_honors_byte_budget() {
 
 #[test]
 fn snapshot_export_fails_closed_on_corrupt_channel_and_invalid_filename() {
-    org_office_sqlite::install();
     let hq = Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
     });
     // Corrupt/unreadable `conversation.json` must fail snapshot export closed instead of skipping
     // the channel (`TASK-52` P25-#1).
@@ -719,7 +714,6 @@ fn snapshot_export_fails_closed_on_corrupt_channel_and_invalid_filename() {
 
 #[test]
 fn replicated_hq_owner_file_fails_closed_on_corrupt_tampered_symlink_dir_and_oversized() {
-    org_office_sqlite::install();
     use org_office::testkit_support::satellite_testkit::{
         read_replicated_hq_owner, remove_replicated_hq_owner, write_replicated_hq_owner,
     };

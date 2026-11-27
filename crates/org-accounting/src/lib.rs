@@ -1,14 +1,21 @@
+#![forbid(unsafe_code)]
+
 //! Consumer-owned port and domain contract for `L2` immutable usage & cost accounting,
 //! versioned USD model pricing, durable JSONL/checkpoint streams, and attribution corrections
 //! (`TASK-53`, `doc-87`, `doc-51`, `FC-084..088`).
 
+pub mod error;
 pub mod memory;
 pub mod query;
 pub mod subscription_usage;
+#[cfg(test)]
+mod tests;
 
+pub use error::AccountingError;
 pub use subscription_usage::{
     aggregate_totals_by_model, build_snapshot_view, canonical_provider_namespace,
-    merge_prior_for_unavailable, validate_stored_snapshot, StoredSubscriptionUsageSnapshot,
+    merge_prior_for_unavailable, paginate_snapshots, paginate_totals, validate_stored_snapshot,
+    ModelRollupResult, StoredSubscriptionUsageSnapshot, SubscriptionConnectionMeta,
     SubscriptionCredentialPresence, MAX_MODEL_NAME_BYTES, MAX_SUBSCRIPTION_MODELS,
     SUBSCRIPTION_USAGE_FRESHNESS_MS,
 };
@@ -23,8 +30,6 @@ use org_proto::costs::{
 use org_proto::{ApiError, ErrorCode};
 use org_store::Sha256;
 use serde::{Deserialize, Serialize};
-
-use crate::error::OfficeError;
 
 /// Durable producer checkpoint (`doc-87` §Durable storage and multi-office recovery).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,13 +101,13 @@ pub trait AccountingStore: Send + Sync {
         &self,
         org_id: &str,
         price: ModelPriceView,
-    ) -> Result<Result<ModelPriceView, ApiError>, OfficeError>;
+    ) -> Result<Result<ModelPriceView, ApiError>, AccountingError>;
 
     fn list_prices(
         &self,
         org_id: &str,
         params: &CostPriceListParams,
-    ) -> Result<Vec<ModelPriceView>, OfficeError>;
+    ) -> Result<Vec<ModelPriceView>, AccountingError>;
 
     fn effective_price(
         &self,
@@ -110,15 +115,16 @@ pub trait AccountingStore: Send + Sync {
         provider: &str,
         model: &str,
         occurred_at: &str,
-    ) -> Result<Option<ModelPriceView>, OfficeError>;
+    ) -> Result<Option<ModelPriceView>, AccountingError>;
 
     fn append_usage(
         &self,
         org_id: &str,
         record: UsageRecordView,
-    ) -> Result<Result<(UsageRecordView, bool), ApiError>, OfficeError>;
+    ) -> Result<Result<(UsageRecordView, bool), ApiError>, AccountingError>;
 
-    fn get_usage(&self, org_id: &str, id: &str) -> Result<Option<UsageRecordView>, OfficeError>;
+    fn get_usage(&self, org_id: &str, id: &str)
+        -> Result<Option<UsageRecordView>, AccountingError>;
 
     fn find_by_source_event(
         &self,
@@ -126,13 +132,13 @@ pub trait AccountingStore: Send + Sync {
         origin_office_id: &str,
         producer_id: &str,
         source_event_id: &str,
-    ) -> Result<Option<UsageRecordView>, OfficeError>;
+    ) -> Result<Option<UsageRecordView>, AccountingError>;
 
-    fn is_superseded(&self, org_id: &str, id: &str) -> Result<bool, OfficeError>;
+    fn is_superseded(&self, org_id: &str, id: &str) -> Result<bool, AccountingError>;
 
-    fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, OfficeError>;
+    fn effective_records(&self, org_id: &str) -> Result<Vec<UsageRecordView>, AccountingError>;
 
-    fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, OfficeError>;
+    fn coverage_summary(&self, org_id: &str) -> Result<UsageCoverageSummary, AccountingError>;
 
     /// Returns `true` iff `(prior.origin_office_id, prior.producer_id)` is currently a verified
     /// stream with `high_water_sequence >= prior.high_water_sequence` AND matching chain digest
@@ -141,24 +147,24 @@ pub trait AccountingStore: Send + Sync {
         &self,
         org_id: &str,
         prior: &VerifiedStreamWatermark,
-    ) -> Result<bool, OfficeError>;
+    ) -> Result<bool, AccountingError>;
 
     fn save_subscription_usage(
         &self,
         org_id: &str,
         snapshot: StoredSubscriptionUsageSnapshot,
-    ) -> Result<(), OfficeError>;
+    ) -> Result<(), AccountingError>;
 
     fn list_subscription_usage(
         &self,
         org_id: &str,
-    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, OfficeError>;
+    ) -> Result<Vec<StoredSubscriptionUsageSnapshot>, AccountingError>;
 
     fn get_subscription_usage(
         &self,
         org_id: &str,
         connection_id: &str,
-    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError>;
+    ) -> Result<Option<StoredSubscriptionUsageSnapshot>, AccountingError>;
 }
 
 /// Compares semantic fields of two model price versions (ignoring wall-clock `created_at`

@@ -1,5 +1,6 @@
-//! Domain types, validation, freshness evaluation, and cross-subscription model aggregation
-//! for `TASK-79` provider subscription model usage snapshots (total, daily, weekly, short-term).
+//! Domain types, validation, freshness evaluation, byte-bounded pagination, and cross-subscription
+//! model aggregation for `TASK-79` provider subscription model usage snapshots (total, daily,
+//! weekly, short-term).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -9,8 +10,6 @@ use org_proto::costs::{
 };
 use org_proto::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
-
-use crate::organization::records::ProviderConnection;
 
 /// Default freshness window for collected subscription usage snapshots (15 minutes).
 pub const SUBSCRIPTION_USAGE_FRESHNESS_MS: u64 = 15 * 60 * 1_000;
@@ -28,6 +27,19 @@ pub const MAX_MESSAGE_BYTES: usize = 512;
 pub const MAX_MODELS_JSON_BYTES: usize = 30 * 1024;
 /// Maximum serialized JSON size for one stored snapshot (keeps list responses well under 1 MiB).
 pub const MAX_SNAPSHOT_JSON_BYTES: usize = 32 * 1024;
+const MAX_TOTALS_RESPONSE_BYTES: usize = 256 * 1024;
+const MAX_LIST_RESPONSE_BYTES: usize = 512 * 1024;
+
+/// Narrow connection descriptor passed into [`build_snapshot_view`] so `org-accounting` stays
+/// decoupled from `org-office::organization` records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubscriptionConnectionMeta<'a> {
+    pub id: &'a str,
+    pub key: &'a str,
+    pub name: &'a str,
+    pub provider_type: &'a str,
+    pub subscription_identity: Option<&'a str>,
+}
 
 /// Persisted office-local subscription usage snapshot (stored outside shared org Git).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,10 +226,10 @@ fn validate_window(window: &SubscriptionUsageWindowView) -> Result<(), ApiError>
     Ok(())
 }
 
-/// Builds a client-facing snapshot view by joining a shared `ProviderConnection`, optional
-/// persisted office-local snapshot, live credential presence, and monotonic `now_ms`.
+/// Builds a client-facing snapshot view by joining connection metadata, optional persisted
+/// office-local snapshot, live credential presence, and monotonic `now_ms`.
 pub fn build_snapshot_view(
-    conn: &ProviderConnection,
+    conn: SubscriptionConnectionMeta<'_>,
     office_id: &str,
     stored: Option<&StoredSubscriptionUsageSnapshot>,
     cred: &SubscriptionCredentialPresence,
@@ -249,11 +261,11 @@ pub fn build_snapshot_view(
                 )
             };
             SubscriptionUsageSnapshotView {
-                connection_id: conn.id.as_str().to_owned(),
-                connection_key: conn.key.clone(),
-                connection_name: conn.name.clone(),
-                provider_type: conn.provider_type.clone(),
-                subscription_identity: conn.subscription_identity.clone(),
+                connection_id: conn.id.to_owned(),
+                connection_key: conn.key.to_owned(),
+                connection_name: conn.name.to_owned(),
+                provider_type: conn.provider_type.to_owned(),
+                subscription_identity: conn.subscription_identity.map(str::to_owned),
                 office_id: snap.office_id.clone(),
                 status,
                 auth_source: snap.auth_source,
@@ -275,7 +287,7 @@ pub fn build_snapshot_view(
 }
 
 fn build_uncollected_snapshot_view(
-    conn: &ProviderConnection,
+    conn: SubscriptionConnectionMeta<'_>,
     office_id: &str,
     cred: &SubscriptionCredentialPresence,
 ) -> SubscriptionUsageSnapshotView {
@@ -294,11 +306,11 @@ fn build_uncollected_snapshot_view(
         )
     };
     SubscriptionUsageSnapshotView {
-        connection_id: conn.id.as_str().to_owned(),
-        connection_key: conn.key.clone(),
-        connection_name: conn.name.clone(),
-        provider_type: conn.provider_type.clone(),
-        subscription_identity: conn.subscription_identity.clone(),
+        connection_id: conn.id.to_owned(),
+        connection_key: conn.key.to_owned(),
+        connection_name: conn.name.to_owned(),
+        provider_type: conn.provider_type.to_owned(),
+        subscription_identity: conn.subscription_identity.map(str::to_owned),
         office_id: office_id.to_owned(),
         status,
         auth_source: SubscriptionUsageAuthSource::None,
@@ -342,6 +354,67 @@ pub fn canonical_provider_namespace(provider_type: &str) -> String {
         "google" | "agy" | "antigravity" | "antigravity-cli" | "gemini" => "google".into(),
         _ => lower,
     }
+}
+
+/// Byte-bounded cursor pagination for aggregated per-model subscription usage totals.
+pub fn paginate_totals(
+    all: Vec<SubscriptionModelUsageView>,
+    cursor: Option<&str>,
+) -> (Vec<SubscriptionModelUsageView>, Option<String>, usize) {
+    let mut used = 0usize;
+    let mut page = Vec::new();
+    let mut has_more = false;
+    for row in all {
+        if let Some(cur) = cursor {
+            if row.model.as_str() <= cur {
+                continue;
+            }
+        }
+        let item_bytes = serde_json::to_vec(&row).map_or(0, |v| v.len()) + 16;
+        if !page.is_empty() && used.saturating_add(item_bytes) > MAX_TOTALS_RESPONSE_BYTES {
+            has_more = true;
+            break;
+        }
+        used = used.saturating_add(item_bytes);
+        page.push(row);
+    }
+    let next = has_more
+        .then(|| page.last().map(|r| r.model.clone()))
+        .flatten();
+    (page, next, used)
+}
+
+/// Byte-bounded cursor pagination for subscription usage snapshot rows.
+pub fn paginate_snapshots(
+    all: Vec<SubscriptionUsageSnapshotView>,
+    cursor: Option<&str>,
+    limit: Option<u32>,
+    totals_bytes: usize,
+) -> (Vec<SubscriptionUsageSnapshotView>, Option<String>) {
+    let cap = limit.map_or(100, |n| (n as usize).clamp(1, 100));
+    let mut used_bytes = totals_bytes.saturating_add(4096);
+    let mut page = Vec::new();
+    let mut has_more = false;
+    for snap in all {
+        if let Some(cur) = cursor {
+            if snap.connection_id.as_str() <= cur {
+                continue;
+            }
+        }
+        let item_bytes = serde_json::to_vec(&snap).map_or(0, |v| v.len()) + 16;
+        if page.len() >= cap
+            || (!page.is_empty() && used_bytes.saturating_add(item_bytes) > MAX_LIST_RESPONSE_BYTES)
+        {
+            has_more = true;
+            break;
+        }
+        used_bytes = used_bytes.saturating_add(item_bytes);
+        page.push(snap);
+    }
+    let next_cursor = has_more
+        .then(|| page.last().map(|s| s.connection_id.clone()))
+        .flatten();
+    (page, next_cursor)
 }
 
 /// Aggregates `total`, `daily`, `weekly`, and compatible `short_term` counters per model across

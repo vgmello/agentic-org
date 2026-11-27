@@ -93,9 +93,9 @@ fn id_creator() -> Id {
 /// after the acknowledgement (without waiting for a full flush).
 #[test]
 fn ack_2_committed_write_survives_immediate_process_kill_on_both_engines() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).expect("org created");
         store.sync().expect("baseline synced");
         let flushed_before = store.status().flushed;
@@ -121,7 +121,7 @@ fn ack_2_committed_write_survives_immediate_process_kill_on_both_engines() {
         drop(store);
 
         // Reopen: journal replay recovers the committed write and its receipt intact.
-        let reopened = place.reopen(engine);
+        let reopened = place.reopen(engine.clone());
         assert!(!reopened.stopped_cleanly(), "{engine:?}");
         let exists = reopened
             .read(ReadSourceExists(place.probe.path("ack2-item")))
@@ -144,9 +144,9 @@ fn ack_2_committed_write_survives_immediate_process_kill_on_both_engines() {
 /// injecting a fault between commit and flush yields no success acknowledgement.
 #[test]
 fn ack_3_durable_org_operation_never_acknowledges_when_flush_fails() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).expect("org created");
         store.sync().expect("baseline synced");
 
@@ -182,7 +182,7 @@ fn ack_3_durable_org_operation_never_acknowledges_when_flush_fails() {
         drop(store);
 
         place.faults.revive();
-        let reopened = place.reopen(engine);
+        let reopened = place.reopen(engine.clone());
         assert!(reopened.fatal().is_none(), "{engine:?}");
         reopened.close().expect("clean close");
     }
@@ -193,9 +193,9 @@ fn ack_3_durable_org_operation_never_acknowledges_when_flush_fails() {
 /// slow macOS `F_FULLFSYNC`.
 #[test]
 fn ack_5_bounded_flush_interval_enforced_under_continuous_committed_load() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut cfg = place.config(engine, Opening::Create(AnchorFacts::default()));
+        let mut cfg = place.config(engine.clone(), Opening::Create(AnchorFacts::default()));
         cfg.flush_interval = Duration::from_millis(25);
         let store = open_store(&cfg).expect("open store");
         create_organization(&store, 1).expect("org created");
@@ -248,10 +248,10 @@ fn ack_6_and_ack_7_committed_multi_file_change_is_atomic_across_crash_points() {
         CrashPoint::AfterCommittedReply,
         CrashPoint::BeforeMark,
     ];
-    for engine in ENGINES {
+    for engine in engines() {
         for (idx, point) in points.into_iter().enumerate() {
             let place = Place::new();
-            let store = place.create(engine);
+            let store = place.create(engine.clone());
             create_organization(&store, 1).expect("org created");
             store.sync().expect("baseline synced");
 
@@ -280,7 +280,7 @@ fn ack_6_and_ack_7_committed_multi_file_change_is_atomic_across_crash_points() {
             drop(store);
 
             place.faults.revive();
-            let reopened = place.reopen(engine);
+            let reopened = place.reopen(engine.clone());
             let has_a = reopened
                 .read(ReadSourceExists(place.probe.path("part-a")))
                 .expect("read a")
@@ -348,9 +348,9 @@ fn ack_6_and_ack_7_committed_multi_file_change_is_atomic_across_crash_points() {
 /// Verifies `create_team` always declares `Ack::Durable` on both engines (`ACK-4` / `ACK-6`).
 #[test]
 fn ack_4_organization_mutation_always_declares_durable_class() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         create_organization(&store, 1).expect("org created");
         let command = team_command(0x410, TOP_TEAM);
         let actor = Actor::Employee(id(CREATOR));
@@ -418,7 +418,7 @@ impl ReadOp for HoldReadOp {
 #[test]
 fn sqlite_persistent_checkpoint_block_surfaces_in_store_status_upkeep_warning() {
     let place = Place::new();
-    let store = place.create(EngineChoice::Sqlite);
+    let store = place.create(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     create_organization(&store, 1).expect("org created");
     store.sync().expect("baseline synced");
     assert!(store.status().upkeep_warning.is_none());

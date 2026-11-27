@@ -12,7 +12,7 @@ use org_proto::org::{MemberAddPersonParams, TeamCreateParams};
 use org_proto::{ApiError, Call, CallError, ErrorCode, Request};
 use org_store::{testkit::identity, Ack, Change, Id, Stream};
 
-use super::{Site, CREATOR, ENGINES, HR, TEAM_A, TOP_TEAM};
+use super::{engines, Site, CREATOR, HR, TEAM_A, TOP_TEAM};
 use org_office::organization_family::{
     chief_of_staff_id,
     features::HIRE_DENIED,
@@ -116,10 +116,9 @@ impl StoreOp for ForgetTess {
 
 #[test]
 fn a_new_organization_has_tess_beside_hr_reporting_to_the_owner() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let tess = office.chief_of_staff().unwrap().expect("Tess");
         assert_eq!(tess.id.as_str(), tess_id(), "{engine:?}");
         assert_eq!((tess.name.as_str(), tess.handle.as_str()), ("Tess", "tess"));
@@ -170,10 +169,9 @@ impl org_office::testkit_support::store_open::ReadOp for TeamCount {
 
 #[test]
 fn an_older_organization_gets_tess_once_and_keeps_her_across_a_rebuild() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         office.store_for_test().run(ForgetTess);
         assert_eq!(office.chief_of_staff().unwrap(), None, "{engine:?}");
 
@@ -205,7 +203,7 @@ fn an_older_organization_gets_tess_once_and_keeps_her_across_a_rebuild() {
         office.close().unwrap();
         // The memory engine keeps no projection on disk, and always rebuilds.
         let _ = std::fs::remove_dir_all(site.runtime_folder());
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         assert_eq!(count(&office), 1, "{engine:?}");
         assert_eq!(office.chief_of_staff().unwrap(), Some(tess));
         office.close().unwrap();
@@ -214,10 +212,9 @@ fn an_older_organization_gets_tess_once_and_keeps_her_across_a_rebuild() {
 
 #[test]
 fn the_bootstrap_takes_another_handle_when_a_person_holds_tess() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         office.store_for_test().run(ForgetTess);
         org_write(
             &office,
@@ -240,7 +237,7 @@ fn the_bootstrap_takes_another_handle_when_a_person_holds_tess() {
         assert_eq!((person.handle.as_str(), person.builtin_key), ("tess", None));
         // The open-time bootstrap of a reopened office is a no-op too.
         office.close().unwrap();
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         let tess = office.chief_of_staff().unwrap().expect("Tess");
         assert_eq!(tess.handle, "chief-of-staff");
         office.close().unwrap();
@@ -249,10 +246,9 @@ fn the_bootstrap_takes_another_handle_when_a_person_holds_tess() {
 
 #[test]
 fn tess_is_never_offboarded_or_moved_and_never_sets_her_own_hiring() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let tess = tess_id();
         let offboard = call_c2::<AgentOffboard>(
             &office,
@@ -331,10 +327,9 @@ fn tess_is_never_offboarded_or_moved_and_never_sets_her_own_hiring() {
 
 #[test]
 fn tess_hires_into_any_team_only_while_the_owner_leaves_may_hire_on() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
+    for engine in engines() {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let tess = tess_id();
         org_write(
             &office,
@@ -424,7 +419,6 @@ fn tess_hires_into_any_team_only_while_the_owner_leaves_may_hire_on() {
 
 #[test]
 fn caller_authority_is_read_live() {
-    org_office_sqlite::install();
     let site = Site::new();
     let office = site.provision(org_store_engine()).unwrap();
     let owner = office.caller_authority(CREATOR).unwrap();

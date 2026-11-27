@@ -3,7 +3,7 @@
 
 use org_store::{Id, Projector, StoreError};
 
-use super::super::{backend::resolve_sqlite_backend, erased::DynOfficeEngine};
+use super::super::{backend::OfficeStorageBackend, erased::DynOfficeEngine};
 use super::OfficeEngine;
 use crate::{
     attachments::projector::AttachmentFiles, organization::projector::OrganizationFiles,
@@ -105,6 +105,7 @@ fn apply_imported_to_engine<E: OfficeEngine>(
 pub(crate) fn validate_imported_files(
     organization_id: &Id,
     files: &std::collections::BTreeMap<org_store::DurablePath, Vec<u8>>,
+    backend: &dyn OfficeStorageBackend,
 ) -> Result<crate::organization::import::ValidatedImport, crate::organization::import::ImportError>
 {
     use crate::organization::import::{
@@ -115,7 +116,6 @@ pub(crate) fn validate_imported_files(
     use crate::projects::ports::ProjectsRead;
     use org_store::Engine;
 
-    let backend = resolve_sqlite_backend(None).map_err(|e| ImportError::Storage(e.to_string()))?;
     let dir = PrivateTempDir::create("org-validate")?;
     let adapter = backend
         .open_validation_engine(&dir.path().join("validate.db"), organization_id)

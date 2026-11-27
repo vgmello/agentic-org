@@ -2,14 +2,14 @@
 
 use rusqlite::params;
 
-use org_office::budgets::BudgetAggregate;
-use org_office::OfficeError;
+use org_budgets::BudgetAggregate;
+use org_budgets::BudgetError;
 
 pub(super) fn project_aggregate(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
     employee_kinds: &[(String, &'static str)],
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     upsert_mirrors(tx, agg, employee_kinds)?;
     upsert_versions(tx, agg)?;
     upsert_budget_row(tx, agg)?;
@@ -24,26 +24,26 @@ fn upsert_mirrors(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
     employee_kinds: &[(String, &'static str)],
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     let org = &agg.budget.organization_id;
     tx.execute(
         "INSERT OR IGNORE INTO budget_organizations(id) VALUES (?1)",
         [org],
     )
-    .map_err(OfficeError::storage)?;
+    .map_err(BudgetError::storage)?;
     if let Some(tid) = agg.budget.task_id.as_deref() {
         tx.execute(
             "INSERT OR IGNORE INTO budget_tasks(organization_id, kind, id, is_deleted) VALUES (?1, 'task', ?2, 0)",
             params![org, tid],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     if let Some(rid) = agg.budget.release_id.as_deref() {
         tx.execute(
             "INSERT OR IGNORE INTO budget_releases(organization_id, id) VALUES (?1, ?2)",
             params![org, rid],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     for (eid, kind) in employee_kinds {
         tx.execute(
@@ -51,7 +51,7 @@ fn upsert_mirrors(
              ON CONFLICT(organization_id, id) DO UPDATE SET kind = 'agent' WHERE excluded.kind = 'agent'",
             params![org, eid, kind],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }
@@ -59,7 +59,7 @@ fn upsert_mirrors(
 fn upsert_versions(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     for v in &agg.versions {
         tx.execute(
             "INSERT OR IGNORE INTO budget_policy_versions(\
@@ -81,7 +81,7 @@ fn upsert_versions(
                 v.reason.as_deref(),
             ],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }
@@ -89,7 +89,7 @@ fn upsert_versions(
 fn upsert_budget_row(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     let org = &agg.budget.organization_id;
     let exists: bool = tx
         .query_row(
@@ -97,7 +97,7 @@ fn upsert_budget_row(
             params![org, &agg.budget.id],
             |r| r.get(0),
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     if exists {
         tx.execute(
             "UPDATE budgets SET current_revision=?1, time_zone=?2, time_zone_source=?3, time_zone_subject_ref=?4 \
@@ -111,7 +111,7 @@ fn upsert_budget_row(
                 &agg.budget.id,
             ],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     } else {
         tx.execute(
             "INSERT INTO budgets(\
@@ -133,7 +133,7 @@ fn upsert_budget_row(
                 &agg.budget.created_at,
             ],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }
@@ -141,7 +141,7 @@ fn upsert_budget_row(
 fn upsert_periods(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     for p in &agg.periods {
         tx.execute(
             "INSERT INTO budget_periods(\
@@ -179,12 +179,12 @@ fn upsert_periods(
                 p.ledger_checkpoint_ref.as_deref(),
             ],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }
 
-fn upsert_events(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Result<(), OfficeError> {
+fn upsert_events(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Result<(), BudgetError> {
     for e in &agg.events {
         tx.execute(
             "INSERT INTO budget_events(\
@@ -206,7 +206,7 @@ fn upsert_events(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Resul
                 &e.payload_json,
             ],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }
@@ -214,7 +214,7 @@ fn upsert_events(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Resul
 fn upsert_notices(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     for n in &agg.notices {
         tx.execute(
             "INSERT INTO budget_notices(\
@@ -239,12 +239,12 @@ fn upsert_notices(
                 n.resolved_at.as_deref(),
             ],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }
 
-fn upsert_holds(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Result<(), OfficeError> {
+fn upsert_holds(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Result<(), BudgetError> {
     for h in &agg.holds {
         tx.execute(
             "INSERT INTO budget_holds(\
@@ -265,7 +265,7 @@ fn upsert_holds(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Result
                 h.release_reason.as_deref(),
             ],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }
@@ -273,22 +273,22 @@ fn upsert_holds(tx: &rusqlite::Transaction<'_>, agg: &BudgetAggregate) -> Result
 fn upsert_pending_stop(
     tx: &rusqlite::Transaction<'_>,
     agg: &BudgetAggregate,
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     if let Some(intent) = &agg.pending_stop {
-        let json = serde_json::to_string(intent).map_err(OfficeError::storage)?;
+        let json = serde_json::to_string(intent).map_err(BudgetError::storage)?;
         tx.execute(
             "INSERT INTO budget_stop_intents(organization_id, budget_id, intent_json) \
              VALUES (?1, ?2, ?3) \
              ON CONFLICT(organization_id, budget_id) DO UPDATE SET intent_json = excluded.intent_json",
             params![&agg.budget.organization_id, &agg.budget.id, &json],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     } else {
         tx.execute(
             "DELETE FROM budget_stop_intents WHERE organization_id=?1 AND budget_id=?2",
             params![&agg.budget.organization_id, &agg.budget.id],
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     }
     Ok(())
 }

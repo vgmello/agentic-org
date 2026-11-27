@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use org_proto::costs::{ModelPriceView, UsageRecordView};
 use rusqlite::Connection;
 
-use org_office::accounting::UsageStreamCheckpoint;
+use org_accounting::{AccountingError, UsageStreamCheckpoint};
 use org_office::private_fs::{
     absolute, full_sync, private_dir, private_dir_synced, sync_dir, tighten_dir, tighten_file,
 };
@@ -107,7 +107,7 @@ impl std::ops::DerefMut for AccountingState {
 
 /// Isolated durable JSONL + SQLite [`AccountingStore`].
 ///
-/// [`AccountingStore`]: org_office::accounting::AccountingStore
+/// [`AccountingStore`]: org_accounting::AccountingStore
 pub struct SqliteAccountingStore {
     durable_org_root: PathBuf,
     durable_root: PathBuf,
@@ -163,7 +163,8 @@ impl SqliteAccountingStore {
                     office_id,
                     org_id,
                     true,
-                )?;
+                )
+                .map_err(OfficeError::from)?;
                 Ok(())
             },
         )?;
@@ -183,17 +184,17 @@ impl SqliteAccountingStore {
         })
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, AccountingState>, OfficeError> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, AccountingState>, AccountingError> {
         self.state
             .lock()
-            .map_err(|_| OfficeError::Invalid("accounting sqlite connection poisoned"))
+            .map_err(|_| AccountingError::Invalid("accounting sqlite connection poisoned"))
     }
 
     fn ensure_reconciled(
         &self,
         state: &mut AccountingState,
         org_id: &str,
-    ) -> Result<(), OfficeError> {
+    ) -> Result<(), AccountingError> {
         if self.needs_reconcile.load(Ordering::Acquire) {
             let meta = reconcile_durable_conn(
                 &mut state.conn,
@@ -211,11 +212,11 @@ impl SqliteAccountingStore {
         Ok(())
     }
 
-    fn write_price_durable(&self, price: &ModelPriceView) -> Result<(), OfficeError> {
+    fn write_price_durable(&self, price: &ModelPriceView) -> Result<(), AccountingError> {
         let dir = self.durable_root.join("prices");
-        private_dir_synced(&self.durable_root, &dir).map_err(OfficeError::storage)?;
+        private_dir_synced(&self.durable_root, &dir).map_err(AccountingError::storage)?;
         let path = dir.join(format!("{}.json", price.id));
-        let bytes = serde_json::to_vec_pretty(price).map_err(OfficeError::storage)?;
+        let bytes = serde_json::to_vec_pretty(price).map_err(AccountingError::storage)?;
         write_atomic(&path, &bytes)
     }
 
@@ -224,12 +225,12 @@ impl SqliteAccountingStore {
         rec: &UsageRecordView,
         cp: &UsageStreamCheckpoint,
         write_zero_anchor: bool,
-    ) -> Result<(), OfficeError> {
+    ) -> Result<(), AccountingError> {
         let cp_dir = self
             .durable_root
             .join("checkpoints")
             .join(safe_segment(&cp.origin_office_id));
-        private_dir_synced(&self.durable_root, &cp_dir).map_err(OfficeError::storage)?;
+        private_dir_synced(&self.durable_root, &cp_dir).map_err(AccountingError::storage)?;
         let cp_path = cp_dir.join(format!("{}.json", safe_segment(&cp.producer_id)));
         // Persist a sequence-0 anchor checkpoint BEFORE writing the first event on a new stream
         // so crash recovery distinguishes an interrupted first write from an unanchored partial
@@ -245,7 +246,8 @@ impl SqliteAccountingStore {
                 state: "open".into(),
                 checkpointed_at: cp.checkpointed_at.clone(),
             };
-            let zero_bytes = serde_json::to_vec_pretty(&zero_cp).map_err(OfficeError::storage)?;
+            let zero_bytes =
+                serde_json::to_vec_pretty(&zero_cp).map_err(AccountingError::storage)?;
             write_atomic(&cp_path, &zero_bytes)?;
         }
 
@@ -255,22 +257,22 @@ impl SqliteAccountingStore {
             .join("usage")
             .join(safe_segment(&rec.origin_office_id))
             .join(safe_segment(&rec.producer_id));
-        private_dir_synced(&self.durable_root, &stream_dir).map_err(OfficeError::storage)?;
+        private_dir_synced(&self.durable_root, &stream_dir).map_err(AccountingError::storage)?;
         let jsonl_path = stream_dir.join(format!("{date}.jsonl"));
         // O(1) last-byte check before appending; only inspects/repairs the trailing fragment
         // if an interrupted write left a non-newline-terminated tail (`TASK-97` / Pass 2 #9).
         if jsonl_path.is_file() {
             ensure_jsonl_ends_with_newline(&jsonl_path)?;
         }
-        let mut line = serde_json::to_vec(rec).map_err(OfficeError::storage)?;
+        let mut line = serde_json::to_vec(rec).map_err(AccountingError::storage)?;
         line.push(b'\n');
         let mut file = open_private_append(&jsonl_path)?;
-        file.write_all(&line).map_err(OfficeError::storage)?;
-        full_sync(&file).map_err(OfficeError::storage)?;
-        tighten_file(&jsonl_path).map_err(OfficeError::storage)?;
-        sync_dir(&stream_dir).map_err(OfficeError::storage)?;
+        file.write_all(&line).map_err(AccountingError::storage)?;
+        full_sync(&file).map_err(AccountingError::storage)?;
+        tighten_file(&jsonl_path).map_err(AccountingError::storage)?;
+        sync_dir(&stream_dir).map_err(AccountingError::storage)?;
 
-        let cp_bytes = serde_json::to_vec_pretty(cp).map_err(OfficeError::storage)?;
+        let cp_bytes = serde_json::to_vec_pretty(cp).map_err(AccountingError::storage)?;
         write_atomic(&cp_path, &cp_bytes)
     }
 }

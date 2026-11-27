@@ -12,10 +12,7 @@ use org_store::{
     StoreParts,
 };
 
-use super::super::{
-    backend::resolve_sqlite_backend,
-    erased::{DynOfficeEngine, OfficeEngineAdapter},
-};
+use super::super::erased::{DynOfficeEngine, OfficeEngineAdapter};
 use super::{EngineChoice, OfficeEngine, ReadOp, StoreConfig, StoreOp};
 use crate::{
     attachments::projector::AttachmentFiles,
@@ -223,9 +220,8 @@ impl Marker {
 /// made, or rebuilt from the files and the journal, as it needs to be. The last stop's
 /// clean-stop marker is consumed: [`OfficeStore::stopped_cleanly`] reports it.
 pub fn open_store(config: &StoreConfig) -> Result<OfficeStore, StoreError> {
-    match config.engine {
-        EngineChoice::Sqlite => {
-            let backend = resolve_sqlite_backend(config.backend.as_ref())?;
+    match &config.engine {
+        EngineChoice::Sqlite(backend) => {
             let adapter = backend.open_projection(config)?;
             open_store_with_adapter(config, adapter)
         }

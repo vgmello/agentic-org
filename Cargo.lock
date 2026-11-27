@@ -1200,6 +1200,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "org-accounting"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "org-store",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-agent-cli"
 version = "0.0.0"
 dependencies = [
@@ -1276,6 +1286,16 @@ dependencies = [
  "tempfile",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "org-budgets"
+version = "0.0.0"
+dependencies = [
+ "org-accounting",
+ "org-proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1515,6 +1535,8 @@ version = "0.0.0"
 dependencies = [
  "base64",
  "image",
+ "org-accounting",
+ "org-budgets",
  "org-docs",
  "org-media",
  "org-office-launch",
@@ -1622,6 +1644,8 @@ version = "0.0.0"
 dependencies = [
  "base64",
  "image",
+ "org-accounting",
+ "org-budgets",
  "org-media",
  "org-office",
  "org-office-sqlite",

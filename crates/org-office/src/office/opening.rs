@@ -139,31 +139,13 @@ fn verify_store_on_open(
 }
 
 impl Office {
-    /// Opens the finished HQ in `folder` on its store: takes the office lock, reads
-    /// `office.json` and the creation intent, checks that the roots and the custody are the
-    /// ones it was created with, opens the store (replaying or rebuilding the projection),
-    /// and checks the organization, this office's role and the CA records. `key` is the
-    /// host's office secrets key, held only to unwrap the office's private keys.
+    /// Opens the finished HQ in `folder` on its store using an explicit
+    /// [`crate::OfficeStorageBackend`]: takes the office lock, reads `office.json` and the
+    /// creation intent, checks that the roots and the custody are the ones it was created with,
+    /// opens the store (replaying or rebuilding the projection), and checks the organization,
+    /// this office's role and the CA records. `key` is the host's office secrets key, held only
+    /// to unwrap the office's private keys.
     pub fn open(
-        folder: impl Into<PathBuf>,
-        key: Option<Key>,
-        instance: &str,
-        roots: DataRoots,
-        custody: Custody,
-    ) -> Result<Office, OfficeError> {
-        Self::open_with_owner(
-            folder,
-            key,
-            instance,
-            roots,
-            custody,
-            None,
-            Options::production(),
-        )
-    }
-
-    /// Opens the finished HQ in `folder` with an explicit [`crate::OfficeStorageBackend`].
-    pub fn open_with_backend(
         folder: impl Into<PathBuf>,
         key: Option<Key>,
         instance: &str,
@@ -178,13 +160,13 @@ impl Office {
             roots,
             custody,
             None,
-            Options::with_backend(backend),
+            Options::production(backend),
         )
     }
 
     /// Opens the finished HQ in `folder` with an explicit host-authoritative owner member ID
     /// (supports organization ownership handover, `TASK-38` / `doc-78`, while keeping the
-    /// immutable `creation-intent.json` intact).
+    /// immutable `creation-intent.json` intact) and an explicit [`crate::OfficeStorageBackend`].
     pub fn open_as_owner(
         folder: impl Into<PathBuf>,
         key: Option<Key>,
@@ -192,26 +174,6 @@ impl Office {
         roots: DataRoots,
         custody: Custody,
         active_owner: &str,
-    ) -> Result<Office, OfficeError> {
-        Self::open_with_owner(
-            folder,
-            key,
-            instance,
-            roots,
-            custody,
-            Some(active_owner),
-            Options::production(),
-        )
-    }
-
-    /// [`Self::open_as_owner`] with an explicit [`crate::OfficeStorageBackend`].
-    pub fn open_as_owner_with_backend(
-        folder: impl Into<PathBuf>,
-        key: Option<Key>,
-        instance: &str,
-        roots: DataRoots,
-        custody: Custody,
-        active_owner: &str,
         backend: std::sync::Arc<dyn crate::store::backend::OfficeStorageBackend>,
     ) -> Result<Office, OfficeError> {
         Self::open_with_owner(
@@ -221,7 +183,7 @@ impl Office {
             roots,
             custody,
             Some(active_owner),
-            Options::with_backend(backend),
+            Options::production(backend),
         )
     }
 
@@ -307,8 +269,7 @@ impl Office {
         let store = verify_store_on_open(store, &info, &custody.identity, &owner, active_owner)?;
         let ca_digest = satellite::read_ca_digest_for_open(&roots.durable, &info, &hq_office_id);
         let companions = open_companion_stores(CompanionOpenSpec {
-            engine: options.engine,
-            backend: options.backend.as_ref(),
+            engine: &options.engine,
             roots: &roots,
             info: &info,
             identity: &custody.identity,

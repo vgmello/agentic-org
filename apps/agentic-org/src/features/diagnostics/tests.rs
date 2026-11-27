@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_platform::service::{Registration, ServiceError, ServiceManager, ServiceStatus, Unit};
 use serde_json::json;
 
@@ -313,16 +313,13 @@ fn org_integrity_accepts_valid_state_and_detects_syntax_key_link_and_symlink_fau
 
 #[test]
 fn sqlite_parity_matches_real_org_office_db_and_catches_drift_without_mutating() {
-    org_office_sqlite::install();
     let dir = tempfile::Builder::new()
         .prefix("sq")
         .tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())
         .unwrap();
     let (office, roots, _, _) = Office::for_test_with_real_ca_in(
         dir.path(),
-        TestOffice {
-            engine: EngineChoice::Sqlite,
-        },
+        TestOffice::sqlite(org_office_sqlite::sqlite_backend()),
     );
     let office_id = office.info().office_id.clone();
     let owner = office.owner_member_id().to_owned();

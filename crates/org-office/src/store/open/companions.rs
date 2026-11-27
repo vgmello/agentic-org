@@ -7,7 +7,7 @@
 
 use std::{path::Path, sync::Arc};
 
-use super::super::backend::{resolve_sqlite_backend, OfficeStorageBackend, PrivateNotesOpened};
+use super::super::backend::PrivateNotesOpened;
 use super::super::layout;
 use super::EngineChoice;
 use crate::{
@@ -41,8 +41,7 @@ fn lay_out(durable_root: &Path, folder: &Path) -> Result<(), OfficeError> {
 /// satellites (`is_hq == false`), returns fail-closed stubs without creating
 /// `<durable-root>/private/task-notes.db` or any search index.
 pub fn open_private_notes(
-    engine: EngineChoice,
-    backend: Option<&Arc<dyn OfficeStorageBackend>>,
+    engine: &EngineChoice,
     durable_root: &Path,
     runtime_root: &Path,
     office_id: &str,
@@ -57,8 +56,7 @@ pub fn open_private_notes(
     }
     lay_out(durable_root, &layout::private_notes(durable_root))?;
     match engine {
-        EngineChoice::Sqlite => {
-            let backend = resolve_sqlite_backend(backend).map_err(OfficeError::storage)?;
+        EngineChoice::Sqlite(backend) => {
             backend.open_private_notes(durable_root, runtime_root, office_id, org_id)
         }
         #[cfg(any(test, feature = "testkit"))]
@@ -78,8 +76,7 @@ pub fn open_private_notes(
 /// human-private space (`private/user-space.db`). A satellite gets the fail-closed private
 /// space and never creates `<durable-root>/private/` (`ARCH-02`).
 pub fn open_attachments(
-    engine: EngineChoice,
-    backend: Option<&Arc<dyn OfficeStorageBackend>>,
+    engine: &EngineChoice,
     durable_root: &Path,
     office_id: &str,
     is_hq: bool,
@@ -99,10 +96,7 @@ pub fn open_attachments(
     }
     lay_out(durable_root, &layout::private_notes(durable_root))?;
     let user_space: Arc<dyn UserSpaceStore> = match engine {
-        EngineChoice::Sqlite => {
-            let backend = resolve_sqlite_backend(backend).map_err(OfficeError::storage)?;
-            backend.open_user_space(durable_root)?
-        }
+        EngineChoice::Sqlite(backend) => backend.open_user_space(durable_root)?,
         #[cfg(any(test, feature = "testkit"))]
         EngineChoice::Memory => {
             Arc::new(crate::attachments::user_space::memory::MemoryUserSpaceStore::new())
@@ -122,8 +116,7 @@ pub fn open_attachments(
 /// Opens the isolated `L2` usage & cost accounting store (`TASK-53`, `doc-87`, `ADR-0016`)
 /// backed by `<durable-root>/accounting/` and `<runtime-root>/<office-id>/protected/accounting.db`.
 pub fn open_accounting(
-    engine: EngineChoice,
-    backend: Option<&Arc<dyn OfficeStorageBackend>>,
+    engine: &EngineChoice,
     durable_root: &Path,
     runtime_root: &Path,
     office_id: &str,
@@ -131,8 +124,7 @@ pub fn open_accounting(
 ) -> Result<Arc<dyn AccountingStore>, OfficeError> {
     lay_out(durable_root, &layout::accounting(durable_root))?;
     match engine {
-        EngineChoice::Sqlite => {
-            let backend = resolve_sqlite_backend(backend).map_err(OfficeError::storage)?;
+        EngineChoice::Sqlite(backend) => {
             backend.open_accounting(durable_root, runtime_root, office_id, org_id)
         }
         #[cfg(any(test, feature = "testkit"))]
@@ -146,8 +138,7 @@ pub fn open_accounting(
 /// backed by `<durable-root>/budgets/` and `<runtime-root>/<office-id>/protected/budgets.db`.
 /// On satellites (`is_hq == false`), wraps the store in `SatelliteReadOnlyBudgetStore` (`TASK-52` M-20).
 pub fn open_budgets(
-    engine: EngineChoice,
-    backend: Option<&Arc<dyn OfficeStorageBackend>>,
+    engine: &EngineChoice,
     durable_root: &Path,
     runtime_root: &Path,
     office_id: &str,
@@ -156,8 +147,7 @@ pub fn open_budgets(
 ) -> Result<Arc<dyn BudgetStore>, OfficeError> {
     lay_out(durable_root, &layout::budgets(durable_root))?;
     match engine {
-        EngineChoice::Sqlite => {
-            let backend = resolve_sqlite_backend(backend).map_err(OfficeError::storage)?;
+        EngineChoice::Sqlite(backend) => {
             let store = backend.open_budgets(durable_root, runtime_root, office_id, org_id)?;
             if is_hq {
                 Ok(store)
@@ -184,8 +174,7 @@ pub fn open_budgets(
 /// Opens the isolated `L4` provider bindings, discovery cache, and dual-authority quota permit
 /// store (`TASK-54`, `doc-88`, `doc-89`, `TASK-2`, `TASK-52` ARCH-02).
 pub fn open_providers(
-    engine: EngineChoice,
-    backend: Option<&Arc<dyn OfficeStorageBackend>>,
+    engine: &EngineChoice,
     durable_root: &Path,
     runtime_root: &Path,
     office_id: &str,
@@ -201,8 +190,7 @@ pub fn open_providers(
         &layout::execution_authority(durable_root, office_id, is_hq),
     )?;
     match engine {
-        EngineChoice::Sqlite => {
-            let backend = resolve_sqlite_backend(backend).map_err(OfficeError::storage)?;
+        EngineChoice::Sqlite(backend) => {
             backend.open_providers(durable_root, runtime_root, office_id, org_id, is_hq)
         }
         #[cfg(any(test, feature = "testkit"))]
@@ -213,8 +201,7 @@ pub fn open_providers(
 }
 
 pub struct ReplicationOpenSpec<'a> {
-    pub engine: EngineChoice,
-    pub backend: Option<&'a Arc<dyn OfficeStorageBackend>>,
+    pub engine: &'a EngineChoice,
     pub durable_root: &'a Path,
     pub runtime_root: &'a Path,
     pub org_id: &'a str,
@@ -252,12 +239,9 @@ pub fn open_replication(
         initial_snapshot_required: spec.initial_snapshot_required,
     };
     let store = match spec.engine {
-        EngineChoice::Sqlite => {
-            let backend = resolve_sqlite_backend(spec.backend).map_err(OfficeError::storage)?;
-            DurableReplicationStore::open_boxed(durable, |data| {
-                backend.open_replication_projection(spec.runtime_root, &local_office, data)
-            })?
-        }
+        EngineChoice::Sqlite(backend) => DurableReplicationStore::open_boxed(durable, |data| {
+            backend.open_replication_projection(spec.runtime_root, &local_office, data)
+        })?,
         #[cfg(any(test, feature = "testkit"))]
         EngineChoice::Memory => DurableReplicationStore::open_unprojected(durable)?,
     };

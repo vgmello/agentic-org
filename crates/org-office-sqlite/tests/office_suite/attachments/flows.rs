@@ -14,9 +14,8 @@ use org_office::attachments::staging::{MAX_STAGED_FILES, STAGED_TTL_MS};
 
 #[test]
 fn a_multi_chunk_upload_is_attached_listed_inspected_and_read_back_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let csv = big_csv();
         let staged = upload(office, &fx.agent, "ledger.csv", "text/csv", &csv).unwrap();
@@ -120,9 +119,8 @@ fn a_multi_chunk_upload_is_attached_listed_inspected_and_read_back_on_both_engin
 
 #[test]
 fn an_uploaded_photo_is_sanitized_before_hashing_and_has_a_model_derivative() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let raw = fixtures::jpeg_with_exif(64, 32, 6, fixtures::GPS_MARKER);
         let staged = upload(office, &fx.person, "IMG_0001.jpeg", "image/jpeg", &raw).unwrap();
@@ -168,7 +166,6 @@ fn an_uploaded_photo_is_sanitized_before_hashing_and_has_a_model_derivative() {
 
 #[test]
 fn uploads_are_refused_when_blocked_mismatched_oversized_or_misnamed() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let office = &fx.office;
     let begin = |filename: &str, mime: &str, bytes: u64| {
@@ -248,9 +245,8 @@ fn uploads_are_refused_when_blocked_mismatched_oversized_or_misnamed() {
 
 #[test]
 fn metadata_updates_are_journaled_and_bounded() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(
             office,
@@ -326,8 +322,7 @@ fn metadata_updates_are_journaled_and_bounded() {
 
 #[test]
 fn lists_page_with_a_cursor_and_a_bounded_limit() {
-    org_office_sqlite::install();
-    let fx = Fixture::new(EngineChoice::Sqlite);
+    let fx = Fixture::new(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let office = &fx.office;
     let mut ids = Vec::new();
     for n in 0..5 {
@@ -397,7 +392,6 @@ fn lists_page_with_a_cursor_and_a_bounded_limit() {
 
 #[test]
 fn staged_uploads_expire_after_a_day_and_the_quota_holds_through_the_office() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let office = &fx.office;
     let begin = |n: u64| {

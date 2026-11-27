@@ -227,8 +227,7 @@ fn seed_fixture(engine: EngineChoice) -> CostBudgetFixture {
     };
     let (new, binding) = request();
     let options = Options {
-        backend: None,
-        engine,
+        engine: engine.clone(),
         clock: clock.clone(),
         testing: Default::default(),
         before_final_checks: None,
@@ -1820,7 +1819,6 @@ fn run_pass2_extended_reset_and_stop_suite(fx: &CostBudgetFixture) {
 
 #[test]
 fn l2_and_l3_conformance_on_memory_engine() {
-    org_office_sqlite::install();
     let fx = seed_fixture(EngineChoice::Memory);
     run_l2_accounting_suite(&fx);
     run_l3_task_and_agent_budget_suite(&fx);
@@ -1831,8 +1829,7 @@ fn l2_and_l3_conformance_on_memory_engine() {
 
 #[test]
 fn l2_and_l3_conformance_on_sqlite_with_protected_db_delete_and_rebuild() {
-    org_office_sqlite::install();
-    let fx = seed_fixture(EngineChoice::Sqlite);
+    let fx = seed_fixture(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     run_l2_accounting_suite(&fx);
     run_l3_task_and_agent_budget_suite(&fx);
     run_l3_agent_daily_monthly_and_release_suite(&fx);
@@ -1905,8 +1902,7 @@ fn l2_and_l3_conformance_on_sqlite_with_protected_db_delete_and_rebuild() {
         roots,
         custody,
         Options {
-            backend: None,
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             clock,
             testing: Default::default(),
             before_final_checks: None,
@@ -2063,8 +2059,7 @@ fn verify_sqlite_subscription_usage_rebuild(fx: CostBudgetFixture) {
         roots,
         custody,
         Options {
-            backend: None,
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             clock,
             testing: Default::default(),
             before_final_checks: None,
@@ -2116,10 +2111,12 @@ fn verify_sqlite_subscription_usage_rebuild(fx: CostBudgetFixture) {
 
 #[test]
 fn task79_subscription_usage_dual_engine_staleness_and_sqlite_rebuild() {
-    org_office_sqlite::install();
     use org_proto::costs::CostSubscriptionUsageListParams;
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
-        let fx = seed_fixture(engine);
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let fx = seed_fixture(engine.clone());
         let conn_id = seed_subscription_connection(&fx.office, &fx.owner);
         assert_eq!(
             fx.office
@@ -2170,7 +2167,7 @@ fn task79_subscription_usage_dual_engine_staleness_and_sqlite_rebuild() {
         assert_eq!(stale.excluded_snapshot_count, 1);
         assert!(stale.totals_by_model.is_empty());
 
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             verify_sqlite_subscription_usage_rebuild(fx);
         }
     }
@@ -2301,9 +2298,11 @@ fn stage_crashed_stop_intent(
 
 #[test]
 fn budget_stop_intent_crash_recovery_and_eval_blocks_in_progress_task() {
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
-        let fx = seed_fixture(engine);
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let fx = seed_fixture(engine.clone());
         let inspected = fx.office.task_inspect(&fx.task_a).unwrap().unwrap();
         fx.office
             .task_transition(

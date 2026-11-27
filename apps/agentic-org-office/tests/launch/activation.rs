@@ -410,7 +410,6 @@ pub(super) fn ready_create(world: &World) -> Session {
 }
 /// The office reopens in process for its own instance and custody only.
 fn assert_reopens(world: &World) {
-    org_office_sqlite::install();
     let (custody, roots) = world.writer.admitted();
     assert!(matches!(
         org_office::Office::open(
@@ -421,6 +420,7 @@ fn assert_reopens(world: &World) {
             "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184",
             roots,
             custody,
+            org_office_sqlite::sqlite_backend(),
         ),
         Err(org_office::OfficeError::Invalid(_))
     ));

@@ -127,23 +127,32 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
     }
 }
 
-/// Runs the server with an empty (fail-closed) runtime registry and returns its exit code.
-/// Production composition roots (`apps/agentic-org-office`) MUST call [`run_with_runtimes`] with
-/// explicitly constructed runtime adapters.
-pub fn run(args: &[String], control: ControlPipe) -> i32 {
-    run_with_runtimes(args, control, org_office_sessions::RuntimeRegistry::empty())
+/// Runs the server with an empty (fail-closed) runtime registry and an explicit storage backend,
+/// returning its exit code. Production composition roots (`apps/agentic-org-office`) MUST call
+/// [`run_with_runtimes`] with explicitly constructed runtime and storage adapters.
+pub fn run(
+    args: &[String],
+    control: ControlPipe,
+    backend: Arc<dyn org_office::OfficeStorageBackend>,
+) -> i32 {
+    run_with_runtimes(
+        args,
+        control,
+        org_office_sessions::RuntimeRegistry::empty(),
+        backend,
+    )
 }
 
 /// Runs the server with an explicit composition-root [`org_office_sessions::RuntimeRegistry`] and
-/// returns its exit code (`TASK-216`).
+/// [`org_office::OfficeStorageBackend`] and returns its exit code (`TASK-216`, `TASK-282`).
 pub fn run_with_runtimes(
     args: &[String],
     control: ControlPipe,
     runtimes: org_office_sessions::RuntimeRegistry,
+    backend: Arc<dyn org_office::OfficeStorageBackend>,
 ) -> i32 {
-    org_office_sqlite::install();
     if matches!(parse_args(args), Ok(Mode::InspectImport)) {
-        return inspect_import(control);
+        return inspect_import(control, backend.as_ref());
     }
     // No child-spawn paths exist today. Any future path must share this receive/spawn fence.
     let mut control = Control::new(control, Arc::new(std::sync::Mutex::new(())));
@@ -165,9 +174,9 @@ pub fn run_with_runtimes(
     };
     match mode {
         Mode::Discard(id) => discard(control, &home, &id),
-        Mode::Create => create_and_serve(control, &home, &runtime, runtimes),
-        Mode::Join => join_and_serve(control, &home, &runtime, runtimes),
-        Mode::Serve(id) => open_and_serve(control, &home, &runtime, &id, runtimes),
+        Mode::Create => create_and_serve(control, &home, &runtime, runtimes, backend),
+        Mode::Join => join_and_serve(control, &home, &runtime, runtimes, backend),
+        Mode::Serve(id) => open_and_serve(control, &home, &runtime, &id, runtimes, backend),
         Mode::InspectImport => unreachable!(),
     }
 }
