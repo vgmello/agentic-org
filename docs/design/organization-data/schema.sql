@@ -1817,7 +1817,7 @@ organization_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   ended_at TEXT,
   error_code TEXT,
-  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','resume','recovery','background_wake')),
+  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','resume','recovery','background_wake','review_requested','review_verdict','review_reply')),
   started_by_employee_id TEXT,
   started_by_ref TEXT,
   CHECK (started_by_kind NOT IN ('recovery','background_wake') OR started_by_employee_id IS NULL),
@@ -2708,3 +2708,283 @@ WHEN NEW.organization_id <> OLD.organization_id OR NEW.office_code <> OLD.office
 BEGIN
   SELECT RAISE(ABORT, 'office task counter cannot decrease');
 END;
+
+-- Universal reviews (TASK-92.1, ADR-0026, ADR-0028): office-numbered RV-<OFFICE_CODE><N>
+-- reviews across code, doc, task, and artifact targets with immutable rounds, replies, and events.
+CREATE TABLE office_review_counters (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) DEFERRABLE INITIALLY DEFERRED,
+  office_id TEXT NOT NULL,
+  office_code TEXT NOT NULL,
+  next_number INTEGER NOT NULL CHECK (next_number >= 1),
+  PRIMARY KEY (organization_id, office_code),
+  FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, office_code) REFERENCES office_codes(organization_id, code) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TRIGGER office_review_counters_monotonic BEFORE UPDATE ON office_review_counters
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.office_id <> OLD.office_id
+  OR NEW.office_code <> OLD.office_code OR NEW.next_number < OLD.next_number
+BEGIN
+  SELECT RAISE(ABORT, 'office review counter cannot decrease');
+END;
+
+CREATE TABLE reviews (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  office_code TEXT NOT NULL,
+  number INTEGER NOT NULL CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS ('RV-' || office_code || number) VIRTUAL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  project_id TEXT,
+  task_id TEXT,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('code', 'doc', 'task', 'artifact')),
+  repository_id TEXT,
+  branch TEXT,
+  target_ref TEXT,
+  kind_slug TEXT NOT NULL CHECK (
+    length(kind_slug) BETWEEN 1 AND 64
+    AND kind_slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(kind_slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(kind_slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(kind_slug, '--') = 0
+  ),
+  category_slug TEXT CHECK (category_slug IS NULL OR (
+    length(category_slug) BETWEEN 1 AND 64
+    AND category_slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(category_slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(category_slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(category_slug, '--') = 0
+  )),
+  title TEXT NOT NULL CHECK (length(title) > 0),
+  body_markdown TEXT NOT NULL DEFAULT '',
+  independent INTEGER NOT NULL DEFAULT 0 CHECK (independent IN (0, 1)),
+  status TEXT NOT NULL CHECK (status IN ('open', 'changes_requested', 'approved', 'closed')),
+  current_round INTEGER NOT NULL CHECK (current_round >= 1),
+  session_mode TEXT NOT NULL DEFAULT 'warm' CHECK (session_mode IN ('warm', 'fresh')),
+  guidance_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (
+    json_valid(guidance_refs_json) AND json_type(guidance_refs_json) = 'array'
+  ),
+  criteria_json TEXT NOT NULL DEFAULT '[]' CHECK (
+    json_valid(criteria_json) AND json_type(criteria_json) = 'array'
+  ),
+  closed_reason TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  closed_at TEXT,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, office_code, number),
+  CHECK ((status = 'closed') = (closed_at IS NOT NULL)),
+  CHECK (status = 'closed' OR closed_reason IS NULL),
+  CHECK (independent = 0 OR session_mode = 'fresh'),
+  CHECK (
+    (target_kind = 'code' AND repository_id IS NOT NULL AND branch IS NOT NULL AND length(branch) > 0 AND target_ref IS NULL)
+    OR (target_kind = 'task' AND task_id IS NOT NULL AND repository_id IS NULL AND branch IS NULL AND target_ref IS NULL)
+    OR (target_kind IN ('doc', 'artifact') AND target_ref IS NOT NULL AND length(target_ref) > 0 AND repository_id IS NULL AND branch IS NULL)
+  ),
+  FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, office_code) REFERENCES office_codes(organization_id, code) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, created_by) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE review_rounds (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  review_id TEXT NOT NULL,
+  round_number INTEGER NOT NULL CHECK (round_number >= 1),
+  base_oid TEXT CHECK (base_oid IS NULL OR (length(base_oid) IN (40, 64) AND base_oid NOT GLOB '*[^0-9a-f]*')),
+  head_oid TEXT CHECK (head_oid IS NULL OR (length(head_oid) IN (40, 64) AND head_oid NOT GLOB '*[^0-9a-f]*')),
+  session_mode TEXT NOT NULL CHECK (session_mode IN ('warm', 'fresh')),
+  submitted_by TEXT NOT NULL,
+  submitted_at TEXT NOT NULL,
+  note_markdown TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (organization_id, review_id, round_number),
+  CHECK ((base_oid IS NULL) = (head_oid IS NULL)),
+  FOREIGN KEY (organization_id, review_id) REFERENCES reviews(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, submitted_by) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TRIGGER review_rounds_no_replace BEFORE INSERT ON review_rounds
+WHEN EXISTS (
+  SELECT 1 FROM review_rounds r
+  WHERE r.organization_id = NEW.organization_id AND r.review_id = NEW.review_id AND r.round_number = NEW.round_number
+)
+BEGIN SELECT RAISE(ABORT, 'review rounds are immutable; submit a new round'); END;
+CREATE TRIGGER review_rounds_no_update BEFORE UPDATE ON review_rounds
+BEGIN SELECT RAISE(ABORT, 'review rounds are immutable; submit a new round'); END;
+CREATE TRIGGER review_rounds_no_delete BEFORE DELETE ON review_rounds
+BEGIN SELECT RAISE(ABORT, 'review round history must be retained'); END;
+
+CREATE TABLE review_reviewers (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  review_id TEXT NOT NULL,
+  round_number INTEGER NOT NULL CHECK (round_number >= 1),
+  reviewer_id TEXT NOT NULL,
+  routing TEXT NOT NULL CHECK (routing IN ('explicit', 'pool', 'single_agent')),
+  team_id TEXT,
+  session_mode TEXT NOT NULL CHECK (session_mode IN ('warm', 'fresh')),
+  assigned_by TEXT NOT NULL,
+  assigned_at TEXT NOT NULL,
+  removed INTEGER NOT NULL DEFAULT 0 CHECK (removed IN (0, 1)),
+  verdict TEXT CHECK (verdict IS NULL OR verdict IN ('approve', 'changes_requested', 'comment', 'incomplete')),
+  summary_markdown TEXT NOT NULL DEFAULT '',
+  finding_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (
+    json_valid(finding_ids_json) AND json_type(finding_ids_json) = 'array'
+  ),
+  attachment_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (
+    json_valid(attachment_ids_json) AND json_type(attachment_ids_json) = 'array'
+  ),
+  verdict_at TEXT,
+  runtime_session_id TEXT,
+  PRIMARY KEY (organization_id, review_id, round_number, reviewer_id),
+  CHECK ((routing = 'pool') = (team_id IS NOT NULL)),
+  CHECK ((verdict IS NULL) = (verdict_at IS NULL)),
+  CHECK (verdict IS NOT NULL OR (summary_markdown = '' AND finding_ids_json = '[]' AND attachment_ids_json = '[]')),
+  FOREIGN KEY (organization_id, review_id, round_number) REFERENCES review_rounds(organization_id, review_id, round_number) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, reviewer_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, assigned_by) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TRIGGER review_reviewers_independent_insert BEFORE INSERT ON review_reviewers
+WHEN NEW.removed = 0
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+    SELECT 1 FROM reviews r
+    WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
+      AND r.independent = 1 AND r.created_by = NEW.reviewer_id
+  );
+END;
+CREATE TRIGGER review_reviewers_independent_update BEFORE UPDATE OF organization_id, review_id, reviewer_id, removed ON review_reviewers
+WHEN NEW.removed = 0
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+    SELECT 1 FROM reviews r
+    WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
+      AND r.independent = 1 AND r.created_by = NEW.reviewer_id
+  );
+END;
+CREATE TRIGGER reviews_independent_after_insert AFTER INSERT ON reviews
+WHEN NEW.independent = 1
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+    SELECT 1 FROM review_reviewers rr
+    WHERE rr.organization_id = NEW.organization_id AND rr.review_id = NEW.id
+      AND rr.removed = 0 AND rr.reviewer_id = NEW.created_by
+  );
+END;
+CREATE TRIGGER reviews_independent_after_update AFTER UPDATE OF independent, created_by ON reviews
+WHEN NEW.independent = 1
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+    SELECT 1 FROM review_reviewers rr
+    WHERE rr.organization_id = NEW.organization_id AND rr.review_id = NEW.id
+      AND rr.removed = 0 AND rr.reviewer_id = NEW.created_by
+  );
+END;
+
+CREATE TABLE review_findings (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  review_id TEXT NOT NULL,
+  number INTEGER NOT NULL CHECK (number >= 1),
+  round_number INTEGER NOT NULL CHECK (round_number >= 1),
+  author_id TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('blocker', 'major', 'minor', 'nit', 'question')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'wont_fix')),
+  anchor_kind TEXT NOT NULL DEFAULT 'general' CHECK (anchor_kind IN ('general', 'file_line', 'doc_section', 'checklist_item')),
+  anchor_json TEXT NOT NULL CHECK (
+    json_valid(anchor_json) AND json_type(anchor_json) = 'object'
+    AND json_extract(anchor_json, '$.kind') = anchor_kind
+  ),
+  body_markdown TEXT NOT NULL CHECK (length(body_markdown) > 0),
+  attachment_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (
+    json_valid(attachment_ids_json) AND json_type(attachment_ids_json) = 'array'
+  ),
+  resolved_by TEXT,
+  resolved_at TEXT,
+  resolved_in_round INTEGER CHECK (resolved_in_round IS NULL OR resolved_in_round >= 1),
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, review_id, number),
+  UNIQUE (organization_id, review_id, id),
+  CHECK (
+    (status = 'open' AND resolved_by IS NULL AND resolved_at IS NULL AND resolved_in_round IS NULL)
+    OR (status IN ('resolved', 'wont_fix') AND resolved_by IS NOT NULL AND resolved_at IS NOT NULL AND resolved_in_round IS NOT NULL)
+  ),
+  FOREIGN KEY (organization_id, review_id, round_number) REFERENCES review_rounds(organization_id, review_id, round_number) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, author_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, resolved_by) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE review_finding_replies (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  finding_id TEXT NOT NULL,
+  review_id TEXT NOT NULL,
+  round_number INTEGER NOT NULL CHECK (round_number >= 1),
+  author_id TEXT NOT NULL,
+  body_markdown TEXT NOT NULL DEFAULT '',
+  set_status TEXT CHECK (set_status IS NULL OR set_status IN ('open', 'resolved', 'wont_fix')),
+  attachment_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (
+    json_valid(attachment_ids_json) AND json_type(attachment_ids_json) = 'array'
+  ),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id),
+  CHECK (length(body_markdown) > 0 OR set_status IS NOT NULL),
+  FOREIGN KEY (organization_id, review_id, finding_id) REFERENCES review_findings(organization_id, review_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, review_id, round_number) REFERENCES review_rounds(organization_id, review_id, round_number) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, author_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TRIGGER review_finding_replies_no_replace BEFORE INSERT ON review_finding_replies
+WHEN EXISTS (
+  SELECT 1 FROM review_finding_replies r
+  WHERE r.organization_id = NEW.organization_id AND r.id = NEW.id
+)
+BEGIN SELECT RAISE(ABORT, 'review finding replies are immutable'); END;
+CREATE TRIGGER review_finding_replies_no_update BEFORE UPDATE ON review_finding_replies
+BEGIN SELECT RAISE(ABORT, 'review finding replies are immutable'); END;
+CREATE TRIGGER review_finding_replies_no_delete BEFORE DELETE ON review_finding_replies
+BEGIN SELECT RAISE(ABORT, 'review finding replies must be retained'); END;
+
+CREATE TABLE review_events (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  review_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  event_type TEXT NOT NULL CHECK (length(event_type) > 0),
+  actor_id TEXT NOT NULL,
+  operation_id TEXT,
+  payload_json TEXT NOT NULL CHECK (json_valid(payload_json) AND json_type(payload_json) = 'object'),
+  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, review_id, revision),
+  FOREIGN KEY (organization_id, review_id) REFERENCES reviews(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, actor_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TRIGGER review_events_no_replace BEFORE INSERT ON review_events
+WHEN EXISTS (
+  SELECT 1 FROM review_events e
+  WHERE e.organization_id = NEW.organization_id AND e.review_id = NEW.review_id AND e.revision = NEW.revision
+)
+BEGIN SELECT RAISE(ABORT, 'review events are immutable; append a new revision'); END;
+CREATE TRIGGER review_events_no_update BEFORE UPDATE ON review_events
+BEGIN SELECT RAISE(ABORT, 'review events are immutable; append a new revision'); END;
+CREATE TRIGGER review_events_no_delete BEFORE DELETE ON review_events
+BEGIN SELECT RAISE(ABORT, 'review history must be retained'); END;
+
+CREATE INDEX reviews_by_updated ON reviews(organization_id, updated_at DESC, id DESC);
+CREATE INDEX reviews_by_project_status ON reviews(organization_id, project_id, status, updated_at DESC);
+CREATE INDEX reviews_by_task ON reviews(organization_id, task_id, updated_at DESC);
+CREATE INDEX reviews_by_creator ON reviews(organization_id, created_by, updated_at DESC);
+CREATE INDEX review_reviewers_by_reviewer ON review_reviewers(organization_id, reviewer_id, removed, review_id, round_number);
+CREATE INDEX review_findings_by_review_status ON review_findings(organization_id, review_id, status, number);
+CREATE INDEX review_finding_replies_by_finding ON review_finding_replies(organization_id, finding_id, created_at, id);
+CREATE INDEX review_events_by_actor ON review_events(organization_id, actor_id);

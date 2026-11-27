@@ -1429,6 +1429,7 @@ dependencies = [
  "org-platform",
  "org-process",
  "org-proto",
+ "org-reviews",
  "org-store",
  "org-sync",
  "org-sync-proto",
@@ -1582,6 +1583,16 @@ dependencies = [
  "serde_json",
  "sha2",
  "unicode-normalization",
+]
+
+[[package]]
+name = "org-reviews"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "org-store",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

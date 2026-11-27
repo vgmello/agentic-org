@@ -22,6 +22,7 @@ use crate::{
     processes::projector::ProcessFiles,
     project_docs::projector::ProjectDocFiles,
     projects::projector::ProjectFiles,
+    reviews::files::ReviewFiles,
     tasks::{features::TaskNumbering, ports::TasksRead, projector::TaskFiles, records},
 };
 
@@ -96,6 +97,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
     let attachments: Arc<dyn Projector<E>> = Arc::new(AttachmentFiles::new());
     let docs: Arc<dyn Projector<E>> = Arc::new(ProjectDocFiles);
+    let reviews: Arc<dyn Projector<E>> = Arc::new(ReviewFiles::new(here.office_id.clone()));
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(
         not(any(test, feature = "testkit")),
@@ -112,6 +114,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
         processes,
         attachments,
         docs,
+        reviews,
         Arc::new(local),
     ];
     #[cfg(any(test, feature = "testkit"))]

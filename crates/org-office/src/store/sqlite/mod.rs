@@ -35,6 +35,7 @@ pub(crate) mod providers;
 mod receipts;
 mod references;
 pub(crate) mod replication;
+mod reviews;
 mod schema;
 pub(crate) mod search;
 mod snapshot;

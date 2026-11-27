@@ -60,3 +60,22 @@ fn project_documentation_applies_after_the_projects_and_employees_it_names() {
         );
     }
 }
+
+#[test]
+fn review_files_apply_as_work_sidecars_and_are_immutable_during_reconciliation() {
+    use super::filters::{classify_replicated_snapshot_path, SnapshotPathClass};
+    use super::is_immutable_state_path;
+    let rid = "0195a000-0000-7000-8000-000000000099";
+    for path in [
+        format!("state/reviews/{rid}/review.json"),
+        format!("state/reviews/{rid}/rounds/000001.json"),
+        format!("state/reviews/{rid}/events/0000000001.json"),
+    ] {
+        assert_eq!(
+            classify_replicated_snapshot_path(&path),
+            SnapshotPathClass::WorkSidecar,
+            "{path}"
+        );
+        assert!(is_immutable_state_path(&path), "{path} must be immutable");
+    }
+}

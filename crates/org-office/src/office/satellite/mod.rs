@@ -51,7 +51,7 @@ pub fn is_immutable_state_path(path: &str) -> bool {
     ) || matches!(
         crate::messaging::records::kind_of(&dp),
         Some(crate::messaging::records::Kind::Message(_, _))
-    )
+    ) || crate::reviews::files::parse_path(&dp).is_some()
 }
 
 #[cfg(test)]
