@@ -44,14 +44,26 @@ fn require_optional_uuid(raw: Option<&str>, field: &str) -> Result<(), ApiError>
     raw.map_or(Ok(()), |id| require_uuid(id, field))
 }
 
-fn require_revision(rev: u64) -> Result<u64, ApiError> {
+fn note_res(record: PrivateNoteRecord, caller: &str) -> Out<TaskNoteResult> {
+    Ok(Ok(TaskNoteResult {
+        note: record.to_wire(caller),
+    }))
+}
+
+fn require_edit_ids(cmd: &str, note: &str, rev: u64) -> Result<(), ApiError> {
+    require_uuid(cmd, "command_id")?;
+    require_uuid(note, "note_id")?;
+    require_revision(rev)
+}
+
+fn require_revision(rev: u64) -> Result<(), ApiError> {
     if rev == 0 || rev > i64::MAX as u64 {
         return Err(api_err(
             ErrorCode::InvalidRequest,
             "`expected_revision` must be between 1 and i64::MAX",
         ));
     }
-    Ok(rev)
+    Ok(())
 }
 
 macro_rules! refused {
@@ -191,9 +203,7 @@ impl Office {
         } else {
             self.private_notes.create_note(cmd)?
         });
-        Ok(Ok(TaskNoteResult {
-            note: record.to_wire(caller.id.as_str()),
-        }))
+        note_res(record, caller.id.as_str())
     }
 
     /// `tasks.notes.list`: newest-first page of the caller's visible active notes (`ADR-0031`).
@@ -242,65 +252,59 @@ impl Office {
             is_person,
             &params.note_id,
         )? {
-            Some(record) => Ok(Ok(TaskNoteResult {
-                note: record.to_wire(caller.id.as_str()),
-            })),
+            Some(record) => note_res(record, caller.id.as_str()),
             None => Ok(Err(api_err(ErrorCode::NotFound, "private note not found"))),
         }
     }
 
     /// `tasks.notes.update`: author-only revision-checked patch of a private note.
-    pub fn task_note_update(
-        &self,
-        actor: &str,
-        params: PrivateNoteUpdateParams,
-    ) -> Out<TaskNoteResult> {
+    pub fn task_note_update(&self, actor: &str, p: PrivateNoteUpdateParams) -> Out<TaskNoteResult> {
         let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
-        refused!(require_uuid(&params.command_id, "command_id")
-            .and_then(|()| require_uuid(&params.note_id, "note_id"))
-            .and_then(|()| require_revision(params.expected_revision).map(|_| ())));
-        let patch = refused!(NotePatch::from_update(&params));
+        refused!(require_edit_ids(
+            &p.command_id,
+            &p.note_id,
+            p.expected_revision
+        ));
+        let patch = refused!(NotePatch::from_update(&p));
         let mut digest = DigestInput::new("edit");
-        digest
-            .text(Some(&params.note_id))
-            .number(params.expected_revision);
+        digest.text(Some(&p.note_id)).number(p.expected_revision);
         patch.digest_into(&mut digest);
         let now = self.monotonic_private_now();
         let record = refused!(self.private_notes.edit_note(EditNoteCmd {
             org_id: &self.info.org_id,
             caller_id: caller.id.as_str(),
             caller_is_person: is_person,
-            note_id: &params.note_id,
-            expected_revision: params.expected_revision,
+            note_id: &p.note_id,
+            expected_revision: p.expected_revision,
             patch: &patch,
-            operation_id: &params.command_id,
+            operation_id: &p.command_id,
             request_sha256: &digest.finish(),
             now: &now,
         })?);
-        Ok(Ok(TaskNoteResult {
-            note: record.to_wire(caller.id.as_str()),
-        }))
+        note_res(record, caller.id.as_str())
     }
 
     /// `tasks.notes.remove`: author-only revisioned tombstone clearing private text and tags.
     pub fn task_note_remove(
         &self,
         actor: &str,
-        params: TasksNotesRemoveParams,
+        p: TasksNotesRemoveParams,
     ) -> Out<TaskNoteRemovedResult> {
         let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
-        refused!(require_uuid(&params.command_id, "command_id")
-            .and_then(|()| require_uuid(&params.note_id, "note_id"))
-            .and_then(|()| require_revision(params.expected_revision).map(|_| ())));
-        let digest = delete_digest(&params.note_id, params.expected_revision);
+        refused!(require_edit_ids(
+            &p.command_id,
+            &p.note_id,
+            p.expected_revision
+        ));
+        let digest = delete_digest(&p.note_id, p.expected_revision);
         let now = self.monotonic_private_now();
         let record = refused!(self.private_notes.delete_note(DeleteNoteCmd {
             org_id: &self.info.org_id,
             caller_id: caller.id.as_str(),
             caller_is_person: is_person,
-            note_id: &params.note_id,
-            expected_revision: params.expected_revision,
-            operation_id: &params.command_id,
+            note_id: &p.note_id,
+            expected_revision: p.expected_revision,
+            operation_id: &p.command_id,
             request_sha256: &digest,
             now: &now,
         })?);
@@ -316,27 +320,25 @@ impl Office {
     pub fn task_note_publish(
         &self,
         actor: &str,
-        params: TasksNotesPublishParams,
+        p: TasksNotesPublishParams,
     ) -> Out<(TaskNotePublishResult, bool)> {
         let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
-        refused!(require_uuid(&params.command_id, "command_id")
-            .and_then(|()| require_uuid(&params.note_id, "note_id"))
-            .and_then(|()| require_uuid(&params.comment_id, "comment_id"))
-            .and_then(|()| require_revision(params.expected_revision).map(|_| ())));
-        let digest = publish_digest(
-            &params.note_id,
-            params.expected_revision,
-            &params.comment_id,
-        );
+        refused!(require_edit_ids(
+            &p.command_id,
+            &p.note_id,
+            p.expected_revision
+        ));
+        refused!(require_uuid(&p.comment_id, "comment_id"));
+        let digest = publish_digest(&p.note_id, p.expected_revision, &p.comment_id);
         let now = self.monotonic_private_now();
         let attempt = refused!(self.private_notes.begin_publish(BeginPublishCmd {
             org_id: &self.info.org_id,
             caller_id: caller.id.as_str(),
             caller_is_person: is_person,
-            note_id: &params.note_id,
-            expected_revision: params.expected_revision,
-            comment_id: &params.comment_id,
-            operation_id: &params.command_id,
+            note_id: &p.note_id,
+            expected_revision: p.expected_revision,
+            comment_id: &p.comment_id,
+            operation_id: &p.command_id,
             request_sha256: &digest,
             now: &now,
         })?);
@@ -357,7 +359,7 @@ impl Office {
             } => self.execute_pending_publish(
                 actor,
                 caller.id.as_str(),
-                &params.command_id,
+                &p.command_id,
                 note,
                 shared_comment_id,
             ),
@@ -427,15 +429,13 @@ impl Office {
             },
         )?;
         let now = self.monotonic_private_now();
+        let finish = |code| {
+            self.private_notes
+                .finish_publish(&self.info.org_id, caller_id, command_id, code, &now)
+        };
         match outcome {
             Ok((res, replayed)) => {
-                self.private_notes.finish_publish(
-                    &self.info.org_id,
-                    caller_id,
-                    command_id,
-                    None,
-                    &now,
-                )?;
+                finish(None)?;
                 Ok(Ok((
                     TaskNotePublishResult {
                         note: note.to_wire(caller_id),
@@ -449,13 +449,7 @@ impl Office {
                 Ok(Err(err))
             }
             Err(err) => {
-                self.private_notes.finish_publish(
-                    &self.info.org_id,
-                    caller_id,
-                    command_id,
-                    Some(format_receipt_error_code(err.code)),
-                    &now,
-                )?;
+                finish(Some(format_receipt_error_code(err.code)))?;
                 Ok(Err(err))
             }
         }
@@ -466,12 +460,13 @@ impl Office {
         &self,
         actor: &str,
         task_ids: &[String],
-    ) -> Result<BTreeMap<String, PrivateNoteRecord>, OfficeError> {
-        if task_ids.is_empty() || !self.private_notes.available() {
-            return Ok(BTreeMap::new());
-        }
-        self.private_notes
-            .latest_author_notes_for_tasks(&self.info.org_id, actor, task_ids)
+    ) -> Out<BTreeMap<String, PrivateNoteRecord>> {
+        let (caller, _) = refused!(self.require_active_private_caller(actor)?);
+        Ok(Ok(self.private_notes.latest_author_notes_for_tasks(
+            &self.info.org_id,
+            caller.id.as_str(),
+            task_ids,
+        )?))
     }
 
     /// Mirrors shared task deletion into the isolated `private_note_tasks` mirror (`PN-06`).

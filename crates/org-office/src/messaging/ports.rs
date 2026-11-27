@@ -87,10 +87,12 @@ pub trait MessagingRead: ProjectsRead {
         employee_id: &Id,
         limit: usize,
     ) -> Result<ResumeInboxSummary, EngineError>;
-    /// Bounded unanswered ask candidates `(message, caller_is_recipient)` for `employee_id`.
+    /// Bounded open ask candidates `(message, caller_is_recipient)` for `employee_id`.
     fn open_asks_for_employee(
         &self,
         employee_id: &Id,
+        now_utc: &str,
+        caller_is_person: bool,
         limit: usize,
     ) -> Result<Vec<(MessageRecord, bool)>, EngineError>;
 }

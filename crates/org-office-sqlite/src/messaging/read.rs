@@ -366,10 +366,19 @@ macro_rules! sqlite_messaging_read {
             fn open_asks_for_employee(
                 &self,
                 employee_id: &Id,
+                now_utc: &str,
+                caller_is_person: bool,
                 limit: usize,
             ) -> Result<Vec<(MessageRecord, bool)>, EngineError> {
                 let (db, scope) = self.msg_view()?;
-                super::resume::open_asks_for_employee(db, scope, employee_id, limit)
+                super::resume::open_asks_for_employee(
+                    db,
+                    scope,
+                    employee_id,
+                    now_utc,
+                    caller_is_person,
+                    limit,
+                )
             }
         }
     )+};

@@ -1,21 +1,26 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use org_office::git::{OfficeGitState, TaskWorkspaceRecord};
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::testkit_support::office_harness;
+use org_office::{EngineChoice, Key, Office, TestOffice, TestSatellite};
 use org_proto::ask::{
-    AskQuestion, AskQuestionType, ChatAnswerParams, ChatAskParams, QuestionAnswer,
+    AskQuestion, AskQuestionType, AskStatus, ChatAnswerParams, ChatAskParams, QuestionAnswer,
 };
 use org_proto::budgets::{
     BudgetPeriodKind, BudgetScopeKind, BudgetSetParams, BudgetStateSummary, BudgetUnit,
 };
-use org_proto::chat::ChatSendParams;
+use org_proto::chat::{ChatChannelCreateParams, ChatSendParams};
 use org_proto::external_auth::SessionMode;
-use org_proto::hiring::{HireProposalWire, HrHire, HrHireParams};
+use org_proto::hiring::{
+    AgentSetStatus, AgentSetStatusParams, HireProposalWire, HrHire, HrHireParams,
+};
 use org_proto::msg::MessagePriority;
 use org_proto::org::MemberKind;
 use org_proto::private_notes::{
-    PrivateNoteAddParams, PrivateNoteKind, PrivateNoteListParams, PRIVATE_NOTE_CHECKPOINT_TAG,
+    PrivateNoteAddParams, PrivateNoteKind, PrivateNoteListParams, TasksNotesGetParams,
+    PRIVATE_NOTE_CHECKPOINT_TAG,
 };
 use org_proto::resume::{
     AgentResume, AgentResumeParams, AgentResumeResult, ResumeAskDirection,
@@ -23,6 +28,8 @@ use org_proto::resume::{
 };
 use org_proto::tasks::{TaskStatus, TasksCreateParams, TasksTransitionParams};
 use org_proto::{ErrorCode, Outcome, Request};
+use org_store::testkit::FakeCustody;
+use org_store::{Clock, Timestamp};
 
 use crate::git_calls::GitService;
 use crate::live::LiveEvents;
@@ -545,7 +552,8 @@ fn run_full_resume_suite(engine: EngineChoice) {
         .unwrap_err();
     assert_eq!(reuse_err.code, ErrorCode::OperationReused);
 
-    // Only one active checkpoint note exists for Ada on t_prog.
+    // Only one active checkpoint note exists for Ada on t_prog, and Bob's checkpoint on the
+    // same task remains completely untouched (ADR-0031 per-author isolation).
     let listed = office
         .task_note_list(
             &ada,
@@ -558,6 +566,47 @@ fn run_full_resume_suite(engine: EngineChoice) {
         .unwrap()
         .unwrap();
     assert_eq!(listed.notes.len(), 1);
+
+    let bob_note = office
+        .task_note_get(&bob, TasksNotesGetParams { note_id: uuid(301) })
+        .unwrap()
+        .unwrap()
+        .note;
+    assert_eq!(bob_note.id, uuid(301));
+    assert_eq!(bob_note.revision, 1);
+    assert_eq!(bob_note.title.as_deref(), Some("BOB-SECRET-TITLE"));
+    assert_eq!(
+        bob_note.body_markdown.as_deref(),
+        Some("BOB-SECRET-BODY never leak to Ada")
+    );
+    let bob_listed = office
+        .task_note_list(
+            &bob,
+            PrivateNoteListParams {
+                task: Some(t_prog.id.clone()),
+                tag: Some(PRIVATE_NOTE_CHECKPOINT_TAG.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(bob_listed.notes.len(), 1);
+    assert_eq!(bob_listed.notes[0].id, uuid(301));
+
+    // Exact total computation when tasks_limit fills on the first bucket (rem == 0 for later buckets).
+    let capped = dispatch_resume(
+        &svc,
+        Some(&ada),
+        Some(SessionMode::Managed),
+        AgentResumeParams {
+            tasks_limit: Some(1),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(capped.active_tasks.len(), 1);
+    assert_eq!(capped.active_tasks[0].status, TaskStatus::InProgress);
+    assert_eq!(capped.active_tasks_total, 3);
 
     // 3. Configure daily budget for Ada and call resume again in External mode.
     office
@@ -667,4 +716,417 @@ fn agent_resume_enforces_binding_bounds_and_policy_gates() {
     let out = crate::resume_calls::assemble::truncate_utf8_excerpt(&emoji, 240);
     assert!(out.len() <= 240 && out.ends_with('…'));
     assert!(crate::resume_calls::assemble::truncate_utf8_excerpt("🚀abc", 2).len() <= 2);
+}
+
+struct SteppingClock(Arc<AtomicU64>);
+
+impl Clock for SteppingClock {
+    fn now(&self) -> Timestamp {
+        Timestamp(self.0.load(Ordering::Relaxed))
+    }
+}
+
+fn office_with_stepping_clock(engine: EngineChoice) -> (Arc<Office>, Arc<AtomicU64>) {
+    let clock_ms = Arc::new(AtomicU64::new(
+        org_office::organization_family::testkit::CREATION_AT.0,
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (folder, roots) = office_harness::places(&root);
+    let (new, binding) = office_harness::request();
+    let custody = office_harness::custody(Arc::new(FakeCustody::new()));
+    let mut opts = office_harness::options(engine);
+    opts.clock = Arc::new(SteppingClock(Arc::clone(&clock_ms)));
+    let mut office = Office::provision_with(
+        folder,
+        &new,
+        Some(Key::from_bytes([7; 32])),
+        &binding,
+        roots,
+        custody,
+        |prior| prior.map_or_else(|| office_harness::record(office_harness::CA_SEED), Ok),
+        opts,
+    )
+    .unwrap();
+    office.retain_test_root(dir);
+    (Arc::new(office), clock_ms)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "compact test helper configuring ask required/approval/addressed/wait flags"
+)]
+fn send_ask_custom(
+    office: &Office,
+    sender: &str,
+    to: &str,
+    prompt: &str,
+    seed: u64,
+    required: bool,
+    approval: bool,
+    wait_ms: u64,
+    addressed_to: Option<String>,
+) -> String {
+    office
+        .msg_ask(
+            sender,
+            ChatAskParams {
+                id: uuid(seed),
+                to: to.to_owned(),
+                body: None,
+                subject: None,
+                questions: vec![AskQuestion {
+                    id: "q1".into(),
+                    question_type: AskQuestionType::FreeText,
+                    prompt: prompt.into(),
+                    options: vec![],
+                    allow_multiple: false,
+                    default_value: None,
+                    optional: false,
+                }],
+                required,
+                wait_ms: Some(wait_ms),
+                hold_ms: None,
+                blocks: None,
+                approval,
+                addressed_to,
+                meta: BTreeMap::new(),
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .result
+        .ask_id
+}
+
+struct AskSuiteCtx {
+    engine: EngineChoice,
+    office: Arc<Office>,
+    clock_ms: Arc<AtomicU64>,
+    svc: ResumeService,
+    owner: String,
+    owner_handle: String,
+    ada: String,
+    bob: String,
+    channel_id: String,
+}
+
+fn setup_ask_suite(engine: EngineChoice) -> AskSuiteCtx {
+    let (office, clock_ms) = office_with_stepping_clock(engine);
+    let owner = office.owner_member_id().to_owned();
+    let owner_handle = office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.id == owner)
+        .unwrap()
+        .handle
+        .unwrap_or_else(|| "owner".into());
+    let ada = hire_agent(&office, &owner, "Ada", "ada", 700);
+    let bob = hire_agent(&office, &owner, "Bob", "bob", 710);
+    let channel_id = office
+        .create_channel(
+            &owner,
+            ChatChannelCreateParams {
+                id: Some(uuid(720)),
+                name: "eng".into(),
+                members: vec![ada.clone(), bob.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .channel
+        .id;
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let git_svc = Arc::new(GitService::new(Arc::clone(&office), live));
+    let svc = ResumeService::new(Arc::clone(&office), git_svc);
+    AskSuiteCtx {
+        engine,
+        office,
+        clock_ms,
+        svc,
+        owner,
+        owner_handle,
+        ada,
+        bob,
+        channel_id,
+    }
+}
+
+fn seed_starvation_noise(ctx: &AskSuiteCtx, t0: u64) {
+    for i in 0..45u64 {
+        ctx.clock_ms.store(t0 + 100 + i, Ordering::Relaxed);
+        send_ask_custom(
+            &ctx.office,
+            &ctx.owner,
+            &ctx.ada,
+            &format!("Expired optional ask #{i}"),
+            1100 + i,
+            false,
+            false,
+            1_000,
+            None,
+        );
+    }
+    for i in 0..5u64 {
+        ctx.clock_ms.store(t0 + 200 + i, Ordering::Relaxed);
+        send_ask_custom(
+            &ctx.office,
+            &ctx.owner,
+            &ctx.channel_id,
+            &format!("Peer-addressed ask for Bob cc @ada #{i}"),
+            1200 + i,
+            true,
+            false,
+            600_000,
+            Some(ctx.bob.clone()),
+        );
+    }
+}
+
+fn verify_open_asks_window_starvation(ctx: &AskSuiteCtx) -> String {
+    let t0 = ctx.clock_ms.load(Ordering::Relaxed);
+    let older_required = send_ask_custom(
+        &ctx.office,
+        &ctx.owner,
+        &ctx.ada,
+        "Older required ask that must never starve",
+        1000,
+        true,
+        false,
+        1_000,
+        None,
+    );
+    seed_starvation_noise(ctx, t0);
+    ctx.clock_ms.store(t0 + 60_000, Ordering::Relaxed);
+
+    let ada_snap = dispatch_resume(
+        &ctx.svc,
+        Some(&ctx.ada),
+        Some(SessionMode::Managed),
+        AgentResumeParams {
+            asks_limit: Some(5),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        ada_snap.open_asks.len(),
+        1,
+        "{:?}: expected only older required_pending ask, got {:?}",
+        ctx.engine,
+        ada_snap.open_asks
+    );
+    assert_eq!(ada_snap.open_asks[0].ask_id, older_required);
+    assert_eq!(ada_snap.open_asks[0].status, AskStatus::RequiredPending);
+    assert_eq!(
+        ada_snap.open_asks[0].direction,
+        ResumeAskDirection::AwaitingCaller
+    );
+    older_required
+}
+
+fn verify_channel_approval_gating(ctx: &AskSuiteCtx, older_required: &str) {
+    let t_next = ctx.clock_ms.load(Ordering::Relaxed) + 1_000;
+    ctx.clock_ms.store(t_next, Ordering::Relaxed);
+    let approval_ask = send_ask_custom(
+        &ctx.office,
+        &ctx.ada,
+        &ctx.channel_id,
+        &format!("@{} @bob Approve production cutover?", ctx.owner_handle),
+        1300,
+        true,
+        true,
+        600_000,
+        None,
+    );
+    let bob_snap = dispatch_resume(
+        &ctx.svc,
+        Some(&ctx.bob),
+        Some(SessionMode::Managed),
+        AgentResumeParams::default(),
+    )
+    .unwrap();
+    assert!(
+        bob_snap.open_asks.iter().all(|a| a.ask_id != approval_ask),
+        "{:?}: agent Bob must not see unaddressed channel approval ask as awaiting_caller",
+        ctx.engine
+    );
+    let owner_snap = dispatch_resume(
+        &ctx.svc,
+        Some(&ctx.owner),
+        None,
+        AgentResumeParams::default(),
+    )
+    .unwrap();
+    assert!(
+        owner_snap.open_asks.iter().any(|a| a.ask_id == approval_ask
+            && a.direction == ResumeAskDirection::AwaitingCaller
+            && a.approval),
+        "{:?}: person Owner must see unaddressed channel approval ask as awaiting_caller",
+        ctx.engine
+    );
+    let ada_after = dispatch_resume(
+        &ctx.svc,
+        Some(&ctx.ada),
+        Some(SessionMode::Managed),
+        AgentResumeParams::default(),
+    )
+    .unwrap();
+    assert!(
+        ada_after.open_asks.iter().any(|a| a.ask_id == approval_ask
+            && a.direction == ResumeAskDirection::SentByCaller
+            && a.approval),
+        "{:?}: sending agent Ada must still see her approval ask as sent_by_caller",
+        ctx.engine
+    );
+    assert!(
+        ada_after
+            .open_asks
+            .iter()
+            .any(|a| a.ask_id == older_required && a.status == AskStatus::RequiredPending),
+        "{:?}: older required_pending ask remains surfaced for Ada",
+        ctx.engine
+    );
+}
+
+fn run_open_asks_prefilter_and_approval_suite(engine: EngineChoice) {
+    let ctx = setup_ask_suite(engine);
+    let older_required = verify_open_asks_window_starvation(&ctx);
+    verify_channel_approval_gating(&ctx, &older_required);
+}
+
+#[test]
+fn open_asks_prefilter_prevents_window_starvation_and_gates_channel_approvals_on_memory_and_sqlite()
+{
+    org_office_sqlite::install();
+    run_open_asks_prefilter_and_approval_suite(EngineChoice::Memory);
+    run_open_asks_prefilter_and_approval_suite(EngineChoice::Sqlite);
+}
+
+#[test]
+fn agent_resume_and_private_notes_refuse_paused_employee_and_degrade_cleanly_on_satellite() {
+    let hq = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = hq.owner_member_id().to_owned();
+    let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
+    let ada = hire_agent(&hq, &owner, "Ada", "ada", 800);
+    let task = create_task(&hq, &owner, &team_id, &ada, "Satellite task", 810);
+
+    // Add a checkpoint on HQ (never replicated to satellites).
+    hq.task_note_add(
+        &ada,
+        PrivateNoteAddParams {
+            command_id: uuid(815),
+            task: Some(task.id.clone()),
+            project_id: None,
+            note_id: uuid(816),
+            kind: PrivateNoteKind::Note,
+            title: Some("HQ-ONLY".into()),
+            why: None,
+            alternatives: None,
+            tags: vec![],
+            body_markdown: "HQ-only private note".into(),
+            checkpoint: true,
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    // Replicate HQ state to a real satellite (uses SatelliteRefusedPrivateNotesStore).
+    let files = hq.collect_authoritative_state_snapshot().unwrap();
+    let info = hq.info();
+    let sat = TestSatellite::joined_to(&info.org_id, &info.office_id);
+    let batch = files.into_iter().map(|(p, b)| (p, Some(b))).collect();
+    sat.office
+        .apply_replicated_state_files(&uuid(820), batch)
+        .unwrap();
+    assert!(!sat.office.private_notes_for_test().available());
+
+    let sat_office = Arc::new(sat.office);
+    let sat_live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let sat_git = Arc::new(GitService::new(Arc::clone(&sat_office), sat_live));
+    let sat_svc = ResumeService::new(Arc::clone(&sat_office), sat_git);
+
+    // Satellite agent.resume returns active task with latest_note = None.
+    let sat_snap = dispatch_resume(
+        &sat_svc,
+        Some(&ada),
+        Some(SessionMode::Managed),
+        AgentResumeParams::default(),
+    )
+    .unwrap();
+    assert_eq!(sat_snap.active_tasks.len(), 1);
+    assert_eq!(sat_snap.active_tasks[0].id, task.id);
+    assert!(sat_snap.active_tasks[0].latest_note.is_none());
+
+    // Satellite refuses checkpoint: true and direct private-note reads with Unavailable.
+    let sat_cp_err = sat_office
+        .task_note_add(
+            &ada,
+            PrivateNoteAddParams {
+                command_id: uuid(825),
+                task: Some(task.id.clone()),
+                project_id: None,
+                note_id: uuid(826),
+                kind: PrivateNoteKind::Note,
+                title: None,
+                why: None,
+                alternatives: None,
+                tags: vec![],
+                body_markdown: "Should fail on satellite".into(),
+                checkpoint: true,
+            },
+        )
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(sat_cp_err.code, ErrorCode::Unavailable);
+    let sat_notes_err = sat_office
+        .latest_author_notes_for_tasks(&ada, std::slice::from_ref(&task.id))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(sat_notes_err.code, ErrorCode::Unavailable);
+
+    // Pause Ada on HQ: agent.resume and latest_author_notes_for_tasks refuse with NotAuthorized.
+    let ada_version = hq
+        .org_snapshot()
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.id == ada)
+        .unwrap()
+        .version;
+    let pause_req = Request::new::<AgentSetStatus>(
+        2,
+        &AgentSetStatusParams {
+            command_id: uuid(830),
+            member_id: ada.clone(),
+            expected_version: ada_version,
+            paused: true,
+        },
+    )
+    .unwrap();
+    let pause_resp = hq.dispatch_hiring_rpc(Some(&owner), &pause_req).unwrap();
+    assert!(
+        matches!(pause_resp.outcome, Outcome::Result(_)),
+        "{pause_resp:?}"
+    );
+
+    let hq_live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let hq_git = Arc::new(GitService::new(Arc::clone(&hq), hq_live));
+    let hq_svc = ResumeService::new(Arc::clone(&hq), hq_git);
+    let paused_err = dispatch_resume(
+        &hq_svc,
+        Some(&ada),
+        Some(SessionMode::Managed),
+        AgentResumeParams::default(),
+    )
+    .unwrap_err();
+    assert_eq!(paused_err.code, ErrorCode::NotAuthorized);
+    let paused_notes_err = hq
+        .latest_author_notes_for_tasks(&ada, std::slice::from_ref(&task.id))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(paused_notes_err.code, ErrorCode::NotAuthorized);
 }

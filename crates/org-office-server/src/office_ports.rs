@@ -372,6 +372,31 @@ fn build_tess_port(
     })
 }
 
+fn build_resume_port(
+    office: &Arc<Office>,
+    git_svc: &Arc<git_calls::GitService>,
+    mailbox: &Arc<org_mailbox::Mailbox>,
+) -> serve::ResumeFn {
+    let resume_svc = Arc::new(resume_calls::ResumeService::new(
+        Arc::clone(office),
+        Arc::clone(git_svc),
+    ));
+    let o = Arc::clone(office);
+    let mb = Arc::clone(mailbox);
+    Box::new(move |member, session_mode, request| {
+        if snapshot_pending(&o) {
+            return Some(org_proto::Response::error(
+                request.id,
+                snapshot_unavailable_api_error(),
+            ));
+        }
+        if let Some(member) = member {
+            let _ = mb.release_due_snoozes_for(member);
+        }
+        resume_svc.dispatch(member, session_mode, request)
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "composes the office's domain ports, federation handle, and sync wakeups"
@@ -423,10 +448,7 @@ pub(crate) fn build_office_ports(
         Arc::clone(&office),
         Arc::clone(&live),
     ));
-    let resume_svc = Arc::new(resume_calls::ResumeService::new(
-        Arc::clone(&office),
-        Arc::clone(&git_svc),
-    ));
+    let resume = build_resume_port(&office, &git_svc, &messaging.mailbox);
     let delegation_gate = Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
         Arc::clone(&office),
         Arc::clone(&session_manager),
@@ -537,18 +559,7 @@ pub(crate) fn build_office_ports(
             }))
         },
         tess: Some(tess),
-        resume: {
-            let o = Arc::clone(&office);
-            Some(Box::new(move |member, session_mode, request| {
-                if snapshot_pending(&o) {
-                    return Some(org_proto::Response::error(
-                        request.id,
-                        snapshot_unavailable_api_error(),
-                    ));
-                }
-                resume_svc.dispatch(member, session_mode, request)
-            }))
-        },
+        resume: Some(resume),
         directory: messaging.directory,
         submit,
     }

@@ -321,9 +321,13 @@ macro_rules! memory_messaging_read {
             fn open_asks_for_employee(
                 &self,
                 employee_id: &Id,
+                now_utc: &str,
+                caller_is_person: bool,
                 limit: usize,
             ) -> Result<Vec<(MessageRecord, bool)>, EngineError> {
-                read(self.table(), |t| t.open_asks_for_employee(employee_id, limit))
+                read(self.table(), |t| {
+                    t.open_asks_for_employee(employee_id, now_utc, caller_is_person, limit)
+                })
             }
         }
     )+};

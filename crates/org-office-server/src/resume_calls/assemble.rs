@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use org_office::attachments::ports::AttachmentsRead;
-use org_office::messaging::ask_card::parse_ask_card;
+use org_office::messaging::ask_card::{parse_ask_card, AskCard};
 use org_office::messaging::records::MessageRecord;
 use org_office::organization_family::records::{Employee, EmployeeKind, EmployeeStatus};
 use org_office::private_notes::PrivateNoteRecord;
@@ -14,7 +14,7 @@ use org_office::search::ports::SearchRead;
 use org_office::tasks::ports::TasksRead;
 use org_office::tasks::query::{TaskListQuery, TaskStatusSet};
 use org_office::tasks::records::TaskRecord;
-use org_office::{parse_rfc3339_ms, Office, OfficeError, ReadOp};
+use org_office::{format_rfc3339_ms, parse_rfc3339_ms, Office, OfficeError, ReadOp};
 use org_proto::ask::AskStatus;
 use org_proto::budgets::{
     BudgetAgentOwnParams, BudgetAgentOwnResult, BudgetStateSummary, BudgetView,
@@ -101,6 +101,7 @@ struct ResumeSnapshot {
 
 struct AgentResumeRead {
     actor: String,
+    now_utc: String,
     tasks_limit: usize,
     inbox_limit: usize,
     asks_limit: usize,
@@ -142,7 +143,7 @@ impl ReadOp for AgentResumeRead {
                     assignee_id: Some(caller.id.as_str().to_owned()),
                     sort: TaskSortMode::Order,
                     offset: 0,
-                    limit: Some(rem.max(1) as u64),
+                    limit: Some(rem as u64),
                     ..TaskListQuery::default()
                 })
                 .map_err(StoreError::from)?;
@@ -162,9 +163,9 @@ impl ReadOp for AgentResumeRead {
         let unread_inbox = snap
             .unread_inbox_summary(&caller.id, self.inbox_limit)
             .map_err(StoreError::from)?;
-        let ask_fetch = self.asks_limit.saturating_mul(4).clamp(32, 200);
+        let caller_is_person = caller.kind == EmployeeKind::Person;
         let open_ask_candidates = snap
-            .open_asks_for_employee(&caller.id, ask_fetch)
+            .open_asks_for_employee(&caller.id, &self.now_utc, caller_is_person, self.asks_limit)
             .map_err(StoreError::from)?;
 
         Ok(Ok(ResumeSnapshot {
@@ -259,68 +260,94 @@ fn build_task_items(
         .collect()
 }
 
+fn open_ask_status(card: &AskCard, now_ms: u64) -> Option<AskStatus> {
+    let wait_until_ms = parse_rfc3339_ms(&card.wait_until).unwrap_or(now_ms);
+    if now_ms < wait_until_ms {
+        Some(AskStatus::Waiting)
+    } else if card.required {
+        Some(AskStatus::RequiredPending)
+    } else {
+        None
+    }
+}
+
+fn open_ask_direction(
+    message: &MessageRecord,
+    card: &AskCard,
+    caller_id: &Id,
+    caller_is_person: bool,
+    caller_is_recipient: bool,
+) -> Option<ResumeAskDirection> {
+    if message.sender_employee_id.as_ref() == Some(caller_id) {
+        return Some(ResumeAskDirection::SentByCaller);
+    }
+    let addressed_to_caller = card
+        .addressed_to
+        .as_deref()
+        .is_none_or(|target| target == caller_id.as_str());
+    let eligible_for_approval = !card.approval || caller_is_person;
+    (caller_is_recipient && addressed_to_caller && eligible_for_approval)
+        .then_some(ResumeAskDirection::AwaitingCaller)
+}
+
+fn to_resume_open_ask(
+    message: MessageRecord,
+    caller_id: &Id,
+    caller_is_person: bool,
+    caller_is_recipient: bool,
+    now_ms: u64,
+) -> Option<ResumeOpenAsk> {
+    let card = parse_ask_card(&message)?;
+    let status = open_ask_status(&card, now_ms)?;
+    let direction = open_ask_direction(
+        &message,
+        &card,
+        caller_id,
+        caller_is_person,
+        caller_is_recipient,
+    )?;
+    let raw_prompt = card
+        .questions
+        .first()
+        .map(|q| q.prompt.as_str())
+        .unwrap_or(message.body_markdown.as_str());
+    let from_member_id = message
+        .sender_employee_id
+        .as_ref()
+        .map(|id| id.as_str().to_owned())
+        .unwrap_or_else(|| OFFICE_SENDER.to_owned());
+    Some(ResumeOpenAsk {
+        ask_id: message.id,
+        conversation_id: message.conversation_id.as_str().to_owned(),
+        direction,
+        status,
+        from_member_id,
+        from_display_name: message.sender_display_name,
+        addressed_to: card.addressed_to,
+        blocks: card.blocks,
+        required: card.required,
+        approval: card.approval,
+        question_count: card.questions.len() as u32,
+        prompt_excerpt: truncate_utf8_excerpt(raw_prompt, RESUME_ASK_EXCERPT_MAX_BYTES),
+        wait_until: card.wait_until,
+        created_at: message.created_at,
+    })
+}
+
 fn build_open_asks(
     candidates: Vec<(MessageRecord, bool)>,
     caller_id: &Id,
+    caller_is_person: bool,
     now_ms: u64,
     limit: usize,
 ) -> Vec<ResumeOpenAsk> {
-    let mut out = Vec::with_capacity(limit.min(candidates.len()));
-    for (message, caller_is_recipient) in candidates {
-        if out.len() >= limit {
-            break;
-        }
-        let Some(card) = parse_ask_card(&message) else {
-            continue;
-        };
-        let wait_until_ms = parse_rfc3339_ms(&card.wait_until).unwrap_or(now_ms);
-        let status = if now_ms < wait_until_ms {
-            AskStatus::Waiting
-        } else if card.required {
-            AskStatus::RequiredPending
-        } else {
-            continue;
-        };
-        let direction = if message.sender_employee_id.as_ref() == Some(caller_id) {
-            ResumeAskDirection::SentByCaller
-        } else if caller_is_recipient
-            && card
-                .addressed_to
-                .as_deref()
-                .is_none_or(|target| target == caller_id.as_str())
-        {
-            ResumeAskDirection::AwaitingCaller
-        } else {
-            continue;
-        };
-        let raw_prompt = card
-            .questions
-            .first()
-            .map(|q| q.prompt.as_str())
-            .unwrap_or(message.body_markdown.as_str());
-        let from_member_id = message
-            .sender_employee_id
-            .as_ref()
-            .map(|id| id.as_str().to_owned())
-            .unwrap_or_else(|| OFFICE_SENDER.to_owned());
-        out.push(ResumeOpenAsk {
-            ask_id: message.id,
-            conversation_id: message.conversation_id.as_str().to_owned(),
-            direction,
-            status,
-            from_member_id,
-            from_display_name: message.sender_display_name,
-            addressed_to: card.addressed_to,
-            blocks: card.blocks,
-            required: card.required,
-            approval: card.approval,
-            question_count: card.questions.len() as u32,
-            prompt_excerpt: truncate_utf8_excerpt(raw_prompt, RESUME_ASK_EXCERPT_MAX_BYTES),
-            wait_until: card.wait_until,
-            created_at: message.created_at,
-        });
-    }
-    out
+    candidates
+        .into_iter()
+        .filter_map(|(msg, is_recipient)| {
+            to_resume_open_ask(msg, caller_id, caller_is_person, is_recipient, now_ms)
+        })
+        .take(limit)
+        .collect()
 }
 
 fn budget_severity(state: BudgetStateSummary) -> u8 {
@@ -374,8 +401,11 @@ pub(super) fn assemble_resume(
     mut worktrees: Vec<ResumeWorktreeItem>,
     limits: &ResumeLimits,
 ) -> Result<Result<AgentResumeResult, ApiError>, OfficeError> {
+    let now_ms = office.now_ms();
+    let now_utc = format_rfc3339_ms(now_ms);
     let snap = match office.read_snapshot(AgentResumeRead {
         actor: actor.to_owned(),
+        now_utc,
         tasks_limit: limits.tasks,
         inbox_limit: limits.inbox,
         asks_limit: limits.asks,
@@ -388,14 +418,24 @@ pub(super) fn assemble_resume(
         .iter()
         .map(|t| t.id.as_str().to_owned())
         .collect();
-    let latest_notes = office.latest_author_notes_for_tasks(snap.caller.id.as_str(), &task_ids)?;
+    let latest_notes = if task_ids.is_empty() {
+        BTreeMap::new()
+    } else {
+        match office.latest_author_notes_for_tasks(snap.caller.id.as_str(), &task_ids)? {
+            Ok(notes) => notes,
+            Err(err) if err.code == ErrorCode::Unavailable => BTreeMap::new(),
+            Err(err) => return Ok(Err(err)),
+        }
+    };
 
     let identity = build_identity(&snap.caller, &office.info().office_id, session_mode);
     let active_tasks = build_task_items(snap.active_tasks, &snap.project_keys, &latest_notes);
+    let caller_is_person = snap.caller.kind == EmployeeKind::Person;
     let open_asks = build_open_asks(
         snap.open_ask_candidates,
         &snap.caller.id,
-        office.now_ms(),
+        caller_is_person,
+        now_ms,
         limits.asks,
     );
     worktrees.truncate(limits.worktrees);

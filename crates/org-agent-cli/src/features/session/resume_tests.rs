@@ -259,3 +259,30 @@ fn resume_and_me_help_and_schema_work_without_calling_office() {
     }
     assert!(transport.calls.is_empty());
 }
+
+#[test]
+fn resume_and_me_reject_unknown_fields_before_calling_office() {
+    let mut transport = RecordingTransport {
+        calls: Vec::new(),
+        reply: sample_resume_payload(),
+    };
+    for word in ["resume", "me"] {
+        let out = execute_with_office(
+            "agent-os",
+            &args(&[word, "--fields", "identity.handle,no_such_field", "--json"]),
+            &mut crate::TransportOffice(&mut transport),
+        );
+        assert_ne!(
+            out.exit_code, 0,
+            "{word} must reject unknown --fields: {}",
+            out.stdout
+        );
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["ok"], false, "{word}: {env}");
+        assert_eq!(env["error"]["code"], "invalid_request", "{word}: {env}");
+    }
+    assert!(
+        transport.calls.is_empty(),
+        "unknown --fields must fail locally before calling the office"
+    );
+}

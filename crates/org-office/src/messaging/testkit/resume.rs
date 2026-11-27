@@ -6,6 +6,7 @@ use org_proto::msg::{is_urgent, MessageLifecycleState, KIND_REQUEST, OFFICE_SEND
 use org_proto::resume::{ResumeInboxItem, ResumeInboxSummary};
 use org_store::Id;
 
+use super::super::ask_card::parse_ask_card;
 use super::super::records::MessageRecord;
 use super::MessagingTables;
 
@@ -69,39 +70,84 @@ impl MessagingTables {
         }
     }
 
+    fn is_answered(&self, message_id: &str) -> bool {
+        self.answers
+            .iter()
+            .any(|((mid, _), ans)| mid == message_id && ans.answer.is_some())
+    }
+
+    fn is_active_recipient(&self, message_id: &str, employee_id: &Id) -> bool {
+        self.recipient_states
+            .get(&(message_id.to_owned(), employee_id.clone()))
+            .is_some_and(|st| {
+                matches!(
+                    st.state,
+                    MessageLifecycleState::Unread
+                        | MessageLifecycleState::Read
+                        | MessageLifecycleState::Snoozed
+                )
+            })
+    }
+
+    fn ask_is_unexpired(card: &super::super::ask_card::AskCard, now_ms: Option<u64>) -> bool {
+        card.required
+            || now_ms
+                .zip(crate::time::parse_rfc3339_ms(&card.wait_until))
+                .is_some_and(|(now, until)| until > now)
+    }
+
+    fn ask_targets_caller(
+        card: &super::super::ask_card::AskCard,
+        employee_id: &Id,
+        caller_is_recipient: bool,
+        caller_is_person: bool,
+    ) -> bool {
+        let addressed = card
+            .addressed_to
+            .as_deref()
+            .is_none_or(|target| target == employee_id.as_str());
+        let approval_ok = !card.approval || caller_is_person;
+        caller_is_recipient && addressed && approval_ok
+    }
+
+    fn ask_candidate_for_employee(
+        &self,
+        msg: &MessageRecord,
+        employee_id: &Id,
+        now_ms: Option<u64>,
+        caller_is_person: bool,
+    ) -> Option<(MessageRecord, bool)> {
+        if msg.kind != KIND_REQUEST || self.is_answered(&msg.id) {
+            return None;
+        }
+        let card = parse_ask_card(msg)?;
+        if !Self::ask_is_unexpired(&card, now_ms) {
+            return None;
+        }
+        let is_sender = msg.sender_employee_id.as_ref() == Some(employee_id);
+        let is_recipient = self.is_active_recipient(&msg.id, employee_id);
+        let awaiting = Self::ask_targets_caller(&card, employee_id, is_recipient, caller_is_person);
+        (is_sender || awaiting).then(|| (msg.clone(), is_recipient))
+    }
+
     pub(super) fn open_asks_for_employee(
         &self,
         employee_id: &Id,
+        now_utc: &str,
+        caller_is_person: bool,
         limit: usize,
     ) -> Vec<(MessageRecord, bool)> {
-        let mut candidates: Vec<(MessageRecord, bool)> = Vec::new();
-        for (_, msg) in self.messages.values() {
-            if msg.kind != KIND_REQUEST {
-                continue;
-            }
-            let answered = self
-                .answers
-                .iter()
-                .any(|((mid, _), ans)| mid == &msg.id && ans.answer.is_some());
-            if answered {
-                continue;
-            }
-            let is_sender = msg.sender_employee_id.as_ref() == Some(employee_id);
-            let caller_is_recipient = self
-                .recipient_states
-                .get(&(msg.id.clone(), employee_id.clone()))
-                .is_some_and(|st| {
-                    matches!(
-                        st.state,
-                        MessageLifecycleState::Unread
-                            | MessageLifecycleState::Read
-                            | MessageLifecycleState::Snoozed
-                    )
-                });
-            if is_sender || caller_is_recipient {
-                candidates.push((msg.clone(), caller_is_recipient));
-            }
+        if limit == 0 {
+            return Vec::new();
         }
+        let now_ms = crate::time::parse_rfc3339_ms(now_utc);
+        let mut candidates: Vec<(MessageRecord, bool)> = self
+            .messages
+            .values()
+            .filter_map(|(_, msg)| {
+                self.ask_candidate_for_employee(msg, employee_id, now_ms, caller_is_person)
+            })
+            .collect();
         candidates.sort_by_key(|(m, _)| (Reverse(m.created_at.clone()), Reverse(m.id.clone())));
         candidates.truncate(limit);
         candidates

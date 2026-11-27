@@ -100,12 +100,15 @@ pub(super) fn unread_inbox_summary(
     })
 }
 
-/// Fetches up to `limit` newest unanswered `request` messages sent by or actively delivered to
-/// `employee_id` in one SQLite query (zero N+1).
+/// Fetches up to `limit` newest open `request` asks visible to `employee_id` in one SQLite query
+/// (zero N+1), pre-filtering expired non-required asks, peer-addressed asks, and agent-ineligible
+/// approvals before `LIMIT`.
 pub(super) fn open_asks_for_employee(
     db: &Connection,
     scope: &str,
     employee_id: &Id,
+    now_utc: &str,
+    caller_is_person: bool,
     limit: usize,
 ) -> Result<Vec<(MessageRecord, bool)>, EngineError> {
     if limit == 0 {
@@ -123,12 +126,19 @@ pub(super) fn open_asks_for_employee(
            ON lm.organization_id = m.organization_id AND lm.message_id = m.id \
          WHERE m.organization_id = ?1 \
            AND m.kind = 'request' \
-           AND (m.sender_employee_id = ?2 OR EXISTS( \
-                 SELECT 1 FROM message_recipient_states s \
-                 WHERE s.organization_id = m.organization_id \
-                   AND s.message_id = m.id \
-                   AND s.employee_id = ?2 \
-                   AND s.state IN ('unread', 'read', 'snoozed'))) \
+           AND json_type(m.metadata_json, '$.card.questions') = 'array' \
+           AND (COALESCE(json_extract(m.metadata_json, '$.card.required'), 0) = 1 \
+                OR (json_type(m.metadata_json, '$.card.wait_until') = 'text' \
+                    AND json_extract(m.metadata_json, '$.card.wait_until') > ?4)) \
+           AND (m.sender_employee_id = ?2 \
+                OR (EXISTS( \
+                      SELECT 1 FROM message_recipient_states s \
+                      WHERE s.organization_id = m.organization_id \
+                        AND s.message_id = m.id \
+                        AND s.employee_id = ?2 \
+                        AND s.state IN ('unread', 'read', 'snoozed')) \
+                    AND COALESCE(json_extract(m.metadata_json, '$.card.addressed_to'), ?2) = ?2 \
+                    AND (COALESCE(json_extract(m.metadata_json, '$.card.approval'), 0) != 1 OR ?5 = 1))) \
            AND NOT EXISTS( \
                  SELECT 1 FROM messaging_answers a \
                  WHERE a.organization_id = m.organization_id \
@@ -144,6 +154,8 @@ pub(super) fn open_asks_for_employee(
             text(scope),
             text(employee_id.as_str()),
             Value::Integer(limit as i64),
+            text(now_utc),
+            Value::Integer(i64::from(caller_is_person)),
         ],
         |row| {
             let message = message_row(row)?;
