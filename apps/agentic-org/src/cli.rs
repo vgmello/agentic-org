@@ -157,7 +157,7 @@ pub(crate) enum TopCommand {
     /// Use when: hiring new agents onto HQ or a remote satellite office from the terminal (optionally binding a local workspace in one step).
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Hr(PassArgs),
-    /// Inspect or manage hired agents (agent inspect|update|pause|offboard|bind|approve|revoke|...)
+    /// Inspect or manage hired agents (agent inspect|update|pause|offboard|bind|approve|renew|sessions|revoke|...)
     /// Use when: checking agent status, execution settings, lifecycle state, or external workspace bindings/sign-ins.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Agent(PassArgs),

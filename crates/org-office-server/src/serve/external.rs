@@ -5,9 +5,9 @@
 //!   only (`peer_allowed`); each connection has a call budget, the office an office-wide budget
 //!   per kind of call ([`super::auth_limits`]); the port's books are bounded.
 //! - `auth.whoami`: a bound connection's member, mode (`managed`|`external`) and expiries.
-//! - `member.external_approve|bind|sessions|revoke`: operator calls, only through a verified grant
-//!   (a person or the owner, on a host channel). An agent on the office socket, managed or
-//!   external, can never approve, bind, list or revoke a lease.
+//! - `member.external_approve|bind|sessions|pending|renew|revoke`: operator calls, only through a
+//!   verified grant (a person or the owner, on a host channel). An agent on the office socket,
+//!   managed or external, can never approve, bind, list, renew or revoke a lease.
 //! - An externally bound connection may only make the organization's collaboration calls
 //!   ([`external_may_call`]): never host administration, provider credentials or raw data.
 
@@ -19,9 +19,10 @@ use org_proto::external_auth::{
     AuthLoginPollResult, AuthLoginRequest, AuthLoginRequestParams, AuthLoginRequestResult,
     AuthLogout, AuthLogoutResult, AuthWhoami, AuthWhoamiResult, ChallengePurpose,
     ExternalSessionView, MemberExternalApprove, MemberExternalApproveParams, MemberExternalBind,
-    MemberExternalBindParams, MemberExternalBindResult, MemberExternalRevoke,
-    MemberExternalRevokeResult, MemberExternalSessions, MemberExternalSessionsResult,
-    SignedChallengeParams,
+    MemberExternalBindParams, MemberExternalBindResult, MemberExternalPending,
+    MemberExternalPendingResult, MemberExternalRenew, MemberExternalRenewParams,
+    MemberExternalRevoke, MemberExternalRevokeResult, MemberExternalSessions,
+    MemberExternalSessionsResult, SignedChallengeParams,
 };
 use org_proto::msg::{json_string_len, MAX_HANDLE_BYTES};
 use org_proto::{ApiError, Call, ErrorCode, MemberKind, Request, Response};
@@ -76,6 +77,17 @@ pub trait ExternalAuthPort: Send + Sync {
         employee_id: &str,
         limit: Option<u32>,
     ) -> Result<MemberExternalSessionsResult, ApiError>;
+    fn pending(
+        &self,
+        actor: &str,
+        employee_id: Option<&str>,
+    ) -> Result<MemberExternalPendingResult, ApiError>;
+    fn renew(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &MemberExternalRenewParams,
+    ) -> Result<ExternalSessionView, ApiError>;
     fn revoke(
         &self,
         actor: &str,
@@ -308,7 +320,8 @@ fn operator_target(shared: &Shared, reference: &str) -> Result<String, ApiError>
     }
 }
 
-/// Answers `member.external_approve|bind|sessions|revoke`; `None` for any other method.
+/// Answers `member.external_approve|bind|sessions|pending|renew|revoke`; `None` for any other
+/// method.
 pub(super) fn answer_operator(
     request: &Request,
     shared: &Shared,
@@ -324,6 +337,8 @@ pub(super) fn answer_operator(
         OperatorOp::Approve => operator_approve(request, shared, actor, port),
         OperatorOp::Bind => operator_bind(request, shared, actor, port),
         OperatorOp::Sessions => operator_sessions(request, shared, actor, port),
+        OperatorOp::Pending => operator_pending(request, shared, actor, port),
+        OperatorOp::Renew => operator_renew(request, shared, actor, port),
         OperatorOp::Revoke => operator_revoke(request, shared, actor, port),
     })
 }
@@ -332,6 +347,8 @@ enum OperatorOp {
     Approve,
     Bind,
     Sessions,
+    Pending,
+    Renew,
     Revoke,
 }
 
@@ -343,6 +360,10 @@ impl OperatorOp {
             Some(Self::Bind)
         } else if request.is::<MemberExternalSessions>() {
             Some(Self::Sessions)
+        } else if request.is::<MemberExternalPending>() {
+            Some(Self::Pending)
+        } else if request.is::<MemberExternalRenew>() {
+            Some(Self::Renew)
         } else if request.is::<MemberExternalRevoke>() {
             Some(Self::Revoke)
         } else {
@@ -360,7 +381,7 @@ fn authorize_operator_call<'a>(
         return Err(error(
             id,
             ErrorCode::NotAuthorized,
-            "only a signed-in person may approve, bind, list or revoke external agent sessions",
+            "only a signed-in person may approve, bind, list, renew or revoke external agent sessions",
         ));
     }
     let actor = binding.member().ok_or_else(|| internal(id))?;
@@ -444,6 +465,43 @@ fn operator_sessions(
             let outcome = operator_target(shared, &p.employee_id)
                 .and_then(|target| port.sessions(actor, &target, p.limit));
             reply::<MemberExternalSessions>(request.id, outcome)
+        }
+        Err(refusal) => refusal,
+    }
+}
+
+fn operator_pending(
+    request: &Request,
+    shared: &Shared,
+    actor: &str,
+    port: &dyn ExternalAuthPort,
+) -> Response {
+    match params::<MemberExternalPending>(request) {
+        Ok(p) => {
+            let target = match p.employee_id.as_deref() {
+                Some(reference) => match operator_target(shared, reference) {
+                    Ok(id) => Some(id),
+                    Err(err) => return Response::error(request.id, err),
+                },
+                None => None,
+            };
+            reply::<MemberExternalPending>(request.id, port.pending(actor, target.as_deref()))
+        }
+        Err(refusal) => refusal,
+    }
+}
+
+fn operator_renew(
+    request: &Request,
+    shared: &Shared,
+    actor: &str,
+    port: &dyn ExternalAuthPort,
+) -> Response {
+    match params::<MemberExternalRenew>(request) {
+        Ok(p) => {
+            let outcome = operator_target(shared, &p.employee_id)
+                .and_then(|target| port.renew(actor, &target, &p));
+            reply::<MemberExternalRenew>(request.id, outcome)
         }
         Err(refusal) => refusal,
     }

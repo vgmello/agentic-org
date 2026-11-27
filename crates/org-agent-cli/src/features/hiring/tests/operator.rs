@@ -162,6 +162,7 @@ impl OfficeTransport for Recording {
         self.calls.push((method.to_owned(), params));
         Ok(match method {
             "member.external_sessions" => json!({"employee_id": "e", "history": []}),
+            "member.external_pending" => json!({"pending": []}),
             "member.external_revoke" => json!({"employee_id": "e", "revoked": true}),
             _ => json!({
                 "session_id": "ext-1", "employee_id": "e", "workspace_label": "w",
@@ -198,12 +199,30 @@ fn operator_rows_send_the_external_calls() {
 
     let out = crate::execute_with_office(
         "agentic-org",
+        &words(&["agent", "sessions", "--pending"]),
+        &mut office,
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.calls[2].0, "member.external_pending");
+    assert_eq!(office.0.calls[2].1, json!({}));
+
+    let out = crate::execute_with_office(
+        "agentic-org",
+        &words(&["agent", "sessions", "@ada", "--pending"]),
+        &mut office,
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.calls[3].0, "member.external_pending");
+    assert_eq!(office.0.calls[3].1, json!({"employee_id": "@ada"}));
+
+    let out = crate::execute_with_office(
+        "agentic-org",
         &words(&["agent", "revoke", "@ada", "ext-9"]),
         &mut office,
     );
     assert_eq!(out.exit_code, 0, "{}", out.stdout);
-    assert_eq!(office.0.calls[2].0, "member.external_revoke");
-    assert_eq!(office.0.calls[2].1["session_id"], "ext-9");
+    assert_eq!(office.0.calls[4].0, "member.external_revoke");
+    assert_eq!(office.0.calls[4].1["session_id"], "ext-9");
 
     let bad = crate::execute_with_office(
         "agentic-org",
@@ -213,7 +232,7 @@ fn operator_rows_send_the_external_calls() {
     assert_ne!(bad.exit_code, 0);
     assert_eq!(
         office.0.calls.len(),
-        3,
+        5,
         "a bad --ttl never reaches the office"
     );
 }

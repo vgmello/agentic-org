@@ -1,5 +1,5 @@
 //! The index of the built-in guides (`agent-os skill list`: key and one-line description), for
-//! `session boot` to answer without the office. The guides themselves live in `org-process`,
+//! `session context` to answer without the office. The guides themselves live in `org-process`,
 //! which serves them; `org-office-sessions`' tests hold this index to that list, entry by entry.
 
 /// Each built-in guide's key and description, in `skill list` order.

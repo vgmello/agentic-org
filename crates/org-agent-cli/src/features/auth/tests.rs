@@ -13,16 +13,11 @@ fn words(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| (*s).to_owned()).collect()
 }
 
-fn no_catalogue() -> String {
-    String::new()
-}
-
 fn no_briefing(_: &mut dyn OfficeTransport) -> Result<Value, Refusal> {
     Ok(Value::Null)
 }
 
 const HOOKS: LoginHooks = LoginHooks {
-    catalogue: no_catalogue,
     briefing: no_briefing,
 };
 

@@ -47,9 +47,38 @@ pub(crate) struct PendingLogin {
     pub(crate) employee_id: String,
     pub(crate) pubkey_ed25519_b64: String,
     pub(crate) workspace_label: String,
+    pub(crate) hostname: Option<String>,
+    pub(crate) workspace_path: Option<String>,
+    pub(crate) requested_ms: u64,
     pub(crate) expires_ms: u64,
     attempts: u32,
     state: Settle,
+}
+
+/// Inputs to [`PendingLogins::insert`].
+pub(crate) struct PendingInsert<'a> {
+    pub(crate) request_id: String,
+    pub(crate) employee_id: &'a str,
+    pub(crate) pubkey_ed25519_b64: &'a str,
+    pub(crate) workspace_label: &'a str,
+    pub(crate) hostname: Option<&'a str>,
+    pub(crate) workspace_path: Option<&'a str>,
+    pub(crate) now_ms: u64,
+}
+
+/// Public snapshot of one live pending login for human operator inspection.
+/// Carries only the masked `code_prefix` (`XXXX-••••`), NEVER the secret half.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingSnapshot {
+    pub(crate) request_id: String,
+    pub(crate) employee_id: String,
+    pub(crate) pubkey_ed25519_b64: String,
+    pub(crate) workspace_label: String,
+    pub(crate) hostname: Option<String>,
+    pub(crate) workspace_path: Option<String>,
+    pub(crate) requested_ms: u64,
+    pub(crate) expires_ms: u64,
+    pub(crate) code_prefix: String,
 }
 
 impl std::fmt::Debug for PendingLogin {
@@ -73,6 +102,25 @@ impl PendingLogin {
         match self.state {
             Settle::Pending => self.expires_ms,
             Settle::Approved { at_ms, .. } | Settle::Locked { at_ms } => at_ms,
+        }
+    }
+
+    /// Masked approval code prefix (`XXXX-••••`); never includes the secret half.
+    fn code_prefix(&self) -> String {
+        format!("{}-••••", self.lookup)
+    }
+
+    fn snapshot(&self) -> PendingSnapshot {
+        PendingSnapshot {
+            request_id: self.request_id.clone(),
+            employee_id: self.employee_id.clone(),
+            pubkey_ed25519_b64: self.pubkey_ed25519_b64.clone(),
+            workspace_label: self.workspace_label.clone(),
+            hostname: self.hostname.clone(),
+            workspace_path: self.workspace_path.clone(),
+            requested_ms: self.requested_ms,
+            expires_ms: self.expires_ms,
+            code_prefix: self.code_prefix(),
         }
     }
 }
@@ -172,18 +220,19 @@ impl PendingLogins {
     /// Records a new pending login and answers it with its full code (`LLLL-SSSS`).
     pub(crate) fn insert(
         &mut self,
-        request_id: String,
-        employee_id: &str,
-        pubkey_ed25519_b64: &str,
-        workspace_label: &str,
-        now_ms: u64,
+        input: PendingInsert<'_>,
     ) -> Result<(PendingLogin, String), ApiError> {
+        let now_ms = input.now_ms;
         self.prune(now_ms);
         let live: Vec<&PendingLogin> = self.entries.iter().filter(|e| e.is_live(now_ms)).collect();
         if live.len() >= MAX_PENDING_TOTAL {
             return Err(too_many());
         }
-        if live.iter().filter(|e| e.employee_id == employee_id).count() >= MAX_PENDING_PER_EMPLOYEE
+        if live
+            .iter()
+            .filter(|e| e.employee_id == input.employee_id)
+            .count()
+            >= MAX_PENDING_PER_EMPLOYEE
         {
             return Err(ApiError::new(
                 ErrorCode::Unavailable,
@@ -204,18 +253,40 @@ impl PendingLogins {
         let secret = random_part(&rng)?;
         let code = format!("{lookup}-{secret}");
         let entry = PendingLogin {
-            request_id,
+            request_id: input.request_id,
             lookup,
             secret,
-            employee_id: employee_id.to_owned(),
-            pubkey_ed25519_b64: pubkey_ed25519_b64.to_owned(),
-            workspace_label: workspace_label.to_owned(),
+            employee_id: input.employee_id.to_owned(),
+            pubkey_ed25519_b64: input.pubkey_ed25519_b64.to_owned(),
+            workspace_label: input.workspace_label.to_owned(),
+            hostname: input.hostname.map(str::to_owned),
+            workspace_path: input.workspace_path.map(str::to_owned),
+            requested_ms: now_ms,
             expires_ms: now_ms.saturating_add(APPROVAL_CODE_TTL_SECS * 1000),
             attempts: 0,
             state: Settle::Pending,
         };
         self.entries.push(entry.clone());
         Ok((entry, code))
+    }
+
+    /// Snapshots all live pending logins (optionally filtered to `employee_id`), oldest first.
+    /// Never exposes the secret half of any approval code.
+    pub(crate) fn list_live(
+        &mut self,
+        employee_id: Option<&str>,
+        now_ms: u64,
+    ) -> Vec<PendingSnapshot> {
+        self.prune(now_ms);
+        let mut out: Vec<PendingSnapshot> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_live(now_ms))
+            .filter(|e| employee_id.is_none_or(|id| e.employee_id == id))
+            .map(PendingLogin::snapshot)
+            .collect();
+        out.sort_by_key(|s| s.requested_ms);
+        out
     }
 
     /// Where `request_id` stands; `None` when it is unknown (or long settled).

@@ -15,7 +15,7 @@ Organization governance in Agentic Org uses typed process and standard documents
 - Each document declares `overridable` (`true` by default, or `false` for non-overridable must-follow rules).
 - When a higher layer sets `overridable: false` for a key, lower team or project layers cannot replace or weaken it; the non-overridable higher layer always wins and any conflicting lower override is flagged as a resolution problem.
 - Overridable documents may be replaced cleanly by a more specific layer sharing the same key.
-- Must-follow documents are delivered whole at session boot (`agent-os boot`) and never truncated mid-document; overridable guidance fits within the standing instruction budget.
+- Must-follow documents are delivered whole in your session context (`agent-os context`) and never truncated mid-document; overridable guidance fits within the standing instruction budget.
 
 ## Tracing decisions with `--why`
 

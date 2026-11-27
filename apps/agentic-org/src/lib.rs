@@ -254,8 +254,8 @@ fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError>
     use features::*;
     refuse_unsupported_modes(&top, ctx)?;
     if let TopCommand::Agent(pass) = &top {
-        if pass.args.first().map(String::as_str) == Some("bind") {
-            return agent::run(&pass.args[1..], ctx);
+        if let Some(outcome) = agent::try_run(&pass.args, ctx) {
+            return outcome;
         }
     }
     if let Some((resource, words)) = top.office_resource() {
@@ -268,15 +268,13 @@ fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError>
         TopCommand::Serve(pass) => serve::run(pass.args, ctx),
         TopCommand::Setup(pass) => setup::run(&pass.args, ctx),
         TopCommand::SignIn(args) => {
-            if let [first, second, rest @ ..] = args.command() {
-                if first == "agent" && second == "bind" {
-                    return agent::run_after_sign_in(
-                        args.instance_name(),
-                        args.office_id(),
-                        rest,
-                        ctx,
-                    );
-                }
+            if let Some(outcome) = agent::try_run_after_sign_in(
+                args.instance_name(),
+                args.office_id(),
+                args.command(),
+                ctx,
+            ) {
+                return outcome;
             }
             sign_in::run(args, ctx)
         }

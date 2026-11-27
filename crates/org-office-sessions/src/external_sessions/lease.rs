@@ -4,9 +4,9 @@
 
 use org_office::organization_family::records::{Employee, EmployeeKind, EmployeeStatus};
 use org_proto::external_auth::{
-    AuthWhoamiResult, ExternalSessionView, MemberExternalApproveParams, MemberExternalRevokeResult,
-    MemberExternalSessionsResult, SessionMode, DEFAULT_LEASE_TTL_SECS, MAX_LEASE_TTL_SECS,
-    MIN_LEASE_TTL_SECS,
+    AuthWhoamiResult, ExternalSessionView, MemberExternalApproveParams, MemberExternalRenewParams,
+    MemberExternalRevokeResult, MemberExternalSessionsResult, SessionMode, DEFAULT_LEASE_TTL_SECS,
+    MAX_LEASE_TTL_SECS, MIN_LEASE_TTL_SECS,
 };
 use org_proto::{ApiError, ErrorCode};
 use serde_json::json;
@@ -29,9 +29,20 @@ pub(super) struct LeaseCommit<'a> {
     pub(super) employee: &'a Employee,
     pub(super) pubkey_ed25519_b64: &'a str,
     pub(super) workspace_label: &'a str,
+    pub(super) hostname: Option<&'a str>,
+    pub(super) workspace_path: Option<&'a str>,
     pub(super) ttl: u64,
     pub(super) takeover: bool,
     pub(super) verb: &'static str,
+}
+
+/// Optional workspace & key metadata written alongside audit history lines for familiarity.
+#[derive(Default)]
+struct AuditMeta<'a> {
+    hostname: Option<&'a str>,
+    workspace_path: Option<&'a str>,
+    workspace_label: Option<&'a str>,
+    pubkey_fingerprint: Option<&'a str>,
 }
 
 fn storage(context: &str) -> ApiError {
@@ -199,6 +210,8 @@ impl SessionManager {
             employee: &employee,
             pubkey_ed25519_b64: &pending.pubkey_ed25519_b64,
             workspace_label: &pending.workspace_label,
+            hostname: pending.hostname.as_deref(),
+            workspace_path: pending.workspace_path.as_deref(),
             ttl,
             takeover: params.takeover,
             verb: "approve",
@@ -231,6 +244,8 @@ impl SessionManager {
             employee_id: emp_id.to_owned(),
             pubkey_ed25519_b64: commit.pubkey_ed25519_b64.to_owned(),
             workspace_label: commit.workspace_label.to_owned(),
+            hostname: commit.hostname.map(str::to_owned),
+            workspace_path: commit.workspace_path.map(str::to_owned),
             approved_by: commit.actor.to_owned(),
             approved_at: format_rfc3339_ms(now),
             expires_at: format_rfc3339_ms(now.saturating_add(commit.ttl * 1000)),
@@ -271,17 +286,112 @@ impl SessionManager {
                 ""
             }
         );
-        self.record_external_event(
+        let fingerprint = decode_pubkey(&record.pubkey_ed25519_b64)
+            .map(|k| pubkey_fingerprint(&k))
+            .unwrap_or_default();
+        self.record_external_event_with_meta(
             emp_id,
             "approved",
             Some(&session_id),
             Some(commit.actor),
             Some(&detail),
+            &AuditMeta {
+                hostname: record.hostname.as_deref(),
+                workspace_path: record.workspace_path.as_deref(),
+                workspace_label: Some(&record.workspace_label),
+                pubkey_fingerprint: (!fingerprint.is_empty()).then_some(&fingerprint),
+            },
         );
         let mut view = self.external_view(commit.employee, &record);
         view.superseded_session_id = superseded;
         view.took_over_managed = took_over;
         Ok(view)
+    }
+
+    /// `member.external_renew`: extends an active external lease by up to [`MAX_LEASE_TTL_SECS`]
+    /// (default 7 days) without re-login. Refuses expired, revoked, or missing leases fail-closed.
+    pub fn external_renew(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &MemberExternalRenewParams,
+    ) -> Result<ExternalSessionView, ApiError> {
+        let ttl = params.ttl_secs.unwrap_or(MAX_LEASE_TTL_SECS);
+        if !(MIN_LEASE_TTL_SECS..=MAX_LEASE_TTL_SECS).contains(&ttl) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                format!("--ttl must be between {MIN_LEASE_TTL_SECS}s and {MAX_LEASE_TTL_SECS}s"),
+            ));
+        }
+        self.authorize_owner_or_person_inner(actor, false)?;
+        let _serial = self
+            .external
+            .lease_mutation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let employee = self.require_agent(employee_id)?;
+        refuse_builtin_agent(&employee)?;
+        self.authorize_external_operator(actor, &employee)?;
+        let employee = self.require_active_agent(employee_id)?;
+        let emp_id = employee.id.as_str();
+        let now = now_ms();
+        let mut lease = self.load_renewable_lease(emp_id, params.session_id.as_deref(), now)?;
+        lease.expires_at = format_rfc3339_ms(now.saturating_add(ttl * 1000));
+        if self.store.write_external_lease(&lease).is_err() {
+            return Err(storage("renew"));
+        }
+        self.external.replace(emp_id, Some(lease.clone()));
+        let fingerprint = decode_pubkey(&lease.pubkey_ed25519_b64)
+            .map(|k| pubkey_fingerprint(&k))
+            .unwrap_or_default();
+        let detail = format!("expires_at={} ttl_secs={ttl}", lease.expires_at);
+        self.record_external_event_with_meta(
+            emp_id,
+            "renewed",
+            Some(&lease.session_id),
+            Some(actor),
+            Some(&detail),
+            &AuditMeta {
+                hostname: lease.hostname.as_deref(),
+                workspace_path: lease.workspace_path.as_deref(),
+                workspace_label: Some(&lease.workspace_label),
+                pubkey_fingerprint: (!fingerprint.is_empty()).then_some(&fingerprint),
+            },
+        );
+        Ok(self.external_view(&employee, &lease))
+    }
+
+    fn load_renewable_lease(
+        &self,
+        emp_id: &str,
+        expected_session: Option<&str>,
+        now: u64,
+    ) -> Result<ExternalLeaseRecord, ApiError> {
+        let Some(lease) = self.external_lease(emp_id) else {
+            return Err(ApiError::new(
+                ErrorCode::NotFound,
+                "this agent has no external session to renew",
+            ));
+        };
+        if lease.revoked_at.is_some() {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "this agent's external session was revoked and cannot be renewed; sign in again",
+            ));
+        }
+        if !lease.is_active(now) {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "this agent's external session has expired and cannot be renewed; sign in again",
+            ));
+        }
+        if expected_session.is_some_and(|id| id != lease.session_id) {
+            return Err(ApiError::new(
+                ErrorCode::NotFound,
+                "that external session is not this agent's current one",
+            ));
+        }
+        Ok(lease)
     }
 
     /// Publishes `record` in the lease cache under the registry lock, refusing a live managed
@@ -503,16 +613,47 @@ impl SessionManager {
         actor_id: Option<&str>,
         detail: Option<&str>,
     ) {
+        self.record_external_event_with_meta(
+            employee_id,
+            event,
+            session_id,
+            actor_id,
+            detail,
+            &AuditMeta::default(),
+        );
+    }
+
+    fn record_external_event_with_meta(
+        &self,
+        employee_id: &str,
+        event: &str,
+        session_id: Option<&str>,
+        actor_id: Option<&str>,
+        detail: Option<&str>,
+        meta: &AuditMeta<'_>,
+    ) {
         let tokens = self.bindings.active_tokens();
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-        let entry = json!({
-            "at": rfc3339_now(),
-            "event": event,
-            "mode": "external",
-            "session_id": session_id,
-            "actor_id": actor_id,
-            "detail": detail,
-        });
+        let mut obj = serde_json::Map::new();
+        obj.insert("at".into(), json!(rfc3339_now()));
+        obj.insert("event".into(), json!(event));
+        obj.insert("mode".into(), json!("external"));
+        obj.insert("session_id".into(), json!(session_id));
+        obj.insert("actor_id".into(), json!(actor_id));
+        obj.insert("detail".into(), json!(detail));
+        if let Some(hostname) = meta.hostname {
+            obj.insert("hostname".into(), json!(hostname));
+        }
+        if let Some(workspace_path) = meta.workspace_path {
+            obj.insert("workspace_path".into(), json!(workspace_path));
+        }
+        if let Some(workspace_label) = meta.workspace_label {
+            obj.insert("workspace_label".into(), json!(workspace_label));
+        }
+        if let Some(fingerprint) = meta.pubkey_fingerprint {
+            obj.insert("pubkey_fingerprint".into(), json!(fingerprint));
+        }
+        let entry = serde_json::Value::Object(obj);
         if let Err(e) = self
             .store
             .append_external_history(employee_id, &entry, &refs)

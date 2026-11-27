@@ -9,12 +9,31 @@ use org_proto::ErrorCode;
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 
-use super::codes::{normalize_code, MAX_PENDING_PER_EMPLOYEE, MAX_PENDING_TOTAL};
+use super::codes::{normalize_code, PendingInsert, MAX_PENDING_PER_EMPLOYEE, MAX_PENDING_TOTAL};
 use super::nonces::{verify_signature, NonceEntry, MAX_NONCES_PER_SESSION};
 use super::{
-    decode_pubkey, pubkey_fingerprint, refuse_builtin_agent, validate_workspace_label,
-    ExternalLeaseRecord, NonceBook, PendingLogins,
+    compute_workspace_familiarity, decode_pubkey, pubkey_fingerprint, refuse_builtin_agent,
+    validate_workspace_label, ExternalLeaseRecord, NonceBook, PendingLogins,
 };
+use org_proto::external_auth::{ExternalHistoryEntry, WorkspaceFamiliarity};
+
+fn insert_req<'a>(
+    request_id: String,
+    employee_id: &'a str,
+    pubkey_ed25519_b64: &'a str,
+    workspace_label: &'a str,
+    now_ms: u64,
+) -> PendingInsert<'a> {
+    PendingInsert {
+        request_id,
+        employee_id,
+        pubkey_ed25519_b64,
+        workspace_label,
+        hostname: None,
+        workspace_path: None,
+        now_ms,
+    }
+}
 
 const KEY: &str = "MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -55,7 +74,7 @@ fn codes_normalize_crockford_and_refuse_anything_else() {
 fn a_pending_login_locks_after_three_wrong_codes_and_never_leaks_its_secret() {
     let mut book = PendingLogins::default();
     let (entry, code) = book
-        .insert("req-1".into(), "emp-1", KEY, "laptop", 1_000)
+        .insert(insert_req("req-1".into(), "emp-1", KEY, "laptop", 1_000))
         .unwrap();
     assert!(!format!("{entry:?}").contains(&code[5..]));
     let (lookup, secret) = normalize_code(&code).unwrap();
@@ -100,7 +119,7 @@ fn a_pending_login_locks_after_three_wrong_codes_and_never_leaks_its_secret() {
 fn codes_expire_after_ten_minutes_and_unknown_lookups_are_not_found() {
     let mut book = PendingLogins::default();
     let (_, code) = book
-        .insert("req-1".into(), "emp-1", KEY, "laptop", 0)
+        .insert(insert_req("req-1".into(), "emp-1", KEY, "laptop", 0))
         .unwrap();
     let ttl_ms = APPROVAL_CODE_TTL_SECS * 1000;
     let target = book.find_live(&code, ttl_ms - 1).unwrap();
@@ -139,7 +158,13 @@ fn codes_expire_after_ten_minutes_and_unknown_lookups_are_not_found() {
     );
     // A target whose lookup now names another request is refused without an attempt.
     let (_, fresh) = book
-        .insert("req-2".into(), "emp-2", KEY, "laptop", ttl_ms * 10)
+        .insert(insert_req(
+            "req-2".into(),
+            "emp-2",
+            KEY,
+            "laptop",
+            ttl_ms * 10,
+        ))
         .unwrap();
     let stale = super::codes::CodeTarget {
         request_id: "req-1".into(),
@@ -170,7 +195,13 @@ fn settled_records_make_room_so_the_book_never_grows_past_its_cap() {
             n += 1;
             let employee = format!("emp-{}", i / MAX_PENDING_PER_EMPLOYEE);
             let (entry, _) = book
-                .insert(format!("req-{n}"), &employee, KEY, "laptop", now)
+                .insert(insert_req(
+                    format!("req-{n}"),
+                    &employee,
+                    KEY,
+                    "laptop",
+                    now,
+                ))
                 .unwrap_or_else(|e| panic!("round {round}, login {i}: {e:?}"));
             book.mark_approved(&entry.request_id, "ext-1", "2099-01-01T00:00:00.000Z", now);
             assert!(book.len() <= MAX_ENTRIES_TOTAL, "{}", book.len());
@@ -186,19 +217,20 @@ fn settled_records_make_room_so_the_book_never_grows_past_its_cap() {
 fn pending_logins_are_bounded_per_agent_and_per_office() {
     let mut book = PendingLogins::default();
     for i in 0..MAX_PENDING_PER_EMPLOYEE {
-        book.insert(format!("req-{i}"), "emp-1", KEY, "l", 0)
+        book.insert(insert_req(format!("req-{i}"), "emp-1", KEY, "l", 0))
             .unwrap();
     }
     let refused = book
-        .insert("req-x".into(), "emp-1", KEY, "l", 0)
+        .insert(insert_req("req-x".into(), "emp-1", KEY, "l", 0))
         .unwrap_err();
     assert_eq!(refused.code, ErrorCode::Unavailable);
     for i in 0..(MAX_PENDING_TOTAL - MAX_PENDING_PER_EMPLOYEE) {
-        book.insert(format!("o-{i}"), &format!("emp-o{i}"), KEY, "l", 0)
+        let emp = format!("emp-o{i}");
+        book.insert(insert_req(format!("o-{i}"), &emp, KEY, "l", 0))
             .unwrap();
     }
     assert_eq!(
-        book.insert("req-y".into(), "emp-new", KEY, "l", 0)
+        book.insert(insert_req("req-y".into(), "emp-new", KEY, "l", 0))
             .unwrap_err()
             .code,
         ErrorCode::Unavailable
@@ -208,7 +240,8 @@ fn pending_logins_are_bounded_per_agent_and_per_office() {
     let polled = book.poll("req-0", 2).unwrap();
     assert_eq!(polled.state, ExternalLoginState::Approved);
     assert_eq!(polled.session_id.as_deref(), Some("ext-1"));
-    book.insert("req-z".into(), "emp-1", KEY, "l", 2).unwrap();
+    book.insert(insert_req("req-z".into(), "emp-1", KEY, "l", 2))
+        .unwrap();
 }
 
 fn nonce_entry(session: &str, purpose: ChallengePurpose) -> impl FnOnce(u64, u64) -> NonceEntry {
@@ -290,6 +323,8 @@ fn leases_are_active_only_unrevoked_and_before_expiry() {
         employee_id: "emp-1".into(),
         pubkey_ed25519_b64: KEY.into(),
         workspace_label: "laptop".into(),
+        hostname: None,
+        workspace_path: None,
         approved_by: "owner".into(),
         approved_at: "2026-11-26T00:00:00.000Z".into(),
         expires_at: "2026-11-27T00:00:00.000Z".into(),
@@ -345,4 +380,89 @@ fn builtin_agents_are_refused_for_external_auth_and_labels_are_validated() {
         validate_workspace_label(&"a".repeat(200)).unwrap_err().code,
         ErrorCode::InvalidRequest
     );
+}
+
+#[test]
+fn pending_list_live_masks_code_prefix_and_never_exposes_secret() {
+    let mut book = PendingLogins::default();
+    let (_, code) = book
+        .insert(PendingInsert {
+            request_id: "req-mask".into(),
+            employee_id: "emp-1",
+            pubkey_ed25519_b64: KEY,
+            workspace_label: "~/repo",
+            hostname: Some("workstation"),
+            workspace_path: Some("/home/ada/repo"),
+            now_ms: 5_000,
+        })
+        .unwrap();
+    let (lookup, secret) = normalize_code(&code).unwrap();
+    let live = book.list_live(None, 5_100);
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].code_prefix, format!("{lookup}-••••"));
+    assert!(!live[0].code_prefix.contains(&secret));
+    assert!(!format!("{:?}", live[0]).contains(&secret));
+    assert_eq!(live[0].hostname.as_deref(), Some("workstation"));
+    assert_eq!(live[0].workspace_path.as_deref(), Some("/home/ada/repo"));
+    assert_eq!(book.list_live(Some("emp-other"), 5_100).len(), 0);
+}
+
+#[test]
+fn workspace_familiarity_classifies_all_three_states() {
+    let history = vec![ExternalHistoryEntry {
+        at: "2026-11-26T10:00:00.000Z".into(),
+        event: "approved".into(),
+        session_id: Some("ext-1".into()),
+        actor_id: Some("owner-1".into()),
+        detail: None,
+        hostname: Some("mac-1".into()),
+        workspace_path: Some("/Users/ada/repo".into()),
+        workspace_label: Some("~/repo".into()),
+        pubkey_fingerprint: Some("fp-known".into()),
+    }];
+
+    // 1. First time: unseen path / label.
+    let (fam, by, at) = compute_workspace_familiarity(
+        &history,
+        Some("mac-1"),
+        Some("/Users/ada/other"),
+        "~/other",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+    assert!(by.is_none() && at.is_none());
+
+    // 2. Returning with same workspace & same keypair.
+    let (fam, by, at) = compute_workspace_familiarity(
+        &history,
+        Some("mac-1"),
+        Some("/Users/ada/repo"),
+        "~/repo",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::ReturningKnownKey);
+    assert_eq!(by.as_deref(), Some("owner-1"));
+    assert_eq!(at.as_deref(), Some("2026-11-26T10:00:00.000Z"));
+
+    // 3. Returning with same workspace & different keypair.
+    let (fam, by, at) = compute_workspace_familiarity(
+        &history,
+        Some("mac-1"),
+        Some("/Users/ada/repo"),
+        "~/repo",
+        "fp-rotated",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::ReturningNewKey);
+    assert_eq!(by.as_deref(), Some("owner-1"));
+    assert_eq!(at.as_deref(), Some("2026-11-26T10:00:00.000Z"));
+
+    // 4. Same path on a different hostname is treated as first_time.
+    let (fam, _, _) = compute_workspace_familiarity(
+        &history,
+        Some("linux-2"),
+        Some("/Users/ada/repo"),
+        "~/repo",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
 }

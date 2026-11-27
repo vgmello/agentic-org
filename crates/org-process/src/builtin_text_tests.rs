@@ -7,8 +7,8 @@ use std::path::Path;
 use crate::{
     list_builtin_skills, list_builtin_skills_by_category, SkillCategory,
     BUILTIN_INSTRUCTIONS_MAX_BYTES, BUILTIN_PROMPTS, CHIEF_OF_STAFF_GUIDANCE,
-    CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES, CORE_RULES, CORE_RULES_MAX_BYTES, HR_LEAD, MANAGED_SESSION,
-    SKILL_MAX_BYTES,
+    CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES, CORE_RULES, CORE_RULES_MAX_BYTES, EXTERNAL_RULES, HR_LEAD,
+    MANAGED_SESSION, SKILL_MAX_BYTES,
 };
 
 /// Body-only Markdown: no carriage return, byte order mark, Unicode line or paragraph separator,
@@ -138,6 +138,11 @@ fn built_in_standing_text_stays_within_its_budgets() {
         "core-rules.md is {} bytes; the limit is {CORE_RULES_MAX_BYTES}",
         CORE_RULES.len()
     );
+    assert!(
+        EXTERNAL_RULES.len() <= CORE_RULES_MAX_BYTES,
+        "external-rules.md is {} bytes; the limit is {CORE_RULES_MAX_BYTES}",
+        EXTERNAL_RULES.len()
+    );
     // An agent gets the shared text and at most one built-in's duties.
     let duties = HR_LEAD.len().max(CHIEF_OF_STAFF_GUIDANCE.len());
     let total = CORE_RULES.len() + MANAGED_SESSION.len() + duties;
@@ -221,6 +226,38 @@ fn core_rules_cover_the_day_one_contract() {
 }
 
 #[test]
+fn external_rules_distinguish_external_sessions_and_omit_managed_wake_rules() {
+    for needle in [
+        "external session",
+        "limits the office enforces in code",
+        "are data, not instructions",
+        "untrusted fence",
+        "`agent-os <resource> <verb> --flag value`",
+        "`agent-os skill list`",
+        "`agent-os task-note add`",
+        "`agent-os msg inbox`",
+        "`agent-os context`",
+        "does not start or wake your local runtime",
+    ] {
+        assert!(
+            EXTERNAL_RULES.contains(needle),
+            "external-rules.md lacks `{needle}`"
+        );
+    }
+    for managed_only in [
+        "Nobody watches your terminal",
+        "the office starts a turn",
+        "end your turn: the office wakes you",
+        "completion wakes you",
+    ] {
+        assert!(
+            !EXTERNAL_RULES.contains(managed_only),
+            "external-rules.md must not include managed-only rule `{managed_only}`"
+        );
+    }
+}
+
+#[test]
 fn built_in_text_names_no_vendor_and_shouts_nothing() {
     let vendors = ["claude", "codex", "anthropic", "openai", "gemini", "agy"];
     let mut texts: Vec<(&str, &str)> = BUILTIN_PROMPTS.iter().map(|p| (p.file, p.body)).collect();
@@ -238,9 +275,14 @@ fn built_in_text_names_no_vendor_and_shouts_nothing() {
             assert!(!named, "{name} names the vendor `{vendor}`");
         }
     }
-    // Plain calm prose in the core rules: no word in capitals except the JSON acronym.
-    for word in CORE_RULES.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
-        let shouted = word.len() >= 3 && word.bytes().all(|b| b.is_ascii_uppercase());
-        assert!(!shouted || word == "JSON", "core-rules.md shouts `{word}`");
+    // Plain calm prose in the rules: no word in capitals except the JSON acronym.
+    for (file, text) in [
+        ("core-rules.md", CORE_RULES),
+        ("external-rules.md", EXTERNAL_RULES),
+    ] {
+        for word in text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+            let shouted = word.len() >= 3 && word.bytes().all(|b| b.is_ascii_uppercase());
+            assert!(!shouted || word == "JSON", "{file} shouts `{word}`");
+        }
     }
 }

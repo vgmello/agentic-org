@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 mod codes;
 mod nonces;
 
-pub(crate) use codes::PendingLogins;
+pub(crate) use codes::{PendingInsert, PendingLogins, PendingSnapshot};
 pub(crate) use nonces::{verify_signature, NonceBook, NonceEntry};
 
 /// Current on-disk lease format.
@@ -44,6 +44,10 @@ pub struct ExternalLeaseRecord {
     pub employee_id: String,
     pub pubkey_ed25519_b64: String,
     pub workspace_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
     pub approved_by: String,
     pub approved_at: String,
     pub expires_at: String,
@@ -217,6 +221,101 @@ pub(crate) fn validate_workspace_label(label: &str) -> Result<String, org_proto:
         ));
     }
     Ok(trimmed.to_owned())
+}
+
+/// Validates and trims an optional host name against the wire byte budget and control-char rules.
+pub(crate) fn validate_optional_hostname(
+    hostname: Option<&str>,
+) -> Result<Option<String>, org_proto::ApiError> {
+    use org_proto::external_auth::MAX_HOSTNAME_BYTES;
+    let Some(raw) = hostname else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_HOSTNAME_BYTES
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::InvalidRequest,
+            format!("hostname must be 1 to {MAX_HOSTNAME_BYTES} bytes without control characters"),
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+/// Validates and trims an optional workspace path against the wire byte budget and control-char
+/// rules (never NUL or control characters).
+pub(crate) fn validate_optional_workspace_path(
+    workspace_path: Option<&str>,
+) -> Result<Option<String>, org_proto::ApiError> {
+    use org_proto::external_auth::MAX_WORKSPACE_PATH_BYTES;
+    let Some(raw) = workspace_path else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_WORKSPACE_PATH_BYTES
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::InvalidRequest,
+            format!(
+                "workspace_path must be 1 to {MAX_WORKSPACE_PATH_BYTES} bytes without control characters"
+            ),
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+/// Server-computed workspace familiarity from an agent's `external-history.jsonl` approvals.
+pub(crate) fn compute_workspace_familiarity(
+    history: &[org_proto::external_auth::ExternalHistoryEntry],
+    hostname: Option<&str>,
+    workspace_path: Option<&str>,
+    workspace_label: &str,
+    pubkey_fingerprint: &str,
+) -> (
+    org_proto::external_auth::WorkspaceFamiliarity,
+    Option<String>,
+    Option<String>,
+) {
+    use org_proto::external_auth::WorkspaceFamiliarity;
+    let latest = history
+        .iter()
+        .rev()
+        .filter(|entry| entry.event == "approved")
+        .find(|entry| history_matches_workspace(entry, hostname, workspace_path, workspace_label));
+    let Some(latest) = latest else {
+        return (WorkspaceFamiliarity::FirstTime, None, None);
+    };
+    let familiarity = if latest.pubkey_fingerprint.as_deref() == Some(pubkey_fingerprint) {
+        WorkspaceFamiliarity::ReturningKnownKey
+    } else {
+        WorkspaceFamiliarity::ReturningNewKey
+    };
+    (
+        familiarity,
+        latest.actor_id.clone(),
+        Some(latest.at.clone()),
+    )
+}
+
+fn history_matches_workspace(
+    entry: &org_proto::external_auth::ExternalHistoryEntry,
+    hostname: Option<&str>,
+    workspace_path: Option<&str>,
+    workspace_label: &str,
+) -> bool {
+    if let (Some(entry_host), Some(req_host)) = (entry.hostname.as_deref(), hostname) {
+        if entry_host != req_host {
+            return false;
+        }
+    }
+    if let Some(req_path) = workspace_path {
+        return entry.workspace_path.as_deref() == Some(req_path);
+    }
+    entry.workspace_label.as_deref() == Some(workspace_label)
 }
 
 /// Built-in office agents (Chief of Staff, HR) run only inside the office: an external workspace

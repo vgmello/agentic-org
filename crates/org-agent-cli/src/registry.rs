@@ -129,8 +129,7 @@ const POLICY_OVERRIDES: &[PolicyOverride] = &[
 /// reads any line, so a shorthand is the same command for a call, its `--help` and `--schema`,
 /// every line of `session attach`, and the drift guard of the built-in text.
 const ALIASES: &[Alias] = &[
-    session::BOOT_ALIAS,
-    session::INSTRUCTIONS_ALIAS,
+    session::CONTEXT_ALIAS,
     work::TASK_NOTE_ALIAS,
     organization::WHO_ALIAS,
 ];
@@ -146,10 +145,7 @@ const GUIDANCE: Guidance = Guidance {
 };
 
 /// What `agent-os login` answers from the rest of the crate.
-const LOGIN_HOOKS: auth::LoginHooks = auth::LoginHooks {
-    catalogue,
-    briefing,
-};
+const LOGIN_HOOKS: auth::LoginHooks = auth::LoginHooks { briefing };
 
 /// Every slice's rows: the one list both tables below are built from.
 fn rows() -> Vec<&'static [Command]> {
@@ -188,14 +184,9 @@ pub fn catalogue_table() -> CommandTable {
     runtime_table().clone()
 }
 
-/// The live table's launch catalogue.
-fn catalogue() -> String {
-    runtime_table().catalogue()
-}
-
-/// The bound `agent-os boot` briefing, for `agent-os login`.
+/// The bound `agent-os context` briefing (with `catalogue` inside it), for `agent-os login`.
 fn briefing(transport: &mut dyn OfficeTransport) -> Result<Value, Refusal> {
-    session::bound_briefing(transport, &catalogue())
+    session::bound_briefing(transport, &runtime_table().catalogue())
 }
 
 /// `args` with a leading shorthand replaced by the command it stands for; anything else as it is.

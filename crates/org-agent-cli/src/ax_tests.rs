@@ -684,7 +684,7 @@ fn agent_os_help_opens_with_the_quickstart_of_its_binding_state() {
         lines[1].contains("agent-os login --as @<handle>"),
         "{lines:?}"
     );
-    assert!(lines[2].contains("agent-os boot --offline"), "{lines:?}");
+    assert!(lines[2].contains("agent-os context --offline"), "{lines:?}");
     assert_eq!(lines[4], "", "four lines, then the help");
     let bound = crate::execute(
         &help,
@@ -695,7 +695,7 @@ fn agent_os_help_opens_with_the_quickstart_of_its_binding_state() {
     );
     let lines: Vec<&str> = bound.stdout.lines().take(5).collect();
     assert!(
-        lines[1].contains("agent-os boot --format yaml"),
+        lines[1].contains("agent-os context --format yaml"),
         "{lines:?}"
     );
     assert!(lines[2].contains("context compaction"), "{lines:?}");
@@ -709,9 +709,9 @@ fn agent_os_help_opens_with_the_quickstart_of_its_binding_state() {
 fn shorthands_read_the_same_in_help_and_schema() {
     use crate::runtime::binding::Binding;
     for (short, long) in [
-        ("boot --schema", "session boot --schema"),
+        ("context --schema", "session context --schema"),
+        ("context --help", "session context --help"),
         ("who --schema", "directory list --schema"),
-        ("instructions overview --help", "session boot --help"),
         ("task note list --schema", "task-note list --schema"),
     ] {
         let words = |line: &str| -> Vec<String> { line.split(' ').map(str::to_owned).collect() };

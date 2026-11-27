@@ -12,7 +12,7 @@ Each `agent-os` call opens a connection to the office. When you need several cal
 {"command":"task transition","input":{"task":"T-A1","status":"in_progress"},"options":{"if_match":3}}
 ```
 
-- `command` is `<resource> <verb>` without `agent-os`. The shorthands `who`, `task note` and `boot` work as on the command line.
+- `command` is `<resource> <verb>` without `agent-os`. The shorthands `who`, `task note` and `context` work as on the command line.
 - `input` is the command's input, exactly what `--json` would take.
 - `options` holds the common options by name: `limit`, `cursor`, `fields`, `if_match`, `idempotency_key`, `durable`. A value of `true` gives a yes-or-no option; `false` leaves it off. Answers are always JSON, so leave `format` out.
 - A line has only these three keys. A line with another key, a `format` other than `json`, `stdin` or `help` is refused, and nothing is sent for it: standard input is the stream of lines, so give long text in `input` or with `input_file`.

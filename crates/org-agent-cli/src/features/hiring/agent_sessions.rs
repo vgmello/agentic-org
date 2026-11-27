@@ -9,7 +9,7 @@ use org_command::{
     Ack, Answer, Command, CommandTable, Example, Field, IfMatch, Kind, Refusal, Request, Type,
 };
 use org_proto::external_auth::{
-    MemberExternalApprove, MemberExternalRevoke, MemberExternalSessions,
+    MemberExternalApprove, MemberExternalPending, MemberExternalRevoke, MemberExternalSessions,
 };
 use org_proto::{Call, ErrorCode};
 use serde_json::{json, Map, Value};
@@ -20,12 +20,20 @@ use crate::runtime::input::{committed_answer, opt_str, parse_ttl, reject_dry_run
 use crate::runtime::transport::OfficeTransport;
 
 /// Operator-only `agent` verbs handled directly by `agentic-org` outside the `agent-os` table.
-pub(crate) const OPERATOR_VERBS: &[ExtraVerb] = &[ExtraVerb {
-    resource: "agent",
-    verb: "bind",
-    summary: "Bind a local workspace directly to an agent without an approval code",
-    use_when: "binding a local folder or Git repo to an agent in one operator step (`--member <id> --workspace <dir> [--takeover]`).",
-}];
+pub(crate) const OPERATOR_VERBS: &[ExtraVerb] = &[
+    ExtraVerb {
+        resource: "agent",
+        verb: "bind",
+        summary: "Bind a local workspace directly to an agent without an approval code",
+        use_when: "binding a local folder or Git repo to an agent in one operator step (`--member <id> --workspace <dir> [--takeover]`).",
+    },
+    ExtraVerb {
+        resource: "agent",
+        verb: "renew",
+        summary: "Extend an agent's active external workspace lease without re-login",
+        use_when: "renewing an active external workspace lease up to 7 days (`--member @<handle> [--ttl 7d]`).",
+    },
+];
 
 const ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
@@ -85,7 +93,16 @@ const APPROVE_INPUT: &[Field] = &[
 ];
 
 const SESSIONS_INPUT: &[Field] = &[
-    Field::required("member", Type::String, "Agent @handle or employee UUIDv7"),
+    Field::optional(
+        "member",
+        Type::String,
+        "Agent @handle or employee UUIDv7 (required unless --pending is given)",
+    ),
+    Field::optional(
+        "pending",
+        Type::Boolean,
+        "List pending external workspace sign-in requests awaiting approval (all agents or filtered by --member)",
+    ),
     Field::optional(
         "history_limit",
         Type::Integer,
@@ -98,13 +115,53 @@ const REVOKE_INPUT: &[Field] = &[
     Field::optional("session", Type::String, "Only this external session ID"),
 ];
 
-const SESSIONS_OUTPUT: &[Field] = &[
+const PENDING_REQUEST_VIEW: &[Field] = &[
+    Field::required("request_id", Type::String, "Pending request ID"),
+    Field::required("handle", Type::String, "Agent @handle"),
     Field::required("employee_id", Type::String, "Agent employee UUIDv7"),
-    Field::optional("active", Type::Object(SESSION_VIEW), "Active lease"),
+    Field::required("office_id", Type::String, "Office UUIDv7"),
+    Field::optional("office_name", Type::String, "Office display name"),
+    Field::optional("hostname", Type::String, "Client machine hostname"),
+    Field::optional("workspace_path", Type::String, "Client workspace root path"),
+    Field::required("workspace_label", Type::String, "Workspace label"),
     Field::required(
+        "pubkey_fingerprint",
+        Type::String,
+        "Workspace key fingerprint",
+    ),
+    Field::required(
+        "managed_turn_active",
+        Type::Boolean,
+        "Whether the agent currently has a live managed turn",
+    ),
+    Field::required("requested_at", Type::String, "Request creation timestamp"),
+    Field::required("expires_at", Type::String, "Approval code expiry timestamp"),
+    Field::required(
+        "code_prefix",
+        Type::String,
+        "Masked approval code prefix (XXXX-••••)",
+    ),
+    Field::required(
+        "workspace_familiarity",
+        Type::Enum(&["first_time", "returning_new_key", "returning_known_key"]),
+        "Whether this workspace and key were approved previously",
+    ),
+    Field::optional("last_approved_by", Type::String, "Last approving member ID"),
+    Field::optional("last_approved_at", Type::String, "Last approval timestamp"),
+];
+
+const SESSIONS_OUTPUT: &[Field] = &[
+    Field::optional("employee_id", Type::String, "Agent employee UUIDv7"),
+    Field::optional("active", Type::Object(SESSION_VIEW), "Active lease"),
+    Field::optional(
         "history",
         Type::List(&Type::Object(HISTORY_ENTRY)),
         "Recent sign-in history",
+    ),
+    Field::optional(
+        "pending",
+        Type::List(&Type::Object(PENDING_REQUEST_VIEW)),
+        "Pending external workspace sign-in requests (--pending)",
     ),
 ];
 
@@ -265,7 +322,7 @@ fn push_flag_token(
 pub(super) const CUES: &[CommandCue] = &[
     ("agent", "approve", "approving an external workspace's `agent-os login` code so it acts as the agent (`--takeover` parks a live managed turn)."),
     ("agent", "revoke", "ending an agent's external workspace session at once (its connections close and held wakes run again)."),
-    ("agent", "sessions", "checking which external workspace an agent is signed in from, until when, and its sign-in history."),
+    ("agent", "sessions", "checking pending external workspace sign-in requests (`--pending`) or an agent's active external lease and sign-in history."),
 ];
 
 /// Runs `agent approve|sessions|revoke`; `None` for any other `agent` command.
@@ -305,8 +362,36 @@ fn sessions<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    let pending = request
+        .input
+        .get("pending")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let member = opt_str(request, "member");
+    if pending {
+        if request.input.get("history_limit").is_some() {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "--history-limit cannot be used with --pending.",
+                "Drop --limit / --history-limit when listing pending sign-in requests.",
+            ));
+        }
+        let mut params = Map::new();
+        if let Some(member) = member {
+            params.insert("employee_id".into(), json!(member));
+        }
+        let raw = transport.call_method(MemberExternalPending::METHOD, Value::Object(params))?;
+        return Ok(Answer::completed(raw));
+    }
+    let member = member.ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            "--member is required unless --pending is given.",
+            "Pass --member @<handle>, or pass --pending to list pending sign-in requests.",
+        )
+    })?;
     let mut params = Map::new();
-    params.insert("employee_id".into(), json!(require_str(request, "member")?));
+    params.insert("employee_id".into(), json!(member));
     if let Some(limit) = request.input.get("history_limit") {
         let limit = limit
             .as_u64()

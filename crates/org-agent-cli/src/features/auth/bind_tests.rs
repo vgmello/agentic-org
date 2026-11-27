@@ -121,6 +121,34 @@ fn bind_workspace_writes_owner_only_credentials_outside_workspace_and_clears_sta
     assert_eq!(saved_binding.session_id, bound.session.session_id);
     // Workspace folder itself stays completely untouched.
     assert_eq!(std::fs::read_dir(&ws).unwrap().count(), 0);
+
+    // Re-binding the same workspace reuses the existing Ed25519 keypair (so returning workspace
+    // familiarity classifies as `returning_known_key`) and sends workspace_path.
+    let mut transport2 = FakeBindTransport::new(Some(sock));
+    bind_workspace(
+        &mut transport2,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws,
+            label: Some("my-repo"),
+            ttl_secs: Some(3600),
+            takeover: false,
+            command_id: Some("cmd-2"),
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    let resent_pubkey = transport2.calls[0].1["pubkey_ed25519_b64"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        resent_pubkey, sent_pubkey,
+        "re-authenticating the same workspace must reuse key.ed25519.pkcs8"
+    );
+    assert_eq!(
+        transport2.calls[0].1["workspace_path"].as_str(),
+        Some(canonical.display().to_string().as_str())
+    );
 }
 
 #[test]
@@ -326,11 +354,21 @@ fn agentic_org_help_lists_agent_bind_and_hr_hire_bind_workspace_while_agent_os_o
         crate::execute_with_office("agentic-org", &words(&["agent", "--help"]), &mut noop);
     assert_eq!(op_agent.exit_code, 0);
     assert!(op_agent.stdout.contains("\n  bind "), "{}", op_agent.stdout);
+    assert!(
+        op_agent.stdout.contains("\n  renew "),
+        "{}",
+        op_agent.stdout
+    );
 
     let ag_agent = crate::execute_with_office("agent-os", &words(&["agent", "--help"]), &mut noop);
     assert_eq!(ag_agent.exit_code, 0);
     assert!(
         !ag_agent.stdout.contains("\n  bind "),
+        "{}",
+        ag_agent.stdout
+    );
+    assert!(
+        !ag_agent.stdout.contains("\n  renew "),
         "{}",
         ag_agent.stdout
     );

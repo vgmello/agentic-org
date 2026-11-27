@@ -97,7 +97,8 @@ fn help_detection_steps_over_values_and_finds_help_after_switches() {
 #[test]
 fn the_quickstart_names_how_to_get_bound_only_when_unbound() {
     assert!(quickstart(false).contains("agent-os login --as @<handle>"));
-    assert!(quickstart(true).contains("agent-os boot --format yaml"));
+    assert!(quickstart(false).contains("agent-os context --offline"));
+    assert!(quickstart(true).contains("agent-os context --format yaml"));
     assert_eq!(quickstart(false).lines().count(), 4);
     assert_eq!(quickstart(true).lines().count(), 4);
 }
