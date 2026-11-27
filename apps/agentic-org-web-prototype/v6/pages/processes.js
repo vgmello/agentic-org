@@ -9,7 +9,15 @@ import {
 import { S, qs } from "../state.js";
 import { av, empty, esc, hdr, ic, pill, searchRow, searchToggle, showMenu, skel } from "../ui.js";
 
-Object.assign(S, { procQuery: "", procState: "live" });
+Object.assign(S, { procQuery: "", procState: "live", procKind: "all" });
+
+/* "all" lists both kinds in one list (a project's Docs, with the Kind filter); Settings shows one kind per tab */
+const kindsOf = (kind) => (kind === "all" ? ["process", "standard"] : [kind]);
+function rowsFor(pl, kind) {
+  const parts = kindsOf(kind).map((k) => placeRows(pl, k));
+  return { entries: parts.flatMap((p) => p.entries), problems: parts.flatMap((p) => p.problems) };
+}
+const kindBadge = (d) => `<span class="proc-badge is-kind">${ic(KIND_WORDS[d.kind].icon, "ic14")}${d.kind === "process" ? "Process" : "Standard"}</span>`;
 
 const LEVEL_ICON = { org: "office", team: "user-group", project: "folder" };
 const LEVEL_WORD = { org: "Organization", team: "Team", project: "Project" };
@@ -32,8 +40,8 @@ function rowHtml(entry, pl) {
   return `<li class="linked plan-row proc-row" data-doc="${esc(d.id)}">
     <span class="proc-row-ic" aria-hidden="true">${ic(KIND_WORDS[d.kind].icon, "ic20")}</span>
     <div class="grow"><p class="rt"><button class="stretch proc-open" type="button" data-proc-act="open" data-id="${esc(d.id)}">${esc(d.title)}</button></p>
-      <div class="meta"><code class="proc-key">${esc(d.key)}</code><span>${esc(sourceText(d))}</span>${ownerHtml(d.owner_employee_id)}<span>Updated ${esc(d.updated)}</span></div></div>
-    <div class="proc-badges">${levelBadge(d)}${relationBadge(entry, pl)}${lockBadge(d)}${statusPill(d)}</div>
+      <div class="meta"><code class="proc-key">${esc(d.key)}</code><span>From ${esc(sourceText(d))}</span>${ownerHtml(d.owner_employee_id)}<span>Updated ${esc(d.updated)}</span></div></div>
+    <div class="proc-badges">${S.procKindBadges ? kindBadge(d) : ""}${levelBadge(d)}${relationBadge(entry, pl)}${lockBadge(d)}${statusPill(d)}</div>
     ${ic("chev-right", "ic20 chev")}</li>`;
 }
 
@@ -52,7 +60,7 @@ function problemRow(p) {
 
 const GROUP_NOTE = {
   must: "Delivered in full to every agent this applies to. No level below can replace them.",
-  guide: { process: "Agents get each one's summary and retrieve the full text when they need it.", standard: "Agents look these up when a process or task calls for them." },
+  guide: { process: "Agents get each one's summary and retrieve the full text when they need it.", standard: "Agents look these up when a process or task calls for them.", all: "Processes reach agents as summaries with the full text retrievable; standards are looked up when a process or task calls for them." },
   draft: "Not delivered to agents until marked Current.",
   deprecated: "No longer delivered. A document stops applying when its own level deprecates it.",
   problems: "Left out of the effective set until fixed.",
@@ -68,7 +76,7 @@ const listOf = (arr, fn) => (arr.length ? { length: arr.length, html: arr.map(fn
 function matches(d, q) { return !q || [d.title, d.key, sourceText(d)].join(" ").toLowerCase().includes(q); }
 
 function groupsHtml(pl, kind) {
-  const q = S.procQuery.trim().toLowerCase(), { entries, problems } = placeRows(pl, kind);
+  const q = S.procQuery.trim().toLowerCase(), { entries, problems } = pl.type === "org" || kind !== "all" ? placeRows(pl, kind) : rowsFor(pl, kind);
   const shown = entries.filter((e) => matches(e.winner, q)), probs = problems.filter((p) => matches(p.doc, q));
   const current = shown.filter((e) => e.winner.status === "current");
   const row = (e) => rowHtml(e, pl);
@@ -78,7 +86,7 @@ function groupsHtml(pl, kind) {
     + group("deprecated", "Deprecated", GROUP_NOTE.deprecated, listOf(shown.filter((e) => e.winner.status === "deprecated"), row))
     + group("problems", "Not applied", GROUP_NOTE.problems, listOf(probs, problemRow));
   if (html) return html;
-  return q ? `<p class="empty-row">Nothing matches “${esc(S.procQuery.trim())}”.</p>` : emptyHtml(kind, pl);
+  return q ? `<p class="empty-row">Nothing matches “${esc(S.procQuery.trim())}”.</p>` : emptyHtml(kind === "all" ? "process" : kind, pl);
 }
 
 function emptyHtml(kind, pl) {
@@ -105,9 +113,12 @@ function contextHtml(pl, kind) {
   if (pl.type === "team") lead = `What ${TEAMS[pl.id].name} follows for its projectless work. A project's own documents are added for work in that project.`;
   if (pl.type === "project") lead = `What every agent working in ${P[pl.id].name} follows, through the project's owning team, ${TEAMS[PROJECT_TEAM[pl.id]].name}. Assignment and an agent's home team add nothing.`;
   if (pl.type === "agent") lead = agentLead(pl.id);
-  return `<div class="proc-context"><p class="proc-define">${ic(KIND_WORDS[kind].icon, "ic16")}<span><b>${KIND_WORDS[kind].title}:</b> ${esc(KIND_WORDS[kind].define)}.</span></p>
-    <p class="proc-lead">${esc(lead)}</p>${pl.type === "org" ? "" : chainHtml(pl)}${devProcessLine(pl)}</div>`;
+  const define = kindsOf(kind).map((k) => `<p class="proc-define">${ic(KIND_WORDS[k].icon, "ic16")}<span><b>${KIND_WORDS[k].title}:</b> ${esc(KIND_WORDS[k].define)}.</span></p>`).join("");
+  return `<div class="proc-context">${define}
+    <p class="proc-lead">${esc(lead)}</p>${pl.type === "org" ? "" : chainHtml(pl)}${inheritedNote(pl)}${devProcessLine(pl)}</div>`;
 }
+/* Inherited documents can't be switched off below (doc-54 PROC-4, doc-31 §4) */
+const inheritedNote = (pl) => (pl.type === "project" ? `<p class="proc-lead">${ic("lock", "ic14")} Documents inherited from the organization or a team can't be marked not applicable here. The project adds its own, or replaces an overridable one by using its key.</p>` : "");
 function agentLead(aid) {
   const w = agentWork(aid), m = M[aid];
   if (!w) return "No current work. Showing the organization's processes. Team and project processes apply when it starts a task.";
@@ -139,14 +150,17 @@ function kindTabs(hrefFor, pl, kind) {
 }
 
 /* The toolbar: Processes | Standards, then search and Display, then the agent preview and New */
-function procToolbar(pl, kind, hrefFor, leading = "") {
-  const label = `Search ${KIND_WORDS[kind].title.toLowerCase()}`;
+const kindMenu = () => showMenu("proc-kind", [["procKind", "Kind", [["all", "Processes and standards"], ["process", "Processes"], ["standard", "Standards"]]]],
+  { icon: "filter", label: "Filter by kind", text: "Kind", active: S.procKind !== "all" });
+function procToolbar(pl, kind, tabsHtml) {
+  const label = kind === "all" ? "Search processes and standards" : `Search ${KIND_WORDS[kind].title.toLowerCase()}`;
+  const newKind = kind === "all" ? "process" : kind;
   const preview = pl.type === "project" || (pl.type === "agent" && agentWork(pl.id))
     ? `<button class="btn outline proc-preview-btn" type="button" data-proc-act="preview" data-place="${esc(placeKey(pl))}">${ic("eye", "ic16")}What agents receive</button>` : "";
   return `<div class="work-subbar-header proc-subbar"><div class="work-toolbar queue-toolbar proc-toolbar">
-      <div class="primary-tab-row"><nav class="queue-tabs" aria-label="Kind of document">${leading}${kindTabs(hrefFor, pl, kind)}</nav></div>
-      <div class="queue-controls" role="group" aria-label="View controls">${searchToggle("proc-search", label, S.procQuery)}${displayMenu()}</div>
-      <div class="proc-toolbar-end">${preview}<button class="btn primary" type="button" data-proc-act="new" data-v="" data-kind="${kind}" data-place="${esc(placeKey(pl))}">${ic("plus", "ic16")}New ${KIND_WORDS[kind].one}</button></div>
+      <div class="primary-tab-row"><nav class="queue-tabs" aria-label="Kind of document">${tabsHtml}</nav></div>
+      <div class="queue-controls" role="group" aria-label="View controls">${searchToggle("proc-search", label, S.procQuery)}${pl.type === "project" ? kindMenu() : ""}${displayMenu()}</div>
+      <div class="proc-toolbar-end">${preview}<button class="btn primary" type="button" data-proc-act="new" data-v="" data-kind="${newKind}" data-place="${esc(placeKey(pl))}">${ic("plus", "ic16")}New ${kind === "all" ? "process or standard" : KIND_WORDS[kind].one}</button></div>
     </div></div>${searchRow("proc-search", label, S.procQuery, `Search title or key… (Esc to close)`, "work-search-row")}`;
 }
 
@@ -160,15 +174,18 @@ function settingsProcesses(sub) {
   const kind = sub === "standards" ? "standard" : "process", pl = parsePlace(qs().get("show"));
   const header = hdr("Processes", placeLabel(pl), showSelect(pl));
   const note = `<p class="desc proc-note">Organization processes and standards say how agents work, written down and inherited. A project's development process is separate: see <a class="alink" href="#/settings/dev-processes">Development processes</a>.</p>`;
-  const body = note + procToolbar(pl, kind, (k) => settingsHref(k, pl)) + contextHtml(pl, kind) + stateBody(pl, kind);
+  S.procKindBadges = false;
+  const body = note + procToolbar(pl, kind, kindTabs((k) => settingsHref(k, pl), pl, kind)) + contextHtml(pl, kind) + stateBody(pl, kind);
   return { header, body };
 }
 const processesTitle = () => `${placeLabel(parsePlace(qs().get("show")))} · Processes`;
 
 /* A project's Docs › Processes and Standards ------------------------------------------------------- */
-function projectProcesses(pid, kind, leadingTabs) {
-  const pl = { type: "project", id: pid };
-  return procToolbar(pl, kind, (k) => `#/projects/${pid}/docs/${k === "standard" ? "standards" : "processes"}`, leadingTabs) + contextHtml(pl, kind) + stateBody(pl, kind);
+/* One list with a Kind filter (doc-31: "process list --kind standard"); each row names its kind and its source */
+function projectProcesses(pid, tabsHtml) {
+  const pl = { type: "project", id: pid }, kind = ["process", "standard"].includes(S.procKind) ? S.procKind : "all";
+  S.procKindBadges = kind === "all";
+  return procToolbar(pl, kind, tabsHtml) + contextHtml(pl, kind) + stateBody(pl, kind);
 }
 const projectProcessCount = (pid) => placeRows({ type: "project", id: pid }, "process").entries.length + placeRows({ type: "project", id: pid }, "standard").entries.length;
 

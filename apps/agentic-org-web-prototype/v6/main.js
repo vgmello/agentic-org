@@ -9,6 +9,8 @@ import "./pages/project-plan-actions.js";
 import "./pages/processes-actions.js";
 import "./pages/docs-actions.js";
 import { mountDevProcesses } from "./pages/dev-processes.js";
+import "./pages/dev-process-io.js";
+import "./pages/dev-process-choose.js";
 
 applyNavCollapsed();
 if (!location.hash) {

@@ -8,6 +8,7 @@ import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { pageFeature, pageFeatures } from "./project-plan-features.js";
 import { pageRelease, pageReleases } from "./project-plan-releases.js";
 import { docCrumbs, docsCount, pageDocs } from "./docs.js";
+import { processTabBody, processTabs, tabCount } from "./project-tabs.js";
 import { featureRef, getFeature, getRelease, projectFeatures, projectReleases, releaseRef } from "../plan-data.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
@@ -34,6 +35,12 @@ function pageProjects() {
   }).join("")}</ul>`;
 }
 
+function planTabCount(id, t) {
+  if (t.view === "features") return projectFeatures(id).filter((f) => f.status !== "retired").length || null;
+  if (t.view === "releases") return projectReleases(id).length || null;
+  return tabCount(id, t);
+}
+
 /* Features and Releases (TASK-244): a detail page sits under its tab, named in the breadcrumb. */
 function planCrumbs(id, tab, sub) {
   const base = "#/projects/" + id;
@@ -52,15 +59,15 @@ function pageProject(id, tab, sub) {
     ["", "Overview"],
     ["activity", "Activity"],
     ["work", "Work", `${ws.filter(OPEN).length} open`],
+    /* Between Work and Docs: the tabs the project's development process declares (doc-32 §4) */
+    ...processTabs(id).map((t) => [t.key, t.title, planTabCount(id, t)]),
+    ["docs", "Docs", docsCount(id) || null],
     ["calendar", "Calendar"],
     ["insights", "Insights"],
     ["conversations", "Conversations"],
     ["team", "Team", projMembers(id).length],
-    ["features", "Features", projectFeatures(id).filter((f) => f.status !== "retired").length || null],
-    ["releases", "Releases", projectReleases(id).length || null],
-    ["docs", "Docs", docsCount(id) || null],
   ];
-  const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
+  const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit") + `<button role="menuitem" type="button" data-dev-act="choose" data-id="${esc(id)}">${ic("files", "ic20")}Development process…</button>`, "ghost");
   const trail = tab === "docs" ? docCrumbs(id, sub) : planCrumbs(id, tab, sub);
   return crumbs([["#/projects", "Projects"], [trail.length ? "#/projects/" + id : null, pr.name], ...trail]) + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
@@ -87,6 +94,8 @@ function projectBody(id, tab, sub) {
   if (tab === "features") return sub ? pageFeature(id, sub) : pageFeatures(id);
   if (tab === "releases") return sub ? pageRelease(id, sub) : pageReleases(id);
   if (tab === "docs") return pageDocs(id, sub);
+  const processTab = processTabBody(id, tab);
+  if (processTab != null) return processTab;
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
   return notFound();
 }

@@ -223,3 +223,19 @@ code.proc-key { font-family: var(--font-mono); font-size: var(--fs-xs); color: v
 @media (max-width: 639px), (pointer: coarse) {
   .project-header ~ .work-subbar-header.proc-subbar .primary-tab-row > .queue-tabs .queue-tab { min-height: 2.75rem; }
 }
+
+/* Development processes: row actions, import checks, choosing a project's process */
+.dev-row .dev-row-actions { display: flex; flex: none; align-items: center; gap: 4px; align-self: center; }
+.dev-checks { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.dev-checks > li { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-sm); line-height: 1.45; color: var(--gray-300); }
+.dev-checks > li > .ic { flex: none; margin-top: 2px; color: var(--tone-ok-ink); }
+.dev-checks > li.is-error, .dev-checks > li.is-error > .ic { color: var(--tone-bad-ink); }
+.dev-checks code { font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600; }
+.dev-import-result:not(:empty) { display: grid; gap: 12px; padding: 12px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); }
+.dev-import-result .dev-import-ok { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--gray-300); font-size: var(--fs-sm); }
+.dev-import-result .dev-import-ok > .ic { color: var(--tone-ok-ink); }
+.plan-form .dev-choose-facts { display: grid; gap: 14px; margin: 0; }
+.plan-form .dev-choose-facts > div { display: grid; gap: 4px; }
+@media (max-width: 639px) {
+  .plan-rows > li.dev-row > .dev-row-actions { order: 3; margin-inline-start: 40px; }
+}

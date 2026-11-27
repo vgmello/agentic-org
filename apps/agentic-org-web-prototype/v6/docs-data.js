@@ -4,7 +4,7 @@
    versioned kind, issued versions written once. A feature's definition and its supporting documents stay beside
    the feature (projects/<p>/features/<f>/). Nothing here is stored beyond this session. */
 import { W } from "./data.js";
-import { getDevProcess, projectDevProcess } from "./devproc-data.js";
+import { PROJECT_DEV, getDevProcess, projectDevProcess } from "./devproc-data.js";
 import { featureRef, getFeature, projectFeatures } from "./plan-data.js";
 
 const BUILT_IN_KINDS = { decision: "Decision", design: "Design", report: "Report", brief: "Brief", changelog: "Changelog" };
@@ -34,7 +34,10 @@ function add(pid, fields) {
 }
 const section = (pid, path, title, summary, kinds = []) => (SECTIONS[pid] ||= []).push({ path, title, summary, kinds });
 
-/* Agentic Org v1.0: Feature delivery (decisions, designs, reports) ---------------------------------- */
+/* Agentic Org v1.0: follows dss. It started on Feature delivery, so its decisions, designs and reports sections and
+   its features stay (changing the development process removes nothing, doc-32 decision 15). */
+section("agency-v1", "product", "Product documentation", "What the product does, by product domain and area.", ["product-dss"]);
+section("agency-v1", "technical", "Technical documentation", "How the system is built, with its diagrams and images.", ["technical-dss"]);
 section("agency-v1", "decisions", "Decisions", "Choices that shape v1.0, with the reasons and what was ruled out.", ["decision"]);
 section("agency-v1", "designs", "Designs", "How a part of the product is built, across features.", ["design"]);
 section("agency-v1", "reports", "Reports", "Findings from runs, reviews and audits.", ["report"]);
@@ -58,6 +61,41 @@ add("agency-v1", { kind: "report", owner: "avery", title: "CSP report-only run, 
 add("agency-v1", { type: "diagram", kind: "diagram", owner: "rowan", title: "Release pipeline", path: "designs/release-pipeline.mmd", media_type: "text/vnd.mermaid", bytes: 1840,
   summary: "Build, gates, sign, notarize, publish.", body: "flowchart LR\n  commit --> suite --> csp[CSP gates] --> sign --> notarize --> publish",
   history: [h(1, "rowan", "Nov 18", "First version")] });
+
+const GETTING_IN = "## Purpose\nA person gets into their organization on this Mac, and an agent is hired into it through HR.\n\n## Behaviour\n- The owner signs in with the Mac's account; there is no separate password.\n- A person invited by the owner signs in with a one-time link.\n- An agent never signs in; it is provisioned with a binding when the hire is confirmed.\n\n## Rules\n- A link expires after 24 hours or one use.\n\n## Out of scope\n- Single sign-on.";
+const gettingIn = add("agency-v1", { kind: "product-dss", owner: "emery", title: "Getting in", path: "product/identity-and-access/getting-in.md",
+  summary: "How the owner, invited people and hired agents get into the organization. Read before changing sign-in.", body: GETTING_IN,
+  versions: [
+    { version: 1, revision: 2, at: "Nov 11", by: "emery", note: "First issue", body: GETTING_IN.replace("\n\n## Rules\n- A link expires after 24 hours or one use.", "") },
+    { version: 2, revision: 4, at: "Nov 19", by: "emery", note: "Invitation links expire", body: GETTING_IN },
+  ],
+  history: [h(4, "emery", "Nov 19", "Issued v2"), h(3, "emery", "Nov 18", "Link expiry"), h(2, "emery", "Nov 11", "Issued v1")] });
+const MESSAGES = "## Purpose\nPeople and agents talk in channels and direct messages, and ask each other questions that wait for an answer.\n\n## Behaviour\n- A message reaches every office of the organization.\n- A required ask suspends the asking agent until it is answered.\n\n## Rules\n- A satellite one codec version behind still receives every message.";
+const messages = add("agency-v1", { kind: "product-dss", owner: "emery", title: "Messages and channels", path: "product/collaboration/messages-and-channels.md",
+  summary: "Channels, direct messages and asks across offices.", body: MESSAGES + "\n- Chat keeps its place after sending.",
+  versions: [{ version: 1, revision: 3, at: "Nov 16", by: "emery", note: "First issue, with the previous-version rule", body: MESSAGES }],
+  history: [h(4, "jules", "Nov 26", "Chat keeps its place (unissued)"), h(3, "emery", "Nov 16", "Issued v1")] });
+add("agency-v1", { kind: "product-dss", owner: "emery", title: "Tasks", path: "product/work/tasks.md", status: "draft",
+  summary: "Tasks, their states and who they wait on. Not issued yet.", body: "## Purpose\nWork is tracked as tasks with one accountable team.\n\n## Open questions\n- Do closed tasks archive after 7 or 14 days?",
+  history: [h(1, "emery", "Nov 25", "First draft")] });
+const CODEC = "## Scope\nThe wire codec between offices.\n\n## Design\nCodec 3 splits the envelope from the payload (2a.3.2b). HQ reads codec 2 and 3 and writes 3 once every office reports 3.\n\n## Decisions\n- Dual read for one release: from the standard Codec compatibility window for v1.0.";
+const codec = add("agency-v1", { kind: "technical-dss", owner: "rowan", title: "Wire codec", path: "technical/wire-codec.md",
+  summary: "Envelope and payload encoding between offices. Follows Messages and channels.", body: CODEC,
+  code_links: [{ repo: "agentic-org", path: "crates/org-proto/src/codec/v3.rs", symbol: "encode_envelope", note: "Codec 3 envelope." }],
+  versions: [
+    { version: 2, revision: 4, at: "Nov 17", by: "rowan", note: "Codec 3 envelope", body: CODEC.replace(" HQ reads codec 2 and 3 and writes 3 once every office reports 3.", ""), derived: [[messages.id, 1]] },
+    { version: 3, revision: 6, at: "Nov 24", by: "rowan", note: "Dual read for one release", body: CODEC, derived: [[messages.id, 1]] },
+  ],
+  history: [h(6, "rowan", "Nov 24", "Issued v3"), h(5, "kai", "Nov 23", "Dual read window"), h(4, "rowan", "Nov 17", "Issued v2")] });
+const CSP = "## Scope\nThe browser UI's Content Security Policy.\n\n## Design\n- No inline script or style; nonces for the one bootstrap script.\n- The gate suite runs report-only, then enforcing.\n\n## Decisions\n- From the organization standard Content Security Policy gates (not overridable).";
+const csp = add("agency-v1", { kind: "technical-dss", owner: "rowan", title: "Content Security Policy", path: "technical/content-security-policy.md",
+  summary: "What the UI may load and run, and how the gates check it.", body: CSP,
+  versions: [{ version: 1, revision: 2, at: "Nov 20", by: "rowan", note: "First issue", body: CSP, derived: [[gettingIn.id, 2]] }],
+  history: [h(2, "rowan", "Nov 20", "Issued v1"), h(1, "rowan", "Nov 19", "First draft")] });
+const SIGN = "## Scope\nSigning and notarizing the Mac app.\n\n## Design\nBuild on HQ, sign with the organization's Developer ID, notarize, staple, then publish with the notes.";
+const signing = add("agency-v1", { kind: "technical-dss", owner: "rowan", title: "Release signing and notarization", path: "technical/release-signing.md",
+  summary: "From a green commit to a notarized download.", body: SIGN,
+  versions: [{ version: 1, revision: 1, at: "Nov 24", by: "rowan", note: "First issue", body: SIGN }], history: [h(1, "rowan", "Nov 24", "Issued v1")] });
 
 /* Office federation: Desired State Specification (versioned Product and Technical DSS) --------------- */
 section("office-federation", "product", "Product documentation", "What the product does, by product domain and area.", ["product-dss"]);
@@ -94,6 +132,7 @@ add("office-federation", { kind: "decision", owner: "rowan", title: "Lease, not 
   history: [h(1, "rowan", "Nov 24", "Proposed")] });
 /* Tasks that realize issued versions (doc-86 "Tasks that realize a version") */
 const realize = (taskId, d, version) => { const w = W.find((x) => x.id === taskId); if (w) (w.realizes ||= []).push({ document_id: d.id, version }); };
+realize("T-A121", codec, 3); realize("T-A124", csp, 1); realize("T-A147", csp, 1); realize("T-A146", signing, 1); realize("T-A142", signing, 1); realize("T-A112", gettingIn, 2);
 realize("T-A118", techCustody, 2); realize("T-A81", productSync, 2); realize("T-A135", productSync, 2); realize("T-A135", techCustody, 1);
 
 /* Look & feel refresh: no development process (decisions, designs, reports) ------------------------- */
@@ -178,9 +217,19 @@ function saveFeatureDefinition(f, body, note) {
   meta.revision += 1;
   meta.history.unshift(h(meta.revision, "you", "Nov 27", note || "Definition edited"));
 }
+/* project.set_development_process (doc-32 §3): sets the field, adds the sections the process declares and the
+   project lacks, and creates missing roles. Nothing is removed and no agent is started. */
+function chooseDevProcess(pid, id) {
+  const dp = getDevProcess(id), have = new Set(projectSections(pid).map((s) => s.path));
+  const added = (dp?.folders || []).filter(([path]) => !have.has(path));
+  added.forEach(([path, title]) => section(pid, path, title, "Added when the development process was chosen.", []));
+  PROJECT_DEV[pid] = id || null;
+  return added.map(([, title]) => title);
+}
+const sectionsToAdd = (pid, dp) => { const have = new Set(projectSections(pid).map((s) => s.path)); return (dp?.folders || []).filter(([path]) => !have.has(path)).map(([, t]) => t); };
 const featureLabel = (fid) => { const f = getFeature(fid); return f ? `${featureRef(f)} ${f.title}` : ""; };
 
 export {
-  BUILT_IN_KINDS, KIND_ICON, createEntry, featureDocs, featureLabel, featureMeta, featurePath, getDevProcess, getEntry, hasUnissued, isVersioned, issueVersion,
+  BUILT_IN_KINDS, KIND_ICON, chooseDevProcess, createEntry, sectionsToAdd, featureDocs, featureLabel, featureMeta, featurePath, getDevProcess, getEntry, hasUnissued, isVersioned, issueVersion,
   kindTitle, latestVersion, projectSections, saveEntry, saveFeatureDefinition, sectionEntries, treeEntries, versionTasks,
 };

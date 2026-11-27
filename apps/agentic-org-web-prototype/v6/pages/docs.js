@@ -66,7 +66,7 @@ function featureGroup(pid, q) {
 function docsTabs(pid, cur) {
   const n = (k) => placeRows({ type: "project", id: pid }, k).entries.length;
   const tab = (key, label, count) => `<a class="queue-tab" href="#/projects/${esc(pid)}/docs${key ? "/" + key : ""}"${cur === key ? ' aria-current="page"' : ""}>${label}<span>${count}</span></a>`;
-  return { documents: tab("", "Documents", treeEntries(pid).length), rest: tab("processes", "Processes", n("process")) + tab("standards", "Standards", n("standard")) };
+  return { documents: tab("", "Documents", treeEntries(pid).length), rest: tab("processes", "Processes and standards", n("process") + n("standard")) };
 }
 
 function devLine(pid) {
@@ -129,8 +129,10 @@ function editorHtml(e) {
 const docBtn = (e, act, icon, label, variant = "outline") => `<button class="btn ${variant} plan-btn" type="button" data-doc-act="${act}" data-id="${esc(e.id)}">${ic(icon, "ic16")}${label}</button>`;
 function issueButton(e) {
   if (!isVersioned(e.project_id, e.kind)) return "";
-  const v = latestVersion(e), primary = hasUnissued(e) || !v;
-  return docBtn(e, "issue", "doc-check", v ? `Issue v${v.version + 1}` : "Issue v1", primary ? "primary" : "outline");
+  /* doc.issue refuses a text equal to its latest version (no_changes, doc-31 §6): offered only when there is one to issue */
+  const v = latestVersion(e);
+  if (v && !hasUnissued(e)) return "";
+  return docBtn(e, "issue", "doc-check", v ? `Issue v${v.version + 1}` : "Issue v1", "primary");
 }
 function docActions(e) {
   if (S.docEditing === e.id) return "";
@@ -178,16 +180,16 @@ function docPage(pid, id) {
 }
 
 function pageDocs(pid, sub) {
-  if (sub === "processes" || sub === "standards") { const t = docsTabs(pid, sub); return projectProcesses(pid, sub === "standards" ? "standard" : "process", t.documents); }
+  if (sub === "processes" || sub === "standards") { const t = docsTabs(pid, "processes"); return projectProcesses(pid, t.documents + t.rest); }
   return sub ? docPage(pid, sub) : documentsView(pid);
 }
 function docCrumbs(pid, sub) {
   const base = `#/projects/${pid}/docs`;
   if (!sub) return [[null, "Docs"]];
-  if (sub === "processes" || sub === "standards") return [[base, "Docs"], [null, sub === "processes" ? "Processes" : "Standards"]];
+  if (sub === "processes" || sub === "standards") return [[base, "Docs"], [null, "Processes and standards"]];
   const e = getEntry(sub);
   return [[base, "Docs"], [null, e ? e.title : "Not found"]];
 }
 const docsCount = (pid) => treeEntries(pid).length;
 
-export { docCrumbs, docHref, docsCount, historyHtml, pageDocs };
+export { docCrumbs, docHref, docRow, docsCount, historyHtml, pageDocs };

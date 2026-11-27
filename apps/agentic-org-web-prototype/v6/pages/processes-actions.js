@@ -25,7 +25,8 @@ const levelKey = (lv) => (lv.type === "org" ? "org" : `${lv.type}.${lv.id}`);
 function startField(d, isNew, kind) {
   if (!isNew) return "";
   const options = TEMPLATES.filter((t) => t.kind === kind).map((t) => opt(t.id, `Template: ${t.title}`, d.template)).join("");
-  return field("Start from", `<select class="field" name="template">${opt("", "Blank", "")}${options}</select>`);
+  const kinds = `<select class="field" name="kind">${opt("process", "Organization process", kind)}${opt("standard", "Standard", kind)}</select>`;
+  return `<div class="work-task-fields">${field("Kind", kinds)}${field("Start from", `<select class="field" name="template">${opt("", "Blank", "")}${options}</select>`)}</div>`;
 }
 function keyField(d, lockScope) {
   const hint = lockScope ? "Same key as the document it replaces." : "A lower level replaces a document by using its key.";
@@ -93,7 +94,7 @@ const val = (form, name) => (form.elements[name]?.value ?? "").trim();
 
 /* doc-34 §5: valid fields, a key unique at its level and scope, no replacement of a non-overridable document */
 function readEditor(form, selfId) {
-  const kind = form.dataset.kind, lv = parsePlace(val(form, "scope")), key = val(form, "key");
+  const kind = form.elements.kind?.value || form.dataset.kind, lv = parsePlace(val(form, "scope")), key = val(form, "key");
   if (!val(form, "title")) return invalid(form.elements.title, "Enter a title.");
   if (!KEY_RE.test(key)) return invalid(form.elements.key, "Use 1 to 64 lowercase letters, digits or hyphens, starting with a letter or digit.");
   const sealed = sealedAbove(lv, key, kind);

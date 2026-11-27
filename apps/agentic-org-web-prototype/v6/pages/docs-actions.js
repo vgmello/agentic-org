@@ -22,14 +22,14 @@ const TEMPLATES = {
 };
 const focusLater = (sel) => requestAnimationFrame(() => document.querySelector(sel)?.focus());
 
-function openNewDoc(trigger, pid, fid) {
+function openNewDoc(trigger, pid, fid, preset = {}) {
   const dp = projectDevProcess(pid);
   const kinds = [...Object.entries(BUILT_IN_KINDS).filter(([k]) => ["decision", "design", "report"].includes(k)), ...(dp?.kinds || []).map((k) => [k.key, k.title])];
   const where = fid ? `<input type="hidden" name="feature" value="${esc(fid)}"><p class="plan-hint">Saved beside ${esc(featureRef(getFeature(fid)))} ${esc(getFeature(fid).title)}, outside the tree.</p>`
-    : `<label>Section<select class="field" name="section">${projectSections(pid).map((s) => opt(s.path, `${s.title} (docs/${s.path}/)`, "")).join("")}</select></label>`;
+    : `<label>Section<select class="field" name="section">${projectSections(pid).map((s) => opt(s.path, `${s.title} (docs/${s.path}/)`, preset.section || "")).join("")}</select></label>`;
   openDialog(trigger, fid ? "New document beside the feature" : "New document", "Starts from its kind's template. The index lists it as soon as it is saved.",
     `<form class="work-task-form plan-form" id="doc-form" data-doc-form="new" data-id="${esc(pid)}" novalidate>
-      <div class="work-task-fields"><label>Kind<select class="field" name="kind">${kinds.map(([k, l]) => opt(k, l, fid ? "design" : "")).join("")}</select></label>${fid ? "" : where}</div>
+      <div class="work-task-fields"><label>Kind<select class="field" name="kind">${kinds.map(([k, l]) => opt(k, l, fid ? "design" : preset.kind || "")).join("")}</select></label>${fid ? "" : where}</div>
       <label>Title<input class="field" name="title" required autocomplete="off" placeholder="Release pipeline"></label>
       <label>Summary<input class="field" name="summary" autocomplete="off" placeholder="One line on why to open it"></label>
       ${fid ? where : ""}</form>`,
@@ -88,7 +88,7 @@ function saveFeatureEdit(form) {
 }
 
 const CLICK = {
-  new: (id, t) => openNewDoc(t, id, t.dataset.feature || null),
+  new: (id, t) => openNewDoc(t, id, t.dataset.feature || null, { section: t.dataset.section, kind: t.dataset.kind }),
   edit: (id) => { S.docEditing = id; render(false); focusLater("#doc-edit-form textarea"); },
   "edit-cancel": () => { S.docEditing = null; render(false); focusLater('[data-doc-act="edit"]'); },
   issue: (id, t) => openIssue(t, id),

@@ -217,6 +217,9 @@ doc({ project_id: "agency-v1", key: "v1-release-checklist", title: "Release chec
 doc({ project_id: "agency-v1", kind: "standard", key: "codec-compat-window", title: "Codec compatibility window for v1.0", owner: "kai", created_by: "kai",
   body: "## Purpose\nDuring v1.0 a satellite one codec version behind keeps syncing.\n\n## Procedure\n- HQ reads codec 2 and 3; writes 3 once every office reports 3.\n- The compatibility test runs a 2a.3.1 satellite against the release build.",
   history: [h(1, "kai", "Nov 24", "Written while splitting the codec (agent, Platform)")] });
+doc({ project_id: "agency-v1", kind: "standard", key: "csp-nonces", title: "Script nonces in the UI", owner: "rowan", created_by: "rowan",
+  body: "## Purpose\nThe one bootstrap script runs with a nonce; nothing else is allowed inline.\n\n## Procedure\n- The web process issues a fresh nonce per response.\n- Components never add a script tag.\n\n## Review and completion\nRecorded while deriving the Technical DSS for Content Security Policy v1.",
+  history: [h(2, "rowan", "Nov 21", "Fresh nonce per response"), h(1, "rowan", "Nov 20", "Recorded from a Technical DSS decision")] });
 doc({ project_id: "office-federation", key: "review-and-merge", title: "Review and merge (custody code)", owner: "rowan",
   body: REVIEW_BODY.replace("2. Ask Quality for a review in the task, naming the commit to review.", "2. Ask Quality for a review in the task, naming the commit to review.\n3. Custody and lock changes need a second review from Rowan.").replace("3. Keep the author's", "4. Keep the author's").replace("4. Merge into", "5. Merge into"),
   history: [h(1, "rowan", "Nov 22", "Second review for custody changes")] });

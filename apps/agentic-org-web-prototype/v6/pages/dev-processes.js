@@ -3,7 +3,7 @@
    A built-in one is copied to change it; a process file is imported as a draft. Never listed with organization
    processes, and never resolved with them. */
 import { M, P } from "../data.js";
-import { DEV_PROCESSES, DEV_STATUS, copyDevProcess, getDevProcess, importDevProcess, projectsFollowing } from "../devproc-data.js";
+import { DEV_PROCESSES, copyDevProcess, getDevProcess, projectsFollowing } from "../devproc-data.js";
 import { closeSheet, openDialog, setSheetReturn } from "../shell/dialogs.js";
 import { render } from "../shell/router.js";
 import { S, qs } from "../state.js";
@@ -13,6 +13,7 @@ import { closeProcPanel, factList, openProcPanel, panelSection } from "./proc-pa
 Object.assign(S, { devView: "current" });
 const VIEWS = [["current", "Current"], ["draft", "Drafts"], ["deprecated", "Deprecated"]];
 const originBadge = (d) => (d.origin === "built_in" ? `<span class="proc-badge">${ic("shield-check", "ic14")}Built in</span>` : `<span class="proc-badge" data-level="org">${ic("office", "ic14")}Organization</span>`);
+const importedBadge = (d) => (d.imported ? `<span class="proc-badge">${ic("download", "ic14")}Imported</span>` : "");
 const statusPill = (d) => (d.status === "current" ? pill("Current", "green", "check-circle") : d.status === "draft" ? pill("Draft", "gray", "pencil") : pill("Deprecated", "outline", "archive"));
 const ordered = () => [...DEV_PROCESSES].sort((a, b) => (a.origin === b.origin ? 0 : a.origin === "built_in" ? -1 : 1));
 
@@ -23,8 +24,9 @@ function rowHtml(d) {
     <span class="proc-row-ic" aria-hidden="true">${ic("files", "ic20")}</span>
     <div class="grow"><p class="rt"><button class="stretch proc-open" type="button" data-dev-act="open" data-id="${esc(d.id)}">${esc(d.name)}</button>${d.version_label ? `<span class="plan-version">${esc(d.version_label)}</span>` : ""}</p>
       <p class="dev-summary">${esc(d.summary)}</p>
-      <div class="meta"><span>Seed roles: ${esc(seeds)}</span><span>Tabs: ${esc(d.tabs.map((t) => t[1]).join(", "))}</span><span>Starts with ${esc(d.folders.map((f) => f[1]).join(", "))}</span>${used.length ? `<span>Followed by ${used.map((p) => esc(P[p].name)).join(", ")}</span>` : "<span>No project follows it</span>"}</div></div>
-    <div class="proc-badges">${originBadge(d)}${statusPill(d)}</div>${ic("chev-right", "ic20 chev")}</li>`;
+      <div class="meta"><code class="proc-key">${esc(d.key)}</code><span>Seed roles: ${esc(seeds)}</span><span>Tabs: ${esc(d.tabs.map((t) => t.title).join(", "))}</span><span>Starts with ${esc(d.folders.map((f) => f[1]).join(", "))}</span>${used.length ? `<span>Followed by ${used.map((p) => esc(P[p].name)).join(", ")}</span>` : "<span>No project follows it</span>"}</div></div>
+    <div class="proc-badges">${originBadge(d)}${importedBadge(d)}${statusPill(d)}</div>
+    <div class="dev-row-actions"><button class="btn ghost sm proc-row-btn" type="button" data-dev-act="copy" data-id="${esc(d.id)}">${ic("copy", "ic16")}Copy<span class="sr-only"> ${esc(d.name)}</span></button><button class="btn ghost sm proc-row-btn" type="button" data-dev-act="download" data-id="${esc(d.id)}">${ic("download", "ic16")}Download<span class="sr-only"> ${esc(d.name)}</span></button></div></li>`;
 }
 
 function pageDevProcesses() {
@@ -32,10 +34,10 @@ function pageDevProcesses() {
   const rows = ordered().filter((d) => d.status === view);
   const tabs = VIEWS.map(([v, l]) => `<button class="queue-tab" type="button" data-act="set" data-k="devView" data-v="${v}" aria-pressed="${v === view}" aria-controls="dev-results">${l}<span>${DEV_PROCESSES.filter((d) => d.status === v).length}</span></button>`).join("");
   const header = hdr("Development processes", "How a project builds software");
-  const body = `<p class="desc proc-note">A project follows at most one development process: which roles start it, what each role does, which documents it produces and which tabs the project has. It is content the product shows to people and agents; nothing runs it. Organization processes and standards are separate: see <a class="alink" href="#/settings/processes">Processes</a>.</p>
+  const body = `<p class="desc proc-note">A project follows at most one development process: which roles start it, what each role does, which documents it produces and which tabs the project has. It is content the product shows to people and agents; nothing runs it. Any person may create, copy, import or edit one; an agent's write is refused. Built-in ones are read-only and can be copied. Organization processes and standards are separate: see <a class="alink" href="#/settings/processes">Processes</a>.</p>
     <div class="work-subbar-header proc-subbar"><div class="work-toolbar queue-toolbar proc-toolbar">
       <div class="primary-tab-row"><div class="queue-tabs" role="group" aria-label="Lifecycle">${tabs}</div></div>
-      <div class="proc-toolbar-end"><button class="btn outline" type="button" data-dev-act="import">${ic("download", "ic16")}Import process file</button><button class="btn primary" type="button" data-dev-act="copy-pick">${ic("copy", "ic16")}Copy one</button></div>
+      <div class="proc-toolbar-end"><button class="btn outline" type="button" data-dev-act="import">${ic("download", "ic16")}Import process</button><button class="btn primary" type="button" data-dev-act="copy-pick">${ic("copy", "ic16")}Copy one</button></div>
     </div></div>
     <div class="plan-results proc-results" id="dev-results">${rows.length ? `<ul class="rows plan-rows" role="list">${rows.map(rowHtml).join("")}</ul>` : `<p class="empty-row">No ${VIEWS.find(([v]) => v === view)[1].toLowerCase()} development processes.</p>`}</div>`;
   return { header, body };
@@ -46,7 +48,7 @@ function manifestHtml(d) {
   const roles = `<ul class="dev-list" role="list">${d.roles.map((r) => `<li><b>${esc(r.name)}</b>${r.seed ? ` <span class="proc-badge is-add">${ic("star", "ic14")}Seed</span>` : ""}<span class="proc-muted"><code>${esc(r.key)}</code>${r.hats.length ? ` · covers ${esc(r.hats.join(", "))}` : ""}</span></li>`).join("")}</ul>`;
   const stages = `<ol class="proc-stages" role="list">${d.stages.map((s) => `<li><b>${esc(s.title)}</b> <span class="proc-muted">${esc(s.summary)} Led by ${esc(d.roles.find((r) => r.key === s.lead)?.name || "anyone")}.</span></li>`).join("")}</ol>`;
   const skills = `<ul class="proc-instr-list" role="list">${d.skills.map((s) => `<li><b>${esc(s.title)}</b> <span class="proc-muted">for ${esc(s.roles.length ? s.roles.map((k) => d.roles.find((r) => r.key === k)?.name || k).join(", ") : "every role")}</span><p>${esc(s.description)}</p></li>`).join("")}</ul>`;
-  const tabs = `<p>Overview · Work · ${d.tabs.map((t) => `<b>${esc(t[1])}</b>`).join(" · ")} · Docs · Team · Activity · Conversations</p><p class="proc-muted">The process's tabs sit between Work and Docs.</p>`;
+  const tabs = `<p>Overview · Work · ${d.tabs.map((t) => `<b>${esc(t.title)}</b>`).join(" · ")} · Docs · Team · Activity · Conversations</p><p class="proc-muted">The process's tabs sit between Work and Docs.</p>`;
   const kinds = d.kinds.length ? `<ul class="dev-list" role="list">${d.kinds.map((k) => `<li><b>${esc(k.title)}</b><span class="proc-muted"><code>${esc(k.key)}</code>${k.versioned ? " · issued in versions" : ""}</span></li>`).join("")}</ul>` : `<p class="proc-muted">None. It uses decisions, designs and reports.</p>`;
   const folders = `<ul class="dev-list" role="list">${d.folders.map(([p, t]) => `<li><b>${esc(t)}</b><span class="proc-muted"><code>docs/${esc(p)}/</code></span></li>`).join("")}</ul>`;
   return panelSection("dev-roles", "Roles", roles) + panelSection("dev-stages", "Stages", stages) + panelSection("dev-skills", "Skills", skills)
@@ -69,7 +71,7 @@ function openDev(id, from) {
     + btn("download", "download", "Download process file")
     + (d.origin !== "built_in" && d.status === "draft" ? btn("make-current", "check-circle", "Make current") : "");
   const draftNote = d.status === "draft" ? `<div class="callout proc-callout" role="note">${ic("info", "ic20")}<div><p>A draft can't be chosen for a project until it's Current.</p></div></div>` : "";
-  openProcPanel({ eyebrow: `${ic("files", "ic16")}Development process`, title: d.name, badges: originBadge(d) + statusPill(d), actions }, draftNote + `<p class="proc-lead">${esc(d.summary)}</p>` + facts + manifestHtml(d), from, true);
+  openProcPanel({ eyebrow: `${ic("files", "ic16")}Development process`, title: d.name, badges: originBadge(d) + importedBadge(d) + statusPill(d), actions }, draftNote + `<p class="proc-lead">${esc(d.summary)}</p>` + facts + manifestHtml(d), from, true);
 }
 
 /* Copy and import ----------------------------------------------------------------------------------- */
@@ -93,20 +95,6 @@ function submitCopy(form) {
   toast(`${copy.name} added as a draft.`, "check-circle");
   openDev(copy.id, document.querySelector(`[data-dev-act="open"][data-id="${CSS.escape(copy.id)}"]`));
 }
-function openImport(trigger) {
-  openDialog(trigger, "Import a process file", "A process file is an archive of a development process's folder. It is validated, gets a new ID and arrives as a draft. Nothing links it to the organization it came from.",
-    `<form class="work-task-form plan-form" id="dev-form" data-dev-form="import" novalidate><label>Process file<input class="field" type="file" name="file" accept=".zip,.tar,.tgz,.agentic-process" required></label></form>`,
-    cancelBtn + `<button class="btn primary" type="submit" form="dev-form">Import</button>`);
-  document.querySelector(".sheet")?.classList.add("plan-dialog");
-}
-function submitImport(form) {
-  const file = form.elements.file.files?.[0];
-  if (!file) { form.elements.file.setCustomValidity("Choose a process file."); form.elements.file.reportValidity(); return; }
-  const d = importDevProcess(file.name);
-  S.devView = "draft"; setSheetReturn(null); closeSheet(); render(false);
-  toast(`${d.name} imported as a draft.`, "check-circle");
-}
-
 /* A dialog opened from the panel replaces it; Cancel returns focus to the process's row */
 function fromPanel(t, id) {
   if (!document.getElementById("proc-panel")?.contains(t)) return t;
@@ -117,9 +105,7 @@ const CLICK = {
   open: (id, t) => openDev(id, t),
   copy: (id, t) => openCopy(fromPanel(t, id), id),
   "copy-pick": (_id, t) => openCopy(t, null),
-  import: (_id, t) => openImport(t),
   edit: () => toast("The development process editor isn't in this prototype."),
-  download: (id) => toast(`${getDevProcess(id).key}.agentic-process downloaded.`, "download"),
   "make-current": (id, t) => { const d = getDevProcess(id); d.status = "current"; d.revision += 1; render(false); openDev(id, t); toast(`${d.name} is Current and can be chosen for a project.`, "check-circle"); },
 };
 document.addEventListener("click", (e) => {
@@ -131,7 +117,7 @@ document.addEventListener("submit", (e) => {
   const form = e.target.closest?.("form[data-dev-form]");
   if (!form) return;
   e.preventDefault();
-  (form.dataset.devForm === "copy" ? submitCopy : submitImport)(form);
+  if (form.dataset.devForm === "copy") submitCopy(form);
 });
 document.addEventListener("input", (e) => { if (e.target.form?.matches?.("form[data-dev-form]")) e.target.setCustomValidity(""); });
 document.addEventListener("change", (e) => { if (e.target.form?.matches?.("form[data-dev-form]")) e.target.setCustomValidity(""); });
@@ -143,4 +129,4 @@ function mountDevProcesses() {
 }
 addEventListener("hashchange", () => setTimeout(mountDevProcesses, 0));
 
-export { mountDevProcesses, pageDevProcesses };
+export { mountDevProcesses, openDev, pageDevProcesses };
