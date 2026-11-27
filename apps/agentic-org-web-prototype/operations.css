@@ -331,10 +331,11 @@
   content: "";
   position: absolute;
   inset-inline-start: -13px;
-  top: .3em;
+  /* Same mark as the toolbar separator between List|Board and Search (owner) */
+  top: calc(.75em - 9px);
   width: 1px;
-  height: .9em;
-  background: var(--page-subtitle-divider);
+  height: 18px;
+  background: var(--toolbar-divider-color);
 }
 /* Narrow: a short summary stays beside the title; one too long for the rest of the line goes under it, full width */
 @media (max-width: 639px) {
