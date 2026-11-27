@@ -494,3 +494,209 @@ fn msg_list_delta_cursor_pages_without_replacing_the_after_id_anchor() {
     assert_eq!(out.exit_code, 1, "{}", out.stdout);
     assert!(calls.is_empty(), "{calls:?}");
 }
+
+#[test]
+fn msg_send_reply_ask_attach_flags_and_zero_overhead_when_omitted() {
+    use crate::runtime::file_guard::{with_test_roots, FileRoots, RootEntry};
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
+
+    const STAGED_ID: &str = "0193a5c0-0000-7000-8000-000000000801";
+    const EXISTING_ID: &str = "0193a5c0-0000-7000-8000-000000000802";
+
+    struct AttachMock {
+        calls: Vec<(String, Value)>,
+    }
+    impl OfficeTransport for AttachMock {
+        fn call_method(
+            &mut self,
+            method: &str,
+            params: Value,
+        ) -> Result<Value, org_command::Refusal> {
+            self.calls.push((method.to_owned(), params));
+            match method {
+                "attachment.upload_begin" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "note.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 0,
+                        "committed": false,
+                        "expires_at": "2026-11-27T01:00:00.000Z"
+                    },
+                    "chunk_size_bytes": 524288
+                })),
+                "attachment.upload_chunk" => {
+                    Ok(json!({ "upload_id": STAGED_ID, "received_bytes": 5, "complete": true }))
+                }
+                "attachment.upload_commit" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "note.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 5,
+                        "committed": true,
+                        "expires_at": "2026-11-27T01:00:00.000Z",
+                        "content_sha256": "0".repeat(64)
+                    }
+                })),
+                "chat.send" => Ok(json!({
+                    "id": M0,
+                    "conversation_id": M2,
+                    "thread_id": M0,
+                    "local_seq": 1,
+                    "origin_seq": 1,
+                    "mentions": [],
+                    "unmatched_mentions": []
+                })),
+                "msg.reply" => Ok(json!({
+                    "id": M2,
+                    "thread_id": M0,
+                    "local_seq": 2,
+                    "origin_seq": 2
+                })),
+                "chat.answer" => Ok(json!({
+                    "ask_id": M0,
+                    "conversation_id": M2,
+                    "answer": { "by": M0, "at": "2026-11-27T00:00:00.000Z", "answers": [] }
+                })),
+                "chat.ask" => Ok(json!({
+                    "status": "waiting",
+                    "ask_id": M0,
+                    "conversation_id": M2,
+                    "thread_id": M0,
+                    "local_seq": 3,
+                    "origin_seq": 3
+                })),
+                other => panic!("unexpected RPC: {other}"),
+            }
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("note.md"), b"hello").unwrap();
+    let roots = FileRoots {
+        cwd: tmp.path().to_path_buf(),
+        workspace_roots: vec![RootEntry::from_path(tmp.path().to_path_buf()).unwrap()],
+        ..FileRoots::default()
+    };
+
+    with_test_roots(roots, || {
+        // 1. Plain `msg send` without `--attach`: zero upload RPCs, no `attachment_ids` key.
+        let mut t = TransportOffice(AttachMock { calls: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "send".into(),
+                "--to".into(),
+                "owner".into(),
+                "--body".into(),
+                "plain".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        assert_eq!(t.0.calls.len(), 1);
+        assert_eq!(t.0.calls[0].0, "chat.send");
+        assert!(t.0.calls[0].1.get("attachment_ids").is_none());
+
+        // 2. `msg send` with `--attach` + `--attachment-id` and omitted `--body`.
+        let mut t = TransportOffice(AttachMock { calls: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "send".into(),
+                "--to".into(),
+                "owner".into(),
+                "--attach".into(),
+                "note.md".into(),
+                "--attachment-id".into(),
+                EXISTING_ID.into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let send = t.0.calls.last().unwrap();
+        assert_eq!(send.0, "chat.send");
+        assert_eq!(send.1["body"], "");
+        assert_eq!(send.1["attachment_ids"], json!([STAGED_ID, EXISTING_ID]));
+        assert_eq!(t.0.calls[1].1["data_base64"], STANDARD.encode(b"hello"));
+
+        // 3. `msg send` with neither `--body` nor attachments fails closed with zero RPCs.
+        let mut t = TransportOffice(AttachMock { calls: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &["msg".into(), "send".into(), "--to".into(), "owner".into()],
+            &mut t,
+        );
+        assert_ne!(out.exit_code, 0, "{}", out.stdout);
+        assert!(t.0.calls.is_empty());
+
+        // 4. `msg reply` (thread) with `--attach` and omitted `--body`.
+        let mut t = TransportOffice(AttachMock { calls: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "reply".into(),
+                "--id".into(),
+                M0.into(),
+                "--attach".into(),
+                "note.md".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let reply = t.0.calls.last().unwrap();
+        assert_eq!(reply.0, "msg.reply");
+        assert_eq!(reply.1["attachment_ids"], json!([STAGED_ID]));
+
+        // 5. `msg reply --answer` with `--attach`.
+        let mut t = TransportOffice(AttachMock { calls: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "reply".into(),
+                "--id".into(),
+                M0.into(),
+                "--answer".into(),
+                r#"[{"question_id":"q1","option_ids":["yes"]}]"#.into(),
+                "--attach".into(),
+                "note.md".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let ans = t.0.calls.last().unwrap();
+        assert_eq!(ans.0, "chat.answer");
+        assert_eq!(ans.1["attachment_ids"], json!([STAGED_ID]));
+
+        // 6. `msg ask` with `--attach` and `--attachment-id`.
+        let mut t = TransportOffice(AttachMock { calls: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "ask".into(),
+                "--to".into(),
+                "owner".into(),
+                "--prompt".into(),
+                "Approve?".into(),
+                "--attach".into(),
+                "note.md".into(),
+                "--attachment-id".into(),
+                EXISTING_ID.into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let ask = t.0.calls.last().unwrap();
+        assert_eq!(ask.0, "chat.ask");
+        assert_eq!(ask.1["attachment_ids"], json!([STAGED_ID, EXISTING_ID]));
+    });
+}

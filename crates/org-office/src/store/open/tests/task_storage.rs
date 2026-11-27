@@ -139,6 +139,7 @@ impl Bench {
                 "labels": ["storage"],
             })),
             numbering: self.store().task_numbering(),
+            prepared_files: Default::default(),
         });
         out.expect("stored").map(|o| o.task).map_err(|e| e.code)
     }
@@ -153,6 +154,7 @@ impl Bench {
                 "expected_revision": expected,
                 "title": format!("Renamed at {expected}"),
             })),
+            prepared_files: Default::default(),
         });
         out.expect("stored").map(|o| o.task).map_err(|e| e.code)
     }
@@ -171,6 +173,7 @@ impl Bench {
                     "command_id": ids[0].as_str(), "task": task.id,
                     "comment_id": comment.as_str(), "body_markdown": "A comment.",
                 })),
+                prepared_files: Default::default(),
             })
             .unwrap()
             .unwrap();

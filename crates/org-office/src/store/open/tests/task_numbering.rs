@@ -115,6 +115,7 @@ fn concurrent_creates_after_an_unclean_stop_jump_past_the_reservation_once() {
                             "body_markdown": "Body.\n",
                         })),
                         numbering,
+                        prepared_files: Default::default(),
                     });
                     out.expect("stored").expect("created").task.number
                 })

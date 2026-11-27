@@ -3,19 +3,46 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use org_proto::attachments::{
+    AttachmentMeta, AttachmentTargetKind, TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX,
+};
 use org_proto::tasks::{
-    TaskDependenciesResult, TaskDependencyEdge, TaskInspectResult, TaskLabelSummary,
-    TaskRefSummary, TasksCommentsResult, TasksHistoryResult, TasksLabelsParams, TasksLabelsResult,
+    TaskCommentWire, TaskDependenciesResult, TaskDependencyEdge, TaskInspectResult,
+    TaskLabelSummary, TaskRefSummary, TasksCommentsResult, TasksHistoryResult, TasksLabelsParams,
+    TasksLabelsResult,
 };
 use org_store::{Id, Refusal};
 
+use crate::attachments::records::AttachmentRecord;
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records::TaskRecord;
+use crate::tasks::records::{TaskCommentRecord, TaskRecord};
 
 use super::{
     build_ref_summary, build_task_view, comment_to_wire, event_to_wire, require_task, step_to_wire,
     storage_refusal, watcher_to_wire,
 };
+
+fn hydrate_comments<R: TasksRead>(
+    view: &R,
+    comments: &[TaskCommentRecord],
+) -> Result<Vec<TaskCommentWire>, Refusal> {
+    let mut out = Vec::with_capacity(comments.len());
+    for comment in comments {
+        let attachments: Vec<AttachmentMeta> = view
+            .attachments_for_target(
+                AttachmentTargetKind::TaskComment,
+                Some(&comment.id),
+                None,
+                TASK_COMMENT_ATTACHMENTS_MAX,
+            )
+            .map_err(storage_refusal)?
+            .iter()
+            .map(AttachmentRecord::to_meta)
+            .collect();
+        out.push(comment_to_wire(comment, attachments));
+    }
+    Ok(out)
+}
 
 pub fn inspect_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskInspectResult, Refusal> {
     let task = require_task(view, reference)?;
@@ -26,11 +53,18 @@ pub fn inspect_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskInspe
         .iter()
         .map(step_to_wire)
         .collect();
-    let comments = view
-        .task_comments(&task.id)
+    let comment_records = view.task_comments(&task.id).map_err(storage_refusal)?;
+    let comments = hydrate_comments(view, &comment_records)?;
+    let attachments = view
+        .attachments_for_target(
+            AttachmentTargetKind::Task,
+            Some(&task.id),
+            None,
+            TASK_ATTACHMENTS_MAX,
+        )
         .map_err(storage_refusal)?
         .iter()
-        .map(comment_to_wire)
+        .map(AttachmentRecord::to_meta)
         .collect();
     let watchers = view
         .task_watchers(&task.id)
@@ -65,6 +99,7 @@ pub fn inspect_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskInspe
         task: task_view,
         checklist,
         comments,
+        attachments,
         watchers,
         depends_on_tasks,
         dependent_tasks,
@@ -191,12 +226,8 @@ pub fn list_comments<R: TasksRead>(
     reference: &str,
 ) -> Result<TasksCommentsResult, Refusal> {
     let task = require_task(view, reference)?;
-    let comments = view
-        .task_comments(&task.id)
-        .map_err(storage_refusal)?
-        .iter()
-        .map(comment_to_wire)
-        .collect();
+    let records = view.task_comments(&task.id).map_err(storage_refusal)?;
+    let comments = hydrate_comments(view, &records)?;
     Ok(TasksCommentsResult {
         task_id: task.id.as_str().to_owned(),
         comments,

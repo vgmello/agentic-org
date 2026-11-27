@@ -4,17 +4,22 @@
 
 use std::collections::BTreeSet;
 
+use org_proto::attachments::{
+    check_task_attachment_ids, AttachmentTargetKind, TASK_ATTACHMENTS_MAX,
+};
 use org_proto::tasks::{PatchField, TasksAssignParams, TasksUpdateParams, TASK_MAX_DEPENDENCIES};
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
 use serde_json::{json, Value};
 
+use crate::attachments::records::AttachmentRecord;
 use crate::organization::records::EmployeeKind;
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{normalize_file_paths, normalize_labels, TaskLinkRecord, TaskRecord};
 use crate::time::format_rfc3339_ms;
 
-use super::write::{current_links, task_location, Writer};
+use super::attachments::{stale_revision_refusal, PreparedTaskFiles};
+use super::write::{current_attachments, current_links, task_location, Writer};
 use super::{
     check_dependency_acyclic, parse_details, parse_uuid_v7, refuse, require_active_employee,
     require_task, storage_refusal, validate_active_employee, validate_active_team, validate_body,
@@ -22,7 +27,7 @@ use super::{
 };
 
 /// A core mutation of `task`, already advanced to its next revision: `task.md` with the
-/// task's links as they stand and that revision's event, answered `durable` (`doc-79`).
+/// task's links and attachments as they stand and that revision's event, answered `durable` (`doc-79`).
 pub(crate) fn rewrite_task<R: TasksRead>(
     view: &R,
     task: &TaskRecord,
@@ -33,11 +38,13 @@ pub(crate) fn rewrite_task<R: TasksRead>(
 ) -> Result<Change, Refusal> {
     let location = task_location(view, task)?;
     let links = current_links(view, task)?;
+    let attachments = current_attachments(view, task)?;
     Writer::new(view, actor_id, at, command_id)?.task_and_event(
         Change::new(Ack::Durable),
         &location,
         task,
         &links,
+        &attachments,
         event,
     )
 }
@@ -67,10 +74,13 @@ pub(crate) fn derived_id(parts: &[&[u8]]) -> Id {
     Id::parse(&formatted).expect("derived UUIDv7 id")
 }
 
-/// Updates core task fields, `rank_order`, `labels`, `reference_files`, `modified_files`, and `details`.
+/// Updates core task fields, `rank_order`, `labels`, `reference_files`, `modified_files`,
+/// `details`, and task attachments (`TASK-98.4`).
 pub struct UpdateTask {
     pub actor_member_id: String,
     pub params: TasksUpdateParams,
+    /// Validated, blob-promoted files for `params.add_attachments` (`TASK-98.4`).
+    pub prepared_files: PreparedTaskFiles,
 }
 
 impl UpdateTask {
@@ -82,18 +92,30 @@ impl UpdateTask {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
         if task.meta.revision != self.params.expected_revision {
-            return Err(refuse(
-                ErrorCode::Conflict,
-                format!(
-                    "stale expected_revision {}: task is at revision {}",
-                    self.params.expected_revision, task.meta.revision
-                ),
+            return Err(stale_revision_refusal(
+                uow.view(),
+                &task,
+                self.params.expected_revision,
             ));
         }
 
         let mut changed_fields: Vec<&'static str> = Vec::new();
         apply_scalar_updates(uow.view(), &mut task, &self.params, &mut changed_fields)?;
         apply_collection_updates(&mut task, &self.params, &mut changed_fields)?;
+
+        let at = format_rfc3339_ms(uow.now().0);
+        let UpdatedAttachments {
+            records: attachments,
+            added_ids,
+            removed_ids,
+        } = apply_attachment_updates(
+            uow.view(),
+            &task,
+            &self.params,
+            &self.prepared_files,
+            &at,
+            &mut changed_fields,
+        )?;
 
         if changed_fields.is_empty() {
             return Err(refuse(
@@ -102,23 +124,109 @@ impl UpdateTask {
             ));
         }
 
-        let at = format_rfc3339_ms(uow.now().0);
         task.meta.touch(&actor.id, &at);
-        let change = rewrite_task(
-            uow.view(),
-            &task,
-            &actor.id,
-            &at,
-            &self.params.command_id,
-            json!({
-                "type": "task_updated",
-                "fields": changed_fields,
-                "rank_order": task.rank_order,
-                "labels": task.labels,
-            }),
-        )?;
+        let location = task_location(uow.view(), &task)?;
+        let links = current_links(uow.view(), &task)?;
+        let mut event = json!({
+            "type": "task_updated",
+            "fields": changed_fields,
+            "rank_order": task.rank_order,
+            "labels": task.labels,
+        });
+        if !added_ids.is_empty() {
+            event["added_attachment_ids"] = json!(added_ids);
+        }
+        if !removed_ids.is_empty() {
+            event["removed_attachment_ids"] = json!(removed_ids);
+        }
+        let change = Writer::new(uow.view(), &actor.id, &at, &self.params.command_id)?
+            .task_and_event(
+                Change::new(Ack::Durable),
+                &location,
+                &task,
+                &links,
+                &attachments,
+                event,
+            )?;
         Ok((change, task.id))
     }
+}
+
+struct UpdatedAttachments {
+    records: Vec<AttachmentRecord>,
+    added_ids: Vec<String>,
+    removed_ids: Vec<String>,
+}
+
+fn apply_attachment_updates<R: TasksRead>(
+    view: &R,
+    task: &TaskRecord,
+    params: &TasksUpdateParams,
+    prepared_files: &PreparedTaskFiles,
+    at: &str,
+    changed: &mut Vec<&'static str>,
+) -> Result<UpdatedAttachments, Refusal> {
+    let mut attachments = current_attachments(view, task)?;
+    if params.add_attachments.is_empty() && params.remove_attachments.is_empty() {
+        return Ok(UpdatedAttachments {
+            records: attachments,
+            added_ids: Vec::new(),
+            removed_ids: Vec::new(),
+        });
+    }
+    if let Err(err) = check_task_attachment_ids(&params.add_attachments) {
+        return Err(refuse(err.code, err.message));
+    }
+    if let Err(err) = check_task_attachment_ids(&params.remove_attachments) {
+        return Err(refuse(err.code, err.message));
+    }
+    let remove_set: BTreeSet<&str> = params
+        .remove_attachments
+        .iter()
+        .map(String::as_str)
+        .collect();
+    if params
+        .add_attachments
+        .iter()
+        .any(|id| remove_set.contains(id.as_str()))
+    {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "cannot add and remove the same attachment in one update",
+        ));
+    }
+    for remove_id in &params.remove_attachments {
+        if !attachments.iter().any(|a| a.id.as_str() == remove_id) {
+            return Err(refuse(
+                ErrorCode::NotFound,
+                format!(
+                    "attachment `{remove_id}` is not attached to task `{}`",
+                    task.key()
+                ),
+            ));
+        }
+    }
+    let removed_ids = params.remove_attachments.clone();
+    attachments.retain(|a| !remove_set.contains(a.id.as_str()));
+    let added = if params.add_attachments.is_empty() {
+        Vec::new()
+    } else {
+        prepared_files.to_records(AttachmentTargetKind::Task, &task.id, &params.command_id, at)?
+    };
+    if attachments.len() + added.len() > TASK_ATTACHMENTS_MAX {
+        return Err(refuse(
+            ErrorCode::TooLarge,
+            format!("a task carries at most {TASK_ATTACHMENTS_MAX} attachments"),
+        ));
+    }
+    let added_ids: Vec<String> = added.iter().map(|r| r.id.to_string()).collect();
+    attachments.extend(added);
+    changed.push("attachments");
+    Ok(UpdatedAttachments {
+        records: attachments,
+        added_ids,
+        removed_ids,
+    })
 }
 
 fn apply_scalar_updates<R: TasksRead>(
@@ -279,12 +387,10 @@ impl AssignTask {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
         if task.meta.revision != self.params.expected_revision {
-            return Err(refuse(
-                ErrorCode::Conflict,
-                format!(
-                    "stale expected_revision {}: task is at revision {}",
-                    self.params.expected_revision, task.meta.revision
-                ),
+            return Err(stale_revision_refusal(
+                uow.view(),
+                &task,
+                self.params.expected_revision,
             ));
         }
 

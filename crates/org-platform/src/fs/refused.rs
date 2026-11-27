@@ -81,6 +81,18 @@ pub(super) fn open_nofollow_ro(_path: &Path) -> io::Result<File> {
     refused()
 }
 
+pub(super) fn open_regular_beneath(_root: &Path, _relative: &Path) -> io::Result<File> {
+    refused()
+}
+
+pub(super) fn write_regular_beneath(
+    _root: &Path,
+    _relative: &Path,
+    _bytes: &[u8],
+) -> io::Result<()> {
+    refused()
+}
+
 pub(super) fn create_symlink(_original: &Path, _link: &Path) -> io::Result<()> {
     refused()
 }
@@ -208,6 +220,12 @@ mod tests {
         assert_refused(super::create_owner_only_dir_all(&dir.path().join("a/b")));
         assert_refused(super::write_owner_only_file(&dir.path().join("f"), b"x"));
         assert_refused(super::open_nofollow_ro(&dir.path().join("f")));
+        assert_refused(super::open_regular_beneath(dir.path(), Path::new("f")));
+        assert_refused(super::write_regular_beneath(
+            dir.path(),
+            Path::new("f"),
+            b"x",
+        ));
         assert_refused(super::create_symlink(dir.path(), &dir.path().join("l")));
         assert_refused(super::effective_uid());
         assert_refused(super::verify_owner_only_dir(dir.path(), 0));

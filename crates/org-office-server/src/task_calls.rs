@@ -236,11 +236,26 @@ impl TaskService {
 
     fn dispatch_collab(&self, member: &str, request: &Request) -> Option<Response> {
         if request.is::<TasksComment>() {
-            return Some(
-                self.run_notifying::<TasksComment>(request, |p| {
-                    self.office.task_comment(member, p)
-                }),
-            );
+            return Some(run_call::<TasksComment>(request, |p| {
+                match self.office.task_comment(member, p)? {
+                    Ok((res, replayed)) => {
+                        if !replayed {
+                            self.live.record_mailbox_change();
+                            self.notify_sync();
+                            if let Some(sessions) = self.sessions.as_ref() {
+                                crate::wake_bridge::on_task_comment_committed(
+                                    &self.office,
+                                    sessions,
+                                    member,
+                                    &res,
+                                );
+                            }
+                        }
+                        Ok(Ok(res))
+                    }
+                    Err(api_err) => Ok(Err(api_err)),
+                }
+            }));
         }
         if request.is::<TasksComments>() {
             return Some(run_call::<TasksComments>(request, |p| {

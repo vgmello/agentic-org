@@ -8,6 +8,7 @@ mod flows;
 mod ingest;
 mod messages;
 mod rebuild;
+mod tasks;
 mod update_meta;
 
 use std::sync::atomic::{AtomicU64, Ordering};

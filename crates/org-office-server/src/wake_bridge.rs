@@ -1,6 +1,7 @@
 //! Bridge connecting `ChatService` and `who` in `org-office-server` to `SessionManager`
 //! autonomous wake-ups, required-ask suspend/resume, and live presence (`TASK-47`).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,6 +15,8 @@ use org_office_sessions::{
 };
 use org_proto::chat::{ConversationKind, DeliveredBecause};
 use org_proto::directory::RecipientPresence;
+use org_proto::tasks::TasksCommentResult;
+use org_proto::{AgentStatus, MemberKind};
 
 const KIND_ANNOUNCEMENT: &str = "announcement";
 const KIND_HANDOFF: &str = "handoff";
@@ -261,6 +264,97 @@ pub(crate) fn on_msg_withdraw_committed(
 ) {
     let asker = committed.asker_id.as_deref().unwrap_or(caller_id);
     sessions.on_ask_withdrawn(asker, &committed.result.ask_id);
+}
+
+/// Processes a committed `tasks.comment`: wakes active agent assignee and watchers placed at this
+/// office (excluding the comment author), carrying lightweight `attachment_ids` when files were
+/// attached (never raw bytes or local paths, `TASK-98.4`).
+pub(crate) fn on_task_comment_committed(
+    office: &Office,
+    sessions: &SessionManager,
+    actor_id: &str,
+    result: &TasksCommentResult,
+) {
+    let Ok(Ok(inspected)) = office.task_inspect(&result.task.id) else {
+        return;
+    };
+    let mut candidates = BTreeSet::new();
+    if let Some(assignee) = &inspected.task.assignee_id {
+        candidates.insert(assignee.clone());
+    }
+    for watcher in &inspected.watchers {
+        if watcher.watcher_kind == "employee" {
+            if let Some(id) = &watcher.watcher_id {
+                candidates.insert(id.clone());
+            }
+        }
+    }
+    candidates.remove(actor_id);
+    if candidates.is_empty() {
+        return;
+    }
+    let Ok(snapshot) = office.org_snapshot() else {
+        return;
+    };
+    let local_office = office.info().office_id.as_str();
+    let targets: Vec<String> = snapshot
+        .members
+        .iter()
+        .filter(|m| {
+            m.kind == MemberKind::Agent
+                && m.agent
+                    .as_ref()
+                    .is_some_and(|a| a.status == AgentStatus::Active)
+                && m.office_id.as_deref() == Some(local_office)
+                && candidates.contains(&m.id)
+        })
+        .map(|m| m.id.clone())
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+    let (sender_name, sender_is_person) = sender_meta(office, actor_id);
+    let summary = comment_wake_summary(result);
+    let ts = now_ms();
+    for target_id in targets {
+        let item = PendingWakeItem {
+            item_id: format!("task-comment:{}:{target_id}", result.comment.id),
+            kind: WakeKind::TaskAssignment,
+            sender_id: actor_id.to_owned(),
+            sender_name: sender_name.clone(),
+            sender_handle: None,
+            sender_relation: None,
+            sender_is_person,
+            conversation_id: None,
+            source_id: result.task.key.clone(),
+            summary: summary.clone(),
+            enqueued_at_ms: ts,
+        };
+        let _ = sessions.enqueue_wake(&target_id, item);
+    }
+}
+
+fn comment_wake_summary(result: &TasksCommentResult) -> String {
+    let trimmed = result.comment.body_markdown.trim();
+    let mut summary = if trimmed.is_empty() {
+        format!("Commented on {}", result.task.key)
+    } else {
+        let mut preview: String = trimmed.chars().take(240).collect();
+        if trimmed.chars().count() > 240 {
+            preview.push('…');
+        }
+        format!("Comment on {}: {preview}", result.task.key)
+    };
+    if !result.comment.attachments.is_empty() {
+        let ids: Vec<&str> = result
+            .comment
+            .attachments
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        summary.push_str(&format!(" [attachment_ids: {}]", ids.join(", ")));
+    }
+    summary
 }
 
 #[cfg(test)]

@@ -25,6 +25,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
+use org_proto::attachments::{check_task_attachment_ids, AttachmentTargetKind};
 use org_proto::tasks::{
     normalize_dod_items, ChecklistSection, TaskPriority, TaskStatus, TasksCreateParams,
     TASK_MAX_DEPENDENCIES,
@@ -40,6 +41,7 @@ use crate::tasks::records::{
 };
 use crate::time::format_rfc3339_ms;
 
+use super::attachments::PreparedTaskFiles;
 use super::core::{derive_link_id, derived_id};
 use super::write::{child_bytes, task_location, too_deep, Writer};
 use super::{
@@ -128,6 +130,8 @@ pub struct CreateTask {
     /// The store's task numbering: whether numbers up to the counter's reservation may have
     /// been issued by a run that did not stop cleanly, and how far a reservation is flushed.
     pub numbering: Arc<TaskNumbering>,
+    /// Validated, blob-promoted files to bind onto the new task (`TASK-98.4`).
+    pub prepared_files: PreparedTaskFiles,
 }
 
 /// What a decided create leaves: its change, the task, the agent it newly assigns, and the
@@ -268,7 +272,20 @@ impl CreateTask {
         if let Some(rank_order) = self.params.rank_order {
             super::validate_i64_u64(rank_order, "rank_order")?;
         }
+        if let Err(err) = check_task_attachment_ids(&self.params.attachment_ids) {
+            return Err(refuse(err.code, err.message));
+        }
         let at = format_rfc3339_ms(uow.now().0);
+        let attachments = if self.params.attachment_ids.is_empty() {
+            Vec::new()
+        } else {
+            self.prepared_files.to_records(
+                AttachmentTargetKind::Task,
+                &task_id,
+                &self.params.command_id,
+                &at,
+            )?
+        };
         let task = TaskRecord {
             id: task_id.clone(),
             office_code: office_code.clone(),
@@ -301,7 +318,7 @@ impl CreateTask {
 
         let location = task_location(uow.view(), &task)?;
         let writer = Writer::new(uow.view(), &actor.id, &at, &self.params.command_id)?;
-        let known_facts = records::task_md::task_fields(&task, &links);
+        let known_facts = records::task_md::task_fields(&task, &links, &attachments);
         let mut created = records::created_change(known_facts, &task.body_markdown);
         let mut change = Change::new(ack).put(
             records::counter_path(&here.office_id),
@@ -316,7 +333,8 @@ impl CreateTask {
                 .collect();
             created["dod"] = serde_json::Value::Array(copied);
         }
-        let change = writer.task_and_event(change, &location, &task, &links, created)?;
+        let change =
+            writer.task_and_event(change, &location, &task, &links, &attachments, created)?;
         Ok(CreatedTask {
             change,
             task_id,

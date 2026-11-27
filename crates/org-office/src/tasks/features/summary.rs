@@ -12,6 +12,7 @@ use crate::tasks::ports::TasksRead;
 use crate::tasks::records::FinalSummaryRecord;
 use crate::time::format_rfc3339_ms;
 
+use super::attachments::stale_revision_refusal;
 use super::{parse_uuid_v7, refuse, require_active_employee, require_task, rewrite_task};
 
 /// The summary trimmed: refused when empty, over [`TASK_FINAL_SUMMARY_MAX_CHARS`], or
@@ -64,12 +65,10 @@ impl SetFinalSummary {
             ));
         }
         if task.meta.revision != self.params.expected_revision {
-            return Err(refuse(
-                ErrorCode::Conflict,
-                format!(
-                    "stale expected_revision {}: task is at revision {}",
-                    self.params.expected_revision, task.meta.revision
-                ),
+            return Err(stale_revision_refusal(
+                uow.view(),
+                &task,
+                self.params.expected_revision,
             ));
         }
         let text = validate_final_summary(&self.params.final_summary)?;

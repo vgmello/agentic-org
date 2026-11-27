@@ -21,9 +21,11 @@ use crate::attachments::user_space::{operation_reused, request_fingerprint, sate
 use crate::authz::{PrincipalContext, ResourceRef};
 use crate::error::OfficeError;
 use crate::office::storage;
+use crate::office::tasks::ensure_local_task_write_authority;
 use crate::store::open::attachment_ops::{
     attachment_operation, AttachmentWrite, AttachmentWriteOp,
 };
+use crate::store::open::task_ops::{TaskAttachOp, TaskUpdateAttachmentMetaOp};
 use crate::store::open::ReceiptById;
 use crate::time::format_rfc3339_ms;
 
@@ -54,7 +56,7 @@ fn unsupported_target(kind: AttachmentTargetKind) -> ApiError {
     ApiError::new(
         ErrorCode::Unsupported,
         format!(
-            "attaching to a `{}` is not available yet: Phase 1 binds project, organization and private files",
+            "attaching to a `{}` is not available through attachment.attach: bind project, organization, task and private files here",
             kind.as_str()
         ),
     )
@@ -109,6 +111,14 @@ impl Office {
                 Ok(Target {
                     kind,
                     resource: ResourceRef::Project(id.to_string()),
+                    id: Some(id),
+                })
+            }
+            AttachmentTargetKind::Task => {
+                let id = parse(target_id)?;
+                Ok(Target {
+                    kind,
+                    resource: ResourceRef::Task(id.to_string()),
                     id: Some(id),
                 })
             }
@@ -353,6 +363,20 @@ impl Office {
         fingerprint: &[u8],
     ) -> Answer<AttachmentResult> {
         let private = target.kind == AttachmentTargetKind::UserPrivate;
+        let is_task = target.kind == AttachmentTargetKind::Task;
+        if is_task {
+            if self.is_satellite() {
+                return Ok(Err(ApiError::new(
+                    ErrorCode::Unavailable,
+                    "attaching files to tasks is handled at HQ; retry against the HQ office",
+                )));
+            }
+            if let Some(tid) = target.id.as_ref() {
+                if let Err(err) = ensure_local_task_write_authority(self, tid.as_str())? {
+                    return Ok(Err(err));
+                }
+            }
+        }
         let store = match self.binding_store(private) {
             Ok(store) => store,
             Err(refusal) => return Ok(Err(refusal)),
@@ -405,6 +429,22 @@ impl Office {
                     &record,
                 )?
                 .map(|r| r.to_view())
+        } else if is_task {
+            let Some(operation) =
+                attachment_operation(&params.command_id, ATTACH, &caller.employee_id, fingerprint)
+            else {
+                return Ok(Err(invalid(
+                    "command_id must be a canonical lowercase UUIDv7",
+                )));
+            };
+            self.store
+                .run(TaskAttachOp {
+                    operation,
+                    actor: caller.employee_id.clone(),
+                    command_id: params.command_id.clone(),
+                    record,
+                })
+                .map_err(storage)?
         } else {
             let Some(operation) =
                 attachment_operation(&params.command_id, ATTACH, &caller.employee_id, fingerprint)
@@ -475,9 +515,17 @@ impl Office {
             kind,
             AttachmentTargetKind::Project
                 | AttachmentTargetKind::Organization
+                | AttachmentTargetKind::Task
                 | AttachmentTargetKind::UserPrivate
         ) {
             return Ok(Err(unsupported_target(kind)));
+        }
+        if kind == AttachmentTargetKind::Task {
+            if let Some(tid) = record.target_id.as_ref() {
+                if let Err(err) = ensure_local_task_write_authority(self, tid.as_str())? {
+                    return Ok(Err(err));
+                }
+            }
         }
         // Only the named fields travel: each is applied where the write is decided, onto the
         // file as it is then.
@@ -518,16 +566,27 @@ impl Office {
                 "command_id must be a canonical lowercase UUIDv7",
             )));
         };
-        let written = self
-            .store
-            .run(AttachmentWriteOp {
-                operation,
-                write: AttachmentWrite::Update {
-                    id: record.id,
+        let written = if kind == AttachmentTargetKind::Task {
+            self.store
+                .run(TaskUpdateAttachmentMetaOp {
+                    operation,
+                    actor: caller.employee_id.clone(),
+                    command_id: params.command_id.clone(),
+                    attachment_id: record.id,
                     patch,
-                },
-            })
-            .map_err(storage)?;
+                })
+                .map_err(storage)?
+        } else {
+            self.store
+                .run(AttachmentWriteOp {
+                    operation,
+                    write: AttachmentWrite::Update {
+                        id: record.id,
+                        patch,
+                    },
+                })
+                .map_err(storage)?
+        };
         Ok(written.map(|attachment| AttachmentResult { attachment }))
     }
 }

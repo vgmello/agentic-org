@@ -134,7 +134,7 @@ pub use calls::{
     OrganizationList, Subscribe, SubscribeParams,
 };
 pub use directory::ManagedHome;
-pub use error::{ApiError, CallError, ErrorCode};
+pub use error::{ApiError, CallError, ConflictDetail, ErrorCode};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
 pub use name::{NameError, OrganizationName};
 pub use operation::{OperationGet, OperationGetParams, OperationKind, OperationOutcome};

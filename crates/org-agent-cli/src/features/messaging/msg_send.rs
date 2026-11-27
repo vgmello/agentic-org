@@ -2,6 +2,7 @@
 //! and triaging the inbox.
 
 use org_command::{Ack, Answer, Command, Example, IfMatch, Kind, Refusal, Request};
+use org_proto::attachments::MESSAGE_ATTACHMENTS_MAX;
 use org_proto::chat::ChatSendResult;
 use org_proto::msg::SendResult;
 use org_proto::ErrorCode;
@@ -15,8 +16,9 @@ use super::schema::{
 };
 use super::{insert_delivery, message_id_for, with_ack};
 use crate::runtime::domain::CommandCue;
+use crate::runtime::file_transfer::resolve_attach_ids;
 use crate::runtime::input::{
-    decode_err, insert_opt, opt_bool, opt_str, reject_dry_run, require_str,
+    decode_err, insert_opt, opt_bool, opt_str, opt_str_list, reject_dry_run, require_str,
 };
 use crate::runtime::transport::OfficeTransport;
 
@@ -129,8 +131,18 @@ pub(super) fn write_msg_send<T: OfficeTransport + ?Sized>(
 ) -> Result<Answer, Refusal> {
     reject_dry_run(request)?;
     let to = require_str(request, "to")?;
-    let body = require_str(request, "body")?;
+    let body = opt_str(request, "body").unwrap_or("");
+    let attach = opt_str_list(request, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(request, "attachment_id").unwrap_or_default();
+    if body.trim().is_empty() && attach.is_empty() && att_ids.is_empty() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`msg send` requires `--body` or at least one `--attach` / `--attachment-id`.",
+            "Pass `--body <text>` (or `--input-file <path>`) or attach a file with `--attach <path>`.",
+        ));
+    }
     let id = message_id_for(request)?;
+    let resolved_ids = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
     params.insert("to".into(), Value::String(to.to_owned()));
@@ -145,6 +157,9 @@ pub(super) fn write_msg_send<T: OfficeTransport + ?Sized>(
     insert_opt(&mut params, "reason", opt_str(request, "reason"));
     if opt_bool(request, "also_in_channel").unwrap_or(false) {
         params.insert("also_in_channel".into(), Value::Bool(true));
+    }
+    if !resolved_ids.is_empty() {
+        params.insert("attachment_ids".into(), json!(resolved_ids));
     }
     let raw = transport.call_method("chat.send", Value::Object(params))?;
     let res: ChatSendResult = serde_json::from_value(raw).map_err(|_| decode_err("chat.send"))?;
@@ -180,20 +195,30 @@ pub(super) fn write_msg_reply<T: OfficeTransport + ?Sized>(
         }
         return write_msg_answer(transport, request, to_id, answer_raw);
     }
-    let body = opt_str(request, "body").ok_or_else(|| {
-        Refusal::new(
-            ErrorCode::InvalidRequest,
-            "`msg reply` needs --body, or --answer to answer an ask.",
-            "Pass --body <text> (or --input-file <path>) to reply, or --answer <json> to answer an ask.",
-        )
-    })?;
+    let attach = opt_str_list(request, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(request, "attachment_id").unwrap_or_default();
+    let body = match opt_str(request, "body") {
+        Some(text) => text,
+        None if !attach.is_empty() || !att_ids.is_empty() => "",
+        None => {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "`msg reply` needs --body, --attach/--attachment-id, or --answer to answer an ask.",
+                "Pass --body <text> (or --input-file <path>) to reply, --attach <path> to attach a file, or --answer <json> to answer an ask.",
+            ));
+        }
+    };
     let id = message_id_for(request)?;
+    let resolved_ids = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
     params.insert("to_id".into(), Value::String(to_id.to_owned()));
     params.insert("body".into(), Value::String(body.to_owned()));
     insert_opt(&mut params, "subject", opt_str(request, "subject"));
     insert_opt(&mut params, "priority", opt_str(request, "priority"));
+    if !resolved_ids.is_empty() {
+        params.insert("attachment_ids".into(), json!(resolved_ids));
+    }
     let raw = transport.call_method("msg.reply", Value::Object(params))?;
     let res: SendResult = serde_json::from_value(raw).map_err(|_| decode_err("msg.reply"))?;
     Ok(with_ack(

@@ -223,6 +223,21 @@ pub fn open_nofollow_ro(path: &Path) -> io::Result<File> {
     native::open_nofollow_ro(path)
 }
 
+/// Open a regular file at `relative` beneath canonical directory `root` without following any
+/// intermediate or leaf symbolic link (`openat` with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`) and
+/// verify `S_ISREG` on the opened handle. Every unsupported target fails closed.
+pub fn open_regular_beneath(root: &Path, relative: &Path) -> io::Result<File> {
+    native::open_regular_beneath(root, relative)
+}
+
+/// Create or truncate a regular file at `relative` beneath canonical directory `root` (mode
+/// `0600`) without following any intermediate or leaf symbolic link (`openat` with
+/// `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`), verify `S_ISREG`, and write `bytes`. Every
+/// unsupported target fails closed.
+pub fn write_regular_beneath(root: &Path, relative: &Path, bytes: &[u8]) -> io::Result<()> {
+    native::write_regular_beneath(root, relative, bytes)
+}
+
 /// Create a symbolic link at `link` pointing to `original`. Every unsupported target fails closed.
 pub fn create_symlink(original: &Path, link: &Path) -> io::Result<()> {
     native::create_symlink(original, link)

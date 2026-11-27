@@ -5,6 +5,7 @@ use std::sync::{
     Arc, Mutex,
 };
 
+use org_proto::attachments::{AttachmentMeta, AttachmentView};
 use org_proto::tasks::{
     TaskDependenciesResult, TaskInspectResult, TasksAddDependencyParams, TasksAssignParams,
     TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
@@ -21,11 +22,13 @@ use org_store::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::attachments::records::{AttachmentRecord, MetaPatch};
 use crate::tasks::features::{
     self, build_task_view, comment_to_wire, decode_refusal, step_to_wire, AddDependency,
-    AssignTask, ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
-    CommentTask, CreateTask, RemoveDependency, SetFinalSummary, TaskNumbering, TaskWriteOutcome,
-    TransitionTask, UnwatchTask, UpdateTask, WatchTask,
+    AssignTask, AttachToTask, ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove,
+    ChecklistRemove, CommentTask, CreateTask, PreparedTaskFiles, RemoveDependency, SetFinalSummary,
+    TaskNumbering, TaskWriteOutcome, TransitionTask, UnwatchTask, UpdateTask,
+    UpdateTaskAttachmentMeta, WatchTask,
 };
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{OfficeTaskCounterRecord, TaskCommentRecord};
@@ -43,6 +46,8 @@ struct TaskCommitReply {
 struct CommentCommitReply {
     task_id: String,
     comment: TaskCommentRecord,
+    #[serde(default)]
+    attachments: Vec<AttachmentMeta>,
 }
 
 fn task_op<P: Serialize>(
@@ -172,6 +177,8 @@ pub struct TaskCreateOp {
     pub params: TasksCreateParams,
     /// [`super::OfficeStore::task_numbering`]: the store's task numbering (`ADR-0019`).
     pub numbering: Arc<TaskNumbering>,
+    /// Validated, blob-promoted files to bind on create (`TASK-98.4`).
+    pub prepared_files: PreparedTaskFiles,
 }
 
 impl StoreOp for TaskCreateOp {
@@ -191,6 +198,7 @@ impl StoreOp for TaskCreateOp {
             actor_member_id: self.actor,
             params: self.params,
             numbering: self.numbering,
+            prepared_files: self.prepared_files,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let created = cmd.decide(uow, &self.here)?;
@@ -222,6 +230,8 @@ impl StoreOp for TaskCreateOp {
 pub struct TaskUpdateOp {
     pub actor: String,
     pub params: TasksUpdateParams,
+    /// Validated, blob-promoted files for `params.add_attachments` (`TASK-98.4`).
+    pub prepared_files: PreparedTaskFiles,
 }
 
 impl StoreOp for TaskUpdateOp {
@@ -236,6 +246,7 @@ impl StoreOp for TaskUpdateOp {
         let cmd = UpdateTask {
             actor_member_id: self.actor,
             params: self.params,
+            prepared_files: self.prepared_files,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let (change, id) = cmd.decide(uow)?;
@@ -327,6 +338,8 @@ impl StoreOp for TaskAssignOp {
 pub struct TaskCommentOp {
     pub actor: String,
     pub params: TasksCommentParams,
+    /// Validated, blob-promoted files bound to this comment (`TASK-98.4`).
+    pub prepared_files: PreparedTaskFiles,
 }
 
 impl StoreOp for TaskCommentOp {
@@ -341,14 +354,18 @@ impl StoreOp for TaskCommentOp {
         let cmd = CommentTask {
             actor_member_id: self.actor,
             params: self.params,
+            prepared_files: self.prepared_files,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
-            let (change, id, comment) = cmd.decide(uow)?;
+            let (change, id, comment, attachments) = cmd.decide(uow)?;
+            let meta: Vec<AttachmentMeta> =
+                attachments.iter().map(AttachmentRecord::to_meta).collect();
             Ok(with_reply(
                 change,
                 &CommentCommitReply {
                     task_id: id.as_str().to_owned(),
                     comment,
+                    attachments: meta,
                 },
             ))
         })? {
@@ -373,7 +390,7 @@ impl StoreOp for TaskCommentOp {
                         Ok(task) => Ok(Ok((
                             TasksCommentResult {
                                 task,
-                                comment: comment_to_wire(&committed.comment),
+                                comment: comment_to_wire(&committed.comment, committed.attachments),
                             },
                             replayed,
                         ))),
@@ -383,6 +400,72 @@ impl StoreOp for TaskCommentOp {
                 Ok(out)
             }
         }
+    }
+}
+
+/// Binds one attachment to a task via `attachment.attach` (`TASK-98.4`).
+pub struct TaskAttachOp {
+    pub operation: Operation,
+    pub actor: String,
+    pub command_id: String,
+    pub record: AttachmentRecord,
+}
+
+impl StoreOp for TaskAttachOp {
+    type Out = Result<Result<AttachmentView, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let cmd = AttachToTask {
+            actor_member_id: self.actor,
+            command_id: self.command_id,
+            record: self.record,
+        };
+        let (reply, _) = match submit_task(store, Some(self.operation), move |uow| {
+            let (change, view) = cmd.decide(uow)?;
+            Ok(with_reply(change, &view))
+        })? {
+            Ok(pair) => pair,
+            Err(api_err) => return Ok(Err(api_err)),
+        };
+        if reply.outcome == Outcome::Rejected {
+            return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
+        }
+        serde_json::from_slice::<AttachmentView>(&reply.bytes)
+            .map(Ok)
+            .map_err(|e| StoreError::Invalid(format!("corrupt task attach reply: {e}")))
+    }
+}
+
+/// Updates metadata on a task-bound attachment via `attachment.update_meta` (`TASK-98.4`).
+pub struct TaskUpdateAttachmentMetaOp {
+    pub operation: Operation,
+    pub actor: String,
+    pub command_id: String,
+    pub attachment_id: Id,
+    pub patch: MetaPatch,
+}
+
+impl StoreOp for TaskUpdateAttachmentMetaOp {
+    type Out = Result<Result<AttachmentView, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let cmd = UpdateTaskAttachmentMeta {
+            actor_member_id: self.actor,
+            command_id: self.command_id,
+            attachment_id: self.attachment_id,
+            patch: self.patch,
+        };
+        let (reply, _) = match submit_task(store, Some(self.operation), move |uow| {
+            let (change, view) = cmd.decide(uow)?;
+            Ok(with_reply(change, &view))
+        })? {
+            Ok(pair) => pair,
+            Err(api_err) => return Ok(Err(api_err)),
+        };
+        if reply.outcome == Outcome::Rejected {
+            return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
+        }
+        serde_json::from_slice::<AttachmentView>(&reply.bytes)
+            .map(Ok)
+            .map_err(|e| StoreError::Invalid(format!("corrupt task attach meta reply: {e}")))
     }
 }
 

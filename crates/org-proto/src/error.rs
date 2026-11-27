@@ -121,6 +121,18 @@ pub enum ErrorCode {
     Unknown,
 }
 
+/// Structured optimistic-concurrency detail returned with [`ErrorCode::Conflict`] when a task
+/// update's `expected_revision` is stale (`TASK-98.4`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictDetail {
+    pub expected_revision: u64,
+    pub current_revision: u64,
+    /// Sorted section names modified after `expected_revision` (e.g. `"title"`, `"attachments"`,
+    /// `"comments"`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed_sections: Vec<String>,
+}
+
 /// An error returned by the server. `message` is for people; it never holds paths or SQL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiError {
@@ -135,6 +147,10 @@ pub struct ApiError {
     /// With `field`: the rule it failed (`format`, `taken`, `too_short`, `too_long`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
+    /// With `conflict` on optimistic-concurrency task mutations: current revision and sections
+    /// changed since `expected_revision` (`TASK-98.4`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<Box<ConflictDetail>>,
 }
 
 impl ApiError {
@@ -145,7 +161,15 @@ impl ApiError {
             retry_after_ms: None,
             field: None,
             rule: None,
+            conflict: None,
         }
+    }
+
+    /// `conflict` carrying the current revision and sections changed since `expected_revision`.
+    pub fn conflict(message: impl Into<String>, detail: ConflictDetail) -> Self {
+        let mut error = Self::new(ErrorCode::Conflict, message);
+        error.conflict = Some(Box::new(detail));
+        error
     }
 
     /// `rate_limited` with the delay until a retry can succeed.
@@ -212,5 +236,26 @@ mod tests {
     fn a_code_this_build_does_not_know_still_reads_as_unknown() {
         let code: ErrorCode = serde_json::from_str("\"some_newer_code\"").unwrap();
         assert_eq!(code, ErrorCode::Unknown);
+    }
+
+    #[test]
+    fn conflict_detail_roundtrips_and_omits_when_absent() {
+        let err = ApiError::conflict(
+            "stale expected_revision 1: task is at revision 3",
+            ConflictDetail {
+                expected_revision: 1,
+                current_revision: 3,
+                changed_sections: vec!["attachments".into(), "title".into()],
+            },
+        );
+        let wire = serde_json::to_value(&err).unwrap();
+        assert_eq!(wire["code"], "conflict");
+        assert_eq!(wire["conflict"]["expected_revision"], 1);
+        assert_eq!(wire["conflict"]["current_revision"], 3);
+        assert_eq!(
+            wire["conflict"]["changed_sections"],
+            serde_json::json!(["attachments", "title"])
+        );
+        assert_eq!(serde_json::from_value::<ApiError>(wire).unwrap(), err);
     }
 }

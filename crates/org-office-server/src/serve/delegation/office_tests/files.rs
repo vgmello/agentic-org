@@ -468,3 +468,104 @@ fn legacy_tess_upload_without_acting_for_fails_closed_even_during_wake() {
         );
     }
 }
+
+#[test]
+fn task_and_comment_attachments_enforce_caller_intersect_tess() {
+    let w = world();
+    let acting = acting_as(&w);
+    let for_owner = w.acting_for(&w.owner);
+    let for_bob = w.acting_for(&w.bob);
+
+    // Bob sent Tess a DM file: acting for the owner, Tess must never re-attach it onto a task or
+    // comment (`caller ∩ tess` anti-exfiltration).
+    let (_bob_msg, bob_file) = send_file(&w.office, &w.bob, &w.tess, "bob-dm.txt", b"BOB-PRIVATE");
+    let task_id = next_id();
+    let team_id = w.office.org_snapshot().unwrap().teams[0].id.clone();
+    for (method, params) in [
+        (
+            "tasks.create",
+            json!({
+                "command_id": next_id(),
+                "task_id": task_id,
+                "team_id": team_id,
+                "title": "Leak attempt",
+                "attachment_ids": [bob_file],
+            }),
+        ),
+        (
+            "tasks.update",
+            json!({
+                "command_id": next_id(),
+                "task": task_id,
+                "expected_revision": 1,
+                "add_attachments": [bob_file],
+            }),
+        ),
+        (
+            "tasks.comment",
+            json!({
+                "command_id": next_id(),
+                "task": task_id,
+                "comment_id": next_id(),
+                "body_markdown": "see attached",
+                "attachment_ids": [bob_file],
+            }),
+        ),
+    ] {
+        assert!(
+            refused(&w.admit(method, params, &for_owner)),
+            "{method} must refuse re-attaching Bob's DM file for the owner"
+        );
+    }
+
+    // Owner staged an upload through Tess: acting for Bob or a wake, Tess must never attach it
+    // to any task or comment; plain task calls without attachments still pass for Bob.
+    *acting.lock().unwrap() = Some(w.owner.clone());
+    let owner_upload = staged(&w.office, &w.tess, "owner.txt", b"OWNER-DOC");
+    for delegation in [&for_bob, &Delegation::default()] {
+        for (method, params) in [
+            (
+                "tasks.create",
+                json!({
+                    "command_id": next_id(),
+                    "task_id": next_id(),
+                    "team_id": team_id,
+                    "title": "Wrong caller",
+                    "attachment_ids": [owner_upload],
+                }),
+            ),
+            (
+                "tasks.update",
+                json!({
+                    "command_id": next_id(),
+                    "task": task_id,
+                    "expected_revision": 1,
+                    "add_attachments": [owner_upload],
+                }),
+            ),
+            (
+                "tasks.comment",
+                json!({
+                    "command_id": next_id(),
+                    "task": task_id,
+                    "comment_id": next_id(),
+                    "body_markdown": "hi",
+                    "attachment_ids": [owner_upload],
+                }),
+            ),
+        ] {
+            assert!(
+                refused(&w.admit(method, params, delegation)),
+                "{method} must refuse owner upload for {:?}",
+                delegation.caller_id
+            );
+        }
+    }
+    let plain_create = json!({
+        "command_id": next_id(),
+        "task_id": next_id(),
+        "team_id": team_id,
+        "title": "No files",
+    });
+    assert!(w.admit("tasks.create", plain_create, &for_bob).is_ok());
+}

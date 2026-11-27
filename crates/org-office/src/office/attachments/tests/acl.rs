@@ -328,9 +328,8 @@ fn re_attaching_needs_read_on_the_source_and_write_on_the_target() {
             inspect(office, &fx.agent, &private.id).unwrap_err().code,
             ErrorCode::NotFound
         );
-        // Targets this phase does not bind yet are refused, not silently accepted.
+        // Targets `attachment.attach` does not bind directly are refused, not silently accepted.
         for kind in [
-            AttachmentTargetKind::Task,
             AttachmentTargetKind::Message,
             AttachmentTargetKind::ReviewFinding,
         ] {

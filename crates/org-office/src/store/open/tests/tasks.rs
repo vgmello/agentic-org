@@ -197,7 +197,9 @@ fn create_basic(
                     ..Default::default()
                 }),
                 dod: None,
+                attachment_ids: Vec::new(),
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .expect("task created")
@@ -410,7 +412,9 @@ fn assert_comments_watchers_and_history(s: &Seed, task_key: &str) {
                 task: task_key.to_owned(),
                 comment_id: next_uuid(),
                 body_markdown: "Looks clean so far.".into(),
+                attachment_ids: vec![],
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap();
@@ -726,7 +730,10 @@ fn assert_files_and_dependency_removal(
                 add_modified_files: vec![],
                 remove_modified_files: vec![],
                 details: None,
+                add_attachments: vec![],
+                remove_attachments: vec![],
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap_err();
@@ -758,7 +765,10 @@ fn assert_files_and_dependency_removal(
                 add_modified_files: vec!["crates/org-office/src/tasks/mod.rs".into()],
                 remove_modified_files: vec![],
                 details: None,
+                add_attachments: vec![],
+                remove_attachments: vec![],
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap()
@@ -875,6 +885,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
         depends_on: vec![],
         details: None,
         dod: None,
+        attachment_ids: vec![],
     };
     let first = s
         .store
@@ -883,6 +894,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
             here: s.here.clone(),
             numbering: s.store.task_numbering(),
             params: params.clone(),
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap();
@@ -896,6 +908,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
             here: s.here.clone(),
             numbering: s.store.task_numbering(),
             params: params.clone(),
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap();
@@ -912,6 +925,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
             here: s.here.clone(),
             numbering: s.store.task_numbering(),
             params: mutated,
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap_err();
@@ -974,7 +988,9 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap_err();
@@ -1011,7 +1027,9 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                     ..Default::default()
                 }),
                 dod: None,
+                attachment_ids: vec![],
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap_err();
@@ -1045,7 +1063,9 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap()
@@ -1076,7 +1096,10 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                 add_modified_files: vec![],
                 remove_modified_files: vec![],
                 details: None,
+                add_attachments: vec![],
+                remove_attachments: vec![],
             },
+            prepared_files: Default::default(),
         })
         .unwrap()
         .unwrap()

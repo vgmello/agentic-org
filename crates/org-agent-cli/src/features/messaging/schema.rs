@@ -46,7 +46,7 @@ pub(super) const MSG_SEND_INPUT: &[Field] = &[
         Type::String,
         "Recipient employee ID, handle, owner, #channel, or conversation UUIDv7",
     ),
-    Field::required("body", Type::String, "Message body (Markdown)"),
+    Field::optional("body", Type::String, "Message body (Markdown)"),
     Field::optional("subject", Type::String, "Optional short subject"),
     Field::optional(
         "kind",
@@ -72,6 +72,16 @@ pub(super) const MSG_SEND_INPUT: &[Field] = &[
         "reason",
         Type::String,
         "Announcement reason (required for --kind announcement)",
+    ),
+    Field::optional(
+        "attach",
+        Type::List(&STRING_TYPE),
+        "Local file path to upload and attach (repeatable)",
+    ),
+    Field::optional(
+        "attachment_id",
+        Type::List(&STRING_TYPE),
+        "Pre-uploaded attachment UUIDv7 to attach (repeatable)",
     ),
 ];
 
@@ -144,6 +154,16 @@ pub(super) const MSG_REPLY_INPUT: &[Field] = &[
         "answer",
         Type::String,
         "JSON array of structured question answers (or object) for a structured ask",
+    ),
+    Field::optional(
+        "attach",
+        Type::List(&STRING_TYPE),
+        "Local file path to upload and attach (repeatable)",
+    ),
+    Field::optional(
+        "attachment_id",
+        Type::List(&STRING_TYPE),
+        "Pre-uploaded attachment UUIDv7 to attach (repeatable)",
     ),
 ];
 

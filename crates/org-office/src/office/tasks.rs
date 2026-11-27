@@ -1,5 +1,6 @@
 //! High-level unified tasks facade on [`Office`] (`TASK-49`, `TASK-77`).
 
+use org_proto::attachments::{TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX};
 use org_proto::tasks::{
     TaskDependenciesResult, TaskInspectResult, TasksAddDependencyParams, TasksAssignParams,
     TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
@@ -79,6 +80,17 @@ impl Office {
         actor: &str,
         params: TasksCreateParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
+        let prepared_files = match self.prepare_task_files(
+            actor,
+            None,
+            &params.attachment_ids,
+            TASK_ATTACHMENTS_MAX,
+            "a task",
+        )? {
+            Ok(files) => files,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let release = prepared_files.clone();
         let res = self
             .store
             .run(TaskCreateOp {
@@ -86,9 +98,11 @@ impl Office {
                 here: self.identity.clone(),
                 params,
                 numbering: self.store.task_numbering(),
+                prepared_files,
             })
             .map_err(storage)?;
         if res.is_ok() {
+            self.release_task_files(&release);
             let _ = self.sync_satellite_work_outbox();
         }
         Ok(res)
@@ -102,14 +116,27 @@ impl Office {
         if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
             return Ok(Err(err));
         }
+        let prepared_files = match self.prepare_task_files(
+            actor,
+            Some(&params.task),
+            &params.add_attachments,
+            TASK_ATTACHMENTS_MAX,
+            "a task",
+        )? {
+            Ok(files) => files,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let release = prepared_files.clone();
         let res = self
             .store
             .run(TaskUpdateOp {
                 actor: actor.to_owned(),
                 params,
+                prepared_files,
             })
             .map_err(storage)?;
         if res.is_ok() {
+            self.release_task_files(&release);
             let _ = self.sync_satellite_work_outbox();
         }
         Ok(res)
@@ -187,14 +214,27 @@ impl Office {
         if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
             return Ok(Err(err));
         }
+        let prepared_files = match self.prepare_task_files(
+            actor,
+            Some(&params.task),
+            &params.attachment_ids,
+            TASK_COMMENT_ATTACHMENTS_MAX,
+            "a task comment",
+        )? {
+            Ok(files) => files,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let release = prepared_files.clone();
         let res = self
             .store
             .run(TaskCommentOp {
                 actor: actor.to_owned(),
                 params,
+                prepared_files,
             })
             .map_err(storage)?;
         if res.is_ok() {
+            self.release_task_files(&release);
             let _ = self.sync_satellite_work_outbox();
         }
         Ok(res)

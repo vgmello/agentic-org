@@ -183,7 +183,9 @@ impl Org {
                 depends_on: Vec::new(),
                 details: None,
                 dod: dod.map(|items| items.into_iter().map(str::to_owned).collect()),
+                attachment_ids: Vec::new(),
             },
+            prepared_files: Default::default(),
         });
         out.unwrap().map(|o| o.task)
     }
@@ -826,7 +828,9 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
                     task: task.clone(),
                     comment_id: uuid(),
                     body_markdown: "Nice work".into(),
+                    attachment_ids: vec![],
                 },
+                prepared_files: Default::default(),
             })
             .unwrap()
             .expect("commented");
@@ -854,6 +858,7 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
             .run(TaskUpdateOp {
                 actor: s.carol.as_str().to_owned(),
                 params: update,
+                prepared_files: Default::default(),
             })
             .unwrap()
             .expect("updated");

@@ -6,15 +6,17 @@ use org_command::{
 use org_proto::ask::{
     AskStatus, ChatAnswerResult, ChatAskResult, MsgWithdrawResult, MAX_SHORT_HOLD_MS,
 };
+use org_proto::attachments::MESSAGE_ATTACHMENTS_MAX;
 use org_proto::ErrorCode;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use super::msg_ask_input::questions;
 use super::schema::{RECIPIENT_PRESENCE_FIELD, STRING_TYPE, WOKE_AGENTS_FIELD, WRITE_ERRORS};
 use super::{insert_delivery, message_id_for, with_ack, AskOutcomeRef};
 use crate::runtime::domain::CommandCue;
+use crate::runtime::file_transfer::resolve_attach_ids;
 use crate::runtime::input::{
-    decode_err, insert_opt, opt_bool, opt_str, opt_u64, reject_dry_run, require_str,
+    decode_err, insert_opt, opt_bool, opt_str, opt_str_list, opt_u64, reject_dry_run, require_str,
 };
 use crate::runtime::transport::OfficeTransport;
 
@@ -128,6 +130,16 @@ const MSG_ASK_INPUT: &[Field] = &[
         "addressed_to",
         Type::String,
         "Optional explicit responder member ID or handle inside a channel",
+    ),
+    Field::optional(
+        "attach",
+        Type::List(&STRING_TYPE),
+        "Local file path to upload and attach (repeatable)",
+    ),
+    Field::optional(
+        "attachment_id",
+        Type::List(&STRING_TYPE),
+        "Pre-uploaded attachment UUIDv7 to attach (repeatable)",
     ),
 ];
 
@@ -333,10 +345,16 @@ pub(super) fn write_msg_ask<T: OfficeTransport + ?Sized>(
     let to = require_str(request, "to")?;
     let questions = questions(request)?;
     let id = message_id_for(request)?;
+    let attach = opt_str_list(request, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(request, "attachment_id").unwrap_or_default();
+    let resolved_ids = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
     params.insert("to".into(), Value::String(to.to_owned()));
     params.insert("questions".into(), questions);
+    if !resolved_ids.is_empty() {
+        params.insert("attachment_ids".into(), json!(resolved_ids));
+    }
     insert_opt(&mut params, "body", opt_str(request, "body"));
     insert_opt(&mut params, "subject", opt_str(request, "subject"));
     insert_opt(&mut params, "blocks", opt_str(request, "blocks"));
@@ -453,6 +471,23 @@ pub(super) fn write_msg_answer<T: OfficeTransport + ?Sized>(
                 "Pass `[{\"question_id\":\"q1\",\"option_ids\":[\"yes\"]}]`.",
             ));
         }
+    }
+    let attach = opt_str_list(request, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(request, "attachment_id").unwrap_or_default();
+    let resolved_ids = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
+    if !resolved_ids.is_empty() {
+        let mut combined: Vec<String> = params
+            .get("attachment_ids")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        combined.extend(resolved_ids);
+        params.insert("attachment_ids".into(), json!(combined));
     }
     params.insert("ask_id".into(), Value::String(ask_id.to_owned()));
     let raw = transport.call_method("chat.answer", Value::Object(params))?;

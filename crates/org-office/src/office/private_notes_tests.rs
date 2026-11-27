@@ -111,6 +111,7 @@ pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()

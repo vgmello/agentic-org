@@ -137,6 +137,148 @@ pub(super) fn open_nofollow_ro(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+/// Descends one plain directory segment relative to `dir` without following symlinks or
+/// blocking on a FIFO (`O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`).
+fn open_dir_component_at(dir: &File, name: &OsStr) -> io::Result<File> {
+    let cname = entry_name(name)?;
+    // SAFETY: `dir` is an open directory descriptor owned by the caller and `cname` is a live
+    // NUL-terminated single path component; `openat` returns a fresh descriptor or -1.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            cname.as_ptr(),
+            libc::O_RDONLY
+                | libc::O_DIRECTORY
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC
+                | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        let err = io::Error::last_os_error();
+        // Linux returns `ENOTDIR` (rather than `ELOOP`) when `O_DIRECTORY | O_NOFOLLOW` hits a
+        // symlink; normalize symlinks to `ELOOP` so callers see a uniform symlink refusal across
+        // Linux and macOS.
+        if err.raw_os_error() == Some(libc::ENOTDIR)
+            && matches!(entry_kind_at(dir, &cname), Ok(EntryKind::Symlink))
+        {
+            return Err(io::Error::from_raw_os_error(libc::ELOOP));
+        }
+        return Err(err);
+    }
+    // SAFETY: `fd` was just opened by this function and nothing else owns it.
+    let child = unsafe { File::from_raw_fd(fd) };
+    if !child.metadata()?.file_type().is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the opened component is not a directory",
+        ));
+    }
+    Ok(child)
+}
+
+/// Walks every intermediate component of `relative` beneath `root` without following any
+/// symbolic link, returning the open parent directory descriptor and the validated leaf name.
+fn walk_beneath(root: &Path, relative: &Path) -> io::Result<(File, CString)> {
+    let raw = relative.as_os_str().as_bytes();
+    if raw.is_empty() || raw.ends_with(b"/") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "relative file path must name a file without a trailing slash",
+        ));
+    }
+    let mut segments: Vec<&OsStr> = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(seg) => segments.push(seg),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "relative path beneath root must contain plain segments only",
+                ));
+            }
+        }
+    }
+    let Some((leaf, parents)) = segments.split_last() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "relative file path is empty",
+        ));
+    };
+    let mut dir = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(root)?;
+    for seg in parents {
+        dir = open_dir_component_at(&dir, seg)?;
+    }
+    Ok((dir, entry_name(leaf)?))
+}
+
+/// Opens a regular file at `relative` beneath canonical directory `root`, walking every
+/// intermediate directory and the leaf with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` and verifying
+/// `S_ISREG` on the opened descriptor so symlinks, FIFOs, devices, sockets and directories are
+/// refused without TOCTOU.
+pub(super) fn open_regular_beneath(root: &Path, relative: &Path) -> io::Result<File> {
+    let (dir, leaf) = walk_beneath(root, relative)?;
+    // SAFETY: `dir` is an open directory descriptor we own and `leaf` is a live NUL-terminated
+    // single component; `openat` returns a fresh descriptor or -1.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            leaf.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` was just opened by this function and nothing else owns it.
+    let file = unsafe { File::from_raw_fd(fd) };
+    if !file.metadata()?.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+/// Creates or truncates a regular file at `relative` beneath canonical directory `root` (mode
+/// `0600`), walking every intermediate directory and the leaf with `O_NOFOLLOW | O_NONBLOCK |
+/// O_CLOEXEC`, verifying `S_ISREG`, and writing `bytes`.
+pub(super) fn write_regular_beneath(root: &Path, relative: &Path, bytes: &[u8]) -> io::Result<()> {
+    let (dir, leaf) = walk_beneath(root, relative)?;
+    // SAFETY: `dir` is an open directory descriptor we own and `leaf` is a live NUL-terminated
+    // single component; `O_CREAT` passes a `c_uint` mode argument as required by POSIX variadic
+    // `openat(2)`.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            leaf.as_ptr(),
+            libc::O_WRONLY
+                | libc::O_CREAT
+                | libc::O_TRUNC
+                | libc::O_NOFOLLOW
+                | libc::O_NONBLOCK
+                | libc::O_CLOEXEC,
+            0o600 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` was just opened by this function and nothing else owns it.
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    if !file.metadata()?.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "output target is not a regular file",
+        ));
+    }
+    file.write_all(bytes)
+}
+
 pub(super) fn create_symlink(original: &Path, link: &Path) -> io::Result<()> {
     std::os::unix::fs::symlink(original, link)
 }

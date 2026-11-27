@@ -16,6 +16,7 @@ mod local_blobs;
 mod messages;
 mod read;
 mod shipping;
+mod tasks;
 mod upload;
 
 use std::sync::atomic::{AtomicU64, Ordering};

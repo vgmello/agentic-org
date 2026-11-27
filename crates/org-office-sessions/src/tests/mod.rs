@@ -601,6 +601,7 @@ fn seed_project_task_wake_fixture(
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()

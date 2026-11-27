@@ -19,8 +19,9 @@ use crate::Call;
 mod meta;
 
 pub use meta::{
-    check_attachment_ids, has_content, is_image_mime, AttachmentFilter, AttachmentMeta,
-    MESSAGE_ATTACHMENTS_MAX,
+    check_attachment_ids, check_attachment_ids_limit, check_task_attachment_ids,
+    check_task_comment_attachment_ids, has_content, is_image_mime, AttachmentFilter,
+    AttachmentMeta, MESSAGE_ATTACHMENTS_MAX, TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX,
 };
 
 /// Largest decoded chunk an upload or a read moves in one call (512 KiB).

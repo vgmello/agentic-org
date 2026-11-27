@@ -110,12 +110,38 @@ pub(super) const CHECKLIST_STEP_FIELDS: &[Field] = &[
 
 pub(super) const CHECKLIST_STEP_TYPE: Type = Type::Object(CHECKLIST_STEP_FIELDS);
 
+pub(super) const ATTACHMENT_META_FIELDS: &[Field] = &[
+    Field::required("id", Type::String, "Attachment UUIDv7"),
+    Field::required("filename", Type::String, "Original filename"),
+    Field::required("title", Type::String, "File title"),
+    Field::optional("description", Type::String, "Optional short description"),
+    Field::required("artifact_status", Type::String, "Artifact status"),
+    Field::required("mime_type", Type::String, "Canonical MIME type"),
+    Field::required("byte_count", Type::Integer, "Stored size in bytes"),
+    Field::optional("width", Type::Integer, "Image width in pixels"),
+    Field::optional("height", Type::Integer, "Image height in pixels"),
+    Field::optional("page_count", Type::Integer, "PDF page count"),
+    Field::required(
+        "uploaded_by_employee_id",
+        Type::String,
+        "Uploader employee UUIDv7",
+    ),
+    Field::required("created_at", Type::String, "RFC 3339 creation timestamp"),
+];
+
+pub(super) const ATTACHMENT_META_TYPE: Type = Type::Object(ATTACHMENT_META_FIELDS);
+
 pub(super) const COMMENT_FIELDS: &[Field] = &[
     Field::required("id", Type::String, "Comment UUIDv7"),
     Field::required("position", Type::Integer, "Zero-based comment position"),
     Field::required("author_id", Type::String, "Author employee UUIDv7"),
     Field::required("created_at", Type::String, "RFC 3339 creation timestamp"),
     Field::required("body_markdown", Type::String, "Public comment body"),
+    Field::optional(
+        "attachments",
+        Type::List(&ATTACHMENT_META_TYPE),
+        "Files attached to this comment",
+    ),
 ];
 
 pub(super) const COMMENT_TYPE: Type = Type::Object(COMMENT_FIELDS);
@@ -151,6 +177,11 @@ pub(super) const TASK_INSPECT_OUTPUT: &[Field] = &[
         "Checklist steps",
     ),
     Field::required("comments", Type::List(&COMMENT_TYPE), "Public comments"),
+    Field::required(
+        "attachments",
+        Type::List(&ATTACHMENT_META_TYPE),
+        "Files attached to this task",
+    ),
     Field::required(
         "depends_on_tasks",
         Type::List(&TASK_REF_TYPE),
@@ -269,6 +300,16 @@ pub(super) const TASK_CREATE_INPUT: &[Field] = &[
         "depends_on",
         Type::List(&STRING_TYPE),
         "Initial upstream dependency task IDs or T-<CODE><N> keys",
+    ),
+    Field::optional(
+        "attach",
+        Type::List(&STRING_TYPE),
+        "Local file path to upload and attach (repeatable)",
+    ),
+    Field::optional(
+        "attachment_id",
+        Type::List(&STRING_TYPE),
+        "Pre-uploaded attachment UUIDv7 to attach (repeatable)",
     ),
 ];
 
@@ -394,6 +435,21 @@ pub(super) const TASK_UPDATE_INPUT: &[Field] = &[
         Type::List(&STRING_TYPE),
         "Remove modified files",
     ),
+    Field::optional(
+        "attach",
+        Type::List(&STRING_TYPE),
+        "Local file path to upload and add to task attachments (repeatable)",
+    ),
+    Field::optional(
+        "add_attachment",
+        Type::List(&STRING_TYPE),
+        "Attachment UUIDv7 to add to this task (repeatable)",
+    ),
+    Field::optional(
+        "remove_attachment",
+        Type::List(&STRING_TYPE),
+        "Attachment UUIDv7 to remove from this task (repeatable)",
+    ),
 ];
 
 pub(super) const TASK_TRANSITION_INPUT: &[Field] = &[
@@ -422,7 +478,17 @@ pub(super) const TASK_ASSIGN_INPUT: &[Field] = &[
 
 pub(super) const TASK_COMMENT_INPUT: &[Field] = &[
     Field::required("task", Type::String, "Task UUIDv7 or T-<CODE><N> key"),
-    Field::required("body", Type::String, "Public shared comment markdown"),
+    Field::optional("body", Type::String, "Public shared comment markdown"),
+    Field::optional(
+        "attach",
+        Type::List(&STRING_TYPE),
+        "Local file path to upload and attach (repeatable)",
+    ),
+    Field::optional(
+        "attachment_id",
+        Type::List(&STRING_TYPE),
+        "Pre-uploaded attachment UUIDv7 to attach (repeatable)",
+    ),
 ];
 
 pub(super) const TASK_DEP_MUTATION_INPUT: &[Field] = &[

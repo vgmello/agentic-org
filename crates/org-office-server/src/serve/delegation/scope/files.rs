@@ -84,7 +84,7 @@ fn of_a_message(kind: AttachmentTargetKind) -> bool {
 
 /// The file `attachment_id`: one of a message, ask or answer only in a conversation the caller
 /// sees; any other (or an unknown one) is the method's to decide.
-fn file(view: &View<'_>, attachment_id: &str) -> Result<(), Response> {
+pub(super) fn file(view: &View<'_>, attachment_id: &str) -> Result<(), Response> {
     match view.port.attachment_conversation(attachment_id) {
         Ok(Some(conversation)) => view.conversation(&conversation),
         Ok(None) => Ok(()),

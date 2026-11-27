@@ -130,6 +130,7 @@ fn project_task(fx: &WakeFixture, name: &str) -> ProjectTask {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()

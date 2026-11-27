@@ -62,6 +62,9 @@ pub struct TasksCreateParams {
     /// default never change a task already created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dod: Option<Vec<String>>,
+    /// Initial staged upload IDs or readable attachment IDs bound to the new task (`TASK-98.4`, max 20).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,6 +215,12 @@ pub struct TasksUpdateParams {
     pub remove_modified_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<TaskDetailsWire>,
+    /// Staged upload IDs or readable attachment IDs to bind to the task (`TASK-98.4`, max 20 total).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub add_attachments: Vec<String>,
+    /// Task attachment IDs to detach from the task (`TASK-98.4`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_attachments: Vec<String>,
 }
 
 impl Call for TasksUpdate {
@@ -302,7 +311,11 @@ pub struct TasksCommentParams {
     pub command_id: String,
     pub task: String,
     pub comment_id: String,
+    #[serde(default)]
     pub body_markdown: String,
+    /// Staged upload IDs or readable attachment IDs bound to this comment (`TASK-98.4`, max 10).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

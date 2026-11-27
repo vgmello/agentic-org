@@ -443,3 +443,48 @@ mod owner_only_dir {
         );
     }
 }
+
+#[test]
+fn regular_beneath_reads_and_writes_regular_files_and_refuses_symlinks_fifos_and_traversal() {
+    use std::io::Read as _;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(root.join("sub")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let root = root.canonicalize().unwrap();
+    let outside = outside.canonicalize().unwrap();
+
+    // Regular write and read beneath root succeed.
+    super::write_regular_beneath(&root, Path::new("sub/ok.txt"), b"hello").unwrap();
+    let mut got = Vec::new();
+    super::open_regular_beneath(&root, Path::new("sub/ok.txt"))
+        .unwrap()
+        .read_to_end(&mut got)
+        .unwrap();
+    assert_eq!(got, b"hello");
+
+    // Parent directory symlink escape is refused on both read and write.
+    fs::write(outside.join("secret.txt"), b"secret").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("dir_link")).unwrap();
+    assert!(super::open_regular_beneath(&root, Path::new("dir_link/secret.txt")).is_err());
+    assert!(super::write_regular_beneath(&root, Path::new("dir_link/out.txt"), b"x").is_err());
+
+    // Leaf symlink is refused on both read and write, leaving target untouched.
+    std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("leaf_link")).unwrap();
+    assert!(super::open_regular_beneath(&root, Path::new("leaf_link")).is_err());
+    assert!(super::write_regular_beneath(&root, Path::new("leaf_link"), b"overwrite").is_err());
+    assert_eq!(fs::read(outside.join("secret.txt")).unwrap(), b"secret");
+
+    // FIFO fails fast without blocking, directory and traversal segments are refused.
+    let fifo = root.join("pipe");
+    let c_fifo = c_path(&fifo);
+    // SAFETY: `c_fifo` is a live NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c_fifo.as_ptr(), 0o600) }, 0);
+    assert!(super::open_regular_beneath(&root, Path::new("pipe")).is_err());
+    assert!(super::write_regular_beneath(&root, Path::new("pipe"), b"x").is_err());
+    assert!(super::open_regular_beneath(&root, Path::new("sub")).is_err());
+    assert!(super::open_regular_beneath(&root, Path::new("sub/../sub/ok.txt")).is_err());
+    assert!(super::open_regular_beneath(&root, Path::new("sub/ok.txt/")).is_err());
+    assert!(super::write_regular_beneath(&root, Path::new("../outside/x"), b"x").is_err());
+}

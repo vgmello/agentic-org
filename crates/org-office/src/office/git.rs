@@ -417,6 +417,7 @@ mod tests {
                     depends_on: vec![],
                     details: None,
                     dod: None,
+                    attachment_ids: vec![],
                 },
             )
             .unwrap()
