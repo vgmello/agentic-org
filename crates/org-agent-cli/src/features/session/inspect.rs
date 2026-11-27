@@ -2,12 +2,13 @@
 //! and its effective permission presets, tool rules and sandbox boundaries.
 
 use org_command::{Answer, Command, Example, Field, Kind, Refusal, Request, Type};
+use org_proto::sessions::SessionListResult;
 use serde_json::{Map, Value};
 
 use super::{READ_ERRORS, STRING_TYPE};
 use crate::runtime::domain::CommandCue;
-use crate::runtime::input::opt_str;
-use crate::runtime::transport::OfficeTransport;
+use crate::runtime::input::{decode_err, encode, opt_str};
+use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport};
 
 const SESSION_INSPECT_INPUT: &[Field] = &[Field::optional(
     "employee_id",
@@ -151,7 +152,22 @@ const GRANT_LIST_OUTPUT: &[Field] = &[
     ),
 ];
 
-/// The `session inspect` and `grant list` rows.
+const SESSION_SUMMARY_FIELDS: &[Field] = &[
+    Field::required("session_id", Type::String, "Logical or runtime session ID"),
+    Field::required("format", Type::String, "Transcript source format"),
+    Field::required(
+        "is_live",
+        Type::Boolean,
+        "Whether the session is currently live",
+    ),
+    Field::optional("started_at", Type::String, "RFC 3339 UTC start time"),
+    Field::optional("updated_at", Type::String, "RFC 3339 UTC last update time"),
+    Field::required("size_bytes", Type::Integer, "Transcript size in bytes"),
+    Field::required("subagent_count", Type::Integer, "Sub-agent count"),
+    Field::optional("preview", Type::String, "Short redacted preview"),
+];
+
+/// The `session inspect`, `session list`, and `grant list` rows.
 pub(super) const COMMANDS: &[Command] = &[
     Command {
         resource: "session",
@@ -166,6 +182,21 @@ pub(super) const COMMANDS: &[Command] = &[
         example: Example {
             input: "{}",
             output: r#"{"session":{"employee_id":"0193a5c0-0000-7000-8000-000000000003","office_id":"0193a5c0-0000-7000-8000-000000000001","state":"running","private_home":"/tmp/home","same_user_isolation_notice":"notice","permission_preset":"safe_ask","sandbox_enabled":true,"consecutive_stalls":0,"stall_locked":false,"recovery_required":false,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"subagent_invocations":0}},"accepted_commands_count":0,"spec_hash":"0123456789abcdef"}"#,
+        },
+    },
+    Command {
+        resource: "session",
+        verb: "list",
+        summary: "List recorded sessions for an agent",
+        call: "member.session_list",
+        kind: Kind::List,
+        input: SESSION_INSPECT_INPUT,
+        content_field: None,
+        output: SESSION_SUMMARY_FIELDS,
+        errors: READ_ERRORS,
+        example: Example {
+            input: "{}",
+            output: r#"[{"session_id":"sess-1","format":"claude","is_live":true,"size_bytes":1024,"subagent_count":0}]"#,
         },
     },
     Command {
@@ -188,6 +219,7 @@ pub(super) const COMMANDS: &[Command] = &[
 /// `Use when:` guidance of each `session` command here.
 pub(super) const CUES: &[CommandCue] = &[
     ("session", "inspect", "checking your (or a named agent's) live session state, workspace paths, stall status, and token usage."),
+    ("session", "list", "listing recorded and live conversation sessions for an agent."),
 ];
 
 /// `Use when:` guidance of each `grant` command.
@@ -205,6 +237,25 @@ pub(super) fn read_session_inspect<T: OfficeTransport + ?Sized>(
     }
     let raw = transport.call_method("member.session_inspect", Value::Object(params))?;
     Ok(Answer::completed(raw))
+}
+
+pub(super) fn read_session_list<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    parse_cursor(request.cursor.as_deref())?;
+    let mut params = Map::new();
+    if let Some(emp) = opt_str(request, "employee_id") {
+        params.insert("employee_id".into(), Value::String(emp.to_owned()));
+    }
+    let raw = transport.call_method("member.session_list", Value::Object(params))?;
+    let res: SessionListResult =
+        serde_json::from_value(raw).map_err(|_| decode_err("member.session_list"))?;
+    let items = match encode(&res.sessions, "member.session_list")? {
+        Value::Array(items) => items,
+        _ => Vec::new(),
+    };
+    paginate(request, items)
 }
 
 pub(super) fn read_grant_list<T: OfficeTransport + ?Sized>(

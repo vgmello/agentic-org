@@ -277,8 +277,50 @@ impl Call for ProcessWrite {
 
 // ── skill.list / skill.read ──────────────────────────────────────────────────
 
+/// High-level category grouping for built-in product skills (`TASK-80.4`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SkillCategoryWire {
+    Workflow,
+    ProductGuide,
+    ChiefOfStaff,
+    #[serde(other)]
+    Unknown,
+}
+
+impl SkillCategoryWire {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Workflow => "workflow",
+            Self::ProductGuide => "product_guide",
+            Self::ChiefOfStaff => "chief_of_staff",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "workflow" => Some(Self::Workflow),
+            "product_guide" => Some(Self::ProductGuide),
+            "chief_of_staff" => Some(Self::ChiefOfStaff),
+            _ => None,
+        }
+    }
+}
+
+/// Unfiltered `skill.list` parameters (kept zero-field for existing callers passing
+/// `SkillListParams {}`; filtered calls encode [`SkillListFilterParams`] on the wire).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillListParams {}
+
+/// Optional category filter accepted on the wire by `skill.list` (`TASK-80.4`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillListFilterParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<SkillCategoryWire>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillSummaryWire {
@@ -286,6 +328,8 @@ pub struct SkillSummaryWire {
     pub title: String,
     pub description: String,
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<SkillCategoryWire>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,6 +356,8 @@ pub struct SkillReadResult {
     pub title: String,
     pub description: String,
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<SkillCategoryWire>,
     pub body_markdown: String,
 }
 

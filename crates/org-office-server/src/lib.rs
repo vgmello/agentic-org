@@ -57,6 +57,7 @@ mod signals;
 mod snapshot_transfer;
 mod startup;
 mod task_calls;
+mod tess_calls;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod test_support;
 mod transfer;
