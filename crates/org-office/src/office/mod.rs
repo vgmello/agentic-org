@@ -46,6 +46,9 @@ mod project_docs_tests;
 mod provider_pool_tests;
 mod providers;
 pub(crate) mod recorded;
+mod reviews;
+#[cfg(test)]
+mod reviews_tests;
 mod satellite;
 #[cfg(test)]
 mod satellite_tests;
