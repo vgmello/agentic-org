@@ -63,10 +63,20 @@ function featureGroup(pid, q) {
     <ul class="rows plan-rows" role="list">${list.map((e) => docRow(e, true)).join("")}</ul></section>`;
 }
 
+/* Docs holds the project's documentation in one place (owner): Documents, then the sections its development
+   process declares (Product, Technical, Features…), then Processes and standards. `extra` is those middle links. */
+let docsExtra = "";
+const setDocsExtra = (html) => { docsExtra = html; };
 function docsTabs(pid, cur) {
   const n = (k) => placeRows({ type: "project", id: pid }, k).entries.length;
   const tab = (key, label, count) => `<a class="queue-tab" href="#/projects/${esc(pid)}/docs${key ? "/" + key : ""}"${cur === key ? ' aria-current="page"' : ""}>${label}<span>${count}</span></a>`;
-  return { documents: tab("", "Documents", treeEntries(pid).length), rest: tab("processes", "Processes and standards", n("process") + n("standard")) };
+  return { documents: tab("", "Documents", treeEntries(pid).length) + docsExtra, rest: tab("processes", "Processes and standards", n("process") + n("standard")) };
+}
+/* The same section bar above a section that lives under Docs (Product, Technical, Features) */
+function docsSectionBar(pid) {
+  const t = docsTabs(pid, null);
+  return `<div class="work-subbar-header proc-subbar docs-section-bar"><div class="work-toolbar queue-toolbar proc-toolbar">
+      <div class="primary-tab-row"><nav class="queue-tabs" aria-label="Documentation">${t.documents}${t.rest}</nav></div></div></div>`;
 }
 
 function devLine(pid) {
@@ -192,4 +202,4 @@ function docCrumbs(pid, sub) {
 }
 const docsCount = (pid) => treeEntries(pid).length;
 
-export { docCrumbs, docHref, docRow, docsCount, historyHtml, pageDocs };
+export { docCrumbs, docHref, docRow, docsCount, docsSectionBar, historyHtml, pageDocs, setDocsExtra };

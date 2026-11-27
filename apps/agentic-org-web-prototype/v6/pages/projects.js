@@ -7,7 +7,7 @@ import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { pageFeature, pageFeatures } from "./project-plan-features.js";
 import { pageRelease, pageReleases } from "./project-plan-releases.js";
-import { docCrumbs, docsCount, pageDocs } from "./docs.js";
+import { docCrumbs, docsCount, docsSectionBar, pageDocs, setDocsExtra } from "./docs.js";
 import { processTabBody, processTabs, tabCount } from "./project-tabs.js";
 import { featureRef, getFeature, getRelease, projectFeatures, projectReleases, releaseRef } from "../plan-data.js";
 import { render } from "../shell/router.js";
@@ -56,6 +56,7 @@ function planCrumbs(id, tab, sub) {
   const ref = rec ? (tab === "features" ? featureRef(rec) : releaseRef(rec)) : "Not found";
   return [[`${base}/${tab}`, label], [null, ref]];
 }
+const inDocs = (t) => t.view === "documents" || t.view === "features";
 function pageProject(id, tab, sub) {
   const pr = P[id]; if (!pr) return notFound();
   tab = tab || "overview";
@@ -65,18 +66,21 @@ function pageProject(id, tab, sub) {
     ["activity", "Activity"],
     ["work", "Work", `${ws.filter(OPEN).length} open`],
     /* Between Work and Docs: the tabs the project's development process declares (doc-32 §4) */
-    ...processTabs(id).map((t) => [t.key, t.title, planTabCount(id, t)]),
+    ...processTabs(id).filter((t) => !inDocs(t)).map((t) => [t.key, t.title, planTabCount(id, t)]),
     ["docs", "Docs", docsCount(id) || null],
     ["calendar", "Calendar"],
     ["insights", "Insights"],
     ["conversations", "Conversations"],
     ["team", "Team", projMembers(id).length],
   ];
+  /* Product, Technical and Features are sections of Docs, not tabs of their own (owner) */
+  const docsKeys = processTabs(id).filter(inDocs).map((t) => t.key);
+  setDocsExtra(processTabs(id).filter(inDocs).map((t) => `<a class="queue-tab" href="#/projects/${esc(id)}/${esc(t.key)}"${tab === t.key ? ' aria-current="page"' : ""}>${esc(t.title)}<span>${planTabCount(id, t) ?? ""}</span></a>`).join(""));
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit") + `<button role="menuitem" type="button" data-dev-act="choose" data-id="${esc(id)}">${ic("files", "ic20")}Development process…</button>`, "ghost");
   const trail = tab === "docs" ? docCrumbs(id, sub) : planCrumbs(id, tab, sub);
   return crumbs([["#/projects", "Projects"], [trail.length ? "#/projects/" + id : null, pr.name], ...trail]) + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", (pr.archived ? "" : favStar(id)) + projPill(id))}
-    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), more)}
+    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : docsKeys.includes(tab) ? "docs" : tab), more)}
   </div>` + (tab === "activity" || tab === "releases" || tab === "docs" ? "" : projectReleaseSummary(id)) + projectBody(id, tab, sub);
 }
 function projectBody(id, tab, sub) {
@@ -96,11 +100,11 @@ function projectBody(id, tab, sub) {
   if (tab === "team") return `<div class="pj-team">${projectTeams(id)}${memberRows(projMembers(id), { emptyText: "No members yet." })}</div>`;
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);
-  if (tab === "features") return sub ? pageFeature(id, sub) : pageFeatures(id);
+  if (tab === "features") return sub ? pageFeature(id, sub) : docsSectionBar(id) + pageFeatures(id);
   if (tab === "releases") return sub ? pageRelease(id, sub) : pageReleases(id);
   if (tab === "docs") return pageDocs(id, sub);
   const processTab = processTabBody(id, tab);
-  if (processTab != null) return processTab;
+  if (processTab != null) return (processTabs(id).some((t) => t.key === tab && inDocs(t)) ? docsSectionBar(id) : "") + processTab;
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
   return notFound();
 }
