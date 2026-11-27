@@ -66,15 +66,6 @@
 	});
 	// Keep the reading panel mounted if an already-open item leaves the team list (e.g. cancelled)
 	// so the user sees the confirmation inside WorkDetailPage and closing still strips ?item= and restores focus.
-	$effect(() => {
-		if (!requestedRef) {
-			openSnapshot = null;
-			return;
-		}
-		if (matchedRow) {
-			openSnapshot = matchedRow;
-		}
-	});
 	const activeOpenRow = $derived<WorkRow | null>(
 		matchedRow ??
 			(requestedRef && openSnapshot && normalizeRef(openSnapshot.ref) === requestedRef
@@ -110,6 +101,7 @@
 		lastTriggerEl =
 			triggerEl ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 		openRowRef = row.ref;
+		openSnapshot = row;
 		dismissedUrlItem = null;
 	}
 
@@ -263,7 +255,10 @@
 					organizationId={team.organizationId}
 					refParam={activeOpenRow.ref}
 					embedded
-					onchanged={() => void work.reload()}
+					onchanged={() => {
+						if (matchedRow) openSnapshot = matchedRow;
+						void work.reload();
+					}}
 				/>
 			{/key}
 		</WorkReadingPanel>

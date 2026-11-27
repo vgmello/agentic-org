@@ -36,6 +36,7 @@ export class ShellData implements ShellDataContext {
 
 	#loadSeq = 0;
 	#leaving = false;
+	#activeAbort: AbortController | undefined;
 	#latestLoad: { seq: number; orgId: string; promise: Promise<ShellRefreshResult> } | undefined =
 		undefined;
 
@@ -59,22 +60,63 @@ export class ShellData implements ShellDataContext {
 		return this.#layeredOffices.length > 0 ? this.#layeredOffices : this.#options.getBaseOffices();
 	}
 
+	#resetFields(): void {
+		this.snapshot = undefined;
+		this.workItems = [];
+		this.workError = undefined;
+		this.inboxItems = [];
+		this.inboxLoadedOrganizationId = undefined;
+		this.#layeredOffices = [];
+		this.loaded = false;
+		this.loadedOrganizationId = undefined;
+	}
+
+	#applyLoadResults(
+		id: string,
+		baseOffices: OfficeInfo[],
+		orgRes: PromiseSettledResult<{ snapshot: OrgSnapshot }>,
+		workRes: PromiseSettledResult<WorkItemSummary[]>,
+		inboxRes: PromiseSettledResult<InboxItem[]>,
+		officesRes: PromiseSettledResult<OfficeInfo[]>
+	): ShellRefreshResult {
+		if (orgRes.status === 'fulfilled') this.snapshot = orgRes.value.snapshot;
+		const workUpdated = workRes.status === 'fulfilled';
+		if (workUpdated) {
+			this.workItems = workRes.value;
+			this.workError = undefined;
+		} else {
+			this.workError = workRes.reason;
+			this.workErrorSeq += 1;
+		}
+		const inboxUpdated = inboxRes.status === 'fulfilled';
+		if (inboxUpdated) {
+			this.inboxItems = inboxRes.value;
+			this.inboxLoadedOrganizationId = id;
+		}
+		this.#layeredOffices = officesRes.status === 'fulfilled' ? officesRes.value : baseOffices;
+		this.loadedOrganizationId = id;
+		this.loaded = true;
+		return { inboxUpdated, workUpdated };
+	}
+
+	#awaitSuperseded(id: string, seq: number): Promise<ShellRefreshResult> {
+		const winning = this.#latestLoad;
+		if (winning && winning.orgId === id && winning.seq > seq) {
+			return winning.promise;
+		}
+		return Promise.resolve({ inboxUpdated: false, workUpdated: false });
+	}
+
 	load(
 		id = this.organizationId,
 		reset = false
 	): { promise: Promise<ShellRefreshResult>; cancel: () => void } {
+		this.#activeAbort?.abort();
+		const controller = new AbortController();
+		this.#activeAbort = controller;
 		const seq = ++this.#loadSeq;
 		let cancelled = false;
-		if (reset) {
-			this.snapshot = undefined;
-			this.workItems = [];
-			this.workError = undefined;
-			this.inboxItems = [];
-			this.inboxLoadedOrganizationId = undefined;
-			this.#layeredOffices = [];
-			this.loaded = false;
-			this.loadedOrganizationId = undefined;
-		}
+		if (reset) this.#resetFields();
 		const baseOffices = untrack(() => this.#options.getBaseOffices());
 		const promise: Promise<ShellRefreshResult> = Promise.allSettled([
 			orgApi.view(id),
@@ -82,33 +124,12 @@ export class ShellData implements ShellDataContext {
 			inboxApi.list(id),
 			this.#options.loadOffices(id, baseOffices)
 		]).then(async ([orgRes, workRes, inboxRes, officesRes]): Promise<ShellRefreshResult> => {
+			if (this.#activeAbort === controller) this.#activeAbort = undefined;
 			if (this.#leaving || cancelled) return { inboxUpdated: false, workUpdated: false };
-			if (seq !== this.#loadSeq) {
-				// If superseded by a newer load for the same org, await and return the winning load's publication result.
-				const winning = this.#latestLoad;
-				if (winning && winning.orgId === id && winning.seq > seq) {
-					return await winning.promise;
-				}
-				return { inboxUpdated: false, workUpdated: false };
+			if (controller.signal.aborted || seq !== this.#loadSeq) {
+				return await this.#awaitSuperseded(id, seq);
 			}
-			if (orgRes.status === 'fulfilled') this.snapshot = orgRes.value.snapshot;
-			const workUpdated = workRes.status === 'fulfilled';
-			if (workUpdated) {
-				this.workItems = workRes.value;
-				this.workError = undefined;
-			} else {
-				this.workError = workRes.reason;
-				this.workErrorSeq += 1;
-			}
-			const inboxUpdated = inboxRes.status === 'fulfilled';
-			if (inboxUpdated) {
-				this.inboxItems = inboxRes.value;
-				this.inboxLoadedOrganizationId = id;
-			}
-			this.#layeredOffices = officesRes.status === 'fulfilled' ? officesRes.value : baseOffices;
-			this.loadedOrganizationId = id;
-			this.loaded = true;
-			return { inboxUpdated, workUpdated };
+			return this.#applyLoadResults(id, baseOffices, orgRes, workRes, inboxRes, officesRes);
 		});
 		// Retain #latestLoad until overwritten by a newer load or dispose() so slower superseded loads can read its result.
 		this.#latestLoad = { seq, orgId: id, promise };
@@ -116,6 +137,7 @@ export class ShellData implements ShellDataContext {
 			promise,
 			cancel: () => {
 				cancelled = true;
+				controller.abort();
 			}
 		};
 	}
@@ -126,6 +148,8 @@ export class ShellData implements ShellDataContext {
 
 	dispose(): void {
 		this.#leaving = true;
+		this.#activeAbort?.abort();
+		this.#activeAbort = undefined;
 		this.#latestLoad = undefined;
 		this.inboxLoadedOrganizationId = undefined;
 	}

@@ -1,14 +1,61 @@
+import { answerExecutiveQuestion } from '$lib/modules/home/model';
+import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
 import { isBuiltInHandle } from '$lib/proto';
+import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/workspace/shell-ai';
 import type { TessActionProposal, TessStreamEvent, TessToolCall, TessUiBlock } from './types';
-import type { TessTurn } from './tess-panel.svelte';
+import type { TessContextSnapshot, TessTurn } from './tess-panel.svelte';
+
+const WRITE_OR_HOWTO_RE =
+	/\b(create|assign|pause|resume|hire|move|delete|archive|approve|deny|how do i|how to|configure|set up|setup)\b/i;
+
+export function buildLocalFallbackAnswer(
+	prompt: string,
+	ctx: TessContextSnapshot,
+	mergedDomain: HomeDomainData | undefined,
+	activeDecision: ShellAiDecisionContext | undefined,
+	opts?: ShellAiAskOptions
+): OrgAiAnswer {
+	if (!activeDecision && WRITE_OR_HOWTO_RE.test(prompt)) {
+		return {
+			query: prompt,
+			headline: 'Live Tess runtime is not connected yet.',
+			bullets: [
+				{
+					text: 'Local quick summary can answer live read-only questions about decisions, projects, budgets, offices, and task flow, but creating or editing items requires a live Tess runtime.',
+					href: '/settings/agents',
+					linkLabel: 'Configure agent runtimes'
+				},
+				{
+					text: 'You can run this action directly using the workspace menu or Cmd+K commands.',
+					href: '/work',
+					linkLabel: 'Open Work'
+				}
+			]
+		};
+	}
+
+	return answerExecutiveQuestion(prompt, {
+		snapshot: ctx.snapshot,
+		items: ctx.items,
+		offices: ctx.offices,
+		ownerId: ctx.ownerId,
+		domain: mergedDomain,
+		decisionId: opts?.decisionId ?? activeDecision?.id,
+		decision: opts?.decision
+	});
+}
 
 const PROTECTED_PROPOSAL_KINDS =
 	/(?:^|[._:-])(member|agent|pause|resume|offboard|remove|delete|rename|move)(?:$|[._:-])/i;
 
-export function isProtectedBuiltInProposal(proposal: TessActionProposal): boolean {
+export function isProtectedBuiltInProposal(
+	proposal: TessActionProposal,
+	protectedMemberIds?: readonly string[]
+): boolean {
 	if (!PROTECTED_PROPOSAL_KINDS.test(proposal.kind)) return false;
 	for (const param of proposal.parameters) {
 		const val = param.value.trim();
+		if (protectedMemberIds?.includes(val)) return true;
 		const norm = val.toLowerCase().replace(/[\s_-]+/g, ' ');
 		if (isBuiltInHandle('agent', val) || norm === 'chief of staff' || norm === 'hr lead') {
 			return true;

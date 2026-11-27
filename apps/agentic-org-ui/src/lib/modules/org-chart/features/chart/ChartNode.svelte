@@ -171,7 +171,7 @@
 				<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => onaction('manager', e)}
 					>Change manager…</DropdownMenuItem
 				>
-				{#if canMove && e.homeTeam && !isBuiltInHandle(e.kind, e.handle)}
+				{#if canMove && e.homeTeam && !isBuiltInHandle(e.kind, e.handle, e.builtinKey)}
 					<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => onaction('move', e)}
 						>Move home team…</DropdownMenuItem
 					>

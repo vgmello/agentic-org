@@ -11,44 +11,31 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import { toast } from 'svelte-sonner';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import DividedRow from '$lib/components/DividedRow.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { focusHeading, neighbourFocus, openerFrom, returnFocus } from '$lib/components/focus';
+	import { neighbourFocus, openerFrom, returnFocus } from '$lib/components/focus';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { OffboardAgentDialog } from '$lib/modules/employees/ui';
 	import { toAppError } from '$lib/proto';
-	import {
-		agentsIn,
-		isHq,
-		orderOffices,
-		statusInfo,
-		unplacedAgents
-	} from '$lib/modules/offices/model';
+	import { agentsIn, orderOffices, statusInfo, unplacedAgents } from '$lib/modules/offices/model';
 	import { orgApi } from '$lib/modules/organization/api';
 	import { sessionFor } from '$lib/modules/organization/session';
-	import type { Connection, Member, OfficeInfo } from '$lib/proto';
+	import type { Connection, OfficeInfo } from '$lib/proto';
 	import { officesApi } from '../../api';
 	import { layerOffices, satelliteWhere } from '../../layer';
 	import { withPlacements } from '../../placements';
-	import type { Invitation, Issued, JoinRequest, OutboxItem, PendingAdd } from '../../types';
-	import AddOfficeDialog from '../add-office/AddOfficeDialog.svelte';
+	import type { Invitation, OutboxItem } from '../../types';
 	import InvitationRows from '../add-office/InvitationRows.svelte';
-	import IssuedDialog from '../add-office/IssuedDialog.svelte';
 	import PendingAddRows from '../add-office/PendingAddRows.svelte';
-	import ApproveJoinDialog from '../approve-join/ApproveJoinDialog.svelte';
 	import JoinRequestRow from '../approve-join/JoinRequestRow.svelte';
-	import OfficeDetailsSheet from '../details/OfficeDetailsSheet.svelte';
 	import OutboxList from '../outbox/OutboxList.svelte';
-	import RemoveOfficeDialog from '../remove-office/RemoveOfficeDialog.svelte';
-	import PlaceAgentDialog from '../unplaced/PlaceAgentDialog.svelte';
 	import UnplacedAgents from '../unplaced/UnplacedAgents.svelte';
 	import { possessive, statusChangeText } from '../../copy';
 	import { compactRow, listBleed } from './compact-row';
 	import type { Counts } from './counts';
 	import { OfficesLive } from './live.svelte';
+	import OfficesDialogs from './OfficesDialogs.svelte';
 	import OfficeRow from './OfficeRow.svelte';
 
 	let {
@@ -167,79 +154,12 @@
 	});
 
 	// ---- details ----------------------------------------------------------------------------------------------------
-	let detailsId = $state<string | undefined>();
-	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
-	const detailsFor = $derived(current.find((o) => o.id === detailsId));
-	let detailsOpen = $state(false);
 	const rowButton = (officeId: string) =>
 		document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
 
-	// ---- overlays: one at a time, and whatever opened it gets focus back when it closes ------------------------------
-	// When the opener's row is gone by then (approved, declined, renewed, removed), focus goes to an explicit target
-	// set by the action, else to the opener's neighbour taken when it opened, else to the page heading: never the body.
-	let lastOpener: HTMLElement | undefined;
-	let lastNeighbour: (() => Promise<void>) | undefined;
-	let focusAfterClose: (() => void) | undefined;
-	/** An approve or decline whose list is reloading; it answers where focus goes. */
-	let approveChange: Promise<() => void> | undefined;
-	const pageHeading = () => (focusHeading('offices-heading'), undefined);
-	const via = (opener: HTMLElement | undefined) => {
-		lastOpener = opener;
-		lastNeighbour = opener ? neighbourFocus(opener, pageHeading) : undefined;
-	};
-	function restoreOpener(event: Event) {
-		const opener = lastOpener;
-		const neighbour = lastNeighbour;
-		const next = focusAfterClose;
-		lastOpener = lastNeighbour = focusAfterClose = undefined;
-		if (!next && !opener?.isConnected && !neighbour) return;
-		event.preventDefault();
-		if (next) setTimeout(next, 0);
-		else if (opener?.isConnected) opener.focus({ preventScroll: true });
-		else void neighbour?.();
-	}
-	/** Focus the first control of the row named `name`: the office's row, else its invitation, else the heading. */
-	const focusRowNamed = (name: string) => () => {
-		const quoted = CSS.escape(name);
-		const target =
-			document.querySelector<HTMLElement>(
-				`[data-testid=office-row][data-office-name="${quoted}"] button[aria-haspopup]`
-			) ??
-			document.querySelector<HTMLElement>(
-				`[data-testid=invitation-row][data-office-name="${quoted}"] button`
-			);
-		if (target) target.focus();
-		else pageHeading();
-	};
-
-	function openDetails(id: string, opener: HTMLElement) {
-		via(opener);
-		detailsId = id;
-		detailsOpen = true;
-	}
-
-	let addOpen = $state(false);
-	let resumeAdd = $state<PendingAdd | undefined>();
-	let approveOpen = $state(false);
-	let approving = $state<JoinRequest | undefined>();
-	let cancelInviteOpen = $state(false);
-	let cancelling = $state<Invitation | undefined>();
-	let renewOpen = $state(false);
-	let renewing = $state<Invitation | undefined>();
-	let issuedOpen = $state(false);
-	let issued = $state<Issued | undefined>();
-	let stopOpen = $state(false);
-	let stopping = $state<PendingAdd | undefined>();
-	let removeOpen = $state(false);
-	let removing = $state<OfficeInfo | undefined>();
-	let removed = false;
-	let placeOpen = $state(false);
-	let placing = $state<Member | undefined>();
-	let offboardOpen = $state(false);
-	let offboarding = $state<Member | undefined>();
-	let discardOpen = $state(false);
-	let discarding = $state<OutboxItem | undefined>();
+	let dialogs = $state<OfficesDialogs | undefined>();
 	let retryingItem = $state<string | undefined>();
+	let renewingId = $state<string | undefined>();
 
 	const canAddOnInstance = $derived(overview?.viewer.isAdministrator ?? false);
 	const placeable = $derived(
@@ -255,26 +175,6 @@
 		!!overview && offices.length === 1 && pendingRows === 0 && overview.joinRequests.length === 0
 	);
 
-	/** The invitation being renewed straight from its row: its button says so and a second press sends nothing. */
-	let renewingId = $state<string | undefined>();
-	async function issue(invitation: Invitation) {
-		issued = await officesApi.newInvitation(orgId, invitation.id);
-		issuedOpen = true;
-		await reload();
-		// The renewed invitation is a new row: focus it when the shown-once dialog closes.
-		focusAfterClose = focusRowNamed(invitation.officeName);
-	}
-	function renew(invitation: Invitation, opener: HTMLElement) {
-		if (renewingId) return;
-		via(opener);
-		renewing = invitation;
-		const stillWorks = invitation.state === 'invited' && Date.parse(invitation.expiresAt) > now;
-		if (stillWorks) return void (renewOpen = true);
-		renewingId = invitation.id;
-		void issue(invitation)
-			.catch((e) => toast.error(toAppError(e).message))
-			.finally(() => (renewingId = undefined));
-	}
 	async function removeInvitation(invitation: Invitation, opener: HTMLElement) {
 		const focusNext = neighbourFocus(opener);
 		try {
@@ -298,21 +198,6 @@
 			retryingItem = undefined;
 		}
 	}
-	function removeFromSheet() {
-		const office = detailsFor;
-		if (!office) return;
-		removing = office;
-		detailsOpen = false;
-		removeOpen = true;
-	}
-	/** After a removal, focus the agents it left unplaced, or the connected office's row when it left none. */
-	function afterRemove(event: Event) {
-		if (!removed) return restoreOpener(event);
-		event.preventDefault();
-		removed = false;
-		lastOpener = lastNeighbour = focusAfterClose = undefined;
-		setTimeout(() => (document.getElementById('unplaced') ?? rowButton(here.id))?.focus(), 0);
-	}
 </script>
 
 <!-- The outer width governs both header gutters and the full-width divided rows. -->
@@ -333,7 +218,7 @@
 					class="max-[639px]:min-h-11"
 					disabled={!overview}
 					aria-describedby={extra.state === 'error' ? 'overview-error' : undefined}
-					onclick={(e) => (via(e.currentTarget), (resumeAdd = undefined), (addOpen = true))}
+					onclick={(e) => dialogs?.openAdd(e.currentTarget)}
 					><Plus aria-hidden="true" /> Add office</Button
 				>
 			{/if}
@@ -389,7 +274,7 @@
 					<JoinRequestRow
 						{request}
 						{now}
-						onreview={(button) => (via(button), (approving = request), (approveOpen = true))}
+						onreview={(button) => dialogs?.openApprove(request, button)}
 					/>
 				{/each}
 			</ul>
@@ -401,7 +286,7 @@
 					type="button"
 					class="font-medium text-link underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:-my-3 max-[639px]:min-h-11 max-[639px]:align-middle"
 					aria-haspopup="dialog"
-					onclick={(e) => openDetails(stale.id, e.currentTarget)}>{stale.name}</button
+					onclick={(e) => dialogs?.openDetails(stale.id, e.currentTarget)}>{stale.name}</button
 				> runs an older version of Agentic Org, so new features wait until it updates.
 			</p>
 		{/each}
@@ -427,7 +312,7 @@
 					retry={status === 'unreachable' || (office.id === here.id && live.retryingProbe)
 						? { busy: live.check === 'checking' }
 						: undefined}
-					onopen={(button) => openDetails(office.id, button)}
+					onopen={(button) => dialogs?.openDetails(office.id, button)}
 					onretry={() => live.retry()}
 				/>
 			{:else}
@@ -463,18 +348,14 @@
 			<ul class={listBleed} aria-label="Invitations and offices being added">
 				<PendingAddRows
 					pending={overview.pendingAdds}
-					onopen={(add, button) => (via(button), (resumeAdd = add), (addOpen = true))}
-					oncancel={(add, button) => (via(button), (stopping = add), (stopOpen = true))}
+					onopen={(add, button) => dialogs?.openAdd(button, add)}
+					oncancel={(add, button) => dialogs?.openStop(add, button)}
 				/>
 				<InvitationRows
 					invitations={overview.invitations}
 					{now}
-					oncancel={(invitation, button) => (
-						via(button),
-						(cancelling = invitation),
-						(cancelInviteOpen = true)
-					)}
-					onrenew={renew}
+					oncancel={(invitation, button) => dialogs?.openCancelInvite(invitation, button)}
+					onrenew={(invitation, button) => dialogs?.renew(invitation, button)}
 					renewing={renewingId}
 					onremove={removeInvitation}
 				/>
@@ -513,8 +394,8 @@
 				bleed={compactRow.bleed}
 				gutters={compactRow.gutters}
 				canplace={extra.state !== 'unavailable' && extra.state !== 'unsupported'}
-				onplace={(agent, button) => (via(button), (placing = agent), (placeOpen = true))}
-				onoffboard={(agent, button) => (via(button), (offboarding = agent), (offboardOpen = true))}
+				onplace={(agent, button) => dialogs?.openPlace(agent, button)}
+				onoffboard={(agent, button) => dialogs?.openOffboard(agent, button)}
 			/>
 		{/if}
 
@@ -526,172 +407,30 @@
 				gutters={compactRow.gutters}
 				retrying={retryingItem}
 				onretry={(item) => retryItem(item)}
-				ondiscard={(item, button) => (via(button), (discarding = item), (discardOpen = true))}
+				ondiscard={(item, button) => dialogs?.openDiscard(item, button)}
 			/>
 		{/if}
 		<p class="text-xs/5 text-fg-muted">Shown from HQ. Statuses include last-seen information.</p>
 	</div>
 </div>
 
-<OfficeDetailsSheet
-	bind:open={
-		() => detailsOpen && !!detailsFor, // the office went away: its sheet closes
-		(open) => (detailsOpen = open)
-	}
-	office={detailsFor}
-	status={detailsFor ? live.statusOf(detailsFor.id) : 'status_unknown'}
-	why={detailsFor ? live.whyOf(detailsFor.id) : undefined}
-	capabilities={live.capabilities}
-	onrestarted={live.refresh}
-	onCloseAutoFocus={(e) => (removeOpen ? e.preventDefault() : restoreOpener(e))}
-	{snapshot}
-	counting={!snapshot && !countError}
-	{sample}
-	here={detailsFor?.id === here.id}
-	details={detailsFor ? detailsOf(detailsFor.id) : undefined}
-	onrename={detailsFor && overview
-		? async (name) => {
-				await officesApi.renameOffice(orgId, detailsFor.id, name);
-				await reload();
-			}
-		: undefined}
-	onremove={detailsFor && !isHq(detailsFor) && overview ? removeFromSheet : undefined}
-/>
-
-<AddOfficeDialog
-	bind:open={addOpen}
-	organizationId={orgId}
+<OfficesDialogs
+	bind:this={dialogs}
+	bind:renewingId
+	{orgId}
+	{organization}
+	hereId={here.id}
+	{now}
+	{current}
+	{placeable}
+	{overview}
 	{canAddOnInstance}
-	resume={resumeAdd}
-	onchanged={reload}
-	onCloseAutoFocus={(e) => {
-		// Closing doesn't cancel a wait for running agents: its pending row shows in the list (§6.2).
-		void reload();
-		restoreOpener(e);
-	}}
-/>
-<ApproveJoinDialog
-	bind:open={approveOpen}
-	request={approving}
-	organizationId={orgId}
-	organizationName={organization}
-	onchanged={() => {
-		// The request's row goes: its office (approved) or its invitation (declined, cancelled) takes focus once listed.
-		const name = approving?.officeName;
-		const change = reload().then(() => (name ? focusRowNamed(name) : pageHeading));
-		approveChange = change;
-		return change.then(() => undefined);
-	}}
-	onCloseAutoFocus={(e) => {
-		const change = approveChange;
-		approveChange = undefined;
-		if (!change) return restoreOpener(e);
-		e.preventDefault();
-		lastOpener = lastNeighbour = focusAfterClose = undefined;
-		void change.then((focus) => setTimeout(focus, 0));
-	}}
-/>
-<ConfirmDialog
-	bind:open={cancelInviteOpen}
-	title={`Cancel the invitation for ${cancelling?.officeName ?? ''}?`}
-	description="Its link stops working. Nothing is added."
-	confirmLabel="Cancel invitation"
-	busyLabel="Cancelling…"
-	cancelLabel="Keep invitation"
-	onCloseAutoFocus={restoreOpener}
-	onconfirm={async () => {
-		if (!cancelling) return;
-		const focusNext = neighbourFocus(lastOpener, pageHeading);
-		await officesApi.cancelInvitation(orgId, cancelling.id);
-		await reload();
-		focusAfterClose = () => void focusNext();
-	}}
-/>
-<ConfirmDialog
-	bind:open={renewOpen}
-	title={`Make a new invitation for ${renewing?.officeName ?? ''}?`}
-	description="The previous invitation stops working. If a computer already used it, its request is cancelled."
-	confirmLabel="New invitation"
-	busyLabel="Creating…"
-	cancelLabel="Keep the current one"
-	onCloseAutoFocus={(e) => (issuedOpen ? e.preventDefault() : restoreOpener(e))}
-	onconfirm={async () => {
-		if (renewing) await issue(renewing);
-	}}
-/>
-<IssuedDialog bind:open={issuedOpen} {issued} onCloseAutoFocus={restoreOpener} />
-<ConfirmDialog
-	bind:open={stopOpen}
-	title={`Stop adding ${stopping?.name ?? ''}?`}
-	description="It wasn't added yet."
-	confirmLabel="Stop adding"
-	busyLabel="Stopping…"
-	cancelLabel="Keep waiting"
-	onCloseAutoFocus={restoreOpener}
-	onconfirm={async () => {
-		if (!stopping) return;
-		const cancelled = await officesApi.cancelAdd(orgId, stopping.id);
-		if (!cancelled)
-			throw {
-				source: 'app',
-				code: 'too_late',
-				message: `Too late to cancel: ${stopping.name} is being added now.`
-			};
-		await reload();
-		toast.success(`${stopping.name} wasn't added.`);
-	}}
-/>
-<RemoveOfficeDialog
-	bind:open={removeOpen}
-	office={removing}
-	organizationId={orgId}
-	organizationName={organization}
-	agents={removing && snapshot ? agentsIn(snapshot, removing.id).length : undefined}
-	tasks={removing ? (detailsOf(removing.id)?.tasks ?? 0) : 0}
-	offline={removing
-		? live.statusOf(removing.id) === 'offline' || live.statusOf(removing.id) === 'unreachable'
-		: false}
-	onchanged={async () => {
-		await reload();
-		removed = true;
-		toast.success(`${removing?.name ?? 'The office'} was removed.`);
-	}}
-	onCloseAutoFocus={afterRemove}
-/>
-<PlaceAgentDialog
-	bind:open={placeOpen}
-	agent={placing}
-	offices={placeable}
-	organizationId={orgId}
-	onchanged={reload}
-	onCloseAutoFocus={restoreOpener}
-/>
-<OffboardAgentDialog
-	bind:open={offboardOpen}
-	agent={offboarding}
-	snapshot={snapshot ?? { position: { epoch: 0, seq: 0 }, teams: [], members: [] }}
+	{snapshot}
+	{countError}
+	{sample}
 	{session}
-	ondone={async (result) => {
-		if ('name' in result) toast.success(`${result.name} was offboarded.`);
-		await invalidate('app:offices');
-	}}
-/>
-<ConfirmDialog
-	bind:open={discardOpen}
-	title="Discard this command?"
-	description={discarding
-		? `${discarding.description} won't be sent to ${discarding.officeName}.`
-		: ''}
-	confirmLabel="Discard"
-	busyLabel="Discarding…"
-	cancelLabel="Keep it"
-	destructive
-	onCloseAutoFocus={restoreOpener}
-	onconfirm={async () => {
-		if (!discarding) return;
-		const focusNext = neighbourFocus(lastOpener, pageHeading);
-		await officesApi.discardOutbox(orgId, discarding.id);
-		await reload();
-		focusAfterClose = () => void focusNext();
-	}}
+	{live}
+	{detailsOf}
+	{rowButton}
+	{reload}
 />

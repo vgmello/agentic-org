@@ -124,7 +124,7 @@
 	/** Added to a request the words become a note, which holds fewer characters than a request does. */
 	const tooLong = $derived([...text].length > WORK_LIMITS.text);
 	// After a pause in typing the office is asked which open requests read like the words (one call); up to 2 are offered.
-	let similar = $state<WorkItemSummary[]>([]);
+	let similar = $state.raw<WorkItemSummary[]>([]);
 	$effect(() => {
 		const lookup = open ? find : undefined;
 		const needle = text.trim();

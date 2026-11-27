@@ -36,11 +36,12 @@ export interface DispatchContext {
 export async function safeRead(
 	http: GatewayHttpTransport,
 	path: string,
-	fallbackMessage: string
+	fallbackMessage: string,
+	signal?: AbortSignal
 ): Promise<Rec> {
 	let reply: GatewayReply;
 	try {
-		reply = await http.read(path);
+		reply = await http.read(path, signal);
 	} catch {
 		throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies ChatRefusal;
 	}
@@ -51,11 +52,12 @@ export async function safeSubmit(
 	http: GatewayHttpTransport,
 	path: string,
 	body: unknown,
-	fallbackMessage: string
+	fallbackMessage: string,
+	signal?: AbortSignal
 ): Promise<Rec> {
 	let reply: GatewayReply;
 	try {
-		reply = await http.submit(path, body);
+		reply = await http.submit(path, body, signal);
 	} catch {
 		throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies ChatRefusal;
 	}

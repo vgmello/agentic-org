@@ -34,7 +34,7 @@ export function createChatSnapshotLoader(opts: {
 		const orgId = opts.getOrganizationId();
 		try {
 			const nowIso = new Date().toISOString();
-			const snap = await opts.chatApi.snapshot(orgId);
+			const snap = await opts.chatApi.snapshot(orgId, controller.signal);
 			if (
 				destroyed ||
 				controller.signal.aborted ||

@@ -401,6 +401,19 @@ class UiPreferencesStore {
 		this.#save(STORAGE_KEYS.favorites, JSON.stringify(this.favoriteProjects));
 	}
 
+	clearFavorites(): void {
+		this.favoriteProjects = [];
+		const storage = safeLocalStorage();
+		if (!storage) return;
+		try {
+			(storage as StorageLike & { removeItem?: (key: string) => void }).removeItem?.(
+				STORAGE_KEYS.favorites
+			);
+		} catch {
+			// Ignore quota / private mode failures.
+		}
+	}
+
 	moveWorkspaceItem(
 		id: WorkspaceNavId,
 		beforeId: WorkspaceNavId | null,

@@ -11,11 +11,13 @@
 	let {
 		label,
 		side = 'bottom',
+		disabled = false,
 		class: className,
 		children
 	}: {
 		label: string;
 		side?: 'bottom' | 'bottom-start' | 'left';
+		disabled?: boolean;
 		class?: string;
 		children: Snippet;
 	} = $props();
@@ -31,11 +33,11 @@
 	}
 
 	function scheduleOpen(event: PointerEvent) {
-		if (event.pointerType === 'touch') return;
+		if (disabled || event.pointerType === 'touch') return;
 		clearTimer();
 		hoverTimer = setTimeout(() => {
 			hoverTimer = undefined;
-			open = true;
+			if (!disabled) open = true;
 		}, 150);
 	}
 
@@ -45,15 +47,19 @@
 	}
 
 	function onFocusIn(event: FocusEvent) {
+		if (disabled) return;
 		const target = event.target;
 		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
 			clearTimer();
-			open = true;
+			hoverTimer = setTimeout(() => {
+				hoverTimer = undefined;
+				if (!disabled) open = true;
+			}, 150);
 		}
 	}
 
 	function onKeydownCapture(event: KeyboardEvent) {
-		if (open && event.key === 'Escape') {
+		if (!disabled && open && event.key === 'Escape') {
 			event.preventDefault();
 			event.stopPropagation();
 			close();
@@ -65,14 +71,12 @@
 		node.addEventListener('pointerleave', close);
 		node.addEventListener('focusin', onFocusIn);
 		node.addEventListener('focusout', close);
-		return {
-			destroy() {
-				clearTimer();
-				node.removeEventListener('pointerenter', scheduleOpen);
-				node.removeEventListener('pointerleave', close);
-				node.removeEventListener('focusin', onFocusIn);
-				node.removeEventListener('focusout', close);
-			}
+		return () => {
+			clearTimer();
+			node.removeEventListener('pointerenter', scheduleOpen);
+			node.removeEventListener('pointerleave', close);
+			node.removeEventListener('focusin', onFocusIn);
+			node.removeEventListener('focusout', close);
 		};
 	}
 
@@ -81,9 +85,9 @@
 
 <svelte:window onkeydowncapture={onKeydownCapture} />
 
-<span use:trackTooltip class={cn('relative inline-flex', className)}>
+<span {@attach trackTooltip} class={cn('relative inline-flex', className)}>
 	{@render children()}
-	{#if open}
+	{#if open && !disabled}
 		<span
 			role="tooltip"
 			data-tooltip-content=""

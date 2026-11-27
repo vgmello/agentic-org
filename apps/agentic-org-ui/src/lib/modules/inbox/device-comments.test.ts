@@ -61,4 +61,30 @@ describe('Inbox device-local comments and drafts cleanup', () => {
 		expect(readInboxCommentDrafts()).toEqual({});
 		expect(session.getItem('agentic-org.inbox.commentDrafts')).toBeNull();
 	});
+
+	it('sweeps all 8 org-scoped storage prefixes from localStorage and sessionStorage while keeping unrelated keys', () => {
+		const orgScopedKeys = [
+			'agentic-org.inbox.comments.org-1',
+			'agentic-org.requests.draft',
+			'agentic-org.tasks.view.org-1',
+			'agentic-org.workitems.filter.org-1',
+			'agentic-org.work.tab.org-1',
+			'agentic-org.chat.draft.org-1',
+			'agentic-org.org.selected.org-1',
+			'agentic-org.organization.cache.org-1'
+		];
+		for (const key of orgScopedKeys) {
+			local.setItem(key, 'secret-org-value');
+			session.setItem(key, 'secret-session-value');
+		}
+		local.setItem('agentic-org.ui.theme', 'ocean');
+
+		clearInboxDeviceComments();
+
+		for (const key of orgScopedKeys) {
+			expect(local.getItem(key)).toBeNull();
+			expect(session.getItem(key)).toBeNull();
+		}
+		expect(local.getItem('agentic-org.ui.theme')).toBe('ocean');
+	});
 });

@@ -13,6 +13,8 @@ export interface ChartEmployee {
 	name: string;
 	/** Stored without `@`. */
 	handle: string;
+	/** Canonical built-in key when supplied by HQ (`hr`, `chief_of_staff`). */
+	builtinKey?: string;
 	status: Exclude<EmployeeStatus, 'inactive'>;
 	/** Required on a valid record; missing is shown as a problem, never as "No team". */
 	homeTeam?: TeamRef;

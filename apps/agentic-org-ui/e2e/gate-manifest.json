@@ -630,7 +630,7 @@
 			"why": "The Agent setup route composes Hire an agent from the employees module's public URL helper (hireUrl) and hands it to the agent-setup list, so agent-setup itself depends on no module that depends on members (members links to agent setup; no cycle). The org-chart category owns and tests the employees module."
 		},
 		{
-			"from": "src/lib/modules/offices/features/list/OfficesPage.svelte",
+			"from": "src/lib/modules/offices/features/list/OfficesDialogs.svelte",
 			"to": "src/lib/modules/employees/{index,ui}.ts",
 			"why": "Offices lists unplaced agents and opens the employees module's Offboard agent dialog; the org-chart category owns and tests that dialog."
 		},
@@ -744,7 +744,7 @@
 			"src/lib/page-title.ts",
 			"src/lib/format.ts",
 			"src/lib/proto*.ts",
-			"src/lib/modules/organization/{actions,api,commands,http-api,live,live-state.svelte,load,mock,model,reducer,sample,session}.ts",
+			"src/lib/modules/organization/{actions,agent-actions,api,commands,http-api,live,live-state.svelte,load,mock,model,reducer,sample,session}.ts",
 			"src/lib/platform/{feature-factory,unavailable-api}.ts",
 			"src/lib/platform/http/**",
 			"src/lib/platform/auth/**",

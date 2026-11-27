@@ -4,6 +4,7 @@
 	import Logo from '$lib/components/Logo.svelte';
 	import MessageSquareReply from '@lucide/svelte/icons/message-square-reply';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import {
 		DropdownMenu,
 		DropdownMenuContent,
@@ -197,19 +198,21 @@
 		<div class="col-start-2 min-w-0">
 			{#if card}
 				<div class="mt-1">
-					<AskCard
-						{message}
-						{ctx}
-						{now}
-						{readOnly}
-						{officeRunning}
-						draft={askDraft}
-						onanswer={(a) => onanswer?.(message, a)}
-						onaccept={() => onaccept?.(message)}
-						onhandback={onhandback ? (reason) => onhandback(message, reason) : undefined}
-						onwithdraw={onwithdraw ? (reason) => onwithdraw(message, reason) : undefined}
-						onreplyinthread={inThread ? undefined : (opener) => onthread?.(message, opener)}
-					/>
+					{#key askDraft}
+						<AskCard
+							{message}
+							{ctx}
+							{now}
+							{readOnly}
+							{officeRunning}
+							draft={askDraft}
+							onanswer={(a) => onanswer?.(message, a)}
+							onaccept={() => onaccept?.(message)}
+							onhandback={onhandback ? (reason) => onhandback(message, reason) : undefined}
+							onwithdraw={onwithdraw ? (reason) => onwithdraw(message, reason) : undefined}
+							onreplyinthread={inThread ? undefined : (opener) => onthread?.(message, opener)}
+						/>
+					{/key}
 				</div>
 			{:else}
 				<div class="mt-0.5 min-w-0 [&_a]:whitespace-normal" data-testid="message-body">
@@ -332,33 +335,35 @@
 						if (trigger) onmenu?.(message, open, trigger);
 					}}
 				>
-					<DropdownMenuTrigger bind:ref={trigger}>
-						{#snippet child({ props })}
-							<button
-								{...props}
-								class="{buttonVariants({ variant: 'ghost', size: 'icon-xs' })} {actionFocus}"
-								type="button"
-								aria-label="Actions for {nameOf(ctx, message.from)}'s message, {clockTime(
-									message.created_at
-								)}"
-								data-testid="message-menu"
-								><svg
-									class="size-3"
-									aria-hidden="true"
-									focusable="false"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="2"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									><path
-										d="M13 12a1 1 0 1 1-2 0 1 1 0 1 1 2 0Zm7 0a1 1 0 1 1-2 0 1 1 0 1 1 2 0ZM6 12a1 1 0 1 1-2 0 1 1 0 1 1 2 0Z"
-									/></svg
-								></button
-							>
-						{/snippet}
-					</DropdownMenuTrigger>{#if menuOpen}
+					<ModalTooltip label="Message actions" disabled={menuOpen}>
+						<DropdownMenuTrigger bind:ref={trigger}>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									class="{buttonVariants({ variant: 'ghost', size: 'icon-xs' })} {actionFocus}"
+									type="button"
+									aria-label="Actions for {nameOf(ctx, message.from)}'s message, {clockTime(
+										message.created_at
+									)}"
+									data-testid="message-menu"
+									><svg
+										class="size-3"
+										aria-hidden="true"
+										focusable="false"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										><path
+											d="M13 12a1 1 0 1 1-2 0 1 1 0 1 1 2 0Zm7 0a1 1 0 1 1-2 0 1 1 0 1 1 2 0ZM6 12a1 1 0 1 1-2 0 1 1 0 1 1 2 0Z"
+										/></svg
+									></button
+								>
+							{/snippet}
+						</DropdownMenuTrigger>
+					</ModalTooltip>{#if menuOpen}
 						<DropdownMenuContent align="end">
 							{#if system}
 								<DropdownMenuItem disabled>{SYSTEM_NO_REPLY}</DropdownMenuItem>
@@ -420,30 +425,36 @@
 				</DropdownMenu>{#if toolbar}
 					{#if !system}
 						{#each REACTIONS as r (r.id)}
+							<ModalTooltip label={r.label}>
+								<Button
+									class={actionFocus}
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									aria-label="React {r.label}"
+									disabled={!officeRunning}
+									onclick={() => onreact?.(message, r.id)}
+									><HeroIcon
+										class="text-current"
+										variant="micro"
+										name={reactionIcon[r.id]}
+									/></Button
+								>
+							</ModalTooltip>
+						{/each}
+					{/if}
+					{#if replyable}
+						<ModalTooltip label="Reply in thread">
 							<Button
 								class={actionFocus}
 								type="button"
 								variant="ghost"
 								size="icon-xs"
-								aria-label="React {r.label}"
-								title={r.label}
-								disabled={!officeRunning}
-								onclick={() => onreact?.(message, r.id)}
-								><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /></Button
+								aria-label="Reply in thread"
+								onclick={(event) => onthread?.(message, event.currentTarget)}
+								><MessageSquareReply aria-hidden="true" /></Button
 							>
-						{/each}
-					{/if}
-					{#if replyable}
-						<Button
-							class={actionFocus}
-							type="button"
-							variant="ghost"
-							size="icon-xs"
-							aria-label="Reply in thread"
-							title="Reply in thread"
-							onclick={(event) => onthread?.(message, event.currentTarget)}
-							><MessageSquareReply aria-hidden="true" /></Button
-						>
+						</ModalTooltip>
 					{/if}
 				{/if}
 			</div>

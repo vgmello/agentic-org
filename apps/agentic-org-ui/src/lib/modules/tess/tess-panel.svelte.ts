@@ -1,11 +1,16 @@
 import { createContext } from 'svelte';
-import { answerExecutiveQuestion } from '$lib/modules/home/model';
 import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
-import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import {
+	isBuiltInAgent,
+	type OfficeInfo,
+	type OrgSnapshot,
+	type WorkItemSummary
+} from '$lib/proto';
 import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/workspace/shell-ai';
 import { defaultTessApi } from './api';
 import {
 	applyStreamEventToTurn,
+	buildLocalFallbackAnswer,
 	isProtectedBuiltInProposal,
 	updateProposalInBlocks
 } from './tess-stream';
@@ -57,46 +62,6 @@ export const TESS_STARTERS: readonly string[] = [
 
 export type TessCompanionMode = 'hidden' | 'pill' | 'open' | 'expanded';
 
-const WRITE_OR_HOWTO_RE =
-	/\b(create|assign|pause|resume|hire|move|delete|archive|approve|deny|how do i|how to|configure|set up|setup)\b/i;
-
-function buildLocalFallbackAnswer(
-	prompt: string,
-	ctx: TessContextSnapshot,
-	mergedDomain: HomeDomainData | undefined,
-	activeDecision: ShellAiDecisionContext | undefined,
-	opts?: ShellAiAskOptions
-): OrgAiAnswer {
-	if (!activeDecision && WRITE_OR_HOWTO_RE.test(prompt)) {
-		return {
-			query: prompt,
-			headline: 'Live Tess runtime is not connected yet.',
-			bullets: [
-				{
-					text: 'Local quick summary can answer live read-only questions about decisions, projects, budgets, offices, and task flow, but creating or editing items requires a live Tess runtime.',
-					href: '/settings/agents',
-					linkLabel: 'Configure agent runtimes'
-				},
-				{
-					text: 'You can run this action directly using the workspace menu or Cmd+K commands.',
-					href: '/work',
-					linkLabel: 'Open Work'
-				}
-			]
-		};
-	}
-
-	return answerExecutiveQuestion(prompt, {
-		snapshot: ctx.snapshot,
-		items: ctx.items,
-		offices: ctx.offices,
-		ownerId: ctx.ownerId,
-		domain: mergedDomain,
-		decisionId: opts?.decisionId ?? activeDecision?.id,
-		decision: opts?.decision
-	});
-}
-
 /**
  * Embedded Tess Companion controller (TASK-80.5 / doc-97).
  * Connects to doc-97 §5.C live HTTP/SSE endpoints when an organizationId is present and the
@@ -120,6 +85,7 @@ export class TessPanelState {
 	#abortController: AbortController | undefined = undefined;
 	#activeOrgId: string | undefined = undefined;
 	#activeLocalTurnId: string | undefined = undefined;
+	#protectedMemberIds: string[] = [];
 
 	constructor(api: TessApi = defaultTessApi) {
 		this.#api = api;
@@ -170,6 +136,7 @@ export class TessPanelState {
 	setOrganization(organizationId: string | undefined): void {
 		if (organizationId === this.#activeOrgId) return;
 		this.#activeOrgId = organizationId;
+		this.#protectedMemberIds = [];
 		this.#sessionGen++;
 		this.#askGen++;
 		this.#abortStream();
@@ -264,7 +231,7 @@ export class TessPanelState {
 		) {
 			return;
 		}
-		if (isProtectedBuiltInProposal(block.proposal)) {
+		if (isProtectedBuiltInProposal(block.proposal, this.#protectedMemberIds)) {
 			const msg = 'Built-in agents (HR and Tess) cannot be modified, moved, paused, or removed.';
 			this.#patchTurn(turnId, (t) => ({
 				...t,
@@ -374,6 +341,9 @@ export class TessPanelState {
 				? activeDecision.title
 				: ctx.routeLabel;
 
+		if (ctx.snapshot) {
+			this.#protectedMemberIds = ctx.snapshot.members.filter(isBuiltInAgent).map((m) => m.id);
+		}
 		const mergedDomain: HomeDomainData | undefined =
 			this.#domainContext || ctx.domain
 				? {

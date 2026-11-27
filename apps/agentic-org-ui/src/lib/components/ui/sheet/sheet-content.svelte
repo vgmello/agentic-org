@@ -5,7 +5,7 @@
 <script lang="ts">
 	import { Dialog as SheetPrimitive } from 'bits-ui';
 	import XIcon from '@lucide/svelte/icons/x';
-	import { returnFocus } from '$lib/components/focus';
+	import { captureOverlayOpener, returnFocus } from '$lib/components/focus';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { cn, type WithoutChildrenOrChild } from '$lib/utils.js';
@@ -38,11 +38,7 @@
 	let capturedOpener: HTMLElement | null = null;
 
 	const openFocus = (e: Event) => {
-		const active = typeof document !== 'undefined' ? document.activeElement : null;
-		capturedOpener =
-			active instanceof HTMLElement && active !== document.body && !ref?.contains(active)
-				? active
-				: null;
+		capturedOpener = captureOverlayOpener(ref);
 		onOpenAutoFocus?.(e);
 	};
 

@@ -34,7 +34,7 @@ src/lib/modules/members/features/profile/ProfileFrame.svelte eslint=0 svelte=0 e
 src/lib/modules/members/features/profile/ProfileSkeleton.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/members/features/sign-in-access/SignInAccessActions.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/members/features/sign-in-access/SignInAccessDialogs.svelte eslint=0 svelte=0 effect=1
-src/lib/modules/messaging/features/answer-ask/AskCard.svelte eslint=0 svelte=0 effect=3
+src/lib/modules/messaging/features/answer-ask/AskCard.svelte eslint=0 svelte=0 effect=2
 src/lib/modules/messaging/features/manage-channel/ChannelDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/messaging/features/open-dm/ChatSidebar.svelte eslint=0 svelte=1 effect=1
 src/lib/modules/messaging/features/open-dm/NewMessageDialog.svelte eslint=0 svelte=0 effect=1
@@ -44,7 +44,7 @@ src/lib/modules/messaging/markdown.ts eslint=1 svelte=0 effect=0
 src/lib/modules/offices/features/add-office/AddOfficeDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/offices/features/approve-join/ApproveJoinDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/offices/features/list/OfficesPage.svelte eslint=1 svelte=0 effect=2
-src/lib/modules/offices/features/list/live.svelte.ts eslint=3 svelte=0 effect=5
+src/lib/modules/offices/features/list/live.svelte.ts eslint=3 svelte=0 effect=4
 src/lib/modules/offices/features/unplaced/PlaceAgentDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/org-chart/features/chart/ChartSkeleton.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/org-chart/features/chart/OrgChartCanvas.svelte eslint=0 svelte=0 effect=1
@@ -78,7 +78,7 @@ src/lib/modules/teams/features/change-lead/ChangeLeadDialog.svelte eslint=0 svel
 src/lib/modules/teams/features/team-actions/TeamDialogs.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/teams/features/team-page/AddPersonToTeam.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/teams/features/team-page/TeamOverview.svelte eslint=0 svelte=0 effect=1
-src/lib/modules/teams/features/team-page/TeamWork.svelte eslint=1 svelte=0 effect=2
+src/lib/modules/teams/features/team-page/TeamWork.svelte eslint=1 svelte=0 effect=1
 src/lib/modules/teams/features/team-page/reload.svelte.ts eslint=0 svelte=0 effect=1
 src/lib/modules/teams/person.ts eslint=1 svelte=0 effect=0
 src/lib/modules/tess/TessPanel.svelte eslint=0 svelte=0 effect=2
@@ -108,7 +108,7 @@ src/lib/utils.ts eslint=2 svelte=0 effect=0
 src/routes/(onboarding)/create/+page.svelte eslint=0 svelte=0 effect=1
 src/routes/(onboarding)/security/+page.svelte eslint=0 svelte=0 effect=1
 src/routes/(onboarding)/welcome/+page.svelte eslint=1 svelte=0 effect=1
-src/routes/(shell)/+layout.svelte eslint=0 svelte=0 effect=7
+src/routes/(shell)/+layout.svelte eslint=0 svelte=0 effect=6
 src/routes/(shell)/home/+page.svelte eslint=0 svelte=0 effect=2
 src/routes/(shell)/inbox/+page.svelte eslint=0 svelte=0 effect=2
 src/routes/(shell)/insights/+page.svelte eslint=0 svelte=0 effect=1

@@ -66,6 +66,7 @@ export function createHttpOrgChartApi({
 					kind: m.kind === 'agent' ? 'agent' : 'person',
 					name: m.name,
 					handle: row?.handle ?? memberHandle(m),
+					...(m.builtin_key ? { builtinKey: m.builtin_key } : {}),
 					status: m.kind === 'agent' && m.agent?.status === 'paused' ? 'paused' : 'active',
 					...(homeTeam ? { homeTeam } : {}),
 					...(m.reports_to_member_id ? { reportsToId: m.reports_to_member_id } : {}),

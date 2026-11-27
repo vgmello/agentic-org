@@ -59,8 +59,8 @@
 	} = $props();
 
 	type Step = RequestStep;
-	let item = $state<WorkItem | undefined>();
-	let events = $state<WorkEvent[]>([]);
+	let item = $state.raw<WorkItem | undefined>();
+	let events = $state.raw<WorkEvent[]>([]);
 	let error = $state<string | undefined>();
 	let busy = $state(false);
 	let step = $state<Step | undefined>();

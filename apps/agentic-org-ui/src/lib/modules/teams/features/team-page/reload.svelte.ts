@@ -4,13 +4,23 @@
 import { untrack } from 'svelte';
 import type { Resource } from '$lib/components/resource.svelte';
 
+export function createChangeReloader(resource: Resource<unknown>, initial: number) {
+	let seen = initial;
+	return (next: number): boolean => {
+		if (next === seen) return false;
+		seen = next;
+		void resource.reload();
+		return true;
+	};
+}
+
 export function reloadOnChange(resource: Resource<unknown>, loads: () => number) {
-	let seen = untrack(loads);
+	const sync = createChangeReloader(resource, untrack(loads));
 	$effect(() => {
 		const load = loads();
-		if (load === seen) return;
-		seen = load;
 		// Synchronising with the server, not deriving: the read starts here and its answer lands in the Resource.
-		untrack(() => void resource.reload());
+		untrack(() => {
+			sync(load);
+		});
 	});
 }

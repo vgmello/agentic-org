@@ -58,7 +58,10 @@
 		tessPanel.setOrganization(organizationId);
 	});
 	onDestroy(() => tessPanel.dispose());
-	const stopCommentCleanup = appSession.onSessionEnded(() => clearInboxDeviceComments());
+	const stopCommentCleanup = appSession.onSessionEnded(() => {
+		clearInboxDeviceComments();
+		uiPrefs.clearFavorites();
+	});
 	onDestroy(() => stopCommentCleanup());
 	provideNotifications();
 	let shortcutsOpen = $state(false);
@@ -274,9 +277,6 @@
 	const liveNotices: Record<string, number> = {};
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
 	const showPaused = $derived(liveState.paused[organizationId] === true || cannotListen);
-	$effect(() => {
-		if (!showPaused) retrying = false;
-	});
 
 	let stop: (() => void) | undefined;
 	function listen() {
@@ -285,6 +285,7 @@
 				if (notice.kind === 'live') {
 					liveNotices[notice.organization_id] = (liveNotices[notice.organization_id] ?? 0) + 1;
 					liveState.paused[notice.organization_id] = !notice.live;
+					if (notice.live && notice.organization_id === organizationId) retrying = false;
 				} else if (notice.organization_id === organizationId) noteChanged(notice, reload);
 			})
 			.then((unlisten) => {
@@ -292,6 +293,7 @@
 				else {
 					stop = unlisten;
 					cannotListen = false;
+					retrying = false;
 					listening = true;
 				}
 			})
@@ -426,7 +428,7 @@
 					{#if showPaused}<div class="shrink-0">
 							<LiveBanner
 								loadedAt={liveState.loadedAt[organizationId]}
-								{retrying}
+								retrying={retrying && showPaused}
 								onretry={retry}
 							/>
 						</div>{/if}
