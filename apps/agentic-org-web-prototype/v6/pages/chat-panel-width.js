@@ -13,10 +13,19 @@ function storeWidth(px) {
 }
 /* The frame's inline style carries a remembered width; CSS clamps it to the room there is. */
 const panelWidthStyle = () => { const w = storedWidth(); return w ? ` style="--chat-panel-w: ${w}px"` : ""; };
+/* The edge names what it resizes ("Resize thread") in a small label shown on hover and keyboard focus. */
+function panelName(panel) {
+  if (panel.classList.contains("chat-members-panel")) return "members";
+  return panel.classList.contains("chat-files-panel") ? "files" : "thread";
+}
 function addSeparator(panel) {
-  const sep = document.createElement("div");
-  Object.assign(sep, { className: "chat-panel-resize", tabIndex: 0, title: "Drag, or use the arrow keys, to resize" });
-  for (const [k, v] of [["role", "separator"], ["aria-orientation", "vertical"], ["aria-label", "Resize side panel"], ["aria-valuemin", String(MIN)]]) sep.setAttribute(k, v);
+  const sep = document.createElement("div"), label = `Resize ${panelName(panel)}`;
+  Object.assign(sep, { className: "chat-panel-resize", tabIndex: 0 });
+  for (const [k, v] of [["role", "separator"], ["aria-orientation", "vertical"], ["aria-label", label], ["aria-description", "Drag, or use the arrow keys"], ["aria-valuemin", String(MIN)]]) sep.setAttribute(k, v);
+  const tip = document.createElement("span");
+  Object.assign(tip, { className: "chat-panel-resize-tip", textContent: label });
+  tip.setAttribute("aria-hidden", "true");
+  sep.append(tip);
   panel.prepend(sep);
   return sep;
 }

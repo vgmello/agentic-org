@@ -10,17 +10,15 @@
 //!   ([`capability`]), so a client checks before relying on one.
 //! - **An office server** (`agentic-org-office`), one process per office. An organization's
 //!   first office is its HQ. The current worker answers `hello` with its identity, supports
-//!   `msg.bind` and `who`, and serves authorized organization requests ([`org`]). The wire
-//!   contract also defines [work calls][`work`]. Until work is rebuilt on the office store,
-//!   valid, authorized writes the worker previously served return [`ErrorCode::Unsupported`].
-//!   Work reads such as `work.get`, `work.list`, and `work.snapshot` return
-//!   [`ErrorCode::UnknownMethod`].
+//!   `msg.bind` and `who`, and serves authorized organization requests ([`org`]). Typed tasks
+//!   are the `tasks.*` calls in [`tasks`]. The retired phase-1 work calls (`task.*`, `bug.*`,
+//!   `checklist.*` and `work.*`) are no longer part of the contract: an office answers them
+//!   [`ErrorCode::UnknownMethod`] and a host channel refuses them.
 //!
 //! ## Who may call what
 //! The wire never carries the caller's identity: the office knows whose connection a call came
 //! in on. **App-only** calls are refused on any other connection with `not_authorized`: every
-//! organization command ([`org`]) and `work.delete` ([`work`]). Every work call needs a bound
-//! connection (`not_bound` otherwise), and acts as the member it is bound as.
+//! organization command ([`org`]).
 //! On the host, for an app-only call (`office.restart`), the client rule: a
 //! client reads `hello`'s answer before sending an app-only call, and sends nothing else on that
 //! connection until its answer arrives. First thing in the app's main, before any output or
@@ -78,7 +76,7 @@
 //!   grant the host MAC'd over [`grant_mac_input`].
 //! - [`retired`] sentinels for the retired inputs, and [`AgentProfileInput`], the profile
 //!   `member.add_agent` takes; move 2a puts both on the params.
-//! - [`ManagedHome`] on `who`'s cards, [`Actor`] on `org.changed` and `work.changed`, the
+//! - [`ManagedHome`] on `who`'s cards, [`Actor`] on `org.changed`, the
 //!   [`OperationGet`] lookup, and the codes `unsupported_version` and `operation_reused`.
 //!
 //! Its vectors are in `test-vectors/v2/proto-*.json`.
@@ -114,7 +112,6 @@ pub mod sessions;
 pub mod tasks;
 pub mod tz;
 pub mod web;
-pub mod work;
 
 mod call;
 mod calls;
@@ -169,21 +166,6 @@ pub use types::{
 pub use ulid::ulid_time_ms;
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,
-};
-pub use work::{
-    ChecklistCounts, ChecklistStep, CommentKind, DocRef, DocWritten, DoneAnyway, DraftTask,
-    Estimate, EventRef, Feature, FeatureOutcome, FeatureStatus, FieldChange, ItemKind, ItemStatus,
-    ItemTime, Link, LinkKind, LinkTarget, NewStep, Priority, RequestKind, RequestOutcome,
-    Resolution, RoutedBy, Severity, Shortcut, TimeFigures, VerifyOutcome, WaitReason, WorkAccepted,
-    WorkActivity, WorkActivityParams, WorkActivityResult, WorkChange, WorkChanged, WorkChangedData,
-    WorkEvent, WorkEventKind, WorkGet, WorkGetParams, WorkGetResult, WorkItem, WorkItemSummary,
-    WorkList, WorkListParams, WorkListResult, WorkPosition, WorkSnapshot, WorkSnapshotParams,
-    WorkSnapshotResult, WorkStatus, WorkTimes, WorkTimesParams, WorkTimesResult,
-    WORK_BLOCKED_REASON_MAX_CHARS, WORK_CHANGED_MAX_BYTES, WORK_DESCRIPTION_MAX_CHARS,
-    WORK_DOD_MAX_CHARS, WORK_ENVIRONMENT_MAX_CHARS, WORK_GET_MAX_LISTED, WORK_MAX_DRAFT_TASKS,
-    WORK_MAX_LINKS, WORK_MAX_STEPS, WORK_PAGE_MAX, WORK_PARAMS_MAX_BYTES, WORK_REASON_MAX_CHARS,
-    WORK_REQUEST_TEXT_MAX_CHARS, WORK_RESPONSE_MAX_BYTES, WORK_STEP_TEXT_MAX_CHARS,
-    WORK_TEXT_MAX_CHARS, WORK_TITLE_MAX_CHARS,
 };
 
 /// The protocol version a server reports in `hello`. Bumped only for a breaking change.

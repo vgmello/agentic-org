@@ -147,16 +147,16 @@ impl Host {
         // volume), bound to this instance and locked for this host alone. Both views open
         // below it from its descriptor. An empty store with office records or a store bound
         // to a different instance refuses before either view can read or write a key.
-        let release_directory = crate::release_store::open(
+        let release_directory = crate::credential_store_root::open(
             !cfg!(debug_assertions),
             org_platform_host::credentials::protected_store(),
-            crate::release_store::Facts {
+            crate::credential_store_root::Facts {
                 instance_id: instance.id(),
                 recorded: record.credentials.as_deref(),
                 data_root: instance.root_descriptor(),
                 // In the foreground mode (a container) the directory is a mounted volume.
                 foreground,
-                expect_items: crate::release_store::records_say_keys_exist(
+                expect_items: crate::credential_store_root::records_say_keys_exist(
                     &layout_paths.office_home,
                 )
                 .map_err(|source| HostError::Io {

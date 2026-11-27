@@ -11,13 +11,12 @@ use std::time::{Duration, Instant};
 /// subprocess fails the test instead of stalling CI.
 const METADATA_DEADLINE: Duration = Duration::from_secs(120);
 
-/// Crates that own host supervision, office storage/keys, work execution or the
-/// privileged client. None may be linked into the web process.
+/// Crates that own host supervision, office storage/keys or the privileged client. None may
+/// be linked into the web process.
 /// The web process opens no database (non-negotiable 7), so no SQLite crate either.
 const FORBIDDEN: &[&str] = &[
     "org-host",
     "org-office",
-    "org-work",
     "org-client",
     "rusqlite",
     "libsqlite3-sys",
@@ -117,7 +116,7 @@ fn normal_closure() -> BTreeSet<String> {
 }
 
 #[test]
-fn the_web_links_no_host_office_work_or_client_crate() {
+fn the_web_links_no_host_office_or_client_crate() {
     let closure = normal_closure();
     // Not vacuous: the walk reaches the web process's real workspace dependencies.
     for expected in ["org-host-control", "org-proto", "org-socket", "org-release"] {

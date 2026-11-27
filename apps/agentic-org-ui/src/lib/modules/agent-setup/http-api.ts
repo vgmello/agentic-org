@@ -28,7 +28,7 @@ import type {
 	RoleEdit
 } from './types';
 
-type Rec = Record<string, unknown>;
+import { asNum, asRec, asStr, asStrList } from '$lib/platform/http/decode';
 
 interface WireConnection {
 	id: string;
@@ -66,14 +66,6 @@ interface WireReadiness {
 		fix?: string;
 	}[];
 }
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-const asStrList = (v: unknown): string[] =>
-	Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
 function runtimeLabel(driver: string | undefined): string {
 	switch ((driver ?? '').toLowerCase()) {

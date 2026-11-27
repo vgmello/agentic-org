@@ -79,6 +79,12 @@ export interface Connection {
 	organization: Organization;
 }
 
+/** The last copy, shown read-only while HQ can't be reached (PRJ-4). */
+export interface StaleCopy {
+	/** RFC 3339. */
+	copiedAt: string;
+}
+
 export interface OrganizationCreateParams {
 	name: string;
 }

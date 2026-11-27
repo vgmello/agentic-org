@@ -11,11 +11,11 @@ use org_proto::{
 };
 
 use super::browser_sessions::{browser_now_ms, finish_ended_browser_sessions};
-use super::listener::Connection;
 use super::office_join;
 use super::reply::ok;
 use super::session_office::{authorize_session_first, journal_error};
 use super::{Authentication, Service};
+use crate::control_listener::Connection;
 
 pub(super) fn dispatch_session_office_op(
     service: &Service,

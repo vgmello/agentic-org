@@ -16,7 +16,7 @@ struct Fixture {
 }
 fn fixture() -> Fixture {
     let instance = crate::ids::uuid_v7().unwrap();
-    let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (dir, auth, _) = crate::authentication::tests::fixture_for(&instance);
     let (db, custody) = auth.provisioning_storage();
     let credentials = db
         .account_credentials(&crate::accounts::identity::LoginKey::new("Owner").unwrap())
@@ -169,7 +169,7 @@ fn unlinked_reservation_reopen_requires_original_recovery_custody() {
         let custody: Arc<dyn HostSecrets> =
             Arc::new(DevSecrets::open(base.path(), home.path(), &public.instance_id).unwrap());
         // Production startup reconciles before starting any catalogued office.
-        let reopened = crate::service::authentication::Authentication::open(
+        let reopened = crate::authentication::Authentication::open(
             home.path(),
             custody.clone(),
             &public.instance_id,

@@ -1,5 +1,5 @@
 //! Reading the time out of a client-made ULID, the one rule every office uses for a
-//! `command_id` ([`crate::org`]) and a `change_id` ([`crate::work`]).
+//! `command_id` ([`crate::org`]).
 
 /// Crockford's base32 alphabet, upper case, as ULIDs are written.
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";

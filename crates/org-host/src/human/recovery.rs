@@ -37,9 +37,7 @@ fn when(ms: Option<i64>) -> String {
     }
 }
 pub(super) fn interactive() -> bool {
-    std::io::stdin().is_terminal()
-        && std::io::stdout().is_terminal()
-        && crate::recovery::presence::current()
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal() && crate::presence::current()
 }
 fn tty() -> Result<File, String> {
     OpenOptions::new()

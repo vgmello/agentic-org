@@ -51,16 +51,12 @@ pub enum ErrorCode {
     /// starting or active).
     Conflict,
     /// `subscribe { from_position }` can't resume from there; take a fresh `org.snapshot`.
-    /// Also for `from_work_position` (take a fresh `work.snapshot`). The error doesn't say
-    /// which stream: a client that gave both positions takes both snapshots again.
     SnapshotRequired,
     /// The command is too old for HQ to accept (its id's time is past the dedup window).
-    /// Applies to every organization command, and to every work write (its `change_id` is
-    /// dated more than 29 days ago; see [`crate::work`]).
+    /// Applies to every organization command.
     Expired,
     /// The command's id is dated too far ahead of HQ's clock. Applies to every organization
-    /// command, and to every work write (its `change_id` is more than 5 minutes ahead of the
-    /// owning office's clock).
+    /// command.
     ClockSkew,
     /// A message or task is addressed to someone who isn't an agent or person of the
     /// organization: no member at all, an offboarded agent, or one whose status this office
@@ -68,7 +64,7 @@ pub enum ErrorCode {
     UnknownRecipient,
     /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
     /// signature failed for `office.restart`, an app-only command
-    /// (`member.set_run_mode`, `project.create`, `work.delete`) arrived on a connection that is
+    /// (`member.set_run_mode`, `project.create`) arrived on a connection that is
     /// not the app's, `msg.bind` refused a member (it fails closed), or
     /// `org.snapshot` or `subscribe` came on an office server connection that isn't bound (ADR-0003 §2.1.4;
     /// unlike `who`, which answers that with `not_bound`).
@@ -86,20 +82,19 @@ pub enum ErrorCode {
     /// recipient's office reports that the request expired.
     Timeout,
     /// A string, body, meta or note is over its size limit, in bytes (or, for a status line,
-    /// characters; see the limits in [`crate::msg`] and [`crate::directory`]), or a work write
-    /// whose encoded params exceed [`crate::work::WORK_PARAMS_MAX_BYTES`]. A number out of range
-    /// is `invalid_request` instead. Never stored as a write's answer.
+    /// characters; see the limits in [`crate::msg`] and [`crate::directory`]). A number out of
+    /// range is `invalid_request` instead. Never stored as a write's answer.
     TooLarge,
     /// The connection hasn't bound with `msg.bind` (ADR-0003: an agent bound as itself; a
     /// person or the owner acts through a grant instead), or the bound member was moved out of
-    /// this office or removed. Also ends
-    /// held `msg.wait` and `msg.ask` calls when the connection re-binds. Every work call
-    /// ([`crate::work`]) needs a bound connection. (`org.snapshot` and `subscribe` on an office server's
-    /// unbound connection are `not_authorized` instead.) Never stored as a write's answer: a retry may succeed.
+    /// this office or removed. Also ends held `msg.wait` and `msg.ask` calls when the connection
+    /// re-binds. (`org.snapshot` and `subscribe` on an office server's unbound connection are
+    /// `not_authorized` instead.) Never stored as a write's answer: a retry may succeed.
     NotBound,
-    /// `task.set_status { done }` (or a bug's mark-fixed) while required checklist steps are
-    /// unticked and no `anyway_reason` is given; the message names the steps. Clients branch on
-    /// it ("Mark done anyway…"). A build that doesn't know it reads it as [`ErrorCode::Unknown`].
+    /// A task was to be completed while required checklist steps are unticked and no reason to
+    /// complete it anyway was given; the message names the steps. Clients branch on it ("Mark
+    /// done anyway…"). The retired phase-1 `task.set_status` answered it; the web gateway still
+    /// maps it. A build that doesn't know it reads it as [`ErrorCode::Unknown`].
     ChecklistIncomplete,
     /// `hello` offered no version this server speaks, or a connection that needs a v2
     /// `hello` didn't start with one (X-02 §3). The server closes the connection after it and

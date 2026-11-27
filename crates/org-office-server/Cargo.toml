@@ -24,7 +24,6 @@ org-git = { path = "../org-git" }
 org-copilot = { path = "../org-copilot" }
 # The writer custody contract the office's store calls, implemented over the host channel.
 org-store = { path = "../org-store" }
-org-work = { path = "../org-work" }
 org-mailbox = { path = "../org-mailbox" }
 org-office-launch = { path = "../org-office-launch" }
 org-office-sessions = { path = "../org-office-sessions" }

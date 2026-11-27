@@ -13,7 +13,7 @@ import type {
 	WorkItemSummary
 } from '$lib/proto';
 import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
-import type { StoredTask, WorkCall, WorkContext, WorkState } from './engine';
+import type { StoredTask, WorkCall, WorkContext, WorkState } from './types';
 import {
 	emptyCounts,
 	fail,

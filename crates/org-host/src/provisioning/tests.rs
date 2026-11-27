@@ -135,7 +135,7 @@ fn offices_in(
 #[test]
 fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_missing_key() {
     let instance = crate::ids::uuid_v7().unwrap();
-    let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (dir, auth, _) = crate::authentication::tests::fixture_for(&instance);
     let root = dir.path().canonicalize().unwrap();
     let (db, custody) = auth.provisioning_storage();
     let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
@@ -222,7 +222,7 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
 fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_completes() {
     use crate::supervisor::tests::write_create_server;
     let instance = crate::ids::uuid_v7().unwrap();
-    let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (dir, auth, _) = crate::authentication::tests::fixture_for(&instance);
     let root = dir.path().canonicalize().unwrap();
     let (db, custody) = auth.provisioning_storage();
     let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
@@ -435,7 +435,7 @@ fn pending_registry_init(instance: &str) -> crate::hostdb::HostDbInit {
 }
 fn seed_owner(db: &HostDb) {
     let account = crate::ids::generate().unwrap();
-    let verifier = crate::service::authentication::hash_password(
+    let verifier = crate::authentication::hash_password(
         &org_host_control::Password::new("synthetic pending recovery password".into()).unwrap(),
     )
     .unwrap();
@@ -552,7 +552,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
     use sha2::{Digest, Sha256};
     for keep_marker in [false, true] {
         let instance = crate::ids::uuid_v7().unwrap();
-        let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+        let (dir, auth, _) = crate::authentication::tests::fixture_for(&instance);
         let root = dir.path().canonicalize().unwrap();
         let (db, custody) = auth.provisioning_storage();
         let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
@@ -647,7 +647,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
 #[test]
 fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
     let instance = crate::ids::uuid_v7().unwrap();
-    let (_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (_root, auth, _) = crate::authentication::tests::fixture_for(&instance);
     let (db, _) = auth.provisioning_storage();
     let actor = account(&db);
     let p = params();
@@ -729,7 +729,7 @@ fn actual_selected_hq_creation_and_exact_retry() {
     use std::time::{Duration, Instant};
     let binary = std::env::var_os("ORG_TEST_OFFICE_BIN").expect("explicit built office binary");
     let instance = crate::ids::uuid_v7().unwrap();
-    let (_account_root, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (_account_root, auth, _) = crate::authentication::tests::fixture_for(&instance);
     let (db, custody) = auth.provisioning_storage();
     let dir =
         tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();

@@ -17,11 +17,11 @@ use org_host_control::listen::ListenMode;
 use org_host_control::ops::{OrgCreate, OrgList, OrgOperationLookup, SessionLocal};
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
-use super::authentication::Authentication;
-use super::listener::Connection;
 use super::reply::{not_authorized, ok, secret_response};
 use super::session_office::authorize_session_first;
 use super::Service;
+use crate::authentication::Authentication;
+use crate::control_listener::Connection;
 
 pub(super) fn is_native_org_or_local_session(request: &Request) -> bool {
     request.is::<SessionLocal>()
@@ -198,8 +198,8 @@ mod tests {
 
     use crate::accounts::rules::Username;
     use crate::provisioning::{Hq, Provisioning};
-    use crate::service::{authentication::hash_password, listener, tests as service_tests};
     use crate::writer::Writers;
+    use crate::{authentication::hash_password, control_listener, service::tests as service_tests};
 
     struct InstantHq(Mutex<std::collections::BTreeMap<String, org_proto::Organization>>);
 
@@ -303,7 +303,7 @@ mod tests {
         );
         db.init_local_authless_if_empty(10_500).unwrap().unwrap();
         let auth = Arc::new(
-            crate::service::authentication::Authentication::open(
+            crate::authentication::Authentication::open(
                 &office_home,
                 Arc::clone(&custody),
                 &instance,
@@ -363,8 +363,8 @@ mod tests {
     fn session_local_and_native_org_ops_work_in_authless_http_and_fail_closed_when_auth_enabled() {
         let (_home, _state, _keys, db, offices, service) = authless_service(false);
         let (host_stream, peer_stream) = UnixStream::pair().unwrap();
-        let handler = Arc::clone(&service) as Arc<dyn listener::Handler>;
-        let _local = listener::LocalConnection::start(host_stream, handler).unwrap();
+        let handler = Arc::clone(&service) as Arc<dyn control_listener::Handler>;
+        let _local = control_listener::LocalConnection::start(host_stream, handler).unwrap();
         peer_stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
@@ -523,7 +523,7 @@ mod tests {
         // HTTPS instance refuses session.local even if local_authless_account exists.
         let (_home, _state, _keys, _db, offices_tls, tls_service) = authless_service(true);
         let (host_stream, peer_stream) = UnixStream::pair().unwrap();
-        let _local = listener::LocalConnection::start(host_stream, tls_service).unwrap();
+        let _local = control_listener::LocalConnection::start(host_stream, tls_service).unwrap();
         peer_stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
@@ -605,7 +605,7 @@ mod tests {
             service_i.instance = Some(Arc::new(handle));
             let (host_stream, peer_stream) = UnixStream::pair().unwrap();
             let _local =
-                listener::LocalConnection::start(host_stream, Arc::new(service_i)).unwrap();
+                control_listener::LocalConnection::start(host_stream, Arc::new(service_i)).unwrap();
             peer_stream
                 .set_read_timeout(Some(Duration::from_secs(10)))
                 .unwrap();

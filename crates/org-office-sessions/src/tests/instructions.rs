@@ -2,7 +2,10 @@
 //! plans' shared prefix, identity by name, the Day-1 guides, and office deny globs.
 
 use org_agent_runtime::{AgentIdentity, AgentName, PermissionPolicy, SandboxSpec, SessionKind};
-use org_process::{find_builtin_skill, list_builtin_skills, CORE_RULES, HR_LEAD, MANAGED_SESSION};
+use org_process::{
+    find_builtin_skill, list_builtin_skills, CHIEF_OF_STAFF_GUIDANCE, CORE_RULES, HR_LEAD,
+    MANAGED_SESSION,
+};
 use org_proto::org::{Member, OrgSnapshot, Position, Team};
 
 use super::*;
@@ -45,6 +48,7 @@ fn input<'a>(
         agent_instructions: prompt,
         repository_instructions: Some("REPO_SENTINEL: run the checks."),
         is_hr_lead: false,
+        is_chief_of_staff: false,
         private_home: "/tmp/agent/home",
         workspace: "/tmp/agent/home",
         permission_preset: "workspace_edits",
@@ -85,6 +89,62 @@ fn built_in_text_stays_within_budget_and_every_cited_command_holds_against_the_l
     let assembled = assemble_standing_instructions(&hr, &table).instructions;
     assert!(assembled.contains(HR_LEAD.trim_end()));
     let problems = verify_command_references(&assembled, &table);
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Tess's duties are Part 5 (`TASK-80.1`, `AX-11`): Parts 1 and 2 (built-in rules and the
+/// grouped catalogue) stay byte-identical to every other agent's, so her prompt shares the
+/// runtime's cache with theirs; every command her guidance cites holds against the live table.
+#[test]
+fn the_chief_of_staff_gets_her_duties_in_part_five_after_the_shared_prefix() {
+    let table = live_table();
+    let team = placement("Example");
+    let regular =
+        assemble_standing_instructions(&input("ada", &team, None, "Small diffs."), &table)
+            .instructions;
+    let mut tess = input("tess", &team, None, "");
+    tess.role_name = None;
+    tess.role_instructions = None;
+    tess.is_chief_of_staff = true;
+    tess.permission_preset = "operator_sandboxed";
+    let tess = assemble_standing_instructions(&tess, &table).instructions;
+
+    let shared = format!(
+        "{}\n\n{}",
+        builtin_instructions(),
+        table.catalogue().trim_end()
+    );
+    assert!(regular.starts_with(&shared), "a regular agent's Parts 1-2");
+    assert!(tess.starts_with(&shared), "Tess's Parts 1-2");
+    assert!(common_prefix_len(&regular, &tess) >= shared.len());
+    // The cache: a new partition's first turn reuses Parts 1-2 from every other agent's
+    // sessions; each later turn reuses her whole standing prompt. Over a partition's life
+    // (it rotates after `ROTATE_AFTER_TURNS` turns) at least 80% of her standing prompt is a
+    // cache hit, and her own part never outweighs the shared one.
+    let first = shared.len() as f64 / tess.len() as f64;
+    assert!(
+        first >= 0.6,
+        "Parts 1-2 are {:.0}% of her first turn",
+        first * 100.0
+    );
+    let turns = f64::from(crate::partition::ROTATE_AFTER_TURNS);
+    let lifetime = (first + (turns - 1.0)) / turns;
+    assert!(lifetime >= 0.8, "{:.0}% over a partition", lifetime * 100.0);
+    // Part 5: after her identity, before her own prompt; nobody else gets it.
+    let duties = CHIEF_OF_STAFF_GUIDANCE.trim_end();
+    let at = tess.find(duties).expect("her duties");
+    assert!(at > tess.find("# Who you are").expect("identity"));
+    assert!(
+        at < tess
+            .find("## Isolation and boundaries")
+            .expect("boundaries")
+    );
+    assert!(!regular.contains(duties));
+    assert!(!tess.contains(HR_LEAD.trim_end()));
+    assert!(tess.contains("Permission preset: operator_sandboxed"));
+    let problems = verify_command_references(&tess, &table);
+    assert!(problems.is_empty(), "{problems:#?}");
+    let problems = verify_command_references(CHIEF_OF_STAFF_GUIDANCE, &table);
     assert!(problems.is_empty(), "{problems:#?}");
 }
 
@@ -319,6 +379,7 @@ fn planned_prompt(
         },
         mcp_servers: Default::default(),
         tools: None,
+        operator_shell_prefixes: Vec::new(),
     };
     let ctx = LaunchContext {
         runtime_path: PathBuf::from("/bin/true"),

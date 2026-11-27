@@ -461,6 +461,11 @@ impl LiveOfficeNode {
         }
     }
 
+    /// Wakes this satellite node's sync loop at once.
+    pub(super) fn notify_sat_sync(&self) {
+        self.sat_wake.notify();
+    }
+
     pub(super) fn hq_fed_addr(&self) -> String {
         self.hq_fed
             .as_ref()
@@ -509,6 +514,7 @@ impl LiveOfficeNode {
                 &run_id,
                 "sess-a2a-e2e",
                 std::process::id() as libc::pid_t,
+                None,
             )
             .unwrap()
             .expose_token()
@@ -684,7 +690,7 @@ pub(super) fn hire_agent_at(
     }
 }
 
-fn sat_custody(org_id: &str, sat_office_id: &str, inc_suffix: u8) -> Custody {
+pub(super) fn sat_custody(org_id: &str, sat_office_id: &str, inc_suffix: u8) -> Custody {
     Custody {
         identity: OfficeIdentity {
             instance_id: Id::parse(&format!(

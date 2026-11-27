@@ -94,9 +94,28 @@ function rerenderList(root, focusId) {
   el.outerHTML = chatListHtml(root.dataset.ch, open);
   document.getElementById(focusId)?.focus();
 }
+/* While the recipient picker is open, the message has no destination yet: the conversation behind it steps back
+   (inert, its composer suspended) and the main pane says "Choose a recipient" until a choice or Cancel. */
+function syncPicking(root) {
+  const main = root.querySelector(".chmain");
+  if (!main) return;
+  const on = list.picker && Boolean(CH[root.dataset.ch]);
+  root.classList.toggle("is-picking", on);
+  main.querySelector(":scope > .chat-picking")?.remove();
+  for (const el of main.children) el.inert = on;
+  if (!on) return;
+  const from = chatTitle(CH[root.dataset.ch]);
+  main.insertAdjacentHTML("afterbegin", `<div class="chat-picking" role="status">
+      <span class="chat-picking-ic">${ic("pencil", "ic20")}</span>
+      <h2 class="chat-picking-t">Choose a recipient</h2>
+      <p class="chat-picking-p">Pick a person or agent under <b>To</b> to start a direct message. Messages to ${esc(from)} are paused until you choose or cancel.</p>
+      <button class="btn ghost sm" type="button" data-act="chat-new-cancel">Cancel new message</button>
+    </div>`);
+}
 function setPicker(root, on) {
   Object.assign(list, { picker: on, to: "" });
   rerenderList(root, on ? "chat-to" : "chat-new");
+  syncPicking(root);
 }
 /* Opens the DM with the composer focused. When that DM is already open the hash would not change, so the
    caller closes the picker and drawer in place ("same-conversation"). */
@@ -200,6 +219,7 @@ export {
   onListInput,
   onListKeydown,
   prepareList,
+  syncPicking,
   takeListFocus,
   unreadDot,
 };

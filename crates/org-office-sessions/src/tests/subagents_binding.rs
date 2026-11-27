@@ -75,7 +75,9 @@ fn subagents_enforce_tool_subset_usage_attribution_and_reaping() {
 fn run_binding_enforces_token_descendant_and_revocation() {
     let reg = RunBindingRegistry::new();
     let self_pid = std::process::id() as libc::pid_t;
-    let binding = reg.issue("emp-1", "run-1", "sess-1", self_pid).unwrap();
+    let binding = reg
+        .issue("emp-1", "run-1", "sess-1", self_pid, None)
+        .unwrap();
     assert!(!format!("{binding:?}").contains(binding.expose_token()));
 
     // Missing token -> refused

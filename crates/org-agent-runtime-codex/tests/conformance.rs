@@ -73,6 +73,7 @@ fn sample_spec() -> SessionSpec {
         },
         mcp_servers,
         tools: None,
+        operator_shell_prefixes: Vec::new(),
     }
 }
 

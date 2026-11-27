@@ -5,8 +5,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::{
-    list_builtin_skills, BUILTIN_INSTRUCTIONS_MAX_BYTES, BUILTIN_PROMPTS, CORE_RULES,
-    CORE_RULES_MAX_BYTES, HR_LEAD, MANAGED_SESSION, SKILL_MAX_BYTES,
+    list_builtin_skills, BUILTIN_INSTRUCTIONS_MAX_BYTES, BUILTIN_PROMPTS, CHIEF_OF_STAFF_GUIDANCE,
+    CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES, CORE_RULES, CORE_RULES_MAX_BYTES, HR_LEAD, MANAGED_SESSION,
+    SKILL_MAX_BYTES,
 };
 
 /// Body-only Markdown: no carriage return, byte order mark, Unicode line or paragraph separator,
@@ -111,11 +112,57 @@ fn built_in_standing_text_stays_within_its_budgets() {
         "core-rules.md is {} bytes; the limit is {CORE_RULES_MAX_BYTES}",
         CORE_RULES.len()
     );
-    let total = CORE_RULES.len() + MANAGED_SESSION.len() + HR_LEAD.len();
+    // An agent gets the shared text and at most one built-in's duties.
+    let duties = HR_LEAD.len().max(CHIEF_OF_STAFF_GUIDANCE.len());
+    let total = CORE_RULES.len() + MANAGED_SESSION.len() + duties;
     assert!(
         total <= BUILTIN_INSTRUCTIONS_MAX_BYTES,
         "built-in standing text is {total} bytes; the limit is {BUILTIN_INSTRUCTIONS_MAX_BYTES}"
     );
+}
+
+#[test]
+fn the_chief_of_staff_guidance_fits_two_kib_and_covers_her_contract() {
+    // UTF-8 bytes, not characters.
+    assert!(
+        CHIEF_OF_STAFF_GUIDANCE.len() <= CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES,
+        "chief-of-staff-guidance.md is {} bytes; the limit is {CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES}",
+        CHIEF_OF_STAFF_GUIDANCE.len()
+    );
+    assert_eq!(CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES, 2_048);
+    for needle in [
+        "Chief of Staff",
+        "calm, brief executive voice",
+        "Each turn acts for one member",
+        "never route around it",
+        "Never change anything silently",
+        "`agent-os session attach`",
+        "### Topic index",
+        "Never spell out an expansion of your name",
+    ] {
+        assert!(
+            CHIEF_OF_STAFF_GUIDANCE.contains(needle),
+            "chief-of-staff-guidance.md lost {needle:?}"
+        );
+    }
+    // Her name's expansion lives in her profile alone, never in what she is told to say.
+    for word in ["Tactical", "Squad", "Supervisor"] {
+        assert!(!CHIEF_OF_STAFF_GUIDANCE.contains(word), "{word}");
+    }
+    // The topic index is short: about 350 bytes.
+    let index = CHIEF_OF_STAFF_GUIDANCE
+        .split("### Topic index")
+        .nth(1)
+        .expect("the topic index");
+    assert!(
+        index.len() <= 512,
+        "the topic index is {} bytes",
+        index.len()
+    );
+    // Commands of later Tess increments are not cited before they exist.
+    for unbuilt in ["suggestion create", "ui present"] {
+        assert!(!CHIEF_OF_STAFF_GUIDANCE.contains(unbuilt), "{unbuilt}");
+    }
 }
 
 #[test]

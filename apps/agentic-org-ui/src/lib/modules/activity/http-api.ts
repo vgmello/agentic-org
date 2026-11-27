@@ -22,7 +22,7 @@ import type {
 	ActivityThread
 } from './types';
 
-type Rec = Record<string, unknown>;
+import { asRec, asStr } from '$lib/platform/http/decode';
 
 interface WireConversation {
 	id: string;
@@ -54,10 +54,6 @@ export interface HttpActivityApiDeps {
 	viewerId?: (organizationId: string) => string | undefined;
 	subscribe?: (organizationId: string, onEvent: () => void) => () => void;
 }
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
 function asIso(v: unknown): string {
 	if (typeof v === 'string' && v) return v;

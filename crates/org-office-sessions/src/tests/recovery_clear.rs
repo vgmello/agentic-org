@@ -168,6 +168,7 @@ fn failover_request(
         reason,
         rate_limit_resets_at: None,
         stop_epoch,
+        partition: None,
     }
 }
 
@@ -399,6 +400,7 @@ fn pass6_unrecovered_pre_pump_handle_is_persisted_but_never_registered_while_dra
                 active_permit: handle.active_permit,
                 supports_mid_turn: false,
                 bwrap_masked_siblings: Some(std::collections::BTreeSet::new()),
+                partition: None,
             },
         );
         assert!(
@@ -479,7 +481,7 @@ fn pass2_stop_session_conflicting_with_an_in_flight_start_moves_the_epoch_withou
 {
     let (_office, mgr, _owner_id, hr_agent_id) = manager_with_hr_agent();
     mgr.bindings
-        .issue(&hr_agent_id, "run-in-flight", "sess-in-flight", 0)
+        .issue(&hr_agent_id, "run-in-flight", "sess-in-flight", 0, None)
         .unwrap();
     let tokens_before = mgr.bindings.active_tokens();
     assert_eq!(tokens_before.len(), 1);

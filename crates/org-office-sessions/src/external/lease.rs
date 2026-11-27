@@ -169,6 +169,7 @@ impl SessionManager {
             .unwrap_or_else(|p| p.into_inner())
             .find_live(&params.code, now_ms())?;
         let employee = self.require_active_agent(&target.employee_id)?;
+        super::refuse_chief_of_staff(&employee)?;
         self.authorize_external_operator(actor, &employee)?;
         let pending = self
             .external
