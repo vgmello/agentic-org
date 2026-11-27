@@ -820,17 +820,4 @@ export function isDeniedOutcome(outcome: string | undefined): boolean {
 	return lower.startsWith('denied') || lower.startsWith('declined');
 }
 
-/**
- * Splits a relative route href into its pathname and `?query`/`#hash` suffix so only the pathname
- * is passed to SvelteKit's `resolve()` (preventing bracket-syntax throws on dynamic fragments).
- */
-export function splitHref(raw: string): { pathname: string; suffix: string } {
-	const qIdx = raw.indexOf('?');
-	const hIdx = raw.indexOf('#');
-	let cut = -1;
-	if (qIdx >= 0 && hIdx >= 0) cut = Math.min(qIdx, hIdx);
-	else if (qIdx >= 0) cut = qIdx;
-	else if (hIdx >= 0) cut = hIdx;
-	if (cut < 0) return { pathname: raw || '/', suffix: '' };
-	return { pathname: raw.slice(0, cut) || '/', suffix: raw.slice(cut) };
-}
+export { splitSafeHref as splitHref } from '$lib/platform/http/safe-url';

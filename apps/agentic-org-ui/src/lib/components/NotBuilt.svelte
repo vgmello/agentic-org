@@ -7,7 +7,7 @@
   Usage: <NotBuilt title="Inbox" area="Inbox" />  ·  <NotBuilt title="Offices" place="Offices" area="Organization settings" />
 -->
 <script lang="ts">
-	import { pageTitle } from '$lib/nav';
+	import { pageTitle } from '$lib/page-title';
 
 	let {
 		title,

@@ -229,8 +229,8 @@
 <div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="board-live-region">
 	{announcement}
 </div>
-
 <Tooltip.Provider delayDuration={150}>
+	<!-- horizontally scrollable board region needs keyboard focus -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
 		class="work-board-scroll"
@@ -284,7 +284,6 @@
 							</button>
 						{/if}
 					</div>
-
 					{#if col.rows.length === 0}
 						<p class="px-1 py-4 text-xs/5 text-fg-muted">
 							{col.column === 'done' && col.hiddenDone > 0
@@ -295,6 +294,7 @@
 						<ul role="list" aria-labelledby="{uid}-col-{col.column}" class="flex flex-col gap-2.5">
 							{#each col.rows as row (row.id)}
 								{@const priSig = prioritySignal(row.priority)}
+								<!-- card keyboard focus and drag-and-drop paired with keyboard status menu -->
 								<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 								<li
