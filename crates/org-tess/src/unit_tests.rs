@@ -142,3 +142,56 @@ fn apply_transport_forbids_privileged_and_recursive_methods() {
         "tasks.create"
     ));
 }
+
+#[test]
+fn apply_translator_covers_every_eligible_confirm_required_command() {
+    let table = org_command_catalogue::table();
+    let mut covered = 0usize;
+    for row in table.rows() {
+        if table.mutation_policy(row) != org_command_catalogue::MutationPolicy::ConfirmRequired {
+            continue;
+        }
+        if !crate::preflight::ALLOWED_SUGGESTION_CALLS.contains(&row.call) {
+            continue;
+        }
+        let input: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(row.example.input).unwrap_or_else(|e| {
+                panic!(
+                    "example input for `{}` is not a JSON object: {e}",
+                    row.name()
+                )
+            });
+        let rev = (row.if_match() != org_command_catalogue::IfMatch::No).then_some(1);
+        let mut seq = 0u64;
+        let mut next_id = || {
+            seq += 1;
+            format!("0193a5c0-0000-7000-8000-{seq:012x}")
+        };
+        let prepared =
+            crate::apply::prepare_apply_rpc(&mut next_id, row.resource, row.verb, &input, rev)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "eligible ConfirmRequired command `{}` (call `{}`) missing from org-tess apply translator",
+                        row.name(),
+                        row.call
+                    )
+                })
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "example input for `{}` failed apply translation: {e:?}",
+                        row.name()
+                    )
+                });
+        assert!(
+            crate::apply::is_permitted_apply_call(prepared.method, row.call, prepared.method),
+            "`{}` translated to forbidden RPC `{}`",
+            row.name(),
+            prepared.method
+        );
+        covered += 1;
+    }
+    assert!(
+        covered >= 45,
+        "expected >= 45 eligible ConfirmRequired commands covered, got {covered}"
+    );
+}

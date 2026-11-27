@@ -1,6 +1,6 @@
-//! Handlers and command rows for `agent-os file upload|list|inspect|fetch|update` (`TASK-98.4`).
+//! Handlers for `agent-os file upload|list|inspect|fetch|update` (`TASK-98.4`).
 
-use org_command::{Ack, Answer, Command, Example, IfMatch, Kind, Refusal, Request};
+use org_command::{Answer, Refusal, Request};
 use org_proto::attachments::{
     ArtifactStatus, AttachmentAttach, AttachmentAttachParams, AttachmentInspect,
     AttachmentInspectParams, AttachmentList, AttachmentListParams, AttachmentListResult,
@@ -12,11 +12,6 @@ use org_proto::tasks::{TaskInspectResult, TasksInspect, TasksInspectParams};
 use org_proto::{Call, ErrorCode};
 use serde_json::{json, Value};
 
-use super::schema::{
-    FILE_EXAMPLE_JSON, FILE_FETCH_INPUT, FILE_FETCH_OUTPUT, FILE_FIELDS, FILE_ID_INPUT,
-    FILE_LIST_INPUT, FILE_RENDER_EXAMPLE_JSON, FILE_RENDER_INPUT, FILE_RENDER_OUTPUT,
-    FILE_UPDATE_INPUT, FILE_UPLOAD_INPUT, READ_ERRORS, WRITE_ERRORS,
-};
 use crate::runtime::domain::CommandCue;
 use crate::runtime::file_guard::FileRoots;
 use crate::runtime::file_transfer::{
@@ -26,109 +21,6 @@ use crate::runtime::input::{
     command_id, decode_err, opt_string, reject_dry_run, require_str, write_answer,
 };
 use crate::runtime::transport::OfficeTransport;
-
-/// The five `file` commands (zero positional arguments, concise summaries for catalogue budget).
-pub(super) const COMMANDS: &[Command] = &[
-    Command {
-        resource: "file",
-        verb: "upload",
-        summary: "Upload and attach a file",
-        call: "attachment.attach",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: FILE_UPLOAD_INPUT,
-        content_field: None,
-        output: FILE_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"path":"spec.md","scope":"org","title":"Spec"}"#,
-            output: FILE_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "file",
-        verb: "list",
-        summary: "List files in a scope",
-        call: "attachment.list",
-        kind: Kind::List,
-        input: FILE_LIST_INPUT,
-        content_field: None,
-        output: FILE_FIELDS,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"scope":"org"}"#,
-            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000500","scope":"shared","target_kind":"organization","filename":"spec.md","mime_type":"text/markdown","byte_count":42,"title":"Spec","artifact_status":"final","uploaded_by_employee_id":"0193a5c0-0000-7000-8000-000000000020","created_at":"2026-11-27T00:00:00.000Z","updated_at":"2026-11-27T00:00:00.000Z","content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]"#,
-        },
-    },
-    Command {
-        resource: "file",
-        verb: "inspect",
-        summary: "Inspect file metadata",
-        call: "attachment.inspect",
-        kind: Kind::Read,
-        input: FILE_ID_INPUT,
-        content_field: None,
-        output: FILE_FIELDS,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000500"}"#,
-            output: FILE_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "file",
-        verb: "fetch",
-        summary: "Download a file locally",
-        call: "attachment.read_chunk",
-        kind: Kind::Read,
-        input: FILE_FETCH_INPUT,
-        content_field: None,
-        output: FILE_FETCH_OUTPUT,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000500","output":"spec.md"}"#,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000500","output":"spec.md","byte_count":42,"content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#,
-        },
-    },
-    Command {
-        resource: "file",
-        verb: "update",
-        summary: "Update file metadata",
-        call: "attachment.update_meta",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: FILE_UPDATE_INPUT,
-        content_field: None,
-        output: FILE_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000500","title":"Final spec","status":"final"}"#,
-            output: FILE_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "file",
-        verb: "render",
-        summary: "Render Markdown/HTML to PDF",
-        call: "attachment.render",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: FILE_RENDER_INPUT,
-        content_field: None,
-        output: FILE_RENDER_OUTPUT,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"from":"report.md","to":"pdf","scope":"org","title":"Report"}"#,
-            output: FILE_RENDER_EXAMPLE_JSON,
-        },
-    },
-];
 
 /// `Use when:` guidance for every `file` verb.
 pub(super) const CUES: &[CommandCue] = &[

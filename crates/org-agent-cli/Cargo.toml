@@ -10,6 +10,7 @@ publish.workspace = true
 base64.workspace = true
 org-client = { path = "../org-client" }
 org-command = { path = "../org-command" }
+org-command-catalogue = { path = "../org-command-catalogue" }
 org-media = { path = "../org-media" }
 org-platform = { path = "../org-platform" }
 org-proto = { path = "../org-proto" }

@@ -1,49 +1,12 @@
 //! `member set-hiring`: granting or revoking an employee's right to hire agents.
 
-use org_command::{Ack, Answer, Command, Example, Field, IfMatch, Kind, Request, Type};
+use org_command::{Answer, Request};
 use org_proto::ErrorCode;
 use serde_json::{json, Map};
 
-use super::schema::WRITE_ERRORS;
 use crate::runtime::domain::CommandCue;
-use crate::runtime::input::{
-    opt_bool, require_if_match, require_str, send_entity_write, ENTITY_OP_OUTPUT,
-};
+use crate::runtime::input::{opt_bool, require_if_match, require_str, send_entity_write};
 use crate::runtime::transport::{OfficeTransport, Refusal};
-
-const MEMBER_SET_MAY_HIRE_INPUT: &[Field] = &[
-    Field::required("member", Type::String, "Employee UUIDv7"),
-    Field::optional(
-        "allow",
-        Type::Boolean,
-        "Grant the right to hire agents (give this or --revoke)",
-    ),
-    Field::optional(
-        "revoke",
-        Type::Boolean,
-        "Take the right to hire agents away (give this or --allow)",
-    ),
-];
-
-/// The `member` rows.
-pub(super) const COMMANDS: &[Command] = &[Command {
-    resource: "member",
-    verb: "set-hiring",
-    summary: "Grant or revoke hiring authority",
-    call: "member.set_may_hire",
-    kind: Kind::Write {
-        ack: Ack::Durable,
-        if_match: IfMatch::Required,
-    },
-    input: MEMBER_SET_MAY_HIRE_INPUT,
-    content_field: None,
-    output: ENTITY_OP_OUTPUT,
-    errors: WRITE_ERRORS,
-    example: Example {
-        input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051","allow":true}"#,
-        output: r#"{"id":"0193a5c0-0000-7000-8000-000000000051","revision":7,"generation":11}"#,
-    },
-}];
 
 /// `Use when:` guidance of each `member` command.
 pub(super) const CUES: &[CommandCue] = &[

@@ -6,7 +6,6 @@
 
 mod handlers;
 mod render;
-mod schema;
 #[cfg(test)]
 mod tests;
 
@@ -19,7 +18,7 @@ pub(crate) use render::rewrite_render_args;
 
 /// The `file` vertical slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[handlers::COMMANDS],
+    commands: org_command_catalogue::files::ALL,
     resources: &[(
         "file",
         "uploading, rendering to PDF, listing, inspecting, fetching, and updating org, project, task, or private files.",

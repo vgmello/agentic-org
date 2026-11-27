@@ -14,11 +14,46 @@ use org_proto::{Call, ErrorCode};
 use serde_json::{json, Map, Value};
 
 use super::{cmd_id, unreadable};
+use crate::runtime::domain::CommandCue;
 use crate::runtime::input::{
     entity_id, is_set, opt_bool, opt_str_list, opt_string, opt_u64, require_if_match, require_str,
     write_answer,
 };
 use crate::runtime::transport::OfficeTransport;
+
+/// `Use when:` guidance of each `checklist` command.
+pub(super) const CUES: &[CommandCue] = &[
+    (
+        "checklist",
+        "add",
+        "appending one or more steps (repeat `--text`, optional `--section`) to a task's checklist.",
+    ),
+    (
+        "checklist",
+        "check",
+        "marking checklist step(s) done (or `--undone`) by `--step-id` or `--section` + `--index` with `--if-match`.",
+    ),
+    (
+        "checklist",
+        "edit",
+        "updating a step's wording or `--required`/`--optional` flag by `--step-id` or `--section` + `--index` with `--if-match`.",
+    ),
+    (
+        "checklist",
+        "list",
+        "listing checklist progress and 1-based ordinals (filter with `--section` or `--unchecked`) without fetching task body or history.",
+    ),
+    (
+        "checklist",
+        "move",
+        "reordering a checklist step to a zero-based `--position` (or `--to-section`) by `--step-id` or `--section` + `--index` with `--if-match`.",
+    ),
+    (
+        "checklist",
+        "remove",
+        "deleting an obsolete checklist step by `--step-id` or `--section` + `--index` with `--if-match`.",
+    ),
+];
 
 pub(super) fn try_checklist<T: OfficeTransport + ?Sized>(
     transport: &mut T,

@@ -8,7 +8,7 @@ mod person;
 mod schema;
 mod team;
 
-use org_command::{Alias, Answer, CommandTable, Request};
+use org_command::{Answer, CommandTable, Request};
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
@@ -18,13 +18,7 @@ use crate::runtime::transport::{OfficeTransport, Refusal};
 
 /// The organization slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[
-        org::COMMANDS,
-        team::COMMANDS,
-        person::COMMANDS,
-        directory::COMMANDS,
-        member::COMMANDS,
-    ],
+    commands: org_command_catalogue::organization::ALL,
     resources: &[
         ("directory", "listing active people and agents with handles, roles, and live presence (shorthand: `who`)."),
         ("member", "granting or revoking an employee's `may_hire` permission."),
@@ -35,9 +29,6 @@ pub(crate) const DOMAIN: Domain = Domain {
     cues: &[org::CUES, team::CUES, person::CUES, directory::CUES, member::CUES],
     dispatch,
 };
-
-/// `who` is `directory list`.
-pub(crate) const WHO_ALIAS: Alias = directory::WHO_ALIAS;
 
 fn dispatch(
     transport: &mut dyn OfficeTransport,

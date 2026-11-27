@@ -246,7 +246,7 @@ impl LocalUnixFrameReader {
 }
 
 /// Opaque local Unix stream received via host SCM_RIGHTS transfer for one office channel.
-pub struct LocalUnixOfficeStream {
+pub(crate) struct LocalUnixOfficeStream {
     stream: LocalStream,
 }
 

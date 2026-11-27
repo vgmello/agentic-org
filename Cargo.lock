@@ -54,7 +54,6 @@ version = "0.0.0"
 dependencies = [
  "hmac",
  "libc",
- "org-agent-cli",
  "org-agent-runtime",
  "org-agent-runtime-agy",
  "org-agent-runtime-claude",
@@ -1203,6 +1202,7 @@ dependencies = [
  "base64",
  "org-client",
  "org-command",
+ "org-command-catalogue",
  "org-media",
  "org-platform",
  "org-proto",
@@ -1309,6 +1309,15 @@ version = "0.0.0"
 dependencies = [
  "org-command",
  "org-docs",
+ "org-proto",
+ "serde_json",
+]
+
+[[package]]
+name = "org-command-catalogue"
+version = "0.0.0"
+dependencies = [
+ "org-command",
  "org-proto",
  "serde_json",
 ]
@@ -1461,6 +1470,7 @@ dependencies = [
  "org-agent-cli",
  "org-agent-runtime",
  "org-client",
+ "org-command-catalogue",
  "org-copilot",
  "org-doc-render",
  "org-git",
@@ -1499,6 +1509,7 @@ dependencies = [
  "org-agent-runtime-claude",
  "org-agent-runtime-codex",
  "org-command",
+ "org-command-catalogue",
  "org-office",
  "org-pki",
  "org-platform",
@@ -1646,7 +1657,7 @@ dependencies = [
 name = "org-tess"
 version = "0.0.0"
 dependencies = [
- "org-agent-cli",
+ "org-command-catalogue",
  "org-office",
  "org-proto",
  "serde_json",

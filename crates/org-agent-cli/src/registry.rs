@@ -1,15 +1,12 @@
-//! The one composition point of `agent-os`: every feature slice's rows, shorthands, guidance and
-//! dispatch, assembled into the shared `org-command` table (B2.4 / B3, `doc-28` §3.2), its help,
+//! The one composition point of `agent-os`: wires every feature slice's guidance and dispatch
+//! onto the declarative [`org_command_catalogue`] table (B2.4 / B3, `doc-28` §3.2), its help,
 //! and the [`Office`] the table runs against. No slice names another slice or this module.
 
 use std::borrow::Cow;
 use std::io::{BufRead, Write};
-use std::sync::OnceLock;
 
-use org_command::{
-    Alias, Answer, Command, CommandTable, MutationPolicy, Office, Output, PolicyOverride, Refusal,
-    Request,
-};
+use org_command::{Answer, Office, Output, Refusal, Request};
+pub use org_command_catalogue::{catalogue_table, runtime_table, table};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
@@ -38,102 +35,6 @@ const DOMAINS: &[Domain] = &[
     tess::DOMAIN,
 ];
 
-/// Declarative mutation-policy overrides on top of `Command::mutation_policy()` defaults
-/// (`Read`/`List` -> `ReadOnly`, `Write` -> `ConfirmRequired`).
-///
-/// Enforced server-side by `org-office-server` when the Chief of Staff acts on behalf of a human
-/// caller (`TASK-80.4`): `AutoSafe` actions run directly; `ConfirmRequired` mutations require a
-/// preflighted `agent-os suggestion create` proposal; `ForbiddenForAgent` calls are always denied.
-const POLICY_OVERRIDES: &[PolicyOverride] = &[
-    // AutoSafe: proposal & UI presentation helpers, caller 1:1 DM reply (enforced server-side),
-    // status line, private task notes.
-    PolicyOverride {
-        resource: "suggestion",
-        verb: "create",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "suggestion",
-        verb: "withdraw",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "ui",
-        verb: "present",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "status",
-        verb: "set",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "status",
-        verb: "clear",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "task-note",
-        verb: "add",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "task-note",
-        verb: "update",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "task-note",
-        verb: "remove",
-        policy: MutationPolicy::AutoSafe,
-    },
-    PolicyOverride {
-        resource: "msg",
-        verb: "reply",
-        policy: MutationPolicy::AutoSafe,
-    },
-    // ForbiddenForAgent: security/governance boundaries no agent may ever execute directly.
-    PolicyOverride {
-        resource: "repo",
-        verb: "push",
-        policy: MutationPolicy::ForbiddenForAgent,
-    },
-    PolicyOverride {
-        resource: "agent",
-        verb: "execution-set",
-        policy: MutationPolicy::ForbiddenForAgent,
-    },
-    PolicyOverride {
-        resource: "agent",
-        verb: "approve",
-        policy: MutationPolicy::ForbiddenForAgent,
-    },
-    PolicyOverride {
-        resource: "agent",
-        verb: "revoke",
-        policy: MutationPolicy::ForbiddenForAgent,
-    },
-    PolicyOverride {
-        resource: "agent",
-        verb: "sessions",
-        policy: MutationPolicy::ForbiddenForAgent,
-    },
-    PolicyOverride {
-        resource: "member",
-        verb: "set-hiring",
-        policy: MutationPolicy::ForbiddenForAgent,
-    },
-];
-
-/// Every shorthand, in the order the catalogue lists them. The table rewrites them before it
-/// reads any line, so a shorthand is the same command for a call, its `--help` and `--schema`,
-/// every line of `session attach`, and the drift guard of the built-in text.
-const ALIASES: &[Alias] = &[
-    session::CONTEXT_ALIAS,
-    work::TASK_NOTE_ALIAS,
-    organization::WHO_ALIAS,
-];
-
 /// What the help text adds to `org-command`'s: every slice's guidance, `session attach`, and the
 /// sign-in verbs outside the table.
 const GUIDANCE: Guidance = Guidance {
@@ -146,43 +47,6 @@ const GUIDANCE: Guidance = Guidance {
 
 /// What `agent-os login` answers from the rest of the crate.
 const LOGIN_HOOKS: auth::LoginHooks = auth::LoginHooks { briefing };
-
-/// Every slice's rows: the one list both tables below are built from.
-fn rows() -> Vec<&'static [Command]> {
-    DOMAINS
-        .iter()
-        .flat_map(|domain| domain.commands.iter().copied())
-        .collect()
-}
-
-/// Builds and validates the shared organization/project/HR/session/messaging command table:
-/// every row's names, fields and example are checked. For the contract tests; a running
-/// command uses [`runtime_table`].
-pub fn table() -> CommandTable {
-    CommandTable::new(&rows())
-        .expect("agent-os command table is valid")
-        .with_aliases(ALIASES)
-        .with_policies(POLICY_OVERRIDES)
-}
-
-/// The same rows for a running command, built once per process and without the checks:
-/// `agent-os` does nothing before its call that the call does not need (`doc-28` §2.11,
-/// `doc-7` #18), and [`table`]'s contract tests are what make skipping the checks safe.
-pub fn runtime_table() -> &'static CommandTable {
-    static TABLE: OnceLock<CommandTable> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        CommandTable::unchecked(&rows())
-            .with_aliases(ALIASES)
-            .with_policies(POLICY_OVERRIDES)
-    })
-}
-
-/// The [`runtime_table`] by value, for a composition root that takes a table builder (the
-/// office's standing instructions, `org_office_sessions::install_command_catalogue`): the rows
-/// unchecked, built once per process, never re-validating every example per session.
-pub fn catalogue_table() -> CommandTable {
-    runtime_table().clone()
-}
 
 /// The bound `agent-os context` briefing (with `catalogue` inside it), for `agent-os login`.
 fn briefing(transport: &mut dyn OfficeTransport) -> Result<Value, Refusal> {
@@ -228,8 +92,10 @@ fn execute(transport: &mut dyn OfficeTransport, request: &Request) -> Result<Ans
     refuse_durable(request)?;
     let table = runtime_table();
     for domain in DOMAINS {
-        if let Some(outcome) = (domain.dispatch)(transport, request, table) {
-            return outcome;
+        if domain.owns(request.command) {
+            if let Some(outcome) = (domain.dispatch)(transport, request, table) {
+                return outcome;
+            }
         }
     }
     let (resource, verb) = (request.command.resource, request.command.verb);

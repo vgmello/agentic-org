@@ -10,6 +10,7 @@ base64.workspace = true
 libc.workspace = true
 org-agent-runtime = { path = "../org-agent-runtime" }
 org-command = { path = "../org-command" }
+org-command-catalogue = { path = "../org-command-catalogue" }
 org-office = { path = "../org-office" }
 org-pki = { path = "../org-pki" }
 org-platform = { path = "../org-platform" }

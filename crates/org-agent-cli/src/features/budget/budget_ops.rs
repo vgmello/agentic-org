@@ -1,6 +1,6 @@
 //! Budget read commands: `budget status`, `budget list`, and `budget inspect`.
 
-use org_command::{Answer, Command, Example, Field, Kind, Refusal, Request, Type};
+use org_command::{Answer, Refusal, Request};
 use org_proto::budgets::{
     BudgetAgentOwn, BudgetAgentOwnParams, BudgetAgentOwnResult, BudgetGet, BudgetGetParams,
     BudgetGetResult, BudgetList, BudgetListParams, BudgetListResult, BudgetPeriodKind,
@@ -9,144 +9,9 @@ use org_proto::budgets::{
 use org_proto::ErrorCode;
 use serde_json::Value;
 
-use super::BUDGET_ERRORS;
 use crate::runtime::domain::CommandCue;
 use crate::runtime::input::{call_rpc, encode, opt_str, opt_string};
 use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport};
-
-const SCOPE_ENUM: &[&str] = &["task", "agent", "release"];
-const PERIOD_ENUM: &[&str] = &["lifetime", "day", "month"];
-
-const BUDGET_VIEW_FIELDS: &[Field] = &[
-    Field::required("id", Type::String, "Budget ID"),
-    Field::required("scope_kind", Type::String, "Scope kind"),
-    Field::optional("task_id", Type::String, "Task ID for a task budget"),
-    Field::optional("agent_id", Type::String, "Agent ID for an agent budget"),
-    Field::optional(
-        "release_id",
-        Type::String,
-        "Release ID for a release budget",
-    ),
-    Field::required("period_kind", Type::String, "Period kind"),
-    Field::optional("current_revision", Type::Integer, "Policy revision"),
-    Field::required("state", Type::String, "Policy state"),
-    Field::optional("time_zone", Type::String, "IANA time zone"),
-    Field::required("state_summary", Type::String, "Budget status summary"),
-    Field::optional("hold_state", Type::String, "Execution hold state"),
-    Field::required(
-        "amounts_visible",
-        Type::Boolean,
-        "Whether amounts are visible",
-    ),
-    Field::optional("unit", Type::String, "micro_usd or tokens"),
-    Field::optional("limit_amount", Type::Integer, "Base limit amount"),
-    Field::optional("effective_limit", Type::Integer, "Effective limit"),
-    Field::optional("used_amount", Type::Integer, "Known used amount"),
-    Field::optional("remaining_amount", Type::Integer, "Remaining amount"),
-];
-
-const BUDGET_STATUS_INPUT: &[Field] = &[Field::optional(
-    "task",
-    Type::String,
-    "Current task ID or T-<CODE><N> ref",
-)];
-
-const BUDGET_STATUS_OUTPUT: &[Field] = &[
-    Field::required("agent_id", Type::String, "Bound agent ID"),
-    Field::optional(
-        "daily",
-        Type::Object(BUDGET_VIEW_FIELDS),
-        "Own daily budget",
-    ),
-    Field::optional(
-        "monthly",
-        Type::Object(BUDGET_VIEW_FIELDS),
-        "Own monthly budget",
-    ),
-    Field::optional("task", Type::Object(BUDGET_VIEW_FIELDS), "Task budget"),
-];
-
-const BUDGET_LIST_INPUT: &[Field] = &[
-    Field::optional(
-        "scope_kind",
-        Type::Enum(SCOPE_ENUM),
-        "Filter by scope: task, agent, or release",
-    ),
-    Field::optional("task", Type::String, "Filter by task ID"),
-    Field::optional("agent", Type::String, "Filter by agent employee ID"),
-    Field::optional("release", Type::String, "Filter by release ID"),
-];
-
-const BUDGET_INSPECT_INPUT: &[Field] = &[
-    Field::optional("budget", Type::String, "Budget UUIDv7"),
-    Field::optional(
-        "scope_kind",
-        Type::Enum(SCOPE_ENUM),
-        "Scope kind when looking up by target instead of --budget",
-    ),
-    Field::optional("task", Type::String, "Task ID for scope lookup"),
-    Field::optional("agent", Type::String, "Agent ID for scope lookup"),
-    Field::optional("release", Type::String, "Release ID for scope lookup"),
-    Field::optional(
-        "period_kind",
-        Type::Enum(PERIOD_ENUM),
-        "Period kind: lifetime, day, or month",
-    ),
-];
-
-const BUDGET_INSPECT_OUTPUT: &[Field] = &[Field::optional(
-    "budget",
-    Type::Object(BUDGET_VIEW_FIELDS),
-    "Matching budget view, if present",
-)];
-
-pub(super) const COMMANDS: &[Command] = &[
-    Command {
-        resource: "budget",
-        verb: "status",
-        summary: "Check own budget status",
-        call: "budget.agent_own",
-        kind: Kind::Read,
-        input: BUDGET_STATUS_INPUT,
-        content_field: None,
-        output: BUDGET_STATUS_OUTPUT,
-        errors: BUDGET_ERRORS,
-        example: Example {
-            input: "{}",
-            output: r#"{"agent_id":"0193a5c0-0000-7000-8000-000000000003"}"#,
-        },
-    },
-    Command {
-        resource: "budget",
-        verb: "list",
-        summary: "List visible budgets",
-        call: "budget.list",
-        kind: Kind::List,
-        input: BUDGET_LIST_INPUT,
-        content_field: None,
-        output: BUDGET_VIEW_FIELDS,
-        errors: BUDGET_ERRORS,
-        example: Example {
-            input: "{}",
-            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000701","scope_kind":"agent","period_kind":"day","state":"active","state_summary":"ok","amounts_visible":true,"unit":"micro_usd","limit_amount":5000000}]"#,
-        },
-    },
-    Command {
-        resource: "budget",
-        verb: "inspect",
-        summary: "Inspect one budget by ID or target scope",
-        call: "budget.get",
-        kind: Kind::Read,
-        input: BUDGET_INSPECT_INPUT,
-        content_field: None,
-        output: BUDGET_INSPECT_OUTPUT,
-        errors: BUDGET_ERRORS,
-        example: Example {
-            input: r#"{"budget":"0193a5c0-0000-7000-8000-000000000701"}"#,
-            output: r#"{"budget":{"id":"0193a5c0-0000-7000-8000-000000000701","scope_kind":"agent","period_kind":"day","state":"active","state_summary":"ok","amounts_visible":true,"unit":"micro_usd","limit_amount":5000000}}"#,
-        },
-    },
-];
 
 pub(super) const CUES: &[CommandCue] = &[
     (

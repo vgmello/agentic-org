@@ -1,5 +1,5 @@
-//! The processes slice: `process` and `skill` (C5, `TASK-44`), each command's row, guidance and
-//! handler in its resource's file.
+//! The processes slice: `process` and `skill` (C5, `TASK-44`), with handlers and guidance in
+//! each resource's file and declarative rows in `org_command_catalogue::processes`.
 
 mod process;
 mod process_inspect;
@@ -13,7 +13,7 @@ use crate::runtime::transport::{OfficeTransport, Refusal};
 
 /// The processes slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[process::COMMANDS, process_inspect::COMMANDS, skill::COMMANDS],
+    commands: org_command_catalogue::processes::ALL,
     resources: &[
         ("process", "listing, inspecting (including `--why` inheritance), creating, or updating org/team/project processes and standards."),
         ("skill", "discovering and reading built-in `agent-os` product skills on demand."),
@@ -21,14 +21,6 @@ pub(crate) const DOMAIN: Domain = Domain {
     cues: &[process::CUES, process_inspect::CUES, skill::CUES],
     dispatch,
 };
-
-const READ_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::NotAuthorized,
-    ErrorCode::Unavailable,
-];
 
 fn dispatch(
     transport: &mut dyn OfficeTransport,

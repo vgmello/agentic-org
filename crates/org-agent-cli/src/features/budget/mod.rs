@@ -5,14 +5,13 @@ mod budget_ops;
 mod cost;
 
 use org_command::{Answer, CommandTable, Refusal, Request};
-use org_proto::ErrorCode;
 
 use crate::runtime::domain::Domain;
 use crate::runtime::transport::OfficeTransport;
 
 /// The budget & cost slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[budget_ops::COMMANDS, cost::COMMANDS],
+    commands: org_command_catalogue::budget::ALL,
     resources: &[
         (
             "budget",
@@ -26,14 +25,6 @@ pub(crate) const DOMAIN: Domain = Domain {
     cues: &[budget_ops::CUES, cost::CUES],
     dispatch,
 };
-
-pub(super) const BUDGET_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::NotAuthorized,
-    ErrorCode::Unavailable,
-];
 
 fn dispatch(
     transport: &mut dyn OfficeTransport,

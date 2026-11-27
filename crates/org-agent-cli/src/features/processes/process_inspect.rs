@@ -1,7 +1,7 @@
 //! `process inspect`: one process or standard, read whole or in chunks (`--offset`, pinned by
 //! `--revision`), or the `--why` inheritance chain of an override key.
 
-use org_command::{Answer, Command, Example, Field, Kind, Refusal, Request, Type};
+use org_command::{Answer, Refusal, Request};
 use org_proto::processes::{
     ProcessForWire, ProcessShow, ProcessShowParams, ProcessShowResult, ProcessWhy,
     ProcessWhyParams, ProcessWhyResult,
@@ -9,102 +9,11 @@ use org_proto::processes::{
 use org_proto::{Call, ErrorCode};
 use serde_json::Value;
 
-use super::process::{parse_for, PROCESS_DOC_FIELDS};
+use super::process::parse_for;
 use super::unreadable;
 use crate::runtime::domain::CommandCue;
 use crate::runtime::input::{encode, opt_string, opt_u64, opt_usize};
 use crate::runtime::transport::OfficeTransport;
-
-const PROCESS_INSPECT_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::Conflict,
-    ErrorCode::NotAuthorized,
-    ErrorCode::Unavailable,
-];
-
-const PROCESS_LAYER_FIELDS: &[Field] = &[
-    Field::required(
-        "document",
-        Type::Object(PROCESS_DOC_FIELDS),
-        "Document at this scope layer",
-    ),
-    Field::required("outcome", Type::String, "Resolution outcome at this layer"),
-    Field::optional("detail", Type::String, "Optional resolution detail"),
-];
-
-const PROCESS_LAYER_TYPE: Type = Type::Object(PROCESS_LAYER_FIELDS);
-
-const PROCESS_INSPECT_INPUT: &[Field] = &[
-    Field::optional("key", Type::String, "Document override key"),
-    Field::optional("id", Type::String, "Document UUIDv7"),
-    Field::optional("why", Type::Boolean, "Show inheritance chain"),
-    Field::optional("project", Type::String, "Project ID, P-<n>, or slug"),
-    Field::optional("task", Type::String, "Task ID or reference"),
-    Field::optional(
-        "offset",
-        Type::Integer,
-        "Byte offset for chunked body reads",
-    ),
-    Field::optional(
-        "revision",
-        Type::Integer,
-        "Pin document revision across chunked --offset reads",
-    ),
-];
-
-const PROCESS_INSPECT_OUTPUT: &[Field] = &[
-    Field::optional(
-        "document",
-        Type::Object(PROCESS_DOC_FIELDS),
-        "Resolved document",
-    ),
-    Field::optional("content", Type::String, "Document Markdown body"),
-    Field::optional(
-        "total_bytes",
-        Type::Integer,
-        "Total document body size in UTF-8 bytes",
-    ),
-    Field::optional(
-        "next_offset",
-        Type::Integer,
-        "Byte offset for the next body chunk when truncated",
-    ),
-    Field::optional(
-        "parent",
-        Type::Object(PROCESS_DOC_FIELDS),
-        "Overridden parent document",
-    ),
-    Field::optional("key", Type::String, "Queried key (with --why)"),
-    Field::optional(
-        "chain",
-        Type::List(&PROCESS_LAYER_TYPE),
-        "Resolution inheritance chain (with --why)",
-    ),
-    Field::optional(
-        "winner",
-        Type::Object(PROCESS_DOC_FIELDS),
-        "Winning document (with --why)",
-    ),
-];
-
-/// The `process inspect` row.
-pub(super) const COMMANDS: &[Command] = &[Command {
-    resource: "process",
-    verb: "inspect",
-    summary: "Read process/standard or --why chain",
-    call: "process.show",
-    kind: Kind::Read,
-    input: PROCESS_INSPECT_INPUT,
-    content_field: None,
-    output: PROCESS_INSPECT_OUTPUT,
-    errors: PROCESS_INSPECT_ERRORS,
-    example: Example {
-        input: r#"{"key":"sec-baseline"}"#,
-        output: r#"{"document":{"id":"0193a5c0-0000-7000-8000-000000000090","key":"sec-baseline","revision":1,"kind":"standard","title":"Security baseline","status":"current","level":"organization","overridable":false,"summary":"Never leak secrets."},"content":"Never leak secrets.","total_bytes":19}"#,
-    },
-}];
 
 /// `Use when:` guidance of `process inspect`.
 pub(super) const CUES: &[CommandCue] = &[

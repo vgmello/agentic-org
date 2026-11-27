@@ -146,6 +146,7 @@ LAYER_0_FOUNDATION_CRATES = frozenset(
         "org-store",
         "org-agent-runtime",
         "org-command",
+        "org-command-catalogue",
         "org-sync-proto",
         "org-host-control",
         "org-office-launch",

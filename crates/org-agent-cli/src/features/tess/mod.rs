@@ -5,14 +5,13 @@ mod suggestion;
 mod ui;
 
 use org_command::{Answer, CommandTable, Refusal, Request};
-use org_proto::ErrorCode;
 
 use crate::runtime::domain::Domain;
 use crate::runtime::transport::OfficeTransport;
 
 /// The Chief of Staff slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[suggestion::COMMANDS, ui::COMMANDS],
+    commands: org_command_catalogue::tess::ALL,
     resources: &[
         (
             "suggestion",
@@ -26,24 +25,6 @@ pub(crate) const DOMAIN: Domain = Domain {
     cues: &[suggestion::CUES, ui::CUES],
     dispatch,
 };
-
-pub(super) const TESS_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::NotAuthorized,
-    ErrorCode::Unavailable,
-];
-
-pub(super) const TESS_WRITE_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::NotAuthorized,
-    ErrorCode::Conflict,
-    ErrorCode::PolicyViolation,
-    ErrorCode::Unavailable,
-];
 
 fn dispatch(
     transport: &mut dyn OfficeTransport,

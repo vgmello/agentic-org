@@ -4,7 +4,7 @@
 //!
 //! Each reader takes the [`Request`] or its input object alike ([`Input`]).
 
-use org_command::{Ack, Answer, Field, Refusal, Request, Status, Type};
+use org_command::{Ack, Answer, Refusal, Request, Status};
 use org_proto::hiring::EntityOpResult;
 use org_proto::org::{CommandAccepted, CommandStatus};
 use org_proto::{Call, ErrorCode};
@@ -263,27 +263,6 @@ pub(crate) fn write_answer(request: &Request, data: Value, revision: Option<u64>
     }
 }
 
-/// An organization log position, as an organization command's answer carries it.
-pub(crate) const POSITION_FIELDS: &[Field] = &[
-    Field::required("epoch", Type::Integer, "Organization log epoch"),
-    Field::required("seq", Type::Integer, "Organization log sequence"),
-];
-
-/// The answer of [`send_command`], as its rows declare it.
-pub(crate) const MUTATION_OUTPUT: &[Field] = &[
-    Field::required("id", Type::String, "Target entity UUIDv7"),
-    Field::required(
-        "status",
-        Type::Enum(&["committed", "checked", "queued"]),
-        "Office command acknowledgement status",
-    ),
-    Field::optional(
-        "position",
-        Type::Object(POSITION_FIELDS),
-        "Committed organization position",
-    ),
-];
-
 /// Sends an organization command (`team.*`, `member.*`, `project.create`) whose reply is the
 /// office's [`CommandAccepted`], answering `{id, status, position}` for `target_id`. A dry run is
 /// sent as one (`dry_run`); any other write carries the command ID of its key.
@@ -335,13 +314,6 @@ pub(crate) fn hiring_command_id(request: &Request) -> Result<String, Refusal> {
     require_key(request)?;
     transport::command_id(request, "hiring-command")
 }
-
-/// The answer of [`send_entity_write`], as its rows declare it.
-pub(crate) const ENTITY_OP_OUTPUT: &[Field] = &[
-    Field::required("id", Type::String, "Target entity UUIDv7"),
-    Field::required("revision", Type::Integer, "Committed record revision"),
-    Field::required("generation", Type::Integer, "Organization store generation"),
-];
 
 /// Sends a hiring-family write whose reply is the office's [`EntityOpResult`], answered with
 /// the revision it made.

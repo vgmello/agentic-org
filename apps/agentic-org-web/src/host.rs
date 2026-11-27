@@ -230,7 +230,7 @@ impl HostControl {
 
     /// Async wrapper for [`open_office_channel`](Self::open_office_channel) used by the
     /// async multiplexed office bridge when establishing a new local-Unix channel.
-    pub async fn open_office_channel_async(
+    pub(crate) async fn open_office_channel_async(
         self: &Arc<Self>,
         auth: BrowserAuth,
         office_id: String,
@@ -281,7 +281,7 @@ impl HostControl {
     /// Opens an authenticated Web channel to `office_id` through the host,
     /// receives the descriptor on the transfer socket, validates its header and
     /// socket type, and acknowledges receipt with `fds.received`.
-    pub fn open_office_channel(
+    pub(crate) fn open_office_channel(
         &self,
         auth: BrowserAuth,
         office_id: &str,

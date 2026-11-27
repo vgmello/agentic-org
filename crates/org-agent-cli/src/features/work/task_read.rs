@@ -1,7 +1,7 @@
 //! The `task` reads: `task list` (filters, sort, pages up to 200 with `--cursor` and
 //! `meta.next_cursor`, `meta.total`, and `--count`), `task inspect|history|deps|labels`.
 
-use org_command::{Answer, Command, Example, Kind, Refusal, Request};
+use org_command::{Answer, Refusal, Request};
 use org_proto::tasks::{
     LabelMatchMode, TaskDependenciesResult, TaskInspectResult, TaskSortMode, TaskStatus,
     TasksDependencies, TasksDependenciesParams, TasksHistory, TasksHistoryParams,
@@ -11,93 +11,10 @@ use org_proto::tasks::{
 use org_proto::{Call, ErrorCode};
 use serde_json::{json, Map, Value};
 
-use super::schema::{
-    EVENT_FIELDS, READ_ERRORS, TASK_DEPS_OUTPUT, TASK_FIELDS, TASK_INSPECT_OUTPUT,
-    TASK_LABELS_INPUT, TASK_LABEL_OUTPUT, TASK_LIST_INPUT, TASK_REF_INPUT,
-};
 use super::{task_to_row, unreadable};
 use crate::runtime::domain::CommandCue;
 use crate::runtime::input::{is_set, opt_str_list, opt_string, require_str};
 use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport};
-
-/// The `task` read rows.
-pub(super) const COMMANDS: &[Command] = &[
-    Command {
-        resource: "task",
-        verb: "list",
-        summary: "List and filter tasks",
-        call: "tasks.list",
-        kind: Kind::List,
-        input: TASK_LIST_INPUT,
-        content_field: None,
-        output: TASK_FIELDS,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"labels":["backend","security"],"label_match":"all","sort":"order"}"#,
-            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","type":"task","title":"Implement auth","status":"todo","priority":"high","team_id":"0193a5c0-0000-7000-8000-000000000010","rank_order":10,"labels":["backend","security"],"reference_files":["docs/auth.md"],"modified_files":["src/auth.rs"],"depends_on":[],"dependents":[],"revision":1,"checklist_total":0,"checklist_done":0,"comment_count":0,"watcher_count":0}]"#,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "inspect",
-        summary: "Inspect a task",
-        call: "tasks.inspect",
-        kind: Kind::Read,
-        input: TASK_REF_INPUT,
-        content_field: None,
-        output: TASK_INSPECT_OUTPUT,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1"}"#,
-            output: r#"{"task":{"id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","type":"task","title":"Implement auth","status":"todo","priority":"high","team_id":"0193a5c0-0000-7000-8000-000000000010","rank_order":10,"labels":["backend","security"],"reference_files":["docs/auth.md"],"modified_files":["src/auth.rs"],"depends_on":[],"dependents":[],"revision":1,"checklist_total":0,"checklist_done":0,"comment_count":0,"watcher_count":0},"body_markdown":"","checklist":[],"comments":[],"attachments":[],"watchers":[],"depends_on_tasks":[],"dependent_tasks":[],"history":[]}"#,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "history",
-        summary: "List task history",
-        call: "tasks.history",
-        kind: Kind::List,
-        input: TASK_REF_INPUT,
-        content_field: None,
-        output: EVENT_FIELDS,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1"}"#,
-            output: r#"[{"task_id":"0193a5c0-0000-7000-8000-000000000100","revision":1,"occurred_at":"2026-11-22T00:00:00.000Z","actor_kind":"employee","actor_id":"0193a5c0-0000-7000-8000-000000000020","change":{"type":"created"},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]"#,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "deps",
-        summary: "Show task dependency graph",
-        call: "tasks.dependencies",
-        kind: Kind::Read,
-        input: TASK_REF_INPUT,
-        content_field: None,
-        output: TASK_DEPS_OUTPUT,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A2"}"#,
-            output: r#"{"task":{"id":"0193a5c0-0000-7000-8000-000000000101","key":"T-A2","title":"Adapter","type":"task","status":"todo","priority":"normal"},"direct_depends_on":[],"direct_dependents":[],"transitive_depends_on":[],"transitive_dependents":[],"edges":[]}"#,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "labels",
-        summary: "Search task labels",
-        call: "tasks.labels",
-        kind: Kind::List,
-        input: TASK_LABELS_INPUT,
-        content_field: None,
-        output: TASK_LABEL_OUTPUT,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"query":"sec"}"#,
-            output: r#"[{"label":"security","task_count":2}]"#,
-        },
-    },
-];
 
 /// `Use when:` guidance of each `task` command here.
 pub(super) const CUES: &[CommandCue] = &[

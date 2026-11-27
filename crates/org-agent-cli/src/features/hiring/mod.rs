@@ -7,7 +7,6 @@ mod agent;
 mod agent_sessions;
 mod hr;
 mod role;
-mod schema;
 
 use org_command::{Answer, CommandTable, Request};
 
@@ -18,12 +17,7 @@ use crate::runtime::transport::{OfficeTransport, Refusal};
 
 /// The hiring slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[
-        role::COMMANDS,
-        hr::COMMANDS,
-        agent::COMMANDS,
-        agent_sessions::COMMANDS,
-    ],
+    commands: org_command_catalogue::hiring::ALL,
     resources: &[
         ("agent", "inspecting or managing agent profiles, team placement, pause/resume, offboarding, or external (bring-your-own) agent sessions."),
         ("hr", "listing, inspecting, drafting, confirming, or withdrawing agent hire requests."),

@@ -1,8 +1,8 @@
 //! # agentic-org-office: the office daemon
 //!
-//! A thin binary: it moves its control pipe out of the way, installs a panic hook, wires the
-//! `agent-os` command catalogue and concrete runtime adapters into the session manager, and
-//! runs `org_office_server::run_with_runtimes`. All logic lives in library crates.
+//! A thin binary: it moves its control pipe out of the way, installs a panic hook, wires
+//! concrete runtime adapters into the session manager, and runs
+//! `org_office_server::run_with_runtimes`. All logic lives in library crates.
 
 #![forbid(unsafe_code)]
 
@@ -78,8 +78,7 @@ fn main() {
         }
     };
     org_office_server::install_panic_hook();
-    // Composition root: inject the live `agent-os` command table and concrete runtime adapters.
-    org_office_sessions::install_command_catalogue(org_agent_cli::catalogue_table);
+    // Composition root: inject concrete runtime adapters.
     org_office_sessions::install_default_runtimes(production_runtimes);
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(org_office_server::run_with_runtimes(

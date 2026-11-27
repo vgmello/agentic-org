@@ -29,6 +29,17 @@ pub(crate) struct Domain {
     pub(crate) dispatch: Dispatch,
 }
 
+impl Domain {
+    /// Whether this slice owns `command` in the shared [`org_command_catalogue`] table.
+    pub(crate) fn owns(&self, command: &Command) -> bool {
+        self.commands
+            .iter()
+            .copied()
+            .flatten()
+            .any(|row| row.resource == command.resource && row.verb == command.verb)
+    }
+}
+
 /// The guidance of `resource` in `domains`.
 pub(crate) fn resource_cue(domains: &[Domain], resource: &str) -> Option<&'static str> {
     domains

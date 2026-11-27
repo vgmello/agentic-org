@@ -12,7 +12,9 @@ use org_proto::{
     ApiRange, Hello, HelloParams, HelloResult, Outcome, Request, Response, MAX_FRAME_BYTES,
 };
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time;
 
@@ -188,6 +190,43 @@ pub(super) async fn write_loop<W: AsyncWrite + Unpin>(
     let _ = write_half.shutdown().await;
 }
 
+/// Maximum wire bytes read per newline-delimited frame (`MAX_FRAME_BYTES` payload + `\r\n`).
+const MAX_FRAME_WIRE_BYTES: u64 = (MAX_FRAME_BYTES + 2) as u64;
+
+/// Reads one newline-delimited office frame into `buf`, capping reads and allocation at
+/// [`MAX_FRAME_WIRE_BYTES`] before scanning for `\n` so an unterminated or oversized stream
+/// cannot allocate unbounded memory.
+///
+/// Returns `Ok(false)` on clean EOF, `Ok(true)` with trailing `\n` / `\r\n` removed when the
+/// payload fits within [`MAX_FRAME_BYTES`], or `Err(InvalidData)` when the frame exceeds the
+/// limit (whether terminated or unterminated).
+pub(super) async fn read_bounded_frame<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+) -> io::Result<bool> {
+    buf.clear();
+    let read = reader
+        .take(MAX_FRAME_WIRE_BYTES)
+        .read_until(b'\n', buf)
+        .await?;
+    if read == 0 {
+        return Ok(false);
+    }
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+    }
+    if buf.len() > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "office frame exceeds maximum size",
+        ));
+    }
+    Ok(true)
+}
+
 pub(super) async fn read_loop<R: AsyncRead + Unpin>(
     read_half: R,
     pending: PendingMap,
@@ -201,15 +240,9 @@ pub(super) async fn read_loop<R: AsyncRead + Unpin>(
     let mut reader = BufReader::new(read_half);
     let mut line = Vec::with_capacity(4096);
     loop {
-        line.clear();
-        let Ok(read) = reader.read_until(b'\n', &mut line).await else {
-            break;
-        };
-        if read == 0 || line.len() > MAX_FRAME_BYTES + 1 {
-            break;
-        }
-        if line.last() == Some(&b'\n') {
-            line.pop();
+        match read_bounded_frame(&mut reader, &mut line).await {
+            Ok(true) => {}
+            Ok(false) | Err(_) => break,
         }
         let Ok(value) = serde_json::from_slice::<Value>(&line) else {
             break;
@@ -254,5 +287,203 @@ pub(super) fn evict_channel(
         {
             map.remove(office_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll};
+
+    use tokio::io::ReadBuf;
+
+    use super::*;
+    use crate::event_hub::InMemoryEventBus;
+
+    fn run_async(fut: impl std::future::Future<Output = ()>) {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut);
+    }
+
+    /// `AsyncBufRead` stream returning a repeating byte (or finite slice) while recording every
+    /// byte consumed by the caller.
+    struct CountingBufStream {
+        prefix: Vec<u8>,
+        pos: usize,
+        total_len: usize,
+        chunk_buf: [u8; 4096],
+        consumed: Arc<AtomicUsize>,
+    }
+
+    impl CountingBufStream {
+        fn repeating(byte: u8, total_len: usize, consumed: Arc<AtomicUsize>) -> Self {
+            Self {
+                prefix: Vec::new(),
+                pos: 0,
+                total_len,
+                chunk_buf: [byte; 4096],
+                consumed,
+            }
+        }
+
+        fn from_bytes(bytes: Vec<u8>, consumed: Arc<AtomicUsize>) -> Self {
+            let total_len = bytes.len();
+            Self {
+                prefix: bytes,
+                pos: 0,
+                total_len,
+                chunk_buf: [b'a'; 4096],
+                consumed,
+            }
+        }
+    }
+
+    impl AsyncRead for CountingBufStream {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            let remaining = self.total_len.saturating_sub(self.pos);
+            if remaining == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            let n = remaining.min(buf.remaining());
+            if !self.prefix.is_empty() {
+                buf.put_slice(&self.prefix[self.pos..self.pos + n]);
+            } else {
+                let mut left = n;
+                while left > 0 {
+                    let take = left.min(self.chunk_buf.len());
+                    buf.put_slice(&self.chunk_buf[..take]);
+                    left -= take;
+                }
+            }
+            self.pos += n;
+            self.consumed.fetch_add(n, Ordering::SeqCst);
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncBufRead for CountingBufStream {
+        fn poll_fill_buf(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
+            let this = self.get_mut();
+            let remaining = this.total_len.saturating_sub(this.pos);
+            if remaining == 0 {
+                return Poll::Ready(Ok(&[]));
+            }
+            if !this.prefix.is_empty() {
+                Poll::Ready(Ok(&this.prefix[this.pos..]))
+            } else {
+                let n = remaining.min(this.chunk_buf.len());
+                Poll::Ready(Ok(&this.chunk_buf[..n]))
+            }
+        }
+
+        fn consume(self: Pin<&mut Self>, amt: usize) {
+            let this = self.get_mut();
+            let step = amt.min(this.total_len.saturating_sub(this.pos));
+            this.pos += step;
+            this.consumed.fetch_add(step, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn read_bounded_frame_accepts_exact_max_frame_bytes_lf_and_crlf() {
+        run_async(async {
+            for suffix in [&b"\n"[..], &b"\r\n"[..]] {
+                let mut raw = vec![b'x'; MAX_FRAME_BYTES];
+                raw.extend_from_slice(suffix);
+                let consumed = Arc::new(AtomicUsize::new(0));
+                let mut reader = CountingBufStream::from_bytes(raw, Arc::clone(&consumed));
+                let mut buf = Vec::new();
+                let ok = read_bounded_frame(&mut reader, &mut buf)
+                    .await
+                    .expect("frame at exact MAX_FRAME_BYTES must succeed");
+                assert!(ok);
+                assert_eq!(buf.len(), MAX_FRAME_BYTES);
+                assert_eq!(
+                    consumed.load(Ordering::SeqCst),
+                    MAX_FRAME_BYTES + suffix.len()
+                );
+                assert!(!read_bounded_frame(&mut reader, &mut buf)
+                    .await
+                    .expect("EOF after valid frame must succeed"));
+            }
+        });
+    }
+
+    #[test]
+    fn read_bounded_frame_rejects_oversized_and_unterminated_streams_within_bound() {
+        run_async(async {
+            // Case 1: MAX_FRAME_BYTES + 1 followed by newline fails closed.
+            let mut over = vec![b'a'; MAX_FRAME_BYTES + 1];
+            over.push(b'\n');
+            let consumed = Arc::new(AtomicUsize::new(0));
+            let mut reader = CountingBufStream::from_bytes(over, Arc::clone(&consumed));
+            let mut buf = Vec::new();
+            let err = read_bounded_frame(&mut reader, &mut buf)
+                .await
+                .expect_err("MAX_FRAME_BYTES + 1 must fail closed");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(consumed.load(Ordering::SeqCst) <= MAX_FRAME_BYTES + 2);
+
+            // Case 2: 16 MiB unterminated stream fails closed after reading at most MAX_FRAME_BYTES + 2.
+            let consumed_huge = Arc::new(AtomicUsize::new(0));
+            let mut huge =
+                CountingBufStream::repeating(b'a', 16 * 1024 * 1024, Arc::clone(&consumed_huge));
+            buf.clear();
+            let err = read_bounded_frame(&mut huge, &mut buf)
+                .await
+                .expect_err("16 MiB unterminated frame must fail closed");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(consumed_huge.load(Ordering::SeqCst), MAX_FRAME_BYTES + 2);
+            assert!(buf.len() <= MAX_FRAME_BYTES + 2);
+        });
+    }
+
+    #[test]
+    fn read_loop_evicts_channel_and_stops_reading_unterminated_16mib_stream() {
+        run_async(async {
+            let consumed = Arc::new(AtomicUsize::new(0));
+            let huge = CountingBufStream::repeating(b'a', 16 * 1024 * 1024, Arc::clone(&consumed));
+            let pending: PendingMap = Arc::new(Mutex::new(BTreeMap::new()));
+            let (tx, rx) = oneshot::channel();
+            pending.lock().unwrap().insert(1, tx);
+            let channels = Arc::new(Mutex::new(BTreeMap::new()));
+            let (writer, _write_rx) = mpsc::channel(1);
+            channels.lock().unwrap().insert(
+                "office-1".to_owned(),
+                Arc::new(MultiplexedChannel {
+                    channel_id: "ch-1".to_owned(),
+                    writer,
+                    pending: Arc::clone(&pending),
+                }),
+            );
+            let events: Arc<dyn EventBus> = Arc::new(InMemoryEventBus::default());
+            read_loop(
+                huge,
+                Arc::clone(&pending),
+                Arc::clone(&channels),
+                "office-1".to_owned(),
+                "ch-1".to_owned(),
+                events,
+                None,
+            )
+            .await;
+            assert!(pending.lock().unwrap().is_empty());
+            assert!(rx.await.is_err());
+            assert!(!channels.lock().unwrap().contains_key("office-1"));
+            // BufReader fills at most one 8 KiB chunk past MAX_FRAME_BYTES + 2.
+            assert!(
+                consumed.load(Ordering::SeqCst) <= MAX_FRAME_BYTES + 16 * 1024,
+                "read_loop consumed {} bytes on 16 MiB stream",
+                consumed.load(Ordering::SeqCst)
+            );
+        });
     }
 }
