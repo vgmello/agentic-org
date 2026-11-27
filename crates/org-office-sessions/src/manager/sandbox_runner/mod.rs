@@ -22,6 +22,7 @@ use bwrap_isolation::{
 };
 use bwrap_pruning::{apply_linux_claude_bwrap_pruning, is_linux_bwrap_sandbox};
 
+use super::office_masks::OfficeMasks;
 use super::SessionManager;
 
 #[cfg(test)]
@@ -55,40 +56,50 @@ pub enum SandboxConfinementMode {
 pub struct SandboxPlan {
     mode: SandboxConfinementMode,
     masked_siblings: Option<BTreeSet<String>>,
+    office_masks_digest: Option<String>,
     prune_absent_denies: bool,
 }
 
 impl SandboxPlan {
-    /// Plan for an unsandboxed session.
+    fn new(
+        mode: SandboxConfinementMode,
+        masked_siblings: Option<BTreeSet<String>>,
+        prune_absent_denies: bool,
+    ) -> Self {
+        Self {
+            mode,
+            masked_siblings,
+            office_masks_digest: None,
+            prune_absent_denies,
+        }
+    }
+
     pub fn unsandboxed() -> Self {
-        Self {
-            mode: SandboxConfinementMode::Unsandboxed,
-            masked_siblings: None,
-            prune_absent_denies: false,
-        }
+        Self::new(SandboxConfinementMode::Unsandboxed, None, false)
     }
 
-    /// Plan for a host-native sandboxed session without mount-mask sibling tracking.
     pub fn host_native() -> Self {
-        Self {
-            mode: SandboxConfinementMode::HostNative,
-            masked_siblings: None,
-            prune_absent_denies: false,
-        }
+        Self::new(SandboxConfinementMode::HostNative, None, false)
     }
 
-    /// Plan for a Linux `bwrap` session with a pre-created masked sibling snapshot.
     pub fn linux_bwrap(masked_siblings: BTreeSet<String>) -> Self {
-        Self {
-            mode: SandboxConfinementMode::LinuxBwrap,
-            masked_siblings: Some(masked_siblings),
-            prune_absent_denies: true,
-        }
+        Self::new(
+            SandboxConfinementMode::LinuxBwrap,
+            Some(masked_siblings),
+            true,
+        )
     }
 
     /// Attaches a masked sibling snapshot to this plan (for custom [`SandboxRunner`] adapters).
     pub fn with_masked_siblings(mut self, masked_siblings: Option<BTreeSet<String>>) -> Self {
         self.masked_siblings = masked_siblings;
+        self
+    }
+
+    /// Attaches a launch-time office-masks topology digest (`TASK-245`) so warm-session reuse
+    /// detects co-hosted sibling organizations or satellites created after launch.
+    pub fn with_office_masks_digest(mut self, digest: Option<String>) -> Self {
+        self.office_masks_digest = digest;
         self
     }
 
@@ -106,6 +117,11 @@ impl SandboxPlan {
     /// Masked sibling employee IDs captured at launch preparation, when mount-mask tracking applies.
     pub fn masked_siblings(&self) -> Option<&BTreeSet<String>> {
         self.masked_siblings.as_ref()
+    }
+
+    /// Launch-time office-masks topology digest, when tracked for warm-session staleness checks.
+    pub fn office_masks_digest(&self) -> Option<&str> {
+        self.office_masks_digest.as_deref()
     }
 
     /// Whether absent concrete deny paths should be pruned when adapting a session spec.
@@ -187,16 +203,27 @@ impl SandboxRunner for LocalOsSandbox {
         if !ctx.sandbox_enabled {
             return Ok(SandboxPlan::unsandboxed());
         }
-        if is_linux_bwrap_sandbox(ctx.sandbox_enabled, ctx.host_profile) {
+        let (plan, track_absent) = if is_linux_bwrap_sandbox(ctx.sandbox_enabled, ctx.host_profile)
+        {
             let masked = ensure_bwrap_deny_dirs_with(
                 ctx.office,
                 ctx.office_socket,
                 ctx.agent_os_state_roots,
                 ctx.employee_id,
             )?;
-            return Ok(SandboxPlan::linux_bwrap(masked));
-        }
-        Ok(SandboxPlan::host_native())
+            (SandboxPlan::linux_bwrap(masked), true)
+        } else {
+            (SandboxPlan::host_native(), false)
+        };
+        let digest = OfficeMasks::of(ctx.office)
+            .topology_digest(track_absent)
+            .ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::StorageError,
+                    "could not compute sandbox office mask topology",
+                )
+            })?;
+        Ok(plan.with_office_masks_digest(Some(digest)))
     }
 
     fn adapt_session_spec(&self, plan: &SandboxPlan, spec: &mut SessionSpec) {
@@ -210,17 +237,25 @@ impl SandboxRunner for LocalOsSandbox {
         ctx: &SandboxVerifyContext<'_>,
         plan: &SandboxPlan,
     ) -> Result<(), ApiError> {
-        if plan.masked_siblings().is_none() {
+        if plan.masked_siblings().is_none() && plan.office_masks_digest().is_none() {
             return Ok(());
         }
-        let raced = plan.has_unmasked_sibling(
+        let sibling_raced = plan.has_unmasked_sibling(
             ctx.employee_id,
             ctx.active_employees.iter().map(String::as_str),
-        ) || self.is_plan_stale(ctx.office, ctx.employee_id, plan);
-        if raced {
+        ) || plan.masked_siblings().is_some_and(|masked| {
+            has_unmasked_bwrap_sibling_in_office(ctx.office, ctx.employee_id, masked)
+        });
+        if sibling_raced {
             return Err(ApiError::new(
                 ErrorCode::Conflict,
                 "a newly hired or starting sibling agent is not masked in this sandbox; retry launch",
+            ));
+        }
+        if is_office_masks_digest_stale(ctx.office, plan) {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "co-hosted office sandbox topology changed while preparing launch; retry launch",
             ));
         }
         Ok(())
@@ -229,6 +264,7 @@ impl SandboxRunner for LocalOsSandbox {
     fn is_plan_stale(&self, office: &Office, employee_id: &str, plan: &SandboxPlan) -> bool {
         plan.masked_siblings()
             .is_some_and(|masked| has_unmasked_bwrap_sibling_in_office(office, employee_id, masked))
+            || is_office_masks_digest_stale(office, plan)
     }
 
     fn enforce_sibling_isolation(
@@ -237,5 +273,16 @@ impl SandboxRunner for LocalOsSandbox {
         starting_emp_id: &str,
     ) -> Result<(), ApiError> {
         enforce_bwrap_sibling_isolation(mgr, starting_emp_id)
+    }
+}
+
+fn is_office_masks_digest_stale(office: &Office, plan: &SandboxPlan) -> bool {
+    let Some(expected) = plan.office_masks_digest() else {
+        return false;
+    };
+    let track_absent_static = plan.mode() == SandboxConfinementMode::LinuxBwrap;
+    match OfficeMasks::of(office).topology_digest(track_absent_static) {
+        Some(current) => current != expected,
+        None => true, // Fail closed on unexpected filesystem I/O error.
     }
 }

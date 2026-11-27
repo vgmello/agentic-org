@@ -68,11 +68,12 @@ impl Host {
 /// What a sandbox masks of `durable`'s neighbours, on roots where the host puts them.
 pub(super) fn placed_masks(durable: &Path, runtime: &Path, org: &str, office: &str) -> OfficeMasks {
     let placement = Placement::locate(durable, runtime, org, office).expect("a host layout");
-    let (mut folders, mut neighbours, mut sweeps) = (Vec::new(), Vec::new(), Vec::new());
-    placement.add_masks(&mut folders, &mut neighbours, &mut sweeps);
+    let (mut folders, mut files, mut neighbours, mut sweeps) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    placement.add_masks(&mut folders, &mut files, &mut neighbours, &mut sweeps);
     OfficeMasks {
         folders,
-        files: Vec::new(),
+        files,
         neighbours,
         sweeps,
         own_roots: own_root_forms([durable, runtime]),
@@ -324,13 +325,29 @@ fn a_shared_data_root_has_only_its_organization_folders_masked() {
             path.display()
         );
     }
+    let office_state_prefix = host
+        .data
+        .join(OFFICE_STATE_DIR_NAME)
+        .join(HOST_REGISTRY_PREFIX)
+        .display()
+        .to_string();
     assert!(
         !denied
             .iter()
             .any(|d| d.starts_with(&*host.data.display().to_string())
-                && !d.starts_with(&*org.display().to_string())),
-        "only the organization's own satellites folder is masked: {denied:?}"
+                && !d.starts_with(&*org.display().to_string())
+                && !d.starts_with(&office_state_prefix)),
+        "only the organization's own satellites folder and office-state/host-registry.* are masked: {denied:?}"
     );
+    for name in HOST_REGISTRY_FILES {
+        let needle = host
+            .data
+            .join(OFFICE_STATE_DIR_NAME)
+            .join(name)
+            .display()
+            .to_string();
+        assert!(denied.contains(&needle), "{needle} missing: {denied:?}");
+    }
 }
 
 #[test]
@@ -421,6 +438,7 @@ fn the_masks_are_the_same_on_every_launch_and_in_name_order() {
         .iter()
         .filter(|d| !d.ends_with("/**"))
         .filter_map(|d| Path::new(d).file_name()?.to_str())
+        .filter(|name| names_an_organization(name))
         .collect();
     let mut sorted = names.to_vec();
     sorted.sort_unstable();
@@ -473,4 +491,128 @@ fn only_a_uuid_names_an_organization_and_a_multibyte_name_never_panics() {
         named.masks(None),
         "an entry whose name isn't UTF-8 is masked"
     );
+}
+
+#[test]
+fn host_registry_files_in_office_state_and_custom_office_home_are_masked_while_run_stays_reachable()
+{
+    let host = Host::new();
+    let host_folders = host.host_folders();
+    let org = host.mk(ORG_A);
+    let (durable, runtime) = (org.join("durable"), org.join("runtime"));
+    let extra_backup = host.file("office-state/host-registry.db.before-restore");
+    let existing_db = host.file("office-state/host-registry.db");
+
+    let (denied, _) = neighbour_masks(&durable, &runtime, ORG_A, HQ);
+    for name in HOST_REGISTRY_FILES {
+        let path = host.data.join("office-state").join(name);
+        let raw = path.display().to_string();
+        assert!(denied.contains(&raw), "{raw} missing: {denied:?}");
+        assert!(
+            !denied.contains(&format!("{raw}/**")),
+            "host-registry file is masked exact, not as folder glob: {denied:?}"
+        );
+    }
+    assert!(
+        denied.contains(&extra_backup.display().to_string()),
+        "swept host-registry backup missing: {denied:?}"
+    );
+    assert!(denied.contains(&existing_db.display().to_string()));
+    for path in &host_folders {
+        assert_reachable(&denied, path);
+    }
+
+    // Custom `<office-home>/offices/<office-id>` outside `<data-root>/office-state/` also masks
+    // its own `host-registry.*` files without masking `<office-home>/run/`.
+    let custom_home = host.mk("custom-office-home");
+    let custom_office_folder = custom_home.join("offices").join(HQ);
+    std::fs::create_dir_all(&custom_office_folder).unwrap();
+    let custom_run = custom_home.join("run/o/short");
+    std::fs::create_dir_all(&custom_run).unwrap();
+    let custom_bak = custom_home.join("host-registry.db.bak");
+    std::fs::write(&custom_bak, b"secret").unwrap();
+    assert_eq!(
+        office_home(&custom_office_folder, HQ),
+        Some(custom_home.clone())
+    );
+    let mut files = Vec::new();
+    let mut sweeps = Vec::new();
+    push_host_registry_masks(&custom_home, &mut files, &mut sweeps);
+    // Calling twice deduplicates cleanly.
+    push_host_registry_masks(&custom_home, &mut files, &mut sweeps);
+    assert_eq!(files.len(), HOST_REGISTRY_FILES.len());
+    assert_eq!(sweeps.len(), 1);
+    let custom_masks = OfficeMasks {
+        folders: Vec::new(),
+        files,
+        neighbours: Vec::new(),
+        sweeps,
+        own_roots: own_root_forms([&durable, &runtime]),
+    };
+    let custom_denied = denies(&custom_masks);
+    assert!(custom_denied.contains(&custom_home.join("host-registry.db").display().to_string()));
+    assert!(custom_denied.contains(&custom_bak.display().to_string()));
+    assert_reachable(&custom_denied, &custom_run);
+}
+
+#[test]
+fn topology_digest_tracks_cohosted_org_and_satellite_changes_without_companion_churn() {
+    let host = Host::new();
+    let org = host.mk(ORG_A);
+    let (hq_durable, hq_runtime) = (org.join("durable"), org.join("runtime"));
+    std::fs::create_dir_all(&hq_durable).unwrap();
+    std::fs::create_dir_all(&hq_runtime).unwrap();
+
+    // 1. HQ digest detects a newly created sibling organization (`ORG_B`), while ignoring
+    //    satellites below statically masked `<ORG_A>/offices/**` and known companion folders.
+    let mut hq_masks = placed_masks(&hq_durable, &hq_runtime, ORG_A, HQ);
+    let hq_local = hq_durable.join("local/offices").join(HQ);
+    hq_masks.folders.push(MaskedFolder {
+        path: hq_local.join("sessions"),
+        pre_create: true,
+    });
+    hq_masks
+        .sweeps
+        .push(Sweep::all_but(&hq_local, [AGENTS_DIR_NAME]));
+    let d0 = hq_masks.topology_digest(false).unwrap();
+    std::fs::create_dir_all(hq_local.join("sessions")).unwrap();
+    assert_eq!(
+        hq_masks.topology_digest(false).unwrap(),
+        d0,
+        "creating a statically declared companion folder must not churn digest"
+    );
+    host.mk(&format!("{ORG_A}/offices/{SAT_1}"));
+    assert_eq!(
+        hq_masks.topology_digest(false).unwrap(),
+        d0,
+        "HQ statically masks `<org>/offices/**`, so new satellites need not churn host-native HQ"
+    );
+    host.mk(ORG_B);
+    let d1 = hq_masks.topology_digest(false).unwrap();
+    assert_ne!(
+        d1, d0,
+        "new co-hosted sibling org must rotate topology digest"
+    );
+
+    // 2. Satellite digest detects both a new sibling satellite (`SAT_2`) and (when tracking
+    //    absent static masks for Linux bwrap) newly materialized HQ roots / host-registry.db.
+    let sat_host = Host::new();
+    let sat_own = sat_host.mk(&format!("{ORG_A}/offices/{SAT_1}"));
+    let (sat_durable, sat_runtime) = (sat_own.join("durable"), sat_own.join("runtime"));
+    std::fs::create_dir_all(&sat_durable).unwrap();
+    std::fs::create_dir_all(&sat_runtime).unwrap();
+    let sat_masks = placed_masks(&sat_durable, &sat_runtime, ORG_A, SAT_1);
+    let sat_native_0 = sat_masks.topology_digest(false).unwrap();
+    let sat_bwrap_0 = sat_masks.topology_digest(true).unwrap();
+
+    // Creating HQ's `durable` root flips Linux bwrap static-presence digest, not host-native.
+    sat_host.mk(&format!("{ORG_A}/durable"));
+    assert_eq!(sat_masks.topology_digest(false).unwrap(), sat_native_0);
+    let sat_bwrap_1 = sat_masks.topology_digest(true).unwrap();
+    assert_ne!(sat_bwrap_1, sat_bwrap_0);
+
+    // Creating a sibling satellite `SAT_2` flips BOTH host-native and Linux bwrap digests.
+    sat_host.mk(&format!("{ORG_A}/offices/{SAT_2}"));
+    assert_ne!(sat_masks.topology_digest(false).unwrap(), sat_native_0);
+    assert_ne!(sat_masks.topology_digest(true).unwrap(), sat_bwrap_1);
 }
