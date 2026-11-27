@@ -124,13 +124,6 @@ pub type HiringFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Sen
 /// Dispatches C3 agent session, grant, and provider CLI enrollment RPCs.
 pub type SessionsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
-/// Verifies a managed agent's per-run `AGENT_OS_SESSION_TOKEN` and peer PID ancestry (`CLI-12`, `SUB-3`).
-pub type RunBindingVerifyFn =
-    Box<dyn Fn(&str, Option<&str>, Option<libc::pid_t>) -> bool + Send + Sync>;
-
-/// Checks whether a bound managed agent still has an active run binding on this office.
-pub type RunBindingActiveFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
-
 /// Records an accepted `agent-os` command for a bound managed run (`ADR-0030` decision 8).
 pub type RecordCommandFn = Box<dyn Fn(&str, &str) + Send + Sync>;
 
@@ -187,8 +180,8 @@ pub struct OfficePorts {
     pub project_inspect: ProjectInspectFn,
     pub hiring: Option<HiringFn>,
     pub sessions: Option<SessionsFn>,
-    pub run_binding_verify: Option<RunBindingVerifyFn>,
-    pub run_binding_active: Option<RunBindingActiveFn>,
+    /// Verifies managed agent run bindings and checks active liveness (`CLI-12`, `SUB-3`, `TASK-233`).
+    pub run_binding_verifier: Option<Arc<dyn org_office_sessions::RunBindingVerifier>>,
     /// The Chief of Staff's delegation, intersected with her own authority on every call she
     /// makes and on what it answers (`TASK-80.1`). `None`: no member is gated.
     pub delegation: Option<Arc<dyn ChiefOfStaffPort>>,

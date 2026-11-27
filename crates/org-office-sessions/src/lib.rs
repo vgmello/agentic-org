@@ -43,7 +43,8 @@ pub use org_turn_attachments as turn_attachments;
 pub mod wake;
 
 pub use binding::{
-    AcceptedCommandRecord, ActiveRunBinding, BindingMode, BindingRejection, RunBindingRegistry,
+    AcceptedCommandRecord, ActiveRunBinding, BindingMode, BindingRejection, LocalPeerPidVerifier,
+    PeerIdentity, RunBindingRegistry, RunBindingVerifier, VerifiedRunBinding,
 };
 pub use credentials::{
     CliEnrollmentDriver, CredentialMetadata, CredentialVault, EnrollmentDriver, EnrollmentManager,
@@ -56,7 +57,10 @@ pub use instructions::{
     TurnTrigger, BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
 };
 pub use lifecycle::spawn_wake_retry_loop;
-pub use manager::{SessionManager, SessionManagerConfig};
+pub use manager::{
+    LocalOsSandbox, SandboxConfinementMode, SandboxPlan, SandboxPrepareContext, SandboxRunner,
+    SandboxVerifyContext, SessionManager, SessionManagerConfig,
+};
 pub use preset::{
     build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_roots,
     decide_escalation_with_tools, EscalationDisposition, PresetConfig, PresetError,

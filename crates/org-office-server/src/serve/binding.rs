@@ -2,6 +2,7 @@
 
 use std::sync::atomic::Ordering;
 
+use org_office_sessions::{PeerIdentity, VerifiedRunBinding};
 use org_proto::msg::{json_string_len, MsgBind, MsgBindResult, MAX_HANDLE_BYTES, OFFICE_SENDER};
 use org_proto::{AgentStatus, ErrorCode, MemberKind, Request, Response};
 
@@ -27,9 +28,9 @@ pub(super) fn lookup_live_binding(
                 && binding.member().is_some_and(|member| {
                     shared
                         .ports
-                        .run_binding_active
+                        .run_binding_verifier
                         .as_ref()
-                        .is_some_and(|active| !active(member))
+                        .is_some_and(|verifier| !verifier.has_active(member))
                 })
         }
     };
@@ -49,7 +50,7 @@ pub(super) fn bind_connection(
     request: &Request,
     shared: &Shared,
     binding: &mut Binding,
-    peer_pid: Option<libc::pid_t>,
+    peer: &PeerIdentity,
 ) -> Response {
     *binding = Binding::Anonymous;
     let params = match request.params::<MsgBind>() {
@@ -66,7 +67,7 @@ pub(super) fn bind_connection(
         shared,
         &member,
         params.session_token.as_deref(),
-        peer_pid,
+        peer,
     );
     match bound {
         Ok((now, member_id)) => {
@@ -82,15 +83,15 @@ pub(super) fn bind_connection(
 }
 
 /// As a member: an agent of this office that may message. Office-run agents require a live
-/// `AGENT_OS_SESSION_TOKEN` and kernel descendant PID check (`CLI-12`, `SUB-3`, `B2 Q9`); an
-/// external (BYOA) workspace presents its lease's fast token instead (`TASK-137`), which binds
-/// the connection as [`Binding::External`].
+/// `AGENT_OS_SESSION_TOKEN` and peer verification via [`org_office_sessions::RunBindingVerifier`]
+/// (`CLI-12`, `SUB-3`, `B2 Q9`, `TASK-233`); an external (BYOA) workspace presents its lease's
+/// fast token instead (`TASK-137`), which binds the connection as [`Binding::External`].
 fn bind_member(
     id: u64,
     shared: &Shared,
     member: &str,
     session_token: Option<&str>,
-    peer_pid: Option<libc::pid_t>,
+    peer: &PeerIdentity,
 ) -> Result<(Binding, Option<String>), Response> {
     // Step 1, which needs no lookup.
     if json_string_len(member) > MAX_HANDLE_BYTES {
@@ -125,23 +126,41 @@ fn bind_member(
     if found.kind == MemberKind::Person {
         return Err(refused());
     }
-    if let Some(verify) = &shared.ports.run_binding_verify {
-        if !verify(&found.id, session_token, peer_pid) {
-            let external = shared
-                .ports
-                .external_auth
-                .as_ref()
-                .and_then(|port| port.verify(&found.id, session_token));
-            let Some(session_id) = external else {
+    if let Some(verifier) = &shared.ports.run_binding_verifier {
+        match verifier.verify_binding(&found.id, session_token, peer) {
+            Ok(VerifiedRunBinding::Managed(_)) => {}
+            Ok(VerifiedRunBinding::External {
+                employee_id,
+                session_id,
+            }) if employee_id == found.id => {
+                return Ok((
+                    Binding::External {
+                        id: employee_id.clone(),
+                        session_id,
+                    },
+                    Some(employee_id),
+                ));
+            }
+            Ok(VerifiedRunBinding::External { .. }) => {
                 return Err(refused());
-            };
-            return Ok((
-                Binding::External {
-                    id: found.id.clone(),
-                    session_id,
-                },
-                Some(found.id),
-            ));
+            }
+            Err(_) => {
+                let external = shared
+                    .ports
+                    .external_auth
+                    .as_ref()
+                    .and_then(|port| port.verify(&found.id, session_token));
+                let Some(session_id) = external else {
+                    return Err(refused());
+                };
+                return Ok((
+                    Binding::External {
+                        id: found.id.clone(),
+                        session_id,
+                    },
+                    Some(found.id),
+                ));
+            }
         }
     } else if session_token.is_some()
         || found
@@ -193,7 +212,7 @@ pub(super) fn lookup(shared: &Shared, handle: &str) -> Lookup {
         MemberKind::Agent => {
             found.office_id.as_deref() == Some(shared.office_id.as_str())
                 && found.agent.as_ref().is_some_and(|profile| {
-                    if shared.ports.run_binding_verify.is_some() {
+                    if shared.ports.run_binding_verifier.is_some() {
                         profile.status == AgentStatus::Active
                     } else {
                         matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)

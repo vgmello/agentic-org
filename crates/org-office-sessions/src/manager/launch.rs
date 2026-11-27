@@ -1,6 +1,5 @@
 //! Session launch: admission, route planning, warm reuse checks, and spawn + persist.
 
-use std::collections::BTreeSet;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +14,6 @@ use crate::pump::{PumpCommand, SessionRuntimeState};
 use crate::recovery::{ActiveTurnRecord, PendingStartRecord};
 use crate::subagents::{build_general_subagent_definition, write_subagent_definition};
 
-use super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
 use super::chief_of_staff::partition_switch_reason;
 use super::environment::{
     assemble_launch_env, resolve_workspace, write_owner_only_binding_file, SessionEnvInput,
@@ -24,9 +22,10 @@ use super::operator_home::ensure_operator_home;
 use super::registry_guards::{
     check_registry_startable, ensure_live_handle_not_recovery_required, ensure_not_stopped_since,
 };
+use super::sandbox_runner::{SandboxPlan, SandboxPrepareContext, SandboxVerifyContext};
 use super::spec::{
-    build_launch_context, build_session_spec_for_launch, canonical_or_spec,
-    compute_launch_spec_hash, is_linux_bwrap_sandbox, ModelChoice,
+    build_launch_context, build_session_spec, canonical_or_spec, compute_launch_spec_hash,
+    ModelChoice,
 };
 use super::warm::{
     dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, StartReservation,
@@ -45,7 +44,7 @@ const MAX_WARM_REVALIDATIONS: usize = 3;
 struct WarmHandleSnapshot {
     state: Arc<Mutex<SessionRuntimeState>>,
     has_connection: bool,
-    bwrap_masked_siblings: Option<BTreeSet<String>>,
+    sandbox_plan: SandboxPlan,
 }
 
 /// What a start does once its warm handle (if any) is re-validated under the lock.
@@ -190,7 +189,7 @@ impl SessionManager {
         Ok(Some(WarmHandleSnapshot {
             state: Arc::clone(&handle.state),
             has_connection: handle.connection_id.is_some(),
-            bwrap_masked_siblings: handle.bwrap_masked_siblings.clone(),
+            sandbox_plan: handle.sandbox_plan.clone(),
         }))
     }
 
@@ -198,9 +197,11 @@ impl SessionManager {
     /// with no lock held.
     fn warm_handle_freshness(&self, emp_id: &str, snap: &WarmHandleSnapshot) -> WarmFreshness {
         WarmFreshness {
-            bwrap_topology_stale: snap.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-                has_unmasked_bwrap_sibling_in_office(&self.office, emp_id, masked)
-            }),
+            sandbox_topology_stale: self.sandbox_runner.is_plan_stale(
+                &self.office,
+                emp_id,
+                &snap.sandbox_plan,
+            ),
             route_stale: !snap.has_connection
                 && self
                     .office
@@ -264,7 +265,7 @@ impl SessionManager {
             if !wants_turn {
                 return Ok(Some(StartDecision::LiveView(Box::new(state.to_view()))));
             }
-            ensure_warm_bwrap_not_stale(freshness.bwrap_topology_stale)?;
+            ensure_warm_sandbox_not_stale(freshness.sandbox_topology_stale)?;
             let target = WarmSendTarget {
                 tx: handle.tx.clone(),
                 state: Arc::clone(&handle.state),
@@ -317,9 +318,9 @@ impl SessionManager {
         // disk setup and the spawn (registration re-checks atomically, `TASK-190`).
         ensure_not_stopped_since(&self.registry, &emp_id, opts.start_stop_epoch)?;
         // Before creating this agent's runtime directory or session-binding token on disk,
-        // ensure no already-running Linux `bwrap` sibling lacks a mount mask for `emp_id`
-        // (`TASK-166`).
-        super::bwrap_isolation::enforce_bwrap_sibling_isolation(self, &emp_id)?;
+        // ensure no already-running sandboxed sibling lacks isolation for `emp_id` (`TASK-166`).
+        self.sandbox_runner
+            .enforce_sibling_isolation(self, &emp_id)?;
         let home = self
             .office
             .ensure_private_home(&emp_id)
@@ -350,14 +351,14 @@ impl SessionManager {
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
 
         let host_profile = admitted.adapter.host_profile();
-        let is_linux_bwrap = is_linux_bwrap_sandbox(admitted.sandbox_enabled, host_profile);
-        let bwrap_masked_siblings = if is_linux_bwrap {
-            Some(super::bwrap_isolation::ensure_bwrap_deny_dirs(
-                self, &emp_id,
-            )?)
-        } else {
-            None
-        };
+        let sandbox_plan = self.sandbox_runner.prepare_launch(&SandboxPrepareContext {
+            office: &self.office,
+            office_socket: &self.config.office_socket,
+            agent_os_state_roots: &self.config.agent_os_state_roots,
+            employee_id: &emp_id,
+            sandbox_enabled: admitted.sandbox_enabled,
+            host_profile,
+        })?;
 
         let mut preset_cfg = self.build_employee_preset_cfg(
             &emp_id,
@@ -382,7 +383,7 @@ impl SessionManager {
             preset_cfg.sandbox.enabled,
         );
         Self::append_attachments_read_only_dir(&mut read_only_dirs, &attachments_root);
-        let spec = build_session_spec_for_launch(
+        let mut spec = build_session_spec(
             admitted.adapter.id(),
             employee,
             ModelChoice {
@@ -393,8 +394,9 @@ impl SessionManager {
             read_only_dirs,
             instructions,
             &preset_cfg,
-            is_linux_bwrap,
         )?;
+        self.sandbox_runner
+            .adapt_session_spec(&sandbox_plan, &mut spec);
         let spec_hash = compute_launch_spec_hash(&spec, &admitted.route_digest_suffix);
         let run_id = format!("run-{}", next_entropy_hex(10)?);
         let session_id = next_uuid_v4()?;
@@ -435,7 +437,7 @@ impl SessionManager {
             runtime: Arc::clone(&admitted.adapter),
             supports_mid_turn: admitted.adapter.capabilities().supports_mid_turn_delivery(),
             model_supports_vision: admitted.model_supports_vision,
-            bwrap_masked_siblings,
+            sandbox_plan,
             connection_id: admitted.connection_id,
             route_digest: admitted.route_digest_suffix,
             oauth_expires_at_ms,
@@ -478,7 +480,7 @@ impl SessionManager {
             runtime,
             supports_mid_turn,
             model_supports_vision,
-            bwrap_masked_siblings,
+            sandbox_plan,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -543,10 +545,14 @@ impl SessionManager {
             .flatten()
             .map_or(0, |r| r.consecutive_stalls);
 
-        super::bwrap_isolation::verify_bwrap_masked_before_spawn(
-            self,
-            &emp_id,
-            bwrap_masked_siblings.as_ref(),
+        let active_employees = self.active_or_starting_employee_ids();
+        self.sandbox_runner.verify_before_spawn(
+            &SandboxVerifyContext {
+                office: &self.office,
+                employee_id: &emp_id,
+                active_employees: &active_employees,
+            },
+            &sandbox_plan,
         )?;
         ensure_not_stopped_since(&self.registry, &emp_id, start_stop_epoch)?;
         let spawned = self.spawn_and_persist(
@@ -575,7 +581,7 @@ impl SessionManager {
             runtime,
             supports_mid_turn,
             model_supports_vision,
-            bwrap_masked_siblings,
+            sandbox_plan,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -670,10 +676,20 @@ impl SessionManager {
                 ApiError::new(ErrorCode::StorageError, "could not persist child identity")
             })
     }
+
+    /// Brief unlocked snapshot of currently live or starting employee IDs for confinement checks.
+    pub(super) fn active_or_starting_employee_ids(&self) -> Vec<String> {
+        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.live
+            .keys()
+            .chain(reg.starting.iter())
+            .cloned()
+            .collect()
+    }
 }
 
-pub(super) fn ensure_warm_bwrap_not_stale(bwrap_topology_stale: bool) -> Result<(), ApiError> {
-    if bwrap_topology_stale {
+pub(super) fn ensure_warm_sandbox_not_stale(sandbox_topology_stale: bool) -> Result<(), ApiError> {
+    if sandbox_topology_stale {
         return Err(ApiError::new(
             ErrorCode::Conflict,
             "sandboxed session topology is stale while busy; wait for current turn to finish or stop session first",

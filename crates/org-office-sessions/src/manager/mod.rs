@@ -61,13 +61,13 @@ mod rpc;
 mod rust_toolchain;
 mod sandbox_paths;
 mod sandbox_rules;
+mod sandbox_runner;
 mod sessions_api;
 mod spec;
 mod turn_controls;
 mod views;
 mod warm;
 
-pub(crate) use bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
 #[cfg(test)]
 pub(crate) use bwrap_isolation::{enforce_bwrap_sibling_isolation, ensure_bwrap_deny_dirs};
 pub(crate) use environment::task_process_context;
@@ -85,6 +85,10 @@ pub(crate) use operator_home::clean_operator_rules;
 pub(crate) use reap::{reap_live_handle, ReapMode};
 #[cfg(test)]
 pub(crate) use rust_toolchain::host_rust_dir_env_from;
+pub use sandbox_runner::{
+    LocalOsSandbox, SandboxConfinementMode, SandboxPlan, SandboxPrepareContext, SandboxRunner,
+    SandboxVerifyContext,
+};
 #[cfg(test)]
 pub(crate) use sessions_api::autonomous_resume;
 #[cfg(test)]
@@ -163,9 +167,8 @@ pub(crate) struct LiveSessionHandle {
     pub workspace: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub supports_mid_turn: bool,
-    /// Set of sibling employee IDs whose directories were pre-created and masked when this
-    /// session launched under Linux Claude `bwrap` (`TASK-166`). `None` for non-bwrap sessions.
-    pub bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    /// Opaque confinement plan produced by [`SandboxRunner::prepare_launch`] (`TASK-233`).
+    pub sandbox_plan: SandboxPlan,
     /// The Chief of Staff partition this process serves, and so the caller its run acts for
     /// (`TASK-80.1`); `None` for every other agent.
     pub partition: Option<crate::partition::PartitionKey>,
@@ -315,7 +318,7 @@ struct PlannedSessionLaunch {
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
     model_supports_vision: bool,
-    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    sandbox_plan: SandboxPlan,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -349,7 +352,7 @@ struct PreparedSessionLaunch {
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
     model_supports_vision: bool,
-    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    sandbox_plan: SandboxPlan,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -432,6 +435,7 @@ pub type WatchNoticeProvider = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 pub struct SessionManager {
     pub(crate) office: Arc<Office>,
     pub(crate) config: SessionManagerConfig,
+    pub(crate) sandbox_runner: Arc<dyn SandboxRunner>,
     pub(crate) attachment_resolver: Arc<dyn crate::turn_attachments::TurnAttachmentResolver>,
     pub(crate) store: SessionStore,
     pub(crate) bindings: RunBindingRegistry,
@@ -458,6 +462,14 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new(office: Arc<Office>, config: SessionManagerConfig) -> Self {
+        Self::with_sandbox_runner(office, config, Arc::new(LocalOsSandbox))
+    }
+
+    pub fn with_sandbox_runner(
+        office: Arc<Office>,
+        config: SessionManagerConfig,
+        sandbox_runner: Arc<dyn SandboxRunner>,
+    ) -> Self {
         let info = office.info();
         let store = SessionStore::new(office.durable_root(), &info.office_id);
         let key = office.secrets_key().map(|k| *k.expose_bytes());
@@ -487,6 +499,7 @@ impl SessionManager {
         Self {
             office,
             config,
+            sandbox_runner,
             attachment_resolver,
             store,
             bindings: RunBindingRegistry::new(),
