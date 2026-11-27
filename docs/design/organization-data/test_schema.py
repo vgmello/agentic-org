@@ -2364,6 +2364,17 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             (self.db, "usage_by_release_time",
              "SELECT id FROM usage_records WHERE organization_id=? AND release_id=? ORDER BY occurred_at",
              ("org", "rel")),
+            # TASK-105: an open-scope page of a project's or a team's tasks, in the default order.
+            (self.db, "tasks_open_by_project",
+             "SELECT t.id, t.title FROM tasks t WHERE t.organization_id=? AND t.project_id=? "
+             "AND t.status NOT IN ('done', 'cancelled') "
+             "ORDER BY t.rank_order IS NULL, t.rank_order, t.office_code, t.number, t.id LIMIT 50",
+             ("org", "project")),
+            (self.db, "tasks_open_by_team",
+             "SELECT t.id, t.title FROM tasks t WHERE t.organization_id=? AND t.team_id=? "
+             "AND t.status NOT IN ('done', 'cancelled') "
+             "ORDER BY t.rank_order IS NULL, t.rank_order, t.office_code, t.number, t.id LIMIT 50",
+             ("org", "team")),
         ]
         msg_db = database("messaging-schema.sql")
         self.addCleanup(msg_db.close)

@@ -2546,6 +2546,12 @@ CREATE INDEX tasks_by_feature ON tasks(organization_id, feature_id);
 CREATE INDEX tasks_by_order ON tasks(organization_id, rank_order, number);
 CREATE INDEX task_labels_by_label ON task_labels(organization_id, label, task_id);
 CREATE INDEX task_files_by_role_path ON task_files(organization_id, role, path, task_id);
+-- Open-task partial indexes (TASK-105): an open-scope `tasks.list` names
+-- `status NOT IN ('done', 'cancelled')` verbatim, and the columns after the owner are its
+-- default order (`rank_order` ascending with nulls last, then office code, number and ID),
+-- so a page of a project's or a team's open work is read in order from the index, unsorted.
+CREATE INDEX tasks_open_by_project ON tasks(organization_id, project_id, rank_order IS NULL, rank_order, office_code, number, id) WHERE status NOT IN ('done', 'cancelled');
+CREATE INDEX tasks_open_by_team ON tasks(organization_id, team_id, rank_order IS NULL, rank_order, office_code, number, id) WHERE status NOT IN ('done', 'cancelled');
 CREATE INDEX task_document_versions_by_document ON task_document_versions(organization_id, document_id, version, task_id);
 CREATE INDEX document_code_links_by_document ON document_code_links(organization_id, document_id);
 CREATE INDEX document_version_sources_by_source ON document_version_sources(organization_id, source_document_id, source_version, document_id, version);
