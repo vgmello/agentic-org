@@ -24,6 +24,7 @@ mod open_routes;
 mod org_routes;
 mod process_routes;
 mod provider_routes;
+mod review_routes;
 mod search_routes;
 mod session_routes;
 mod task_routes;
@@ -196,6 +197,7 @@ pub enum Route {
     Attachments(attachment_routes::AttachmentRoute),
     Tess(tess_routes::TessRoute),
     ExternalAuth(external_auth_routes::ExternalAuthRoute),
+    Reviews(review_routes::ReviewRoute),
 }
 
 pub enum Call {
@@ -243,6 +245,7 @@ pub enum Call {
     Attachments(attachment_routes::AttachmentCall),
     Tess(tess_routes::TessCall),
     ExternalAuth(external_auth_routes::ExternalAuthCall),
+    Reviews(review_routes::ReviewCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.

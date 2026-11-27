@@ -33,7 +33,8 @@ pub(super) struct WriteDeps<'a> {
 
 impl WriteDeps<'_> {
     fn notify_mutation(&self) {
-        self.live.record_mailbox_change();
+        self.live.record_inbox_changed();
+        self.live.record_org_changed();
         if let Some(wake) = self.sync_wake {
             wake();
         }

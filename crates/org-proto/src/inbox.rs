@@ -13,6 +13,7 @@ pub enum InboxKind {
     Question,
     Decision,
     Problem,
+    Review,
     #[serde(other)]
     Unknown,
 }
@@ -28,6 +29,7 @@ pub enum InboxClears {
     LeavesFixed,
     AssignedOrClosed,
     Unblocked,
+    ReviewDecided,
     #[serde(other)]
     Unknown,
 }
@@ -50,6 +52,7 @@ pub enum OpenTarget {
     WorkItem,
     Bug,
     Message,
+    Review,
     #[serde(other)]
     Unknown,
 }
@@ -171,6 +174,10 @@ fn bounded(text: &str, max: usize) -> String {
     result
 }
 
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
+}
+
 /// Unfiltered open totals, independent of source item caps. `total` includes future kinds.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxCounts {
@@ -178,6 +185,8 @@ pub struct InboxCounts {
     pub questions: u64,
     pub decisions: u64,
     pub problems: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub reviews: u64,
     pub total: u64,
 }
 

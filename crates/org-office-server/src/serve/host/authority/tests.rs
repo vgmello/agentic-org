@@ -394,3 +394,49 @@ fn attachment_methods_are_person_scoped_never_owner_only() {
     }
     assert!(!is_member_scoped_method("attachment.future"));
 }
+
+#[test]
+fn review_methods_are_person_scoped_never_owner_only_or_unlinked_satellite() {
+    let satellite: OfficeInfo = serde_json::from_value(serde_json::json!({
+        "id": "office",
+        "organization_id": "org",
+        "name": "Berlin",
+        "role": "satellite",
+        "host": "test",
+        "status": "active"
+    }))
+    .unwrap();
+    let mut sat_claims = claims();
+    sat_claims.member = "office".into();
+
+    assert_eq!(org_proto::reviews::REVIEW_METHODS.len(), 9);
+    for method in org_proto::reviews::REVIEW_METHODS {
+        assert!(!requires_owner(method), "{method}");
+        assert!(is_member_scoped_method(method), "{method}");
+        let mut req = request(claims());
+        req.method = method.into();
+        assert_eq!(
+            authorize(
+                &req,
+                "channel",
+                &office(),
+                &PersonOnly(Some("person".into()))
+            ),
+            Ok("person".into()),
+            "any live person may call {method}"
+        );
+        assert_eq!(
+            authorize(&req, "channel", &office(), &PersonOnly(None)),
+            Err(ErrorCode::NotAuthorized),
+            "{method} needs a live person"
+        );
+        let mut sat_req = request(sat_claims.clone());
+        sat_req.method = method.into();
+        assert_eq!(
+            authorize(&sat_req, "channel", &satellite, &PersonOnly(None)),
+            Err(ErrorCode::NotAuthorized),
+            "unlinked satellite operator grant must not authorize {method}"
+        );
+    }
+    assert!(!is_member_scoped_method("review.future"));
+}
