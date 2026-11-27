@@ -13,6 +13,7 @@ mod attachment_routes;
 mod chat_routes;
 mod cost_routes;
 mod doc_routes;
+mod external_auth_routes;
 mod git_routes;
 mod hiring_routes;
 mod hq_context;
@@ -194,6 +195,7 @@ pub enum Route {
     OfficeFederation(office_routes::OfficeFederationRoute),
     Attachments(attachment_routes::AttachmentRoute),
     Tess(tess_routes::TessRoute),
+    ExternalAuth(external_auth_routes::ExternalAuthRoute),
 }
 
 pub enum Call {
@@ -240,6 +242,7 @@ pub enum Call {
     OfficeFederation(office_routes::OfficeFederationCall),
     Attachments(attachment_routes::AttachmentCall),
     Tess(tess_routes::TessCall),
+    ExternalAuth(external_auth_routes::ExternalAuthCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
