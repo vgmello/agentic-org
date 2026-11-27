@@ -48,7 +48,14 @@ pub fn decode_ask_answer_file(
         return (None, None);
     };
     match serde_json::from_value::<AskOutcomeEnvelope>(val.clone()) {
-        Ok(AskOutcomeEnvelope::Answer(ans)) => (Some(ans), None),
+        Ok(AskOutcomeEnvelope::Answer(mut ans)) => {
+            // The answer's files sit beside the envelope in the answer file (`TASK-98.2`).
+            if ans.attachments.is_empty() {
+                ans.attachments =
+                    super::files::metas(&file.attachments, &ans.at, Some(&file.employee_id));
+            }
+            (Some(ans), None)
+        }
         Ok(AskOutcomeEnvelope::Withdrawal(wd)) => (None, Some(wd)),
         Err(_) => (None, None),
     }

@@ -14,6 +14,7 @@ use org_store::{Id, OfficeIdentity, Store, StoreError};
 use crate::messaging::{
     asks::{self, AnswerCommitted, AskCommitted, WithdrawCommitted},
     features::{self, ChatSendCommitted},
+    files::MessageFiles,
 };
 use crate::store::open::{OfficeEngine, StoreOp};
 
@@ -129,6 +130,7 @@ pub struct ChatSendOp {
     pub owner: Id,
     pub caller: Id,
     pub params: ChatSendParams,
+    pub files: MessageFiles,
     pub org_seq: u64,
     pub now_utc: String,
 }
@@ -146,6 +148,7 @@ impl StoreOp for ChatSendOp {
                 &owner,
                 &self.caller,
                 &self.params,
+                &self.files,
                 self.org_seq,
                 &self.now_utc,
             )?;
@@ -161,6 +164,7 @@ pub struct ChatReplyOp {
     pub owner: Id,
     pub caller: Id,
     pub params: MsgReplyParams,
+    pub files: MessageFiles,
     pub org_seq: u64,
     pub now_utc: String,
 }
@@ -178,6 +182,7 @@ impl StoreOp for ChatReplyOp {
                 &owner,
                 &self.caller,
                 &self.params,
+                &self.files,
                 self.org_seq,
                 &self.now_utc,
             )?;
@@ -336,6 +341,7 @@ pub struct MsgAskOp {
     pub owner: Id,
     pub caller: Id,
     pub params: ChatAskParams,
+    pub files: MessageFiles,
     pub org_seq: u64,
     pub now_ms: u64,
 }
@@ -353,6 +359,7 @@ impl StoreOp for MsgAskOp {
                 &owner,
                 &self.caller,
                 &self.params,
+                &self.files,
                 self.org_seq,
                 self.now_ms,
             )?;
@@ -368,6 +375,7 @@ pub struct ChatAnswerOp {
     pub owner: Id,
     pub caller: Id,
     pub params: ChatAnswerParams,
+    pub files: MessageFiles,
     pub reply_id: String,
     pub org_seq: u64,
     pub now_utc: String,
@@ -386,6 +394,7 @@ impl StoreOp for ChatAnswerOp {
                 &owner,
                 &self.caller,
                 &self.params,
+                &self.files,
                 &self.reply_id,
                 self.org_seq,
                 &self.now_utc,

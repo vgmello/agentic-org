@@ -50,6 +50,7 @@ pub(super) fn validate_ask_inputs(
     if json_string_len(&body) > MAX_BODY_BYTES {
         return Err(refusal(ErrorCode::TooLarge, "body exceeds 256 KiB limit"));
     }
+    crate::messaging::files::check_message_files(&params.id, &body, &params.attachment_ids)?;
     if params
         .subject
         .as_deref()

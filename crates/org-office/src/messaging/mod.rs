@@ -9,6 +9,7 @@
 pub mod ask_card;
 pub mod asks;
 pub mod features;
+pub mod files;
 pub mod mentions;
 pub mod ports;
 pub mod projector;

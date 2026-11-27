@@ -274,6 +274,7 @@ pub(crate) fn send_params(n: u32, to: &str) -> MsgSendParams {
         body: format!("body {n}"),
         meta: Meta::new(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     }
 }
 

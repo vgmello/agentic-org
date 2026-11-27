@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::attachments::AttachmentMeta;
 use crate::{Call, EventKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,17 @@ pub struct ActionInput {
     pub field: String,
     pub required: bool,
     pub max_chars: u32,
+    /// The params field that takes up to `max_attachments` of the caller's committed staged
+    /// uploads with the text (`attachment_ids`, `TASK-98.2`); absent when the call takes none.
+    /// With files the text may be empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments_field: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub max_attachments: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Clients drop unknown actions and map Open targets to their own routes. Fresh ids live
@@ -122,6 +134,9 @@ pub struct InboxItem {
     pub clears: InboxClears,
     pub dismissable: bool,
     pub actions: Vec<Action>,
+    /// The files on the item's message (`TASK-98.2`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 impl InboxItem {
@@ -186,6 +201,12 @@ pub struct InboxListParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// `has:image`: only items with (`true`) or without (`false`) an image file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_image: Option<bool>,
+    /// `has:file`: only items with (`true`) or without (`false`) a document file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_file: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

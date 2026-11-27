@@ -1,11 +1,13 @@
 //! The office's attachment facade (`TASK-98.1`, ADR-0037): the nine `attachment.*` calls
-//! (`upload.rs`, `attach.rs`, `read.rs`) over the stores in [`crate::attachments`], each
-//! decided by [`AuthorizationPolicy`] and nothing else.
+//! (`upload.rs`, `attach.rs`, `read.rs`) over the stores in [`crate::attachments`], and the
+//! files of messages, asks and answers (`messages.rs`, `TASK-98.2`), each decided by
+//! [`AuthorizationPolicy`] and nothing else.
 //!
 //! Every call names the caller by employee ID (the connection's binding, never the wire), and
 //! answers `Ok(Err(..))` for a caller's mistake or refusal and `Err(..)` only for storage.
 
 mod attach;
+mod messages;
 mod read;
 mod upload;
 
@@ -36,7 +38,10 @@ struct OfficeFacts<'a>(&'a Office);
 
 impl ResourceFacts for OfficeFacts<'_> {
     fn facts(&self, resource: &ResourceRef) -> Result<ParentFacts, OfficeError> {
-        let read = ResourceFactsRead(resource.clone());
+        let read = ResourceFactsRead {
+            resource: resource.clone(),
+            owner: self.0.effective_owner_for_ops(),
+        };
         Ok(self.0.store.read(read).map_err(storage)?.0)
     }
 }
@@ -178,6 +183,9 @@ impl Office {
             return Ok(None);
         };
         if let Some(record) = self.store.read(AttachmentById(id)).map_err(storage)?.0 {
+            return Ok(Some(record));
+        }
+        if let Some(record) = self.message_file_record(attachment_id)? {
             return Ok(Some(record));
         }
         self.attachments

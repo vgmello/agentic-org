@@ -328,6 +328,8 @@ pub(super) async fn execute(api: &SessionApi, call: ChatCall) -> ApiReply {
                 team: None,
                 cursor: None,
                 limit: None,
+                has_file: None,
+                has_image: None,
             };
             run_office::<InboxList>(api, c, &o, &params, true).await
         }
