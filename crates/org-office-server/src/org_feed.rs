@@ -1,48 +1,15 @@
 //! Production [`OrgFeed`] backed by `org_office::Office` (`org-store` committed receipts)
 //! with immediate wakeups for `subscribe`, `inbox.changed`, and `/api/v1/events/stream` (`B6`).
 
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use org_office::Office;
 use org_proto::org::{OrgChangedData, Position};
 
+pub(crate) use org_federation::FeedWake;
+
 use crate::follow::OrgFeed;
-
-/// Shared monotonic wake token notified on every committed organization change or live event.
-#[derive(Default)]
-pub(crate) struct FeedWake {
-    seq: Mutex<u64>,
-    cv: Condvar,
-}
-
-impl FeedWake {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn notify(&self) {
-        let mut seq = self.seq.lock().unwrap_or_else(|p| p.into_inner());
-        *seq = seq.saturating_add(1);
-        self.cv.notify_all();
-    }
-
-    pub(crate) fn token(&self) -> u64 {
-        *self.seq.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    pub(crate) fn wait(&self, seen: u64, timeout: Duration) -> u64 {
-        let guard = self.seq.lock().unwrap_or_else(|p| p.into_inner());
-        if *guard != seen {
-            return *guard;
-        }
-        let (guard, _) = self
-            .cv
-            .wait_timeout_while(guard, timeout, |cur| *cur == seen)
-            .unwrap_or_else(|p| p.into_inner());
-        *guard
-    }
-}
 
 /// [`OrgFeed`] backed by [`Office`] durable receipts (`org_changes_after`) and [`FeedWake`].
 pub(crate) struct OfficeOrgFeed {

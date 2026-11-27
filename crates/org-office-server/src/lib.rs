@@ -26,11 +26,12 @@ mod directory;
 mod doc_calls;
 mod failure;
 pub mod fdswap;
-pub mod federation;
+pub use org_federation as federation;
 mod federation_calls;
-mod federation_link;
+#[cfg(test)]
+pub(crate) use org_federation::testkit::federation_link;
 mod federation_runtime;
-mod federation_stream;
+pub(crate) use org_federation::stream as federation_stream;
 mod follow;
 mod git_calls;
 mod grant;
@@ -54,7 +55,8 @@ mod search_calls;
 mod serve;
 mod session_proxy;
 mod signals;
-mod snapshot_transfer;
+#[cfg(test)]
+pub(crate) use org_federation::testkit::snapshot_transfer;
 mod startup;
 mod task_calls;
 mod tess_calls;
@@ -62,8 +64,11 @@ mod tess_calls;
 pub mod test_support;
 mod transfer;
 mod wake_bridge;
-mod watcher;
-mod watcher_store;
+pub(crate) use org_channel_watcher as watcher;
+#[cfg(test)]
+pub(crate) use org_channel_watcher::store as watcher_store;
+#[cfg(test)]
+mod watcher_tests;
 mod zeroed;
 
 #[cfg(test)]

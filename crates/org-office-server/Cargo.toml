@@ -11,10 +11,9 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+org-channel-watcher = { path = "../org-channel-watcher" }
+org-federation = { path = "../org-federation" }
 org-pki = { path = "../org-pki" }
-org-sync = { path = "../org-sync" }
-org-sync-proto = { path = "../org-sync-proto" }
-rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 base64.workspace = true
 zeroize = "=1.9.1"
 org-socket = { path = "../org-socket" }
@@ -23,7 +22,6 @@ org-office = { path = "../org-office" }
 org-office-sqlite = { path = "../org-office-sqlite" }
 org-doc-render = { path = "../org-doc-render" }
 org-git = { path = "../org-git" }
-org-copilot = { path = "../org-copilot" }
 # The writer custody contract the office's store calls, implemented over the host channel.
 org-store = { path = "../org-store" }
 org-mailbox = { path = "../org-mailbox" }
@@ -45,7 +43,11 @@ sha2.workspace = true
 [dev-dependencies]
 org-agent-cli = { path = "../org-agent-cli" }
 org-agent-runtime = { path = "../org-agent-runtime" }
+org-channel-watcher = { path = "../org-channel-watcher", features = ["testkit"] }
+org-copilot = { path = "../org-copilot" }
+org-federation = { path = "../org-federation", features = ["testkit"] }
 org-sync = { path = "../org-sync" }
+org-sync-proto = { path = "../org-sync-proto" }
 org-office = { path = "../org-office", features = ["testkit"] }
 org-office-sqlite = { path = "../org-office-sqlite", features = ["testkit"] }
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }

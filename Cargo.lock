@@ -1279,6 +1279,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-channel-watcher"
+version = "0.0.0"
+dependencies = [
+ "org-copilot",
+ "org-office",
+ "org-office-sessions",
+ "org-platform",
+ "org-proto",
+ "org-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "org-cli-shell"
 version = "0.0.0"
 dependencies = [
@@ -1355,6 +1370,26 @@ version = "0.0.0"
 dependencies = [
  "saphyr-parser",
  "serde_json",
+]
+
+[[package]]
+name = "org-federation"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "org-office",
+ "org-office-sessions",
+ "org-pki",
+ "org-platform",
+ "org-proto",
+ "org-socket",
+ "org-store",
+ "org-sync",
+ "org-sync-proto",
+ "rustls",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -1518,10 +1553,12 @@ dependencies = [
  "libc",
  "org-agent-cli",
  "org-agent-runtime",
+ "org-channel-watcher",
  "org-client",
  "org-command-catalogue",
  "org-copilot",
  "org-doc-render",
+ "org-federation",
  "org-git",
  "org-mailbox",
  "org-office",
@@ -1539,7 +1576,6 @@ dependencies = [
  "org-tess",
  "proc-macro2",
  "ring",
- "rustls",
  "serde",
  "serde_json",
  "sha2",
