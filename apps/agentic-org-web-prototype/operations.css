@@ -3011,6 +3011,20 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
 #main .activity-body { grid-template-columns: minmax(0, 1fr) 0px; grid-template-areas: "main panel"; }
 #main .activity-body[data-panel-open] { grid-template-columns: minmax(0, 1fr) clamp(17rem, 27%, 24rem); }
 #main .queue-controls > .activity-tools { grid-area: auto; flex-direction: row; gap: 2px; padding: 0; border: 0; background: none; }
+/* Same "|" group separators as the Work toolbar (owner): tabs | Filter · Display | panel toggles */
+#main :is(.activity-toolbar, .project-subbar) .queue-controls { position: relative; align-items: center; }
+#main .activity-toolbar > .primary-tab-row + .queue-controls { margin-inline-start: var(--toolbar-group-gap); }
+#main .activity-toolbar > .primary-tab-row + .queue-controls::before,
+#main :is(.activity-toolbar, .project-subbar) .queue-controls > .activity-tools::before {
+  content: ""; position: absolute; inset-inline-start: calc(var(--toolbar-group-gap) / -2); inset-block-start: 50%;
+  translate: -50% -50%; width: 1px; height: 18px; background: var(--toolbar-divider-color); pointer-events: none;
+}
+#main .project-subbar .project-activity-controls > .queue-controls { margin-inline-start: var(--toolbar-group-gap); }
+#main .project-subbar .project-activity-controls > .queue-controls::before {
+  content: ""; position: absolute; inset-inline-start: calc(var(--toolbar-group-gap) / -2); inset-block-start: 50%;
+  translate: -50% -50%; width: 1px; height: 18px; background: var(--toolbar-divider-color); pointer-events: none;
+}
+#main :is(.activity-toolbar, .project-subbar) .queue-controls > .activity-tools { position: relative; margin-inline-start: var(--toolbar-group-gap); }
 #main .queue-controls > .activity-tools .activity-tool .icon-tooltip { inset-block-start: calc(100% + 6px); inset-inline-end: 0; }
 @container activity (max-width: 42.5rem) {
   #main .activity-body, #main .activity-body[data-panel-open] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "panel"; }
