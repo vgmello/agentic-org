@@ -47,6 +47,7 @@ pub struct Org {
 impl Org {
     /// A new organization, seeded and stopped.
     pub fn seeded() -> Org {
+        org_office_sqlite::install();
         let tmp = tempfile::tempdir().expect("a temporary directory");
         let root = tmp.path().canonicalize().expect("a real path");
         let (office, roots, custody, key) = Office::for_test_with_real_ca_in(

@@ -562,6 +562,7 @@ fn live_three_runtimes_claude_codex_and_agy_cross_office_a2a_ring() {
     let ws_dir = tempfile::tempdir().unwrap();
     let ws = ws_dir.path().canonicalize().unwrap();
 
+    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));

@@ -17,8 +17,6 @@
 //! Nothing here deletes anything under `durable/`.
 
 mod accounting;
-#[cfg(test)]
-mod accounting_budget_tests;
 mod attachments;
 mod budgets;
 mod chief_of_staff;
@@ -36,28 +34,16 @@ mod messaging_catchup;
 mod opening;
 mod org;
 mod private_notes;
-#[cfg(test)]
-mod private_notes_tests;
 mod processes;
 mod project_docs;
-#[cfg(test)]
-mod project_docs_tests;
-#[cfg(test)]
-mod provider_pool_tests;
 mod providers;
 pub(crate) mod recorded;
 mod reviews;
-#[cfg(test)]
-mod reviews_tests;
 mod satellite;
-#[cfg(test)]
-mod satellite_tests;
 mod search;
-#[cfg(test)]
-mod search_tests;
 mod tasks;
 #[cfg(any(test, feature = "testkit"))]
-mod testkit;
+pub mod testkit;
 #[cfg(test)]
 mod tests;
 
@@ -84,6 +70,12 @@ pub use self::invitations::{
 };
 pub use self::providers::OfficePermitSpec;
 pub(crate) use self::satellite::check_replicated_hq_owner;
+#[cfg(any(test, feature = "testkit"))]
+pub mod satellite_testkit {
+    pub use super::satellite::{
+        read_replicated_hq_owner, remove_replicated_hq_owner, write_replicated_hq_owner,
+    };
+}
 pub use self::satellite::{
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
     is_immutable_state_path, relocated_task_paths, resolve_employee_office,
@@ -101,7 +93,10 @@ use crate::{
     key::Key,
     model::OfficeInfo,
     office_local::{read_ca, CaRecords},
-    store::open::{EngineChoice, OfficeStanding, OfficeStore, StoreConfig},
+    store::{
+        backend::OfficeStorageBackend,
+        open::{EngineChoice, OfficeStanding, OfficeStore, StoreConfig},
+    },
 };
 pub use folder::LOCK_WAIT;
 
@@ -164,37 +159,40 @@ pub(crate) fn tls_dir(durable_root: &Path, office_id: &str) -> PathBuf {
 /// What the office composes its store from besides the request: production uses SQLite
 /// and the wall clock; tests choose.
 #[derive(Clone)]
-pub(crate) struct Options {
+pub struct Options {
     pub engine: EngineChoice,
     pub clock: Arc<dyn Clock>,
+    /// Optional explicit storage backend overriding the installed process default.
+    pub backend: Option<Arc<dyn OfficeStorageBackend>>,
     #[cfg(any(test, feature = "testkit"))]
     pub testing: crate::store::open::Testing,
     /// Runs once a creation is durable and its files are written, before the final checks
     /// and `office.json`: a test spoils the disk there.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub before_final_checks: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Options {
-    fn production() -> Self {
+    pub(crate) fn production() -> Self {
         Self {
             engine: EngineChoice::Sqlite,
             clock: Arc::new(SystemClock),
+            backend: None,
             #[cfg(any(test, feature = "testkit"))]
             testing: Default::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testkit"))]
             before_final_checks: None,
         }
     }
 
+    pub(crate) fn with_backend(backend: Arc<dyn OfficeStorageBackend>) -> Self {
+        Self {
+            backend: Some(backend),
+            ..Self::production()
+        }
+    }
+
     fn config(&self, roots: &DataRoots, custody: &Custody) -> StoreConfig {
-        #[cfg_attr(
-            not(any(test, feature = "testkit")),
-            allow(
-                unused_mut,
-                reason = "test and testkit builds populate `config.testing` below"
-            )
-        )]
         let mut config = StoreConfig::new(
             self.engine,
             roots.durable.clone(),
@@ -203,6 +201,7 @@ impl Options {
             Arc::clone(&custody.authority),
             Arc::clone(&self.clock),
         );
+        config.backend = self.backend.clone();
         #[cfg(any(test, feature = "testkit"))]
         {
             config.testing = self.testing.clone();
@@ -563,9 +562,28 @@ impl Office {
         self.store.entries_after(ordinal)
     }
 
-    /// Every row of the projection, to compare with another of the same engine.
     #[cfg(any(test, feature = "testkit"))]
     pub fn dump(&self) -> Vec<String> {
         self.store.dump()
+    }
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn store_for_test(&self) -> &OfficeStore {
+        &self.store
+    }
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn accounting_for_test(&self) -> &Arc<dyn crate::accounting::AccountingStore> {
+        &self.accounting
+    }
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn budgets_for_test(&self) -> &Arc<dyn crate::budgets::BudgetStore> {
+        &self.budgets
+    }
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn private_notes_for_test(&self) -> &Arc<dyn crate::private_notes::PrivateNotesStore> {
+        &self.private_notes
+    }
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn retain_test_root(&mut self, root: tempfile::TempDir) {
+        self._test_root = Some(root);
     }
 }

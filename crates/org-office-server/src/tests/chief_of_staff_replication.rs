@@ -42,6 +42,7 @@ fn rebuilt(
 fn an_older_organizations_tess_reaches_its_satellite_once_and_survives_rebuilds() {
     let hq_dir = tempfile::tempdir().unwrap();
     let hq_root = hq_dir.path().canonicalize().unwrap();
+    org_office_sqlite::install();
     let (hq_office, hq_roots, hq_custody, hq_key) = Office::for_test_with_real_ca_in(
         &hq_root,
         TestOffice {

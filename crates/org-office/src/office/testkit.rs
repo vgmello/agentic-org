@@ -23,9 +23,9 @@ use crate::{
 };
 
 /// The creation request's canonical UUIDv7 operation ID.
-pub(crate) const OPERATION: &str = "01563e3a-b5d3-7d67-9931-87bee64c0af5";
+pub const OPERATION: &str = "01563e3a-b5d3-7d67-9931-87bee64c0af5";
 /// The CA material's seed.
-pub(crate) const CA_SEED: u8 = 1;
+pub const CA_SEED: u8 = 1;
 
 /// What [`Office::for_test`] makes.
 #[derive(Clone, Copy, Debug)]
@@ -43,7 +43,7 @@ impl Default for TestOffice {
 
 /// The request of the suite's creation: the office and organization of
 /// `org_store::testkit::identity`, with `creation_command`'s records.
-pub(crate) fn request() -> (NewOffice, Binding) {
+pub fn request() -> (NewOffice, Binding) {
     let command = creation_command();
     let prepared = PreparedV1 {
         plan: PlanV1 {
@@ -80,7 +80,7 @@ pub(crate) fn request() -> (NewOffice, Binding) {
 }
 
 /// The CA record the suite's creation commits, made from `seed`.
-pub(crate) fn record(seed: u8) -> Result<LocalRecord, OfficeError> {
+pub fn record(seed: u8) -> Result<LocalRecord, OfficeError> {
     let here = identity();
     let material = ca_material(&here.organization_id, seed);
     LocalRecord::new(
@@ -94,7 +94,7 @@ pub(crate) fn record(seed: u8) -> Result<LocalRecord, OfficeError> {
 
 /// The office folder and data roots under `root`. The roots are made, as the host makes
 /// them when it reserves the office's custody.
-pub(crate) fn places(root: &Path) -> (std::path::PathBuf, DataRoots) {
+pub fn places(root: &Path) -> (std::path::PathBuf, DataRoots) {
     let here = identity();
     let folder = root.join("home/offices").join(here.office_id.as_str());
     let data = root.join("data").join(here.organization_id.as_str());
@@ -108,19 +108,19 @@ pub(crate) fn places(root: &Path) -> (std::path::PathBuf, DataRoots) {
     (folder, roots)
 }
 
-pub(crate) fn custody(authority: Arc<FakeCustody>) -> Custody {
+pub fn custody(authority: Arc<FakeCustody>) -> Custody {
     Custody {
         identity: identity(),
         authority: authority as Arc<dyn WriterAuthority>,
     }
 }
 
-pub(crate) fn options(engine: EngineChoice) -> Options {
+pub fn options(engine: EngineChoice) -> Options {
     Options {
         engine,
         clock: Arc::new(FixedClock(CREATION_AT)),
+        backend: None,
         testing: Default::default(),
-        #[cfg(test)]
         before_final_checks: None,
     }
 }
@@ -218,6 +218,7 @@ pub struct TestSatellite {
     pub office: Office,
     /// The HQ office the satellite is bound to.
     pub hq_office_id: String,
+    engine: EngineChoice,
     folder: std::path::PathBuf,
     roots: DataRoots,
     custody: Custody,
@@ -234,8 +235,14 @@ impl TestSatellite {
     }
 
     /// A satellite of the organization `org` whose HQ is the office `hq`, so an HQ test
-    /// office's replicated `state/` applies onto it.
+    /// office's replicated `state/` applies onto it. Runs on `EngineChoice::Memory` by default
+    /// (matching [`TestOffice::default`]); use [`Self::joined_to_with_engine`] to select SQLite.
     pub fn joined_to(org: &str, hq: &str) -> Self {
+        Self::joined_to_with_engine(org, hq, EngineChoice::Memory)
+    }
+
+    /// Like [`Self::joined_to`], selecting the storage engine explicitly.
+    pub fn joined_to_with_engine(org: &str, hq: &str, engine: EngineChoice) -> Self {
         use org_pki::cert::{
             build_org_ca_cert, issue_satellite_cert_from_pubkey, sign_satellite_key_pop,
             IssueSatelliteCertParams,
@@ -285,7 +292,9 @@ impl TestSatellite {
         )
         .expect("a satellite certificate");
         let key = Key::from_bytes([0x5a; 32]);
-        let office = Office::provision_satellite(
+        let mut opts = options(engine);
+        opts.clock = Arc::new(org_store::SystemClock);
+        let office = Office::provision_satellite_with(
             folder.clone(),
             super::SatelliteProvisionSpec {
                 new: NewOffice {
@@ -306,11 +315,14 @@ impl TestSatellite {
             key.clone(),
             roots.clone(),
             custody.clone(),
+            opts,
+            true,
         )
         .expect("a test satellite");
         Self {
             office,
             hq_office_id: hq.into(),
+            engine,
             folder,
             roots,
             custody,
@@ -325,6 +337,7 @@ impl TestSatellite {
         let Self {
             office,
             hq_office_id,
+            engine,
             folder,
             roots,
             custody,
@@ -335,17 +348,21 @@ impl TestSatellite {
         std::fs::remove_dir_all(&roots.runtime).expect("the runtime root goes");
         std::fs::create_dir_all(&roots.runtime).expect("a fresh runtime root");
         let instance = custody.identity.instance_id.to_string();
-        let office = Office::open(
+        let mut opts = options(engine);
+        opts.clock = Arc::new(org_store::SystemClock);
+        let office = Office::open_with(
             folder.clone(),
             Some(key.clone()),
             &instance,
             roots.clone(),
             custody.clone(),
+            opts,
         )
         .expect("the satellite reopens");
         Self {
             office,
             hq_office_id,
+            engine,
             folder,
             roots,
             custody,

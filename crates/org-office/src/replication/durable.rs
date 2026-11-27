@@ -31,7 +31,7 @@ use self::events_log::EventsLog;
 use self::state_file::{core_from_file, encode_state_file};
 
 /// A rebuildable projection of the committed replication state: an engine's index of it.
-pub(crate) trait ReplicationProjection: Send {
+pub trait ReplicationProjection: Send {
     /// Brings the projection to `data`, the committed state.
     fn project(&mut self, data: &ReplicationCoreData) -> Result<(), OfficeError>;
 
@@ -52,7 +52,7 @@ pub(crate) trait ReplicationProjection: Send {
 /// by new ones; `None` when the change is anything else (cleared, replaced). Compares every
 /// retained position and digest, so a cleared and refilled history is never taken for an
 /// append.
-pub(crate) fn appended_events<'a>(
+pub fn appended_events<'a>(
     before: &ReplicationCoreData,
     after: &'a ReplicationCoreData,
 ) -> Option<Vec<&'a OrgEvent>> {
@@ -153,9 +153,20 @@ pub struct DurableReplicationParams<'a> {
 impl DurableReplicationStore {
     /// Opens the durable state, writing the initial one when there is none, then the
     /// engine's projection over it: `projection` receives the state it starts from.
-    pub(crate) fn open<P: ReplicationProjection + 'static>(
+    pub fn open<P: ReplicationProjection + 'static>(
         p: DurableReplicationParams<'_>,
         projection: impl FnOnce(&ReplicationCoreData) -> Result<P, OfficeError>,
+    ) -> Result<Self, OfficeError> {
+        Self::open_boxed(p, |data| Ok(Box::new(projection(data)?)))
+    }
+
+    /// Opens the durable state with a boxed [`ReplicationProjection`] returned by a
+    /// [`crate::OfficeStorageBackend`].
+    pub fn open_boxed(
+        p: DurableReplicationParams<'_>,
+        projection: impl FnOnce(
+            &ReplicationCoreData,
+        ) -> Result<Box<dyn ReplicationProjection>, OfficeError>,
     ) -> Result<Self, OfficeError> {
         let state_dir = p
             .durable_root
@@ -192,7 +203,7 @@ impl DurableReplicationStore {
             (initial, log)
         };
 
-        let projection = Box::new(projection(&data)?);
+        let projection = projection(&data)?;
         Ok(Self {
             state_path,
             inner: Mutex::new(DurableReplicationInner {
@@ -206,7 +217,7 @@ impl DurableReplicationStore {
 
     /// Opens the durable state for an engine without a projection (the memory engine).
     #[cfg(any(test, feature = "testkit"))]
-    pub(crate) fn open_unprojected(p: DurableReplicationParams<'_>) -> Result<Self, OfficeError> {
+    pub fn open_unprojected(p: DurableReplicationParams<'_>) -> Result<Self, OfficeError> {
         Self::open(p, |_| Ok(NoProjection))
     }
 

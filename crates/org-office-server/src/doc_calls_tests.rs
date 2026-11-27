@@ -153,6 +153,7 @@ fn png() -> String {
 
 #[test]
 fn every_docs_call_dispatches_as_the_bound_member_on_both_engines() {
+    org_office_sqlite::install();
     for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
         let s = seed(engine);
         let me = Some(s.member_agent.as_str());

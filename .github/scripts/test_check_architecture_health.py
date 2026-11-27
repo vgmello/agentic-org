@@ -484,17 +484,23 @@ class TestInfraCouplingDetection(unittest.TestCase):
                 root,
                 [
                     "crates/org-office",
+                    "crates/org-office-sqlite",
                     "crates/org-host",
                     "crates/org-platform",
                     "crates/org-socket",
                     "crates/org-client",
                 ],
                 {
+                    "crates/org-office-sqlite": (
+                        '[package]\nname = "org-office-sqlite"\nversion = "0.0.0"\n',
+                        {
+                            # Allowed inside extracted SQLite adapter crate:
+                            "src/conn.rs": "use rusqlite::Connection;\n",
+                        },
+                    ),
                     "crates/org-office": (
                         '[package]\nname = "org-office"\nversion = "0.0.0"\n',
                         {
-                            # Allowed inside SQLite adapter:
-                            "src/store/sqlite/conn.rs": "use rusqlite::Connection;\n",
                             # Violating outside adapter:
                             "src/domain.rs": (
                                 "use rusqlite::Connection;\n"

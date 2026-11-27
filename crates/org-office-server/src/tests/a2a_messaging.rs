@@ -811,6 +811,7 @@ where
 
 #[test]
 fn same_office_a2a_dm_reply_channel_mentions_ask_and_handoff() {
+    org_office_sqlite::install();
     let office = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));
@@ -1031,6 +1032,7 @@ fn same_office_a2a_dm_reply_channel_mentions_ask_and_handoff() {
 
 #[test]
 fn cross_office_a2a_hq_satellite_and_sat_to_sat_end_to_end() {
+    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));
@@ -1568,6 +1570,7 @@ fn handoff_accept_delta_files(
 
 #[test]
 fn relayed_handoff_accept_enforces_placement_addressing_validation_and_tiebreak() {
+    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));
@@ -1758,6 +1761,7 @@ fn relayed_handoff_accept_enforces_placement_addressing_validation_and_tiebreak(
 
 #[test]
 fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wake() {
+    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test(TestOffice {
         engine: EngineChoice::Sqlite,
     }));
@@ -2034,6 +2038,7 @@ fn assert_proxied_session_auth_and_disconnect(
 
 #[test]
 fn task140_persistent_mtls_low_latency_and_task143_hq_session_proxy_end_to_end() {
+    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));
@@ -2096,6 +2101,7 @@ fn task140_persistent_mtls_low_latency_and_task143_hq_session_proxy_end_to_end()
 
 #[test]
 fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_sync() {
+    org_office_sqlite::install();
     use crate::git_calls::GitService;
     use crate::live::LiveEvents;
     use org_proto::git::{
@@ -2595,6 +2601,7 @@ fn assert_sat_worktree_rejects_hq_durable_conflicts(
 
 #[test]
 fn task141_satellite_agent_addresses_owner_by_handle_and_receives_reply() {
+    org_office_sqlite::install();
     use org_proto::chat::{ChatInbox, ChatInboxParams, ChatInboxResult};
     use org_proto::msg::{MsgReply, MsgReplyParams};
 
@@ -2870,6 +2877,7 @@ fn assert_sat_owner_is(sat: &Office, sat_node: &LiveOfficeNode, agent_id: &str, 
 
 #[test]
 fn task141_satellite_tracks_owner_handover_across_reconnect_and_offline_restart() {
+    org_office_sqlite::install();
     use org_proto::org::{TeamSetLead, TeamSetLeadParams};
 
     let hq_dir = tempfile::tempdir().unwrap();

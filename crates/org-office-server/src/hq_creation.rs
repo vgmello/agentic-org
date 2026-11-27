@@ -56,6 +56,7 @@ pub(crate) fn prepare(
     recovery: RecoveryCode,
     import_source: Option<&org_office_launch::ImportSourceV1>,
 ) -> Result<Office, OfficeError> {
+    org_office_sqlite::install();
     let Some(key) = key else {
         return Err(invalid());
     };

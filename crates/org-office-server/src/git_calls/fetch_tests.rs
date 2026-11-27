@@ -96,6 +96,7 @@ struct Fixture {
 }
 
 fn fixture(cooldown: Duration) -> Fixture {
+    org_office_sqlite::install();
     let office = Arc::new(Office::for_test(TestOffice {
         engine: EngineChoice::Sqlite,
     }));

@@ -11,24 +11,24 @@
 use std::path::{Path, PathBuf};
 
 /// `<durable>/accounting/`: the `L2` usage & cost records (`TASK-53`, `doc-87`).
-pub(crate) fn accounting(durable_root: &Path) -> PathBuf {
+pub fn accounting(durable_root: &Path) -> PathBuf {
     durable_root.join("accounting")
 }
 
 /// `<durable>/budgets/`: the `L3` budgets & holds (`TASK-53`, `doc-92`).
-pub(crate) fn budgets(durable_root: &Path) -> PathBuf {
+pub fn budgets(durable_root: &Path) -> PathBuf {
     durable_root.join("budgets")
 }
 
 /// `<durable>/private/`: HQ's per-author private task notes (`TASK-50`, `doc-79`); a
 /// satellite has none.
-pub(crate) fn private_notes(durable_root: &Path) -> PathBuf {
+pub fn private_notes(durable_root: &Path) -> PathBuf {
     durable_root.join("private")
 }
 
 /// `<durable>/local/offices/<office>/connections/`: the office's own provider bindings
 /// (`TASK-54`, `doc-88`).
-pub(crate) fn provider_bindings(durable_root: &Path, office_id: &str) -> PathBuf {
+pub fn provider_bindings(durable_root: &Path, office_id: &str) -> PathBuf {
     office_local(durable_root, office_id).join("connections")
 }
 
@@ -36,7 +36,7 @@ pub(crate) fn provider_bindings(durable_root: &Path, office_id: &str) -> PathBuf
 /// Only HQ owns `<durable>/authority/agent-execution/`; a satellite keeps its local offline
 /// permits and replicated cooldown caches under its own
 /// `<durable>/local/offices/<office>/local-execution/` (`TASK-52` / `ARCH-02`).
-pub(crate) fn execution_authority(durable_root: &Path, office_id: &str, is_hq: bool) -> PathBuf {
+pub fn execution_authority(durable_root: &Path, office_id: &str, is_hq: bool) -> PathBuf {
     if is_hq {
         durable_root.join("authority").join("agent-execution")
     } else {
@@ -50,12 +50,12 @@ fn office_local(durable_root: &Path, office_id: &str) -> PathBuf {
 
 /// `<durable>/blobs/`: shared attachment bytes, content-addressed (`TASK-98.1`). Not a tree of
 /// the office store: the journal never carries it.
-pub(crate) fn shared_blobs(durable_root: &Path) -> PathBuf {
+pub fn shared_blobs(durable_root: &Path) -> PathBuf {
     durable_root.join("blobs")
 }
 
 /// `<durable>/private/blobs/`: HQ's human-private attachment bytes (`TASK-98.1`); a satellite
 /// has none.
-pub(crate) fn private_blobs(durable_root: &Path) -> PathBuf {
+pub fn private_blobs(durable_root: &Path) -> PathBuf {
     private_notes(durable_root).join("blobs")
 }

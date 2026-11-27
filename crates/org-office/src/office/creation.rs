@@ -156,16 +156,16 @@ impl Office {
         custody: Custody,
         material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
     ) -> Result<Office, OfficeError> {
-        let options = Options::production();
-        Self::provision_with(
+        Self::seed_with(
             folder.into(),
             new,
             Some(key),
             binding,
             roots,
             custody,
+            SeedMode::Create,
             material,
-            options,
+            Options::production(),
         )
     }
 
@@ -188,7 +188,6 @@ impl Office {
             + 'static,
         material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
     ) -> Result<Office, OfficeError> {
-        let options = Options::production();
         let office = Self::seed_with(
             folder.into(),
             new,
@@ -198,7 +197,7 @@ impl Office {
             custody,
             SeedMode::Import(Box::new(load_import)),
             material,
-            options,
+            Options::production(),
         )?;
         // An organization exported before the built-in Chief of Staff existed gets her now,
         // not at the next open (`TASK-80.1`). Best effort, as at open: a failure leaves the
@@ -207,11 +206,40 @@ impl Office {
         Ok(office)
     }
 
+    /// [`Self::provision_hq`] with an explicit [`crate::OfficeStorageBackend`].
     #[expect(
         clippy::too_many_arguments,
-        reason = "internal provisioning helper forwards explicit setup inputs to the shared seed path"
+        reason = "public HQ provisioning entry point accepts explicit folder, descriptor, key, binding, roots, custody, backend, and CA material"
     )]
-    pub(crate) fn provision_with(
+    pub fn provision_hq_with_backend(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        binding: &Binding,
+        roots: DataRoots,
+        custody: Custody,
+        backend: std::sync::Arc<dyn crate::store::backend::OfficeStorageBackend>,
+        material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
+    ) -> Result<Office, OfficeError> {
+        Self::seed_with(
+            folder.into(),
+            new,
+            Some(key),
+            binding,
+            roots,
+            custody,
+            SeedMode::Create,
+            material,
+            Options::with_backend(backend),
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "testkit provisioning helper forwards explicit setup inputs to the shared seed path"
+    )]
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn provision_with(
         folder: PathBuf,
         new: &NewOffice,
         key: Option<Key>,
@@ -311,7 +339,7 @@ impl Office {
         write_ca_key(&roots.durable, &here.office_id, &ca_key_record)
             .map_err(OfficeError::storage)?;
         remove_staged_ca_key(&roots.durable, &here.office_id).map_err(OfficeError::storage)?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testkit"))]
         if let Some(spoil) = &options.before_final_checks {
             spoil();
         }
@@ -320,6 +348,7 @@ impl Office {
             super::satellite::read_ca_digest_for_open(&roots.durable, &info, &info.office_id);
         let companions = super::open_companion_stores(super::CompanionOpenSpec {
             engine: options.engine,
+            backend: options.backend.as_ref(),
             roots: &roots,
             info: &info,
             identity: &here,

@@ -246,6 +246,3 @@ impl Office {
         self.blob_cache()
     }
 }
-
-#[cfg(test)]
-mod tests;

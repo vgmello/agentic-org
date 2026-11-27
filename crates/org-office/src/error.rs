@@ -62,7 +62,7 @@ pub enum OfficeError {
 }
 
 impl OfficeError {
-    pub(crate) fn storage(cause: impl Error + Send + Sync + 'static) -> Self {
+    pub fn storage(cause: impl Error + Send + Sync + 'static) -> Self {
         Self::Storage(Box::new(cause))
     }
 }

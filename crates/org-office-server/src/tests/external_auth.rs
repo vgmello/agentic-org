@@ -37,6 +37,7 @@ struct World {
 }
 
 fn world() -> World {
+    org_office_sqlite::install();
     let office = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));

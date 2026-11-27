@@ -34,6 +34,7 @@ pub(super) struct Fixture {
 
 /// A real HQ serving federation, and a satellite enrolled with it and holding HQ's snapshot.
 pub(super) fn fixture(name: &str, suffix: u8) -> Fixture {
+    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: EngineChoice::Sqlite,
     }));

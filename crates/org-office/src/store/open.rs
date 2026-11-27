@@ -1,31 +1,28 @@
 //! Opening an office's store (ADR-0018, ADR-0021, `docs/design/office-store.md`): the one
-//! place that names an engine. Everything above it holds an [`OfficeStore`] and passes it
-//! operations; nothing above it is generic over the engine, and nothing but this module
-//! (`store/open.rs` and `store/open/`) and `store/sqlite/` knows which engine there is.
-//!
-//! Dispatch is static (design open point 1): [`OfficeStore`] is an enum with one arm per
-//! engine, and an operation is a [`StoreOp`] or a [`ReadOp`], generic over the engine and
-//! compiled once per arm.
+//! place that dispatches across storage engines. Everything above it holds an [`OfficeStore`]
+//! and passes it operations; nothing above it is generic over the engine, and `org-office`
+//! itself holds zero database drivers or SQL (`TASK-255`, ENG-1).
 //!
 //! - Adding an operation: one `StoreOp` in `open/operations.rs`; this module and the
 //!   engines do not change.
 //! - Adding a family: one bound on [`OfficeEngine`] and one projector in `open_on`
 //!   (`open/office_store.rs`).
-//! - Adding an engine: one arm of [`EngineChoice`] and of [`OfficeStore`].
+//! - Plugging in a concrete engine: implement [`crate::OfficeStorageBackend`] /
+//!   [`crate::OfficeEngineAdapter`] in an external adapter crate such as `org-office-sqlite`.
 
-pub(crate) mod attachment_ops;
+pub mod attachment_ops;
 mod companions;
-pub(crate) mod dod_ops;
-pub(crate) mod git_ops;
+pub mod dod_ops;
+pub mod git_ops;
 mod import_validation;
-pub(crate) mod messaging_ops;
+pub mod messaging_ops;
 mod office_store;
 mod operations;
-pub(crate) mod process_ops;
-pub(crate) mod project_doc_ops;
-pub(crate) mod review_ops;
-pub(crate) mod search_ops;
-pub(crate) mod task_ops;
+pub mod process_ops;
+pub mod project_doc_ops;
+pub mod review_ops;
+pub mod search_ops;
+pub mod task_ops;
 #[cfg(test)]
 mod tests;
 
@@ -33,6 +30,12 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use org_store::{Clock, OfficeIdentity, Opening, Store, StoreError, WriterAuthority};
 
+#[cfg(any(test, feature = "testkit"))]
+pub use companions::{
+    open_accounting, open_attachments, open_budgets, open_private_notes, open_providers,
+    open_replication, ReplicationOpenSpec,
+};
+#[cfg(not(any(test, feature = "testkit")))]
 pub(crate) use companions::{
     open_accounting, open_attachments, open_budgets, open_private_notes, open_providers,
     open_replication, ReplicationOpenSpec,
@@ -54,7 +57,9 @@ pub use messaging_ops::{
     MailboxUnsnoozeOp, MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp, MsgWithdrawOp,
     OpenOwnerInboxRead, OrgChangesAfterRead, PeekUnreadRead,
 };
-pub use office_store::{open_store, OfficeStore};
+#[cfg(any(test, feature = "testkit"))]
+pub use office_store::memory_engine;
+pub use office_store::{open_store, open_store_with_adapter, OfficeStore};
 pub use operations::{
     AddPersonOp, AddProjectTeamOp, AgentExecutionById, ApplyReplicatedFilesOp, ArchiveTeamOp,
     AttachProjectRepositoryOp, CheckHrMessageAccess, CheckOp, CreateOrganizationOp,
@@ -67,6 +72,7 @@ pub use operations::{
     Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
+use super::backend::OfficeStorageBackend;
 use crate::attachments::ports::{AttachmentsEngine, AttachmentsRead};
 use crate::project_docs::ports::{ProjectDocsEngine, ProjectDocsRead};
 use crate::reviews::ports::{ReviewsEngine, ReviewsRead};
@@ -74,7 +80,7 @@ use crate::search::ports::{SearchEngine, SearchRead};
 use crate::tasks::ports::{TasksEngine, TasksRead};
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
-pub(crate) const PROJECTION_FILE: &str = "office.db";
+pub const PROJECTION_FILE: &str = "office.db";
 
 /// Which engine holds the projection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -108,12 +114,10 @@ pub struct Testing {
     pub faults: Option<Arc<org_store::testkit::Faults>>,
     pub probe: Option<org_store::testkit::Probe>,
     /// DDL after this build's: the schema of another build.
-    #[cfg(test)]
-    pub(crate) extra_ddl: Option<&'static str>,
+    pub extra_ddl: Option<&'static str>,
     /// Override for [`StoreConfig::flush_interval`]: crash-point tests set an hour so the
     /// 50 ms background timer cannot fire mid-commit under load and race with writer crashes.
-    #[cfg(test)]
-    pub(crate) flush_interval: Option<Duration>,
+    pub flush_interval: Option<Duration>,
 }
 
 /// Everything an office's store is opened from.
@@ -128,6 +132,8 @@ pub struct StoreConfig {
     pub identity: OfficeIdentity,
     pub custody: Arc<dyn WriterAuthority>,
     pub clock: Arc<dyn Clock>,
+    /// Optional explicit storage backend overriding the installed process default.
+    pub backend: Option<Arc<dyn OfficeStorageBackend>>,
     /// How long appended entries may wait for a flush nobody asked for.
     pub flush_interval: Duration,
     pub opening: Opening,
@@ -152,11 +158,18 @@ impl StoreConfig {
             identity,
             custody,
             clock,
+            backend: None,
             flush_interval: Duration::from_millis(50),
             opening: Opening::Existing,
             #[cfg(any(test, feature = "testkit"))]
             testing: Testing::default(),
         }
+    }
+
+    /// Attaches an explicit [`OfficeStorageBackend`] to this configuration.
+    pub fn with_backend(mut self, backend: Arc<dyn OfficeStorageBackend>) -> Self {
+        self.backend = Some(backend);
+        self
     }
 
     /// The projection's file.
