@@ -5,6 +5,7 @@ import {
 	type GatewayHttpTransport,
 	type GatewayReply
 } from '$lib/platform/http/gateway-errors';
+import { asNum, asRec, asStr, type Rec } from '$lib/platform/http/decode';
 import { readJsonObject, readResponse } from '$lib/platform/http/wire';
 import { readOrganizationsList } from '$lib/platform/organizations/readers';
 import type { AppError, OrgSnapshot } from '$lib/proto';
@@ -28,14 +29,6 @@ import type {
 	ProcessDocument,
 	RowProblem
 } from './types';
-
-type Rec = Record<string, unknown>;
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 
 const VALID_KINDS: ReadonlySet<string> = new Set(['process', 'standard']);
 const VALID_STATUS: ReadonlySet<string> = new Set(['draft', 'current', 'deprecated']);

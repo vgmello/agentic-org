@@ -1,4 +1,4 @@
-import { isItemDone, initialsOf } from '$lib/home/model';
+import { badgeInitials as initialsOf, isItemDone } from '$lib/format';
 import { matchesQuery } from '$lib/modules/activity/filter';
 import type { ActivityKind, ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
 import { KIND_WORD } from '$lib/modules/activity/types';

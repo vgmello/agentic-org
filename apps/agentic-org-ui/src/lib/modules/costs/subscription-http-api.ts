@@ -17,7 +17,7 @@ import type {
 	SubscriptionUsageWindow
 } from './types';
 
-type Rec = Record<string, unknown>;
+import { asNum, asRec, asStr, type Rec } from '$lib/platform/http/decode';
 
 const MAX_PAGES = 20;
 const STATUSES: ReadonlySet<string> = new Set([
@@ -35,15 +35,10 @@ const AUTH_SOURCES: ReadonlySet<string> = new Set([
 	'unknown'
 ]);
 
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 const asNullableNum = (v: unknown): number | null | undefined => {
 	if (v === null) return null;
 	return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 };
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 
 function unwrapReply(reply: GatewayReply, fallbackMessage: string): Rec {
 	const root = asRec(reply.body);

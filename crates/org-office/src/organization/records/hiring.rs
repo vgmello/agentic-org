@@ -56,9 +56,18 @@ pub enum PermissionPreset {
     ReadOnly,
     WorkspaceEdits,
     AutonomousSandboxed,
+    /// The built-in Chief of Staff's preset (`TASK-80.1`, `doc-97` §3.1): read-only, with a
+    /// shell confined to `agent-os`, from her repo-less private home, with no MCP server. It
+    /// is **never stored or assigned**: no hire, configuration or record names it (it is not
+    /// in [`Self::ALL`], so [`Self::parse`] refuses it, and serde skips it). The office derives
+    /// it from her identity alone ([`Self::effective_for`]), so nobody can give it to another
+    /// agent and no edit to her execution configuration can take it from her.
+    #[serde(skip)]
+    OperatorSandboxed,
 }
 
 impl PermissionPreset {
+    /// The presets an execution configuration stores and a hire or configuration names.
     pub const ALL: [Self; 4] = [
         Self::SafeAsk,
         Self::ReadOnly,
@@ -72,11 +81,29 @@ impl PermissionPreset {
             Self::ReadOnly => "read_only",
             Self::WorkspaceEdits => "workspace_edits",
             Self::AutonomousSandboxed => "autonomous_sandboxed",
+            Self::OperatorSandboxed => "operator_sandboxed",
         }
     }
 
     pub fn parse(text: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.as_str() == text)
+    }
+
+    /// The preset a session of the employee holding `builtin_key` runs with, whatever
+    /// `stored` says: the built-in Chief of Staff always runs [`Self::OperatorSandboxed`];
+    /// everyone else runs their stored preset. The one place the office decides it.
+    pub fn effective_for(builtin_key: Option<super::BuiltinKey>, stored: Self) -> Self {
+        match builtin_key {
+            Some(super::BuiltinKey::ChiefOfStaff) => Self::OperatorSandboxed,
+            _ if stored == Self::OperatorSandboxed => Self::SafeAsk,
+            _ => stored,
+        }
+    }
+
+    /// Whether the preset grants no writable root at all (its sessions write only their
+    /// `TMPDIR`, and an operator session not even that on Codex).
+    pub const fn is_read_only_fs(self) -> bool {
+        matches!(self, Self::ReadOnly | Self::OperatorSandboxed)
     }
 }
 

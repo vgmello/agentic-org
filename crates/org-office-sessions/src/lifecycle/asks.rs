@@ -22,8 +22,15 @@ use super::DispatchWakeGuard;
 
 impl SessionManager {
     /// Records an open required ask created by an active agent so turn-end or grace expiry
-    /// suspends the session cleanly (`ASK-3`, `ASK-11`, `ASK-12`).
+    /// suspends the session cleanly (`ASK-3`, `ASK-11`, `ASK-12`). The built-in Chief of Staff
+    /// is never suspended on an ask (`TASK-80.1`): one process serves every caller's partition,
+    /// so suspending it for one caller's question would hold every other caller, and resuming
+    /// it would carry that caller's answer outside their partition. Her answer arrives as an
+    /// ordinary `AskAnswer` wake in the answering member's partition instead.
     pub fn on_required_ask_opened(&self, employee_id: &str, entry: SuspendedAskEntry) {
+        if self.office.is_chief_of_staff(employee_id) {
+            return;
+        }
         let _lock = self.employee_locks.lock(employee_id);
         insert_open_required_ask(&self.open_required_asks, employee_id, entry);
     }
@@ -158,7 +165,10 @@ impl SessionManager {
             sender_handle: None,
             sender_relation: None,
             sender_is_person: answered_by_person,
-            conversation_id: None,
+            // The ask's conversation, so an answer given in a DM never reaches the Chief of
+            // Staff's shared wake partition (`TASK-80.1`); unknown here (an ask of another
+            // office), it counts as private.
+            conversation_id: self.office.message_conversation_id(ask_id).ok().flatten(),
             source_id: ask_id.to_owned(),
             summary: format!("Question: {question_summary}\nAnswer: {answer_summary}"),
             enqueued_at_ms: now_ms(),
@@ -294,6 +304,7 @@ impl SessionManager {
             susp.runtime_session_id.as_deref(),
             None,
             trigger,
+            None,
         ) {
             Ok(_) => {
                 let _lock = self.employee_locks.lock(emp_id);

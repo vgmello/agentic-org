@@ -8,11 +8,7 @@ import type { WorkState } from '$lib/modules/members';
 import type { TaskRow } from '$lib/modules/workitems/types';
 import type { ActivityEntry, ConversationRow, WorkRow } from './types';
 
-type Rec = Record<string, unknown>;
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+import { asRec, asStr, type Rec } from '$lib/platform/http/decode';
 
 function asIso(v: unknown): string {
 	if (typeof v === 'string' && v) return v;

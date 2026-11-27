@@ -31,7 +31,7 @@ import {
 } from './types';
 import type { ChatApi } from './api';
 
-type Rec = Record<string, unknown>;
+import { asBool, asNum, asRec, asStr, asStrList, type Rec } from '$lib/platform/http/decode';
 type DirectoryEntry = NonNullable<ChatSnapshot['directory']>[number];
 
 const CHAT_ERROR_CODES: ReadonlySet<string> = new Set<ChatErrorCode>([
@@ -59,14 +59,6 @@ const REASONS: ReadonlySet<string> = new Set(ANNOUNCEMENT_REASONS);
 const QUESTION_TYPES: ReadonlySet<string> = new Set(['choice', 'yes_no', 'free_text']);
 const CHANNEL_ACCESS: ReadonlySet<string> = new Set(['open', 'invite', 'restricted']);
 
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asBool = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-const asStrList = (v: unknown): string[] =>
-	Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 const optField = <K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> =>
 	value === undefined ? {} : ({ [key]: value } as Partial<Record<K, V>>);
 

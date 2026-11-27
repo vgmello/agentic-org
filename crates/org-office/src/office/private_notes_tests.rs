@@ -972,3 +972,50 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
         Outcome::Result(_)
     ));
 }
+
+/// ADR-0031 holds for the built-in Chief of Staff (`TASK-80.1`): she is an agent, so another
+/// agent's private notes stay invisible to her, whoever her run acts for.
+#[test]
+fn the_chief_of_staff_never_reads_another_agents_private_notes() {
+    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+        let f = seed_fixture(engine);
+        let tess = f
+            .office
+            .chief_of_staff()
+            .unwrap()
+            .expect("the Chief of Staff")
+            .id
+            .to_string();
+        let note_id = next_uuid();
+        f.office
+            .task_note_add(
+                &f.agent_a,
+                TasksNotesAddParams {
+                    command_id: next_uuid(),
+                    task: f.task_key.clone(),
+                    note_id: note_id.clone(),
+                    body_markdown: "Alpha's private reasoning".into(),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let listed = f
+            .office
+            .task_note_list(
+                &tess,
+                TasksNotesListParams {
+                    task: f.task_key.clone(),
+                    author_id: Some(f.agent_a.clone()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(listed.notes.is_empty(), "{engine:?}");
+        let got = f
+            .office
+            .task_note_get(&tess, TasksNotesGetParams { note_id })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(got.code, ErrorCode::NotFound, "{engine:?}");
+    }
+}

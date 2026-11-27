@@ -636,7 +636,7 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   title_in_team TEXT,
   offboarded_at TEXT,
   may_hire INTEGER NOT NULL DEFAULT 0 CHECK (may_hire IN (0, 1)),
-  builtin_key TEXT CHECK (builtin_key IS NULL OR (builtin_key = 'hr' AND kind = 'agent' AND may_hire = 0)),
+  builtin_key TEXT CHECK (builtin_key IS NULL OR (builtin_key IN ('hr', 'chief_of_staff') AND kind = 'agent' AND (builtin_key <> 'hr' OR may_hire = 0))),
   CHECK (kind = 'agent' OR status <> 'paused'),
   CHECK (offboarded_at IS NULL OR status = 'inactive'),
   PRIMARY KEY (organization_id, id),
@@ -1298,6 +1298,7 @@ CREATE INDEX deployments_by_target ON deployments(organization_id, project_id, e
 CREATE INDEX tasks_by_team_status ON tasks(organization_id, team_id, status);
 CREATE UNIQUE INDEX one_hq_per_org ON offices(organization_id) WHERE role = 'hq';
 CREATE UNIQUE INDEX one_hr_lead_per_org ON employees(organization_id) WHERE builtin_key = 'hr';
+CREATE UNIQUE INDEX one_chief_of_staff_per_org ON employees(organization_id) WHERE builtin_key = 'chief_of_staff';
 CREATE INDEX teams_by_parent ON teams(organization_id, parent_team_id);
 CREATE INDEX employees_by_team ON employees(organization_id, home_team_id);
 CREATE INDEX projects_by_owner ON projects(organization_id, owner_team_id);

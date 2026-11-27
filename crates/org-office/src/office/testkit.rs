@@ -353,3 +353,60 @@ impl Default for TestSatellite {
         Self::new()
     }
 }
+
+/// Removes the built-in Chief of Staff's profile, as an organization created before
+/// `TASK-80.1` lacks it (the shape the HQ-open bootstrap migrates).
+struct ForgetChiefOfStaff {
+    path: org_store::DurablePath,
+}
+
+impl crate::store::open::StoreOp for ForgetChiefOfStaff {
+    type Out = Result<(), org_store::StoreError>;
+
+    fn run<E: crate::store::open::OfficeEngine>(self, store: &org_store::Store<E>) -> Self::Out {
+        store
+            .submit(None, true, move |uow| {
+                uow.next(org_store::Stream::Organization)?;
+                Ok(org_store::Change::new(org_store::Ack::Durable)
+                    .remove(self.path.clone())
+                    .reply(b"{}".to_vec()))
+            })
+            .map(|_| ())
+    }
+}
+
+/// Reads the chain of parents of a team, from its top-level team.
+struct TeamChainOf(org_store::Id);
+
+impl crate::store::open::ReadOp for TeamChainOf {
+    type Out = Option<Vec<org_store::Id>>;
+
+    fn read<S: crate::tasks::ports::TasksRead>(
+        self,
+        read: &S,
+    ) -> Result<Self::Out, org_store::StoreError> {
+        Ok(read.team_chain(&self.0)?)
+    }
+}
+
+impl Office {
+    /// Test-only: forgets the organization's built-in Chief of Staff, as an organization
+    /// created before `TASK-80.1` never had her. The open-time bootstrap
+    /// ([`Office::ensure_chief_of_staff`]) provisions her again.
+    pub fn forget_chief_of_staff_for_test(&self) -> Result<(), OfficeError> {
+        let Some(tess) = self.chief_of_staff()? else {
+            return Ok(());
+        };
+        let chain = self
+            .store
+            .read(TeamChainOf(tess.home_team_id.clone()))
+            .map_err(super::storage)?
+            .0
+            .ok_or(OfficeError::Invalid("her team has no chain"))?;
+        let path = crate::organization::records::employee_path(&chain, tess.kind, &tess.id)
+            .map_err(super::storage)?;
+        self.store
+            .run(ForgetChiefOfStaff { path })
+            .map_err(super::storage)
+    }
+}

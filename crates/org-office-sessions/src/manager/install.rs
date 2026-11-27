@@ -46,6 +46,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             start_stop_epoch,
+            partition,
             binding_file,
             objective,
             spawned,
@@ -60,6 +61,7 @@ impl SessionManager {
             route_digest.clone(),
             oauth_expires_at_ms,
             bwrap_masked_siblings.clone(),
+            partition.is_some(),
         );
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
@@ -84,6 +86,9 @@ impl SessionManager {
             // The epoch at slot reservation: a stop accepted or refused since then abandons any
             // failover of this run (`TASK-190`).
             stop_epoch: start_stop_epoch,
+            partition: partition.clone().map(|key| {
+                crate::partition::PartitionHandle::new(self.partitions.clone(), emp_id.clone(), key)
+            }),
         };
         let pre_pump_meta = PrePumpHandleMeta {
             tx: tx.clone(),
@@ -95,13 +100,14 @@ impl SessionManager {
             active_permit: Arc::clone(&active_permit),
             supports_mid_turn,
             bwrap_masked_siblings: bwrap_masked_siblings.clone(),
+            partition: partition.clone(),
         };
         let ready =
             ensure_pre_pump_isolation(self, &emp_id, spawned, session, pump_ctx, pre_pump_meta)?;
         // Enqueue the initial turn BEFORE starting the pump thread so `run_pump` always sees
         // Turn 1 immediately upon `Ready` without transitioning `Starting -> Idle` prematurely.
         if !objective.is_empty() {
-            let _ = tx.send(PumpCommand::SendTurn(objective));
+            let _ = crate::pump::queue_turn(&runtime_state, &tx, objective);
         }
         let thread = spawn_pump_thread(
             self,
@@ -132,6 +138,7 @@ impl SessionManager {
                 active_permit,
                 supports_mid_turn,
                 bwrap_masked_siblings,
+                partition,
             },
         )?;
         Ok(view)
@@ -148,6 +155,7 @@ pub(crate) struct PrePumpHandleMeta {
     pub(crate) active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub(crate) supports_mid_turn: bool,
     pub(crate) bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    pub(crate) partition: Option<crate::partition::PartitionKey>,
 }
 
 pub(super) struct VerifiedPrePump {
@@ -253,6 +261,7 @@ pub(crate) fn install_unrecovered_pre_pump_handle(
         active_permit: meta.active_permit,
         supports_mid_turn: meta.supports_mid_turn,
         bwrap_masked_siblings: meta.bwrap_masked_siblings,
+        partition: meta.partition,
     };
     reg.live.insert(emp_id.to_owned(), handle);
 }

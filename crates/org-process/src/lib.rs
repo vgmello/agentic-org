@@ -23,8 +23,8 @@ pub use model::{
     summarize_body, DocumentKind, DocumentStatus, ProcessKey, Scope, StructureDocInput,
 };
 pub use prompts::{
-    BuiltinPrompt, BUILTIN_INSTRUCTIONS_MAX_BYTES, BUILTIN_PROMPTS, CORE_RULES,
-    CORE_RULES_MAX_BYTES, HR_LEAD, MANAGED_SESSION,
+    BuiltinPrompt, BUILTIN_INSTRUCTIONS_MAX_BYTES, BUILTIN_PROMPTS, CHIEF_OF_STAFF_GUIDANCE,
+    CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES, CORE_RULES, CORE_RULES_MAX_BYTES, HR_LEAD, MANAGED_SESSION,
 };
 pub use render::{render_instructions, RenderError, RenderInput, Rendered, OVERRIDABLE_CAP_BYTES};
 pub use resolve::{

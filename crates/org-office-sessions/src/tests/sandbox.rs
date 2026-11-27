@@ -270,6 +270,7 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
         sandbox: preset.sandbox,
         mcp_servers: Default::default(),
         tools: None,
+        operator_shell_prefixes: Vec::new(),
     };
     let ctx = LaunchContext {
         runtime_path: std::path::PathBuf::from("/usr/bin/true"),
@@ -458,6 +459,7 @@ fn task126_nested_team_hierarchy_and_readonly_preset_enforce_strict_isolation() 
         sandbox: ro.sandbox.clone(),
         mcp_servers: Default::default(),
         tools: ro.allowed_tools.clone(),
+        operator_shell_prefixes: Vec::new(),
     };
     org_agent_runtime_codex::CodexRuntime::new()
         .plan_session(&make_spec("codex"), &ctx)

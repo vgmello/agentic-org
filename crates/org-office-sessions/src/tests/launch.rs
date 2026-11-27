@@ -52,6 +52,7 @@ fn production_registry_wires_claude_codex_and_agy_and_refuses_unknown() {
             },
             mcp_servers: Default::default(),
             tools: None,
+            operator_shell_prefixes: Vec::new(),
         };
         let ctx = LaunchContext {
             runtime_path: PathBuf::from("/bin/true"),

@@ -12,7 +12,7 @@ import {
 	NOW,
 	org
 } from './testkit';
-import { tick } from './engine';
+import { tick } from './testing/chat-engine';
 import {
 	acceptedWords,
 	activityRows,

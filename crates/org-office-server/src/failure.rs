@@ -3,7 +3,6 @@
 use crate::startup::Control;
 use org_office::OfficeError;
 use org_office_launch::{FailCode, ServerEvent};
-use org_proto::ApiError;
 
 /// Logs why the office could not answer (to stderr, the host's log: `OfficeError`'s text has no
 /// path, SQL or secret in it) and returns it for the connection, which tells the client only a
@@ -12,15 +11,6 @@ pub(crate) fn logged(what: &str, error: &OfficeError) -> String {
     eprintln!("agentic-org-office: {what} failed: {error}");
     log_causes(error);
     error.to_string()
-}
-
-/// The answer to a call this office does not serve yet: `what` is rebuilt on the office store
-/// by increment `by`.
-pub(crate) fn unsupported(what: &str, by: &str) -> ApiError {
-    ApiError::new(
-        org_proto::ErrorCode::Unsupported,
-        format!("this office does not serve {what} yet ({by})"),
-    )
 }
 
 /// The causes behind a storage failure (a path, the OS error, SQLite's text) belong in the log

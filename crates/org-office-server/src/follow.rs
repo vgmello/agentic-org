@@ -96,14 +96,8 @@ pub fn begin(
             "this connection is already subscribed",
         ));
     }
+    // A retired `from_work_position` never gets here: its params are refused above.
     let unavailable = || ApiError::new(ErrorCode::StorageError, "the office could not answer");
-    // This office has no work feed to resume yet: a client that asks for one takes the snapshot.
-    if params.from_work_position.is_some() {
-        return Err(ApiError::new(
-            ErrorCode::SnapshotRequired,
-            "take a fresh snapshot",
-        ));
-    }
     match params.from_position {
         Some(after) => {
             if feed.can_resume_from(after).map_err(|_| unavailable())? {

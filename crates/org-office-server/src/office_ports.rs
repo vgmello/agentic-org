@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::failure::{logged, unsupported};
+use crate::failure::logged;
 use crate::federation_runtime::HqFederationSlot;
 use crate::session_proxy::build_session_hooks;
 use crate::{
@@ -345,7 +345,6 @@ pub(crate) fn build_office_ports(
         Arc::clone(&live),
     ));
     serve::OfficePorts {
-        work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
         operation_get: {
             let office = Arc::clone(&office);
             Box::new(move |member, id| {
@@ -361,6 +360,10 @@ pub(crate) fn build_office_ports(
         sessions: Some(session_hooks.sessions),
         run_binding_verify: Some(session_hooks.run_binding_verify),
         run_binding_active: Some(session_hooks.run_binding_active),
+        delegation: Some(Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
+            Arc::clone(&office),
+            Arc::clone(&session_manager),
+        ))),
         external_auth: Some(Arc::new(crate::session_proxy::ExternalAuth(Arc::clone(
             &session_manager,
         )))),
