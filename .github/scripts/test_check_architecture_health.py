@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import io
 import os
 import subprocess
@@ -16,7 +17,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import check_architecture_health as health  # noqa: E402
+health = importlib.import_module("check_architecture_health")
 
 
 ALLOWLIST_HEADER = "# Synthetic architecture boundaries (only shrinks).\n"

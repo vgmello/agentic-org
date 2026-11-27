@@ -81,10 +81,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+tomllib: Any
 try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # pragma: no cover - fallback for Python < 3.11
-    tomllib = None  # type: ignore[assignment]
+    import tomllib as _stdlib_tomllib
+except ModuleNotFoundError:
+    tomllib = None
+else:
+    tomllib = _stdlib_tomllib
 
 
 ALLOWLIST_REL = ".github/architecture-boundaries.allow"
@@ -178,6 +181,22 @@ FAST_PATH_TRIGGERS = (
     "dead_code",
 )
 
+_LEX_MARKERS = ("//", "/*", '"', "'")
+_DEP_TABLE_KEYS = ("dependencies", "build-dependencies", "build_dependencies")
+_SEMICOLON_ITEM_KWS = frozenset({"use", "type", "static", "const"})
+_BLOCK_ITEM_KWS = frozenset(
+    {"fn", "mod", "impl", "struct", "enum", "trait", "extern", "macro_rules"}
+)
+_ALL_ITEM_KWS = _SEMICOLON_ITEM_KWS | _BLOCK_ITEM_KWS
+
+# Minimal TOML fallback regexes.
+_TOML_COMMENT_SCAN_RE = re.compile(r'"(?:\\.|[^"\\])*(?:"|$)|\'[^\']*(?:\'|$)|(#)')
+_TOML_DOTTED_TOKEN_RE = re.compile(r'"[^"]*"|\'[^\']*\'|\.|[^.\'"]+')
+_TOML_ARRAY_ITEM_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
+_TOML_INLINE_KV_RE = re.compile(
+    r'([A-Za-z0-9_-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(true|false))'
+)
+
 # Single-pass Rust lexical pattern for comments, string literals, and char literals.
 _LEX_RE = re.compile(
     r"""
@@ -234,6 +253,7 @@ _ALLOW_CALL_RE = re.compile(r"\b(?:allow|expect)\s*\(")
 _DEAD_CODE_WORD_RE = re.compile(r"\bdead_code\b")
 _RAW_STR_PREFIX_RE = re.compile(r"^(?:b|c)?r(#*)\"")
 _PLAIN_STR_PREFIX_RE = re.compile(r"^(?:b|c)?\"")
+_CRATE_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _HEX_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 
@@ -261,9 +281,120 @@ class HealthResult:
     layer0_checked: list[str]
 
 
+@dataclass(slots=True)
+class _ItemScanState:
+    start_pos: int
+    seen_let: bool = False
+    seen_if: bool = False
+    needs_semicolon: bool = False
+    in_where: bool = False
+    seen_item_kw: bool = False
+    paren: int = 0
+    bracket: int = 0
+    brace: int = 0
+    angle: int = 0
+    entered_brace: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Minimal Cargo.toml loader (uses stdlib tomllib on 3.11+, pure-stdlib fallback)
 # ---------------------------------------------------------------------------
+
+
+def _strip_toml_comment(line: str) -> str:
+    if "#" not in line:
+        return line
+    for match in _TOML_COMMENT_SCAN_RE.finditer(line):
+        if match.group(1) is not None:
+            return line[: match.start()]
+    return line
+
+
+def _split_toml_dotted(header: str) -> list[str]:
+    parts: list[str] = []
+    buf: list[str] = []
+    for match in _TOML_DOTTED_TOKEN_RE.finditer(header):
+        tok = match.group(0)
+        if tok == ".":
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(tok[1:-1] if tok[0] in ('"', "'") else tok)
+    parts.append("".join(buf).strip())
+    return [part for part in parts if part]
+
+
+def _ensure_toml_table(root: dict[str, Any], path: list[str]) -> dict[str, Any]:
+    target = root
+    for part in path:
+        nxt = target.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            target[part] = nxt
+        target = nxt
+    return target
+
+
+def _parse_toml_table_header(line: str, root: dict[str, Any]) -> dict[str, Any]:
+    if line.startswith("[[") and line.endswith("]]"):
+        return {}
+    path = _split_toml_dotted(line[1:-1].strip())
+    return _ensure_toml_table(root, path)
+
+
+def _parse_toml_array(inner: str) -> list[str]:
+    return [m.group(1) or m.group(2) for m in _TOML_ARRAY_ITEM_RE.finditer(inner)]
+
+
+def _parse_toml_inline_table(inner: str) -> dict[str, Any]:
+    tbl: dict[str, Any] = {}
+    for m in _TOML_INLINE_KV_RE.finditer(inner):
+        key = m.group(1)
+        if m.group(2) is not None:
+            tbl[key] = m.group(2)
+        elif m.group(3) is not None:
+            tbl[key] = m.group(3)
+        else:
+            tbl[key] = m.group(4) == "true"
+    return tbl
+
+
+def _parse_toml_value(raw: str) -> Any:
+    val = raw.strip()
+    if len(val) < 2:
+        return val
+    if val[0] == val[-1] and val[0] in ('"', "'"):
+        return val[1:-1]
+    if val in ("true", "false"):
+        return val == "true"
+    if (val[0], val[-1]) == ("[", "]"):
+        return _parse_toml_array(val[1:-1])
+    if (val[0], val[-1]) == ("{", "}"):
+        return _parse_toml_inline_table(val[1:-1])
+    return val
+
+
+def _is_unclosed_toml_collection(rhs: str) -> bool:
+    if rhs.startswith("["):
+        return rhs.count("[") > rhs.count("]")
+    if rhs.startswith("{"):
+        return rhs.count("{") > rhs.count("}")
+    return False
+
+
+def _parse_toml_kv(
+    line: str, lines: list[str], idx: int, current: dict[str, Any]
+) -> int:
+    lhs, rhs = line.split("=", 1)
+    rhs = rhs.strip()
+    while _is_unclosed_toml_collection(rhs) and idx < len(lines):
+        rhs += " " + _strip_toml_comment(lines[idx]).strip()
+        idx += 1
+    keys = _split_toml_dotted(lhs.strip())
+    if keys:
+        target = _ensure_toml_table(current, keys[:-1])
+        target[keys[-1]] = _parse_toml_value(rhs)
+    return idx
 
 
 def _parse_toml_fallback(text: str) -> dict[str, Any]:
@@ -272,120 +403,15 @@ def _parse_toml_fallback(text: str) -> dict[str, Any]:
     current: dict[str, Any] = root
     lines = text.splitlines()
     i = 0
-
-    def _strip_comment(line: str) -> str:
-        in_str: str | None = None
-        escaped = False
-        for idx, ch in enumerate(line):
-            if escaped:
-                escaped = False
-                continue
-            if in_str == '"' and ch == "\\":
-                escaped = True
-                continue
-            if ch in ('"', "'"):
-                if in_str is None:
-                    in_str = ch
-                elif in_str == ch:
-                    in_str = None
-            elif ch == "#" and in_str is None:
-                return line[:idx]
-        return line
-
-    def _split_dotted(header: str) -> list[str]:
-        parts: list[str] = []
-        buf: list[str] = []
-        quote: str | None = None
-        for ch in header:
-            if quote:
-                if ch == quote:
-                    quote = None
-                else:
-                    buf.append(ch)
-            elif ch in ('"', "'"):
-                quote = ch
-            elif ch == ".":
-                parts.append("".join(buf).strip())
-                buf = []
-            else:
-                buf.append(ch)
-        if buf:
-            parts.append("".join(buf).strip())
-        return [p for p in parts if p]
-
-    def _parse_value(raw: str) -> Any:
-        raw = raw.strip()
-        if not raw:
-            return ""
-        if raw.startswith('"') and raw.endswith('"'):
-            return raw[1:-1]
-        if raw.startswith("'") and raw.endswith("'"):
-            return raw[1:-1]
-        if raw == "true":
-            return True
-        if raw == "false":
-            return False
-        if raw.startswith("[") and raw.endswith("]"):
-            inner = raw[1:-1]
-            return [m.group(1) or m.group(2) for m in re.finditer(r'"([^"]*)"|\'([^\']*)\'', inner)]
-        if raw.startswith("{") and raw.endswith("}"):
-            tbl: dict[str, Any] = {}
-            inner = raw[1:-1]
-            for m in re.finditer(
-                r'([A-Za-z0-9_-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(true|false))', inner
-            ):
-                k = m.group(1)
-                if m.group(2) is not None:
-                    tbl[k] = m.group(2)
-                elif m.group(3) is not None:
-                    tbl[k] = m.group(3)
-                else:
-                    tbl[k] = m.group(4) == "true"
-            return tbl
-        return raw
-
     while i < len(lines):
-        line = _strip_comment(lines[i]).strip()
+        line = _strip_toml_comment(lines[i]).strip()
         i += 1
         if not line:
             continue
-        if line.startswith("[[") and line.endswith("]]"):
-            current = {}
-            continue
         if line.startswith("[") and line.endswith("]"):
-            path = _split_dotted(line[1:-1].strip())
-            target = root
-            for part in path:
-                nxt = target.get(part)
-                if not isinstance(nxt, dict):
-                    nxt = {}
-                    target[part] = nxt
-                target = nxt
-            current = target
-            continue
-        if "=" not in line:
-            continue
-        lhs, rhs = line.split("=", 1)
-        rhs = rhs.strip()
-        # Accumulate multi-line arrays / inline tables.
-        while (rhs.startswith("[") and rhs.count("[") > rhs.count("]")) or (
-            rhs.startswith("{") and rhs.count("{") > rhs.count("}")
-        ):
-            if i >= len(lines):
-                break
-            rhs += " " + _strip_comment(lines[i]).strip()
-            i += 1
-        keys = _split_dotted(lhs.strip())
-        if not keys:
-            continue
-        target = current
-        for part in keys[:-1]:
-            nxt = target.get(part)
-            if not isinstance(nxt, dict):
-                nxt = {}
-                target[part] = nxt
-            target = nxt
-        target[keys[-1]] = _parse_value(rhs)
+            current = _parse_toml_table_header(line, root)
+        elif "=" in line:
+            i = _parse_toml_kv(line, lines, i, current)
     return root
 
 
@@ -431,56 +457,60 @@ def _blank_preserving_newlines(seg: str) -> str:
     return "\n".join(" " * len(part) for part in seg.split("\n"))
 
 
+def _skip_block_comment(src: str, pos: int) -> int:
+    """Given `pos` right after `/*`, return index right after its matching nested `*/`."""
+    depth = 1
+    n = len(src)
+    while pos < n and depth > 0:
+        nxt_open = src.find("/*", pos)
+        nxt_close = src.find("*/", pos)
+        if nxt_close == -1:
+            return n
+        if nxt_open != -1 and nxt_open < nxt_close:
+            depth += 1
+            pos = nxt_open + 2
+        else:
+            depth -= 1
+            pos = nxt_close + 2
+    return pos
+
+
+def _mask_without_block_comments(src: str) -> tuple[str, list[tuple[int, int, str]]]:
+    strings: list[tuple[int, int, str]] = []
+
+    def _repl(m: re.Match[str]) -> str:
+        if m.lastgroup in ("str", "raw_str"):
+            strings.append((m.start(), m.end(), m.group(0)))
+        return _blank_preserving_newlines(m.group(0))
+
+    return _LEX_NO_BLOCK_RE.sub(_repl, src), strings
+
+
 def mask_comments_and_strings(src: str) -> tuple[str, list[tuple[int, int, str]]]:
     """Replace Rust comments, strings, and char literals with spaces preserving newlines.
 
     Returns `(code_only, string_spans)` where `string_spans` holds `(start, end, raw_literal)`
     for every non-comment string literal.
     """
-    if "//" not in src and "/*" not in src and '"' not in src and "'" not in src:
+    if not any(marker in src for marker in _LEX_MARKERS):
         return src, []
+    if "/*" not in src:
+        return _mask_without_block_comments(src)
 
     strings: list[tuple[int, int, str]] = []
-
-    if "/*" not in src:
-        # Fast C-loop path when no block comments exist.
-        def _repl(m: re.Match[str]) -> str:
-            if m.lastgroup in ("str", "raw_str"):
-                strings.append((m.start(), m.end(), m.group(0)))
-            return _blank_preserving_newlines(m.group(0))
-
-        return _LEX_NO_BLOCK_RE.sub(_repl, src), strings
-
-    n = len(src)
     out: list[str] = []
     pos = 0
     last = 0
+    n = len(src)
     while pos < n:
         m = _LEX_RE.search(src, pos)
         if not m:
             break
-        start = m.start()
-        end = m.end()
-        kind = m.lastgroup
-        if kind == "block_comment":
-            depth = 1
-            cur = end
-            while cur < n and depth > 0:
-                nxt_open = src.find("/*", cur)
-                nxt_close = src.find("*/", cur)
-                if nxt_close == -1:
-                    cur = n
-                    break
-                if nxt_open != -1 and nxt_open < nxt_close:
-                    depth += 1
-                    cur = nxt_open + 2
-                else:
-                    depth -= 1
-                    cur = nxt_close + 2
-            end = cur
-        elif kind in ("str", "raw_str"):
+        start, end = m.start(), m.end()
+        if m.lastgroup == "block_comment":
+            end = _skip_block_comment(src, end)
+        elif m.lastgroup in ("str", "raw_str"):
             strings.append((start, end, src[start:end]))
-
         out.append(src[last:start])
         out.append(_blank_preserving_newlines(src[start:end]))
         last = pos = end
@@ -516,8 +546,7 @@ def _split_top_level_args(text: str) -> list[str]:
             depth += 1
             buf.append(ch)
         elif ch == ")":
-            if depth > 0:
-                depth -= 1
+            depth = max(0, depth - 1)
             buf.append(ch)
         elif ch == "," and depth == 0:
             parts.append("".join(buf).strip())
@@ -543,6 +572,279 @@ def _is_test_only_cfg_predicate(pred: str) -> bool:
     return False
 
 
+def _skip_ws_forward(code: str, pos: int) -> int:
+    n = len(code)
+    while pos < n and code[pos].isspace():
+        pos += 1
+    return pos
+
+
+def _skip_ws_backward(code: str, idx: int, min_start: int) -> int:
+    while idx > min_start and code[idx - 1].isspace():
+        idx -= 1
+    return idx
+
+
+def _find_matching_open_bracket(code: str, close_idx: int, min_start: int) -> int | None:
+    depth = 1
+    j = close_idx - 1
+    while j >= min_start and depth > 0:
+        ch = code[j]
+        if ch == "]":
+            depth += 1
+        elif ch == "[":
+            depth -= 1
+        j -= 1
+    return (j + 1) if depth == 0 else None
+
+
+def _prev_outer_attr_span(
+    code: str, idx: int, min_start: int = 0
+) -> tuple[int, int] | None:
+    end = _skip_ws_backward(code, idx, min_start)
+    if end <= min_start or code[end - 1] != "]":
+        return None
+    open_bracket = _find_matching_open_bracket(code, end - 1, min_start)
+    if open_bracket is None:
+        return None
+    before_bracket = _skip_ws_backward(code, open_bracket, min_start)
+    if before_bracket <= min_start or code[before_bracket - 1] != "#":
+        return None
+    return before_bracket - 1, end
+
+
+def _walk_back_outer_attrs(code: str, item_start: int, min_start: int) -> int:
+    while True:
+        span = _prev_outer_attr_span(code, item_start, min_start)
+        if span is None:
+            return item_start
+        item_start = span[0]
+
+
+def _skip_chained_outer_attrs(code: str, pos: int) -> int:
+    n = len(code)
+    while True:
+        pos = _skip_ws_forward(code, pos)
+        if pos >= n or code[pos] != "#":
+            return pos
+        bracket = _skip_ws_forward(code, pos + 1)
+        if bracket >= n or code[bracket] != "[":
+            return pos
+        pos = _skip_balanced(code, bracket + 1, "[", "]")
+
+
+def _match_cfg_test_attr(code: str, m: re.Match[str]) -> tuple[bool, int]:
+    paren_end = _skip_balanced(code, m.end(), "(", ")")
+    pred = code[m.end() : paren_end - 1]
+    bracket_pos = code.find("[", m.start())
+    attr_end = _skip_balanced(code, bracket_pos + 1, "[", "]")
+    is_only_cfg = code[paren_end : attr_end - 1].strip() == ""
+    return is_only_cfg and _is_test_only_cfg_predicate(pred), attr_end
+
+
+def _at_top_level(state: _ItemScanState) -> bool:
+    return state.paren == 0 and state.bracket == 0 and state.brace == 0
+
+
+def _init_item_scan_state(code: str, pos: int) -> _ItemScanState:
+    state = _ItemScanState(start_pos=pos)
+    wm = _IDENT_AT_START_RE.match(code, pos)
+    if not wm:
+        return state
+    first_kw = wm.group(0)
+    if first_kw == "let":
+        state.seen_let = True
+        state.needs_semicolon = True
+    elif first_kw == "if":
+        state.seen_if = True
+    elif first_kw in _SEMICOLON_ITEM_KWS:
+        state.seen_item_kw = True
+        state.needs_semicolon = True
+    elif first_kw in _BLOCK_ITEM_KWS:
+        state.seen_item_kw = True
+    return state
+
+
+def _update_paren_or_bracket(tok: str, state: _ItemScanState) -> bool:
+    if tok == "(":
+        state.paren += 1
+    elif tok == ")":
+        state.paren = max(0, state.paren - 1)
+    elif tok == "[":
+        state.bracket += 1
+    elif tok == "]":
+        state.bracket = max(0, state.bracket - 1)
+    else:
+        return False
+    return True
+
+
+def _handle_open_angle(code: str, end: int, state: _ItemScanState) -> None:
+    if state.seen_let or state.seen_if:
+        return
+    if code[end : end + 1] not in ("=", "<"):
+        state.angle += 1
+
+
+def _handle_close_angle(code: str, start: int, state: _ItemScanState) -> None:
+    if state.angle == 0:
+        return
+    if start == 0 or code[start - 1] not in ("-", "="):
+        state.angle -= 1
+
+
+def _handle_angle(code: str, tm: re.Match[str], state: _ItemScanState) -> None:
+    if not _at_top_level(state):
+        return
+    if tm.group(0) == "<":
+        _handle_open_angle(code, tm.end(), state)
+    else:
+        _handle_close_angle(code, tm.start(), state)
+
+
+def _handle_open_brace(state: _ItemScanState) -> None:
+    state.brace += 1
+    state.entered_brace = True
+    if state.paren == 0 and state.bracket == 0:
+        state.in_where = False
+        state.angle = 0
+
+
+def _match_following_else(code: str, cur: int) -> int | None:
+    q = _skip_ws_forward(code, cur)
+    if code[q : q + 4] != "else":
+        return None
+    after = code[q + 4 : q + 5]
+    if after and (after.isalnum() or after == "_"):
+        return None
+    return q + 4
+
+
+def _handle_close_brace(
+    code: str, tm: re.Match[str], state: _ItemScanState
+) -> tuple[int, bool]:
+    if state.brace == 0:
+        return tm.start(), True
+    state.brace -= 1
+    cur = tm.end()
+    if not (_at_top_level(state) and state.entered_brace):
+        return cur, False
+    if state.needs_semicolon:
+        return cur, False
+    if state.seen_if:
+        else_end = _match_following_else(code, cur)
+        if else_end is not None:
+            state.entered_brace = False
+            return else_end, False
+    return cur, True
+
+
+def _handle_delimiter(
+    code: str, tm: re.Match[str], state: _ItemScanState
+) -> tuple[int, bool] | None:
+    tok = tm.group(0)
+    if tok.startswith("#"):
+        return _skip_balanced(code, tm.end(), "[", "]"), False
+    if _update_paren_or_bracket(tok, state):
+        return tm.end(), False
+    if tok == "{":
+        _handle_open_brace(state)
+        return tm.end(), False
+    if tok == "}":
+        return _handle_close_brace(code, tm, state)
+    if tok in ("<", ">"):
+        _handle_angle(code, tm, state)
+        return tm.end(), False
+    return None
+
+
+def _is_field_terminator_comma(state: _ItemScanState) -> bool:
+    return (
+        state.angle == 0
+        and not state.seen_item_kw
+        and not state.in_where
+        and not state.seen_let
+        and not state.needs_semicolon
+        and not state.seen_if
+    )
+
+
+def _is_static_lifetime(code: str, tm: re.Match[str]) -> bool:
+    return tm.group(0) == "static" and tm.start() > 0 and code[tm.start() - 1] == "'"
+
+
+def _clears_semicolon_requirement(
+    code: str, tm: re.Match[str], state: _ItemScanState
+) -> bool:
+    if not state.needs_semicolon or state.entered_brace or state.seen_let:
+        return False
+    if tm.group(0) not in ("fn", "trait"):
+        return False
+    return _COLON_OR_EQ_RE.search(code, state.start_pos, tm.start()) is None
+
+
+def _apply_item_keyword(
+    code: str, tm: re.Match[str], state: _ItemScanState
+) -> None:
+    if _is_static_lifetime(code, tm):
+        return
+    tok = tm.group(0)
+    if (
+        tok in _SEMICOLON_ITEM_KWS
+        and not state.seen_item_kw
+        and not state.entered_brace
+        and not state.seen_if
+        and not state.seen_let
+    ):
+        state.needs_semicolon = True
+    if _clears_semicolon_requirement(code, tm, state):
+        state.needs_semicolon = False
+    state.seen_item_kw = True
+
+
+def _update_item_keywords(
+    code: str, tm: re.Match[str], state: _ItemScanState
+) -> bool:
+    if not _at_top_level(state):
+        return False
+    tok = tm.group(0)
+    if tok == ";":
+        return True
+    if tok == ",":
+        return _is_field_terminator_comma(state)
+    if tok == "where":
+        state.in_where = True
+        return False
+    if state.angle == 0 and tok in _ALL_ITEM_KWS:
+        _apply_item_keyword(code, tm, state)
+    return False
+
+
+def _scan_item_tokens(code: str, start_pos: int, state: _ItemScanState) -> int:
+    n = len(code)
+    cur = start_pos
+    while cur < n:
+        tm = _STRUCT_TOK_RE.search(code, cur)
+        if not tm:
+            return n
+        delim_res = _handle_delimiter(code, tm, state)
+        if delim_res is not None and delim_res[1]:
+            return delim_res[0]
+        if delim_res is not None:
+            cur = delim_res[0]
+        elif _update_item_keywords(code, tm, state):
+            return tm.end()
+        else:
+            cur = tm.end()
+    return cur
+
+
+def _find_cfg_test_item_end(code: str, attr_end: int) -> int:
+    item_body_start = _skip_chained_outer_attrs(code, attr_end)
+    state = _init_item_scan_state(code, item_body_start)
+    return _scan_item_tokens(code, item_body_start, state)
+
+
 def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
     """Find character `(start, end)` ranges of `#[cfg(test)]` / `#[cfg(all(..., test, ...))]` items."""
     if "cfg" not in code:
@@ -550,245 +852,48 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
     n = len(code)
     ranges: list[tuple[int, int]] = []
     pos = 0
-
     while pos < n:
         m = _CFG_ATTR_START_RE.search(code, pos)
         if not m:
             break
-        cfg_start = m.start()
-        # Locate end of `cfg(...)` and enclosing `#[...]`.
-        paren_end = _skip_balanced(code, m.end(), "(", ")")
-        pred = code[m.end() : paren_end - 1]
-        bracket_pos = code.find("[", cfg_start)
-        attr_end = _skip_balanced(code, bracket_pos + 1, "[", "]")
-        # Ensure `cfg(...)` is the entire attribute (nothing extra besides whitespace before `]`).
-        if code[paren_end : attr_end - 1].strip() != "" or not _is_test_only_cfg_predicate(pred):
+        is_test_only, attr_end = _match_cfg_test_attr(code, m)
+        if not is_test_only:
             pos = attr_end
             continue
-
-        # Walk backwards over any immediately preceding outer attributes `#[...]` attached
-        # to this `#[cfg(test)]` item (skipping `#![...]` inner attributes and never crossing
-        # a previous stripped range). Comments between attributes are already space-masked.
-        item_start = cfg_start
         min_start = ranges[-1][1] if ranges else 0
-        idx = item_start
-        while idx > min_start:
-            while idx > min_start and code[idx - 1].isspace():
-                idx -= 1
-            if idx > min_start and code[idx - 1] == "]":
-                depth = 1
-                j = idx - 2
-                while j >= min_start and depth > 0:
-                    ch = code[j]
-                    if ch == "]":
-                        depth += 1
-                    elif ch == "[":
-                        depth -= 1
-                    j -= 1
-                if depth != 0:
-                    break
-                open_bracket = j + 1
-                k = open_bracket - 1
-                while k >= min_start and code[k].isspace():
-                    k -= 1
-                if (
-                    k >= min_start
-                    and code[k] == "#"
-                    and code[k + 1 : open_bracket].strip() == ""
-                ):
-                    item_start = k
-                    idx = k
-                    continue
-            break
-
-        # Skip any chained outer attributes `#[...]` and whitespace.
-        p = attr_end
-        while p < n:
-            while p < n and code[p].isspace():
-                p += 1
-            if p < n and code[p] == "#":
-                q = p + 1
-                while q < n and code[q].isspace():
-                    q += 1
-                if q < n and code[q] == "[":
-                    p = _skip_balanced(code, q + 1, "[", "]")
-                    continue
-            break
-
-        # Determine attached item/statement/field kind and scan to its balanced end.
-        seen_let = False
-        seen_if = False
-        needs_semicolon = False
-        in_where = False
-        seen_item_kw = False
-        paren = 0
-        bracket = 0
-        brace = 0
-        angle = 0
-        entered_brace = False
-
-        wm = _IDENT_AT_START_RE.match(code, p)
-        if wm:
-            first_kw = wm.group(0)
-            if first_kw == "let":
-                seen_let = True
-                needs_semicolon = True
-            elif first_kw == "if":
-                seen_if = True
-            elif first_kw in ("use", "type", "static", "const"):
-                seen_item_kw = True
-                needs_semicolon = True
-            elif first_kw in (
-                "fn",
-                "mod",
-                "impl",
-                "struct",
-                "enum",
-                "trait",
-                "extern",
-                "macro_rules",
-            ):
-                seen_item_kw = True
-
-        cur = p
-        while cur < n:
-            tm = _STRUCT_TOK_RE.search(code, cur)
-            if not tm:
-                cur = n
-                break
-            tok = tm.group(0)
-            if tok.startswith("#"):
-                cur = _skip_balanced(code, tm.end(), "[", "]")
-                continue
-            if tok == "(":
-                paren += 1
-                cur = tm.end()
-                continue
-            if tok == ")":
-                if paren > 0:
-                    paren -= 1
-                cur = tm.end()
-                continue
-            if tok == "[":
-                bracket += 1
-                cur = tm.end()
-                continue
-            if tok == "]":
-                if bracket > 0:
-                    bracket -= 1
-                cur = tm.end()
-                continue
-            if tok == "<":
-                if (
-                    paren == 0
-                    and bracket == 0
-                    and brace == 0
-                    and not seen_let
-                    and not seen_if
-                    and (tm.end() >= n or code[tm.end()] not in ("=", "<"))
-                ):
-                    angle += 1
-                cur = tm.end()
-                continue
-            if tok == ">":
-                if (
-                    paren == 0
-                    and bracket == 0
-                    and brace == 0
-                    and angle > 0
-                    and (tm.start() == 0 or code[tm.start() - 1] not in ("-", "="))
-                ):
-                    angle -= 1
-                cur = tm.end()
-                continue
-            if tok == "{":
-                brace += 1
-                entered_brace = True
-                if paren == 0 and bracket == 0:
-                    in_where = False
-                    angle = 0
-                cur = tm.end()
-                continue
-            if tok == "}":
-                if brace == 0:
-                    # Reached enclosing block's closing brace (e.g. last struct field without comma).
-                    cur = tm.start()
-                    break
-                brace -= 1
-                cur = tm.end()
-                if brace == 0 and paren == 0 and bracket == 0 and entered_brace:
-                    if needs_semicolon:
-                        continue
-                    if seen_if:
-                        q = cur
-                        while q < n and code[q].isspace():
-                            q += 1
-                        if code[q : q + 4] == "else" and (
-                            q + 4 == n or not (code[q + 4].isalnum() or code[q + 4] == "_")
-                        ):
-                            cur = q + 4
-                            entered_brace = False
-                            continue
-                    break
-                continue
-
-            if paren == 0 and bracket == 0 and brace == 0:
-                if tok == ";":
-                    cur = tm.end()
-                    break
-                if tok == ",":
-                    if (
-                        angle == 0
-                        and not seen_item_kw
-                        and not in_where
-                        and not seen_let
-                        and not needs_semicolon
-                        and not seen_if
-                    ):
-                        cur = tm.end()
-                        break
-                elif angle == 0 and tok in (
-                    "fn",
-                    "mod",
-                    "impl",
-                    "struct",
-                    "enum",
-                    "trait",
-                    "type",
-                    "use",
-                    "const",
-                    "static",
-                    "extern",
-                    "macro_rules",
-                ):
-                    if tok == "static" and tm.start() > 0 and code[tm.start() - 1] == "'":
-                        pass
-                    else:
-                        if (
-                            not seen_item_kw
-                            and not entered_brace
-                            and not seen_if
-                            and not seen_let
-                            and tok in ("use", "type", "static", "const")
-                        ):
-                            needs_semicolon = True
-                        if (
-                            tok in ("fn", "trait")
-                            and needs_semicolon
-                            and not entered_brace
-                            and not seen_let
-                            and _COLON_OR_EQ_RE.search(code, p, tm.start()) is None
-                        ):
-                            needs_semicolon = False
-                        seen_item_kw = True
-                elif tok == "where":
-                    in_where = True
-            cur = tm.end()
-
-        ranges.append((item_start, cur))
-        pos = cur
-
+        item_start = _walk_back_outer_attrs(code, m.start(), min_start)
+        item_end = _find_cfg_test_item_end(code, attr_end)
+        ranges.append((item_start, item_end))
+        pos = item_end
     return ranges
+
+
+def _advance_line_mask(ranges: list[tuple[int, int]], ri: int, line_start: int) -> int:
+    nr = len(ranges)
+    while ri < nr and ranges[ri][1] <= line_start:
+        ri += 1
+    return ri
+
+
+def _is_code_line(
+    src: str,
+    line_start: int,
+    line_end: int,
+    ranges: list[tuple[int, int]],
+    ri: int,
+) -> bool:
+    nr = len(ranges)
+    if ri >= nr or ranges[ri][0] >= line_end:
+        return True
+    cur = line_start
+    j = ri
+    while j < nr and ranges[j][0] < line_end:
+        rs, re_ = ranges[j]
+        if cur < rs and src[cur : min(rs, line_end)].strip():
+            return True
+        cur = max(cur, re_)
+        j += 1
+    return cur < line_end and bool(src[cur:line_end].strip())
 
 
 def count_non_test_lines(src: str, ranges: list[tuple[int, int]]) -> int:
@@ -797,34 +902,16 @@ def count_non_test_lines(src: str, ranges: list[tuple[int, int]]) -> int:
         return 0
     if not ranges:
         return src.count("\n") + (0 if src.endswith("\n") else 1)
-
     total = 0
     ri = 0
-    nr = len(ranges)
     n = len(src)
     ls = 0
     while ls < n:
         nl = src.find("\n", ls)
         le = nl if nl != -1 else n
-        while ri < nr and ranges[ri][1] <= ls:
-            ri += 1
-        if ri >= nr or ranges[ri][0] >= le:
+        ri = _advance_line_mask(ranges, ri, ls)
+        if _is_code_line(src, ls, le, ranges, ri):
             total += 1
-        else:
-            has_prod = False
-            c = ls
-            j = ri
-            while j < nr and ranges[j][0] < le:
-                rs, re_ = ranges[j]
-                if c < rs and src[c : min(rs, le)].strip():
-                    has_prod = True
-                    break
-                c = max(c, re_)
-                j += 1
-            if not has_prod and c < le and src[c:le].strip():
-                has_prod = True
-            if has_prod:
-                total += 1
         if nl == -1:
             break
         ls = nl + 1
@@ -858,7 +945,7 @@ def _offset_in_ranges(offset: int, ranges: list[tuple[int, int]]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _attr_contains_allow_dead_code(attr_text: str) -> bool:
+def _attr_has_dead_code(attr_text: str) -> bool:
     for m in _ALLOW_CALL_RE.finditer(attr_text):
         end = _skip_balanced(attr_text, m.end(), "(", ")")
         inner = attr_text[m.end() : end - 1]
@@ -867,42 +954,74 @@ def _attr_contains_allow_dead_code(attr_text: str) -> bool:
     return False
 
 
+def _scan_preceding_attrs(prod_code: str, start_idx: int) -> list[str]:
+    attrs: list[str] = []
+    idx = start_idx
+    while True:
+        span = _prev_outer_attr_span(prod_code, idx)
+        if span is None:
+            return attrs
+        attrs.append(prod_code[span[0] : span[1]])
+        idx = span[0]
+
+
 def find_dead_code_traits(prod_code: str) -> list[str]:
     """Return names of traits directly preceded by an outer `allow|expect(...dead_code...)` attribute."""
     if "dead_code" not in prod_code or "trait" not in prod_code:
         return []
     hits: list[str] = []
     for tm in _TRAIT_DECL_RE.finditer(prod_code):
-        idx = tm.start()
-        attrs: list[str] = []
-        while True:
-            while idx > 0 and prod_code[idx - 1].isspace():
-                idx -= 1
-            if idx > 0 and prod_code[idx - 1] == "]":
-                depth = 1
-                j = idx - 2
-                while j >= 0 and depth > 0:
-                    ch = prod_code[j]
-                    if ch == "]":
-                        depth += 1
-                    elif ch == "[":
-                        depth -= 1
-                    j -= 1
-                if depth != 0:
-                    break
-                open_bracket = j + 1
-                k = open_bracket - 1
-                while k >= 0 and prod_code[k].isspace():
-                    k -= 1
-                # Outer attribute `#[...]` only (no `!` between `#` and `[`).
-                if k >= 0 and prod_code[k] == "#" and prod_code[k + 1 : open_bracket].strip() == "":
-                    attrs.append(prod_code[k:idx])
-                    idx = k
-                    continue
-            break
-        if any(_attr_contains_allow_dead_code(a) for a in attrs):
+        attrs = _scan_preceding_attrs(prod_code, tm.start())
+        if any(_attr_has_dead_code(attr) for attr in attrs):
             hits.append(tm.group(1))
     return hits
+
+
+def _count_rusqlite(rel_posix: str, prod_code: str) -> int:
+    if rel_posix.startswith(RUSQLITE_ADAPTER_PREFIXES) or "rusqlite" not in prod_code:
+        return 0
+    return len(_RUSQLITE_RE.findall(prod_code))
+
+
+def _count_unix_socket(rel_posix: str, prod_code: str) -> int:
+    if rel_posix.startswith(UNIX_SOCKET_ADAPTER_PREFIXES):
+        return 0
+    if "Unix" not in prod_code and "unix::net" not in prod_code:
+        return 0
+    return len(_UNIX_SOCKET_RE.findall(prod_code))
+
+
+def _count_sandbox_strings(
+    text: str,
+    string_spans: list[tuple[int, int, str]],
+    ranges: list[tuple[int, int]],
+) -> int:
+    if "bwrap" not in text and "sandbox-exec" not in text:
+        return 0
+    count = 0
+    for s_start, _s_end, raw_lit in string_spans:
+        if "bwrap" not in raw_lit and "sandbox-exec" not in raw_lit:
+            continue
+        if _offset_in_ranges(s_start, ranges):
+            continue
+        if _SANDBOX_STR_VALUE_RE.search(_unquote_rust_string(raw_lit).strip()):
+            count += 1
+    return count
+
+
+def _count_sandbox(
+    rel_posix: str,
+    text: str,
+    prod_code: str,
+    string_spans: list[tuple[int, int, str]],
+    ranges: list[tuple[int, int]],
+) -> int:
+    if rel_posix.startswith(SANDBOX_ADAPTER_PREFIXES):
+        return 0
+    code_hits = 0
+    if "sandbox" in prod_code or "Seatbelt" in prod_code:
+        code_hits = len(_SANDBOX_CODE_RE.findall(prod_code))
+    return code_hits + _count_sandbox_strings(text, string_spans, ranges)
 
 
 def scan_production_file(
@@ -918,31 +1037,13 @@ def scan_production_file(
     loc = count_non_test_lines(text, ranges)
     prod_code = blank_ranges(code, ranges)
 
-    rusqlite_count = 0
-    if not rel_posix.startswith(RUSQLITE_ADAPTER_PREFIXES) and "rusqlite" in prod_code:
-        rusqlite_count = len(_RUSQLITE_RE.findall(prod_code))
-
-    unix_count = 0
-    if not rel_posix.startswith(UNIX_SOCKET_ADAPTER_PREFIXES) and (
-        "Unix" in prod_code or "unix::net" in prod_code
-    ):
-        unix_count = len(_UNIX_SOCKET_RE.findall(prod_code))
-
-    sandbox_count = 0
-    if not rel_posix.startswith(SANDBOX_ADAPTER_PREFIXES):
-        if "sandbox" in prod_code or "Seatbelt" in prod_code:
-            sandbox_count += len(_SANDBOX_CODE_RE.findall(prod_code))
-        if "bwrap" in text or "sandbox-exec" in text:
-            for s_start, _s_end, raw_lit in string_spans:
-                if ("bwrap" in raw_lit or "sandbox-exec" in raw_lit) and not _offset_in_ranges(
-                    s_start, ranges
-                ):
-                    unquoted = _unquote_rust_string(raw_lit).strip()
-                    if _SANDBOX_STR_VALUE_RE.search(unquoted):
-                        sandbox_count += 1
-
-    dead_code_trait_count = len(find_dead_code_traits(prod_code))
-    return loc, rusqlite_count, unix_count, sandbox_count, dead_code_trait_count
+    return (
+        loc,
+        _count_rusqlite(rel_posix, prod_code),
+        _count_unix_socket(rel_posix, prod_code),
+        _count_sandbox(rel_posix, text, prod_code, string_spans, ranges),
+        len(find_dead_code_traits(prod_code)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +1062,39 @@ def _extract_workspace_dep_renames(root_manifest: dict[str, Any]) -> dict[str, s
     return renames
 
 
+def _expand_member_pattern(repo_root: Path, pattern: str) -> list[Path]:
+    if any(ch in pattern for ch in "*?["):
+        return sorted(p for p in repo_root.glob(pattern) if (p / "Cargo.toml").is_file())
+    return [repo_root / pattern]
+
+
+def _resolve_workspace_members(repo_root: Path, raw_members: list[str]) -> list[Path]:
+    candidates = [
+        cand
+        for pattern in raw_members
+        for cand in _expand_member_pattern(repo_root, pattern)
+    ]
+    member_dirs: list[Path] = []
+    seen_dirs: set[Path] = set()
+    for cand in candidates:
+        resolved = cand.resolve()
+        if resolved not in seen_dirs:
+            seen_dirs.add(resolved)
+            member_dirs.append(cand)
+    return member_dirs
+
+
+def _load_member_manifest(member_dir: Path) -> tuple[str, Path, dict[str, Any]]:
+    manifest_path = member_dir / "Cargo.toml"
+    if not manifest_path.is_file():
+        raise ValueError(f"workspace member missing Cargo.toml: {member_dir}")
+    data = load_toml(manifest_path)
+    pkg_name = (data.get("package") or {}).get("name")
+    if not isinstance(pkg_name, str) or not pkg_name:
+        raise ValueError(f"{manifest_path}: missing [package].name")
+    return pkg_name, member_dir, data
+
+
 def _load_workspace(
     repo_root: Path,
 ) -> tuple[list[tuple[str, Path, dict[str, Any]]], dict[str, str]]:
@@ -973,30 +1107,8 @@ def _load_workspace(
     if not raw_members:
         raise ValueError("root Cargo.toml declares no [workspace].members")
     workspace_dep_renames = _extract_workspace_dep_renames(root_manifest)
-
-    member_dirs: list[Path] = []
-    seen_dirs: set[Path] = set()
-    for pattern in raw_members:
-        if any(ch in pattern for ch in "*?["):
-            candidates = sorted(p for p in repo_root.glob(pattern) if (p / "Cargo.toml").is_file())
-        else:
-            candidates = [repo_root / pattern]
-        for cand in candidates:
-            resolved = cand.resolve()
-            if resolved not in seen_dirs:
-                seen_dirs.add(resolved)
-                member_dirs.append(cand)
-
-    members: list[tuple[str, Path, dict[str, Any]]] = []
-    for member_dir in member_dirs:
-        manifest_path = member_dir / "Cargo.toml"
-        if not manifest_path.is_file():
-            raise ValueError(f"workspace member missing Cargo.toml: {member_dir}")
-        data = load_toml(manifest_path)
-        pkg_name = (data.get("package") or {}).get("name")
-        if not isinstance(pkg_name, str) or not pkg_name:
-            raise ValueError(f"{manifest_path}: missing [package].name")
-        members.append((pkg_name, member_dir, data))
+    member_dirs = _resolve_workspace_members(repo_root, raw_members)
+    members = [_load_member_manifest(member_dir) for member_dir in member_dirs]
     members.sort(key=lambda item: item[0])
     return members, workspace_dep_renames
 
@@ -1031,6 +1143,33 @@ def _extract_workspace_deps(
     return deps
 
 
+def _extract_section_deps(
+    table: dict[str, Any],
+    workspace_pkgs: set[str],
+    workspace_dep_renames: dict[str, str] | None,
+) -> set[str]:
+    deps: set[str] = set()
+    for key in _DEP_TABLE_KEYS:
+        deps |= _extract_workspace_deps(
+            table.get(key), workspace_pkgs, workspace_dep_renames
+        )
+    return deps
+
+
+def _extract_target_deps(
+    targets: Any,
+    workspace_pkgs: set[str],
+    workspace_dep_renames: dict[str, str] | None,
+) -> set[str]:
+    if not isinstance(targets, dict):
+        return set()
+    deps: set[str] = set()
+    for tdata in targets.values():
+        if isinstance(tdata, dict):
+            deps |= _extract_section_deps(tdata, workspace_pkgs, workspace_dep_renames)
+    return deps
+
+
 def build_normal_dep_graph(
     members: list[tuple[str, Path, dict[str, Any]]],
     workspace_dep_renames: dict[str, str] | None = None,
@@ -1039,28 +1178,8 @@ def build_normal_dep_graph(
     workspace_pkgs = {name for name, _, _ in members}
     graph: dict[str, list[str]] = {}
     for name, _member_dir, data in members:
-        deps = _extract_workspace_deps(
-            data.get("dependencies"), workspace_pkgs, workspace_dep_renames
-        )
-        deps |= _extract_workspace_deps(
-            data.get("build-dependencies"), workspace_pkgs, workspace_dep_renames
-        )
-        deps |= _extract_workspace_deps(
-            data.get("build_dependencies"), workspace_pkgs, workspace_dep_renames
-        )
-        targets = data.get("target")
-        if isinstance(targets, dict):
-            for tdata in targets.values():
-                if isinstance(tdata, dict):
-                    deps |= _extract_workspace_deps(
-                        tdata.get("dependencies"), workspace_pkgs, workspace_dep_renames
-                    )
-                    deps |= _extract_workspace_deps(
-                        tdata.get("build-dependencies"), workspace_pkgs, workspace_dep_renames
-                    )
-                    deps |= _extract_workspace_deps(
-                        tdata.get("build_dependencies"), workspace_pkgs, workspace_dep_renames
-                    )
+        deps = _extract_section_deps(data, workspace_pkgs, workspace_dep_renames)
+        deps |= _extract_target_deps(data.get("target"), workspace_pkgs, workspace_dep_renames)
         graph[name] = sorted(deps)
     return graph
 
@@ -1131,27 +1250,29 @@ def check_cargo_dag_and_layer0(
 # ---------------------------------------------------------------------------
 
 
+def _is_skipped_dir(entry: os.DirEntry[str]) -> bool:
+    name = entry.name
+    if name.startswith(".") or name in SKIPPED_DIRS:
+        return True
+    dir_path = Path(entry.path)
+    return (dir_path / "CACHEDIR.TAG").exists() or (dir_path / ".git").exists()
+
+
+def _read_dir_entries(current: Path) -> list[os.DirEntry[str]]:
+    try:
+        return list(os.scandir(current))
+    except OSError as exc:
+        raise ValueError(f"cannot read directory {current}: {exc}") from exc
+
+
 def _iter_crate_rs_files(crate_dir: Path) -> list[Path]:
     found: list[Path] = []
     stack = [crate_dir]
     while stack:
-        current = stack.pop()
-        try:
-            entries = list(os.scandir(current))
-        except OSError as exc:
-            raise ValueError(f"cannot read directory {current}: {exc}") from exc
-        for entry in entries:
-            name = entry.name
-            if entry.is_dir(follow_symlinks=False):
-                if (
-                    name.startswith(".")
-                    or name in SKIPPED_DIRS
-                    or (Path(entry.path) / "CACHEDIR.TAG").exists()
-                    or (Path(entry.path) / ".git").exists()
-                ):
-                    continue
+        for entry in _read_dir_entries(stack.pop()):
+            if entry.is_dir(follow_symlinks=False) and not _is_skipped_dir(entry):
                 stack.append(Path(entry.path))
-            elif name.endswith(".rs") and entry.is_file(follow_symlinks=True):
+            elif entry.name.endswith(".rs") and entry.is_file(follow_symlinks=True):
                 found.append(Path(entry.path))
     found.sort()
     return found
@@ -1197,6 +1318,82 @@ def scan_workspace(
 # ---------------------------------------------------------------------------
 
 
+def _is_section_header_line(raw_line: str) -> bool:
+    return raw_line.startswith("[") and raw_line.endswith("]")
+
+
+def _parse_allowlist_section_header(
+    raw_line: str, seen_sections: set[str], source_name: str, lineno: int
+) -> str:
+    sec = raw_line[1:-1]
+    if sec not in ALL_SECTIONS:
+        raise ValueError(f"{source_name}:{lineno}: unknown section [{sec}]")
+    if sec in seen_sections:
+        raise ValueError(f"{source_name}:{lineno}: duplicate section [{sec}]")
+    seen_sections.add(sec)
+    return sec
+
+
+def _is_plain_rs_path(key: str) -> bool:
+    if not key.endswith(".rs") or "\\" in key or any(ch.isspace() for ch in key):
+        return False
+    return all(part not in ("", ".", "..") for part in key.split("/"))
+
+
+def _store_allowlist_entry(
+    parsed: Allowlist,
+    section: str,
+    key: str,
+    count: int,
+    source_name: str,
+    lineno: int,
+) -> None:
+    if section == SECTION_CRATE_LOC:
+        if not _CRATE_NAME_RE.fullmatch(key):
+            raise ValueError(f"{source_name}:{lineno}: invalid crate name {key!r}")
+        parsed.crate_loc[key] = count
+        return
+    if not _is_plain_rs_path(key):
+        raise ValueError(
+            f"{source_name}:{lineno}: expected plain repo-relative `.rs` path, got {key!r}"
+        )
+    parsed.coupling[section][key] = count
+
+
+def _parse_allowlist_entry(
+    raw_line: str,
+    section: str | None,
+    prev_key: str | None,
+    parsed: Allowlist,
+    source_name: str,
+    lineno: int,
+) -> str:
+    if section is None:
+        raise ValueError(f"{source_name}:{lineno}: entry appears before any [section] header")
+    parts = raw_line.split(" ")
+    if len(parts) != 2:
+        raise ValueError(
+            f"{source_name}:{lineno}: expected `<key> <positive-int>` with a single space"
+        )
+    key, count_str = parts
+    if not count_str.isdigit() or count_str.startswith("0"):
+        raise ValueError(
+            f"{source_name}:{lineno}: count must be a positive decimal integer without leading zero, got {count_str!r}"
+        )
+    if prev_key is not None and prev_key >= key:
+        raise ValueError(
+            f"{source_name}:{lineno}: entries in [{section}] must be strictly sorted and unique"
+        )
+    _store_allowlist_entry(parsed, section, key, int(count_str), source_name, lineno)
+    return key
+
+
+def _validate_required_sections(seen_sections: set[str], source_name: str) -> None:
+    missing = [sec for sec in ALL_SECTIONS if sec not in seen_sections]
+    if missing:
+        raise ValueError(f"{source_name}: missing required section(s): {', '.join(missing)}")
+
+
 def parse_allowlist(text: str, source_name: str = ALLOWLIST_REL) -> Allowlist:
     if not text.startswith("#"):
         raise ValueError(
@@ -1210,170 +1407,162 @@ def parse_allowlist(text: str, source_name: str = ALLOWLIST_REL) -> Allowlist:
     for lineno, raw_line in enumerate(text.splitlines(), start=1):
         if raw_line == "" or raw_line.startswith("#"):
             continue
-        if raw_line.startswith("[") and raw_line.endswith("]"):
-            sec = raw_line[1:-1]
-            if sec not in ALL_SECTIONS:
-                raise ValueError(f"{source_name}:{lineno}: unknown section [{sec}]")
-            if sec in seen_sections:
-                raise ValueError(f"{source_name}:{lineno}: duplicate section [{sec}]")
-            seen_sections.add(sec)
-            current_section = sec
+        if _is_section_header_line(raw_line):
+            current_section = _parse_allowlist_section_header(
+                raw_line, seen_sections, source_name, lineno
+            )
             prev_key = None
-            continue
-        if current_section is None:
-            raise ValueError(f"{source_name}:{lineno}: entry appears before any [section] header")
-
-        parts = raw_line.split(" ")
-        if len(parts) != 2:
-            raise ValueError(
-                f"{source_name}:{lineno}: expected `<key> <positive-int>` with a single space"
-            )
-        key, count_str = parts
-        if not count_str.isdigit() or count_str.startswith("0"):
-            raise ValueError(
-                f"{source_name}:{lineno}: count must be a positive decimal integer without leading zero, got {count_str!r}"
-            )
-        count = int(count_str)
-        if prev_key is not None and prev_key >= key:
-            raise ValueError(
-                f"{source_name}:{lineno}: entries in [{current_section}] must be strictly sorted and unique"
-            )
-        prev_key = key
-
-        if current_section == SECTION_CRATE_LOC:
-            if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
-                raise ValueError(f"{source_name}:{lineno}: invalid crate name {key!r}")
-            parsed.crate_loc[key] = count
         else:
-            plain_path = (
-                key.endswith(".rs")
-                and "\\" not in key
-                and not any(ch.isspace() for ch in key)
-                and all(p not in ("", ".", "..") for p in key.split("/"))
+            prev_key = _parse_allowlist_entry(
+                raw_line, current_section, prev_key, parsed, source_name, lineno
             )
-            if not plain_path:
-                raise ValueError(
-                    f"{source_name}:{lineno}: expected plain repo-relative `.rs` path, got {key!r}"
-                )
-            parsed.coupling[current_section][key] = count
 
-    missing = [sec for sec in ALL_SECTIONS if sec not in seen_sections]
-    if missing:
-        raise ValueError(f"{source_name}: missing required section(s): {', '.join(missing)}")
+    _validate_required_sections(seen_sections, source_name)
     return parsed
+
+
+def _check_single_crate_loc(
+    crate: str,
+    loc: int,
+    allowlist_loc: dict[str, int],
+    allowlist_label: str,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    if crate in allowlist_loc:
+        ceiling = allowlist_loc[crate]
+        if loc > ceiling:
+            errors.append(
+                f"[crate_loc] `{crate}` has {loc:,} non-test LOC, exceeding its shrink-only "
+                f"baseline ceiling of {ceiling:,} in {allowlist_label}. Extract new domains "
+                f"into a cohesive crate ({RULES_DOC})."
+            )
+        return
+    if loc > CRATE_FAIL_LOC:
+        errors.append(
+            f"[crate_loc] unlisted crate `{crate}` has {loc:,} non-test LOC, exceeding "
+            f"the {CRATE_FAIL_LOC:,}-LOC hard cap. Extract domains into a cohesive crate "
+            f"({RULES_DOC}); new crates may not be added to {allowlist_label}."
+        )
+    elif loc >= CRATE_WARN_LOC:
+        warnings.append(
+            f"[crate_loc] WARNING: crate `{crate}` has {loc:,} non-test LOC "
+            f"(>= {CRATE_WARN_LOC:,} warning threshold; hard cap is {CRATE_FAIL_LOC:,})."
+        )
+
+
+def _check_crate_loc_limits(
+    crate_locs: dict[str, int], allowlist_loc: dict[str, int], allowlist_label: str
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    for crate, loc in sorted(crate_locs.items()):
+        _check_single_crate_loc(crate, loc, allowlist_loc, allowlist_label, errors, warnings)
+    for crate in sorted(allowlist_loc):
+        if crate not in crate_locs:
+            errors.append(
+                f"[crate_loc] `{crate}` in {allowlist_label} is no longer a workspace crate; "
+                f"delete its entry."
+            )
+    return errors, warnings
+
+
+def _check_coupling_section(
+    sec: str,
+    actual_map: dict[str, int],
+    listed_map: dict[str, int],
+    allowlist_label: str,
+) -> list[str]:
+    errors: list[str] = []
+    for path, actual in sorted(actual_map.items()):
+        listed = listed_map.get(path)
+        if listed is None:
+            errors.append(
+                f"[{sec}] {path}: {actual} occurrence(s) outside designated adapter "
+                f"(unlisted in {allowlist_label}). Move behind an adapter/port ({RULES_DOC})."
+            )
+        elif actual > listed:
+            errors.append(
+                f"[{sec}] {path}: {actual} occurrence(s), exceeding allowlist baseline "
+                f"{listed} in {allowlist_label}. Coupling allowlist only shrinks."
+            )
+        elif actual < listed:
+            errors.append(
+                f"[{sec}] {path}: {actual} occurrence(s), below allowlist entry {listed}. "
+                f"Lower its entry in {allowlist_label} to {actual} so the reduction stays locked in."
+            )
+    for path in sorted(listed_map):
+        if path not in actual_map:
+            errors.append(
+                f"[{sec}] {path}: 0 occurrences remain (allowlist has {listed_map[path]}). "
+                f"Delete its entry from {allowlist_label}."
+            )
+    return errors
 
 
 def compare_live_report(
     report: ScanReport, allowlist: Allowlist, allowlist_label: str = ALLOWLIST_REL
 ) -> tuple[list[str], list[str]]:
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    # 1. Crate size ratchet
-    for crate, loc in sorted(report.crate_locs.items()):
-        if crate in allowlist.crate_loc:
-            ceiling = allowlist.crate_loc[crate]
-            if loc > ceiling:
-                errors.append(
-                    f"[crate_loc] `{crate}` has {loc:,} non-test LOC, exceeding its shrink-only "
-                    f"baseline ceiling of {ceiling:,} in {allowlist_label}. Extract new domains "
-                    f"into a cohesive crate ({RULES_DOC})."
-                )
-        else:
-            if loc > CRATE_FAIL_LOC:
-                errors.append(
-                    f"[crate_loc] unlisted crate `{crate}` has {loc:,} non-test LOC, exceeding "
-                    f"the {CRATE_FAIL_LOC:,}-LOC hard cap. Extract domains into a cohesive crate "
-                    f"({RULES_DOC}); new crates may not be added to {allowlist_label}."
-                )
-            elif loc >= CRATE_WARN_LOC:
-                warnings.append(
-                    f"[crate_loc] WARNING: crate `{crate}` has {loc:,} non-test LOC "
-                    f"(>= {CRATE_WARN_LOC:,} warning threshold; hard cap is {CRATE_FAIL_LOC:,})."
-                )
-
-    for crate in sorted(allowlist.crate_loc):
-        if crate not in report.crate_locs:
-            errors.append(
-                f"[crate_loc] `{crate}` in {allowlist_label} is no longer a workspace crate; "
-                f"delete its entry."
-            )
-
-    # 2. Exact shrink-only coupling ratchets
+    errors, warnings = _check_crate_loc_limits(
+        report.crate_locs, allowlist.crate_loc, allowlist_label
+    )
     for sec in COUPLING_SECTIONS:
-        actual_map = report.coupling_counts[sec]
-        listed_map = allowlist.coupling[sec]
-        for path, actual in sorted(actual_map.items()):
-            listed = listed_map.get(path)
-            if listed is None:
-                errors.append(
-                    f"[{sec}] {path}: {actual} occurrence(s) outside designated adapter "
-                    f"(unlisted in {allowlist_label}). Move behind an adapter/port ({RULES_DOC})."
-                )
-            elif actual > listed:
-                errors.append(
-                    f"[{sec}] {path}: {actual} occurrence(s), exceeding allowlist baseline "
-                    f"{listed} in {allowlist_label}. Coupling allowlist only shrinks."
-                )
-            elif actual < listed:
-                errors.append(
-                    f"[{sec}] {path}: {actual} occurrence(s), below allowlist entry {listed}. "
-                    f"Lower its entry in {allowlist_label} to {actual} so the reduction stays locked in."
-                )
-        for path in sorted(listed_map):
-            if path not in actual_map:
-                errors.append(
-                    f"[{sec}] {path}: 0 occurrences remain (allowlist has {listed_map[path]}). "
-                    f"Delete its entry from {allowlist_label}."
-                )
-
+        errors.extend(
+            _check_coupling_section(
+                sec, report.coupling_counts[sec], allowlist.coupling[sec], allowlist_label
+            )
+        )
     return errors, warnings
+
+
+def _diff_crate_loc_shrinks(before_loc: dict[str, int], after_loc: dict[str, int]) -> list[str]:
+    problems: list[str] = []
+    for crate, cap in sorted(after_loc.items()):
+        if crate not in before_loc:
+            problems.append(
+                f"[crate_loc] `{crate}` ({cap}): new crates may not be added to the legacy monolith baseline"
+            )
+        elif cap > before_loc[crate]:
+            problems.append(
+                f"[crate_loc] `{crate}`: ceiling raised from {before_loc[crate]} to {cap}"
+            )
+    before_sum = sum(before_loc.values())
+    after_sum = sum(after_loc.values())
+    if after_sum > before_sum:
+        problems.append(f"[crate_loc]: total ceiling raised from {before_sum} to {after_sum}")
+    return problems
+
+
+def _diff_coupling_shrinks(
+    sec: str, before_map: dict[str, int], after_map: dict[str, int]
+) -> list[str]:
+    problems: list[str] = []
+    added: list[str] = []
+    for path, count in sorted(after_map.items()):
+        if path not in before_map:
+            added.append(f"[{sec}] {path}: added to allowlist ({count})")
+        elif count > before_map[path]:
+            problems.append(f"[{sec}] {path}: count raised from {before_map[path]} to {count}")
+    b_total = sum(before_map.values())
+    a_total = sum(after_map.values())
+    if a_total > b_total:
+        problems.extend(added)
+        problems.append(f"[{sec}]: section total raised from {b_total} to {a_total}")
+    return problems
 
 
 def compare_allowlist_shrinks(
     before: Allowlist, after: Allowlist, base_ref: str, allowlist_label: str = ALLOWLIST_REL
 ) -> list[str]:
     """Verify `after` never raises any ceiling, coupling count, or section total vs `before`."""
-    problems: list[str] = []
-
-    # [crate_loc]: strictly shrink-only — never add a crate, never raise any ceiling or total.
-    for crate, cap in sorted(after.crate_loc.items()):
-        if crate not in before.crate_loc:
-            problems.append(
-                f"[crate_loc] `{crate}` ({cap}): new crates may not be added to the legacy monolith baseline"
-            )
-        elif cap > before.crate_loc[crate]:
-            problems.append(
-                f"[crate_loc] `{crate}`: ceiling raised from {before.crate_loc[crate]} to {cap}"
-            )
-    before_loc_sum = sum(before.crate_loc.values())
-    after_loc_sum = sum(after.crate_loc.values())
-    if after_loc_sum > before_loc_sum:
-        problems.append(
-            f"[crate_loc]: total ceiling raised from {before_loc_sum} to {after_loc_sum}"
-        )
-
-    # [coupling.*]: no listed path may rise, and no section total may rise (a new path is
-    # accepted only when the section total does not rise, i.e. rename/split without adding).
+    problems = _diff_crate_loc_shrinks(before.crate_loc, after.crate_loc)
     for sec in COUPLING_SECTIONS:
-        b_map = before.coupling[sec]
-        a_map = after.coupling[sec]
-        added: list[str] = []
-        for path, count in sorted(a_map.items()):
-            if path not in b_map:
-                added.append(f"[{sec}] {path}: added to allowlist ({count})")
-            elif count > b_map[path]:
-                problems.append(
-                    f"[{sec}] {path}: count raised from {b_map[path]} to {count}"
-                )
-        b_total = sum(b_map.values())
-        a_total = sum(a_map.values())
-        if a_total > b_total:
-            problems.extend(added)
-            problems.append(f"[{sec}]: section total raised from {b_total} to {a_total}")
-
+        problems.extend(_diff_coupling_shrinks(sec, before.coupling[sec], after.coupling[sec]))
     if problems:
-        return [f"{allowlist_label} only shrinks compared with {base_ref}:", *(f"  {p}" for p in problems)]
+        return [
+            f"{allowlist_label} only shrinks compared with {base_ref}:",
+            *(f"  {p}" for p in problems),
+        ]
     return []
 
 
@@ -1506,7 +1695,7 @@ def run_health_check(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Automated CI Architecture Health & Shrink-Only Coupling Guardrails."
     )
@@ -1533,39 +1722,29 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print current measured crate LOCs and coupling entries in allowlist format and exit 0.",
     )
-    args = parser.parse_args(argv)
-    t0 = time.perf_counter()
+    return parser
 
-    try:
-        if args.print_baseline:
-            members = discover_workspace_members(args.repo_root)
-            report = scan_workspace(args.repo_root, members)
-            allowlist_file = args.allowlist or (args.repo_root / ALLOWLIST_REL)
-            if allowlist_file.is_file() and allowlist_file.stat().st_size > 0:
-                existing = parse_allowlist(allowlist_file.read_text(encoding="utf-8"))
-                crate_caps = existing.crate_loc
-            else:
-                crate_caps = {
-                    crate: ((loc + 2_000 + 250) // 500) * 500
-                    for crate, loc in report.crate_locs.items()
-                    if loc >= CRATE_WARN_LOC
-                }
-            sys.stdout.write(format_baseline(report, crate_caps))
-            return 0
 
-        result = run_health_check(
-            repo_root=args.repo_root,
-            allowlist_path=args.allowlist,
-            base_commit=args.base,
-        )
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+def _print_baseline_report(repo_root: Path, allowlist: Path | None) -> int:
+    members = discover_workspace_members(repo_root)
+    report = scan_workspace(repo_root, members)
+    allowlist_file = allowlist or (repo_root / ALLOWLIST_REL)
+    if allowlist_file.is_file() and allowlist_file.stat().st_size > 0:
+        existing = parse_allowlist(allowlist_file.read_text(encoding="utf-8"))
+        crate_caps = existing.crate_loc
+    else:
+        crate_caps = {
+            crate: ((loc + 2_000 + 250) // 500) * 500
+            for crate, loc in report.crate_locs.items()
+            if loc >= CRATE_WARN_LOC
+        }
+    sys.stdout.write(format_baseline(report, crate_caps))
+    return 0
 
-    elapsed = time.perf_counter() - t0
+
+def _emit_health_result(result: HealthResult, elapsed: float, base: str | None) -> int:
     for warning in result.warnings:
         print(warning, file=sys.stderr)
-
     if result.errors:
         print(
             f"Architecture health check FAILED ({len(result.errors)} error(s) in {elapsed:.2f}s):",
@@ -1574,12 +1753,11 @@ def main(argv: list[str] | None = None) -> int:
         for err in result.errors:
             print(f"  - {err}", file=sys.stderr)
         return 1
-
     coupling_summary = ", ".join(
         f"{sec.split('.', 1)[1]}={sum(result.report.coupling_counts[sec].values())}"
         for sec in COUPLING_SECTIONS
     )
-    base_note = f"; shrink-only verified against {args.base[:12]}" if args.base else ""
+    base_note = f"; shrink-only verified against {base[:12]}" if base else ""
     print(
         f"Architecture health OK: {len(result.workspace_crates)} crates, "
         f"{result.report.files_scanned} production .rs files, "
@@ -1587,6 +1765,23 @@ def main(argv: list[str] | None = None) -> int:
         f"coupling({coupling_summary}){base_note} [{elapsed:.2f}s]."
     )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_arg_parser().parse_args(argv)
+    t0 = time.perf_counter()
+    try:
+        if args.print_baseline:
+            return _print_baseline_report(args.repo_root, args.allowlist)
+        result = run_health_check(
+            repo_root=args.repo_root,
+            allowlist_path=args.allowlist,
+            base_commit=args.base,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    return _emit_health_result(result, time.perf_counter() - t0, args.base)
 
 
 if __name__ == "__main__":
