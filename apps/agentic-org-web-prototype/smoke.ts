@@ -88,6 +88,8 @@ async function checkWorkBoard(page: Page) {
   assert.equal(await requests.count(), asked, "A badge for several requests lists each of them");
   await page.keyboard.press("Escape");
   for (const width of [1440, 1024, 420, 320]) await checkToolbarTabOrder(page, width);
+  await checkWorkHeaderLikeProjects(page);
+  await checkMultiSelectFilter(page, board);
   await checkBoardRequestMenus(page, board);
   await checkAttentionFirst(page, board);
   await checkBoardPrioritySort(page, board);
@@ -127,6 +129,96 @@ async function checkWorkBoard(page: Page) {
   await checkVerifyApproved(page, board);
   await layout.getByRole("button", { name: "List" }).press("Enter");
   await checkProjectWorkTab(page);
+  await checkToolbarMenusOnTop(page);
+}
+
+/* Choose values in one Filter facet: open Filter, open the facet, tick each value, close */
+async function pickFilter(page: Page, facet: string, values: string[]) {
+  await page.getByRole("button", { name: /^Filter work/ }).click();
+  await page.getByRole("menuitem", { name: new RegExp(`^${facet}\\b`) }).click();
+  for (const value of values) await page.getByRole("group", { name: facet }).getByRole("menuitemcheckbox", { name: new RegExp(`^${value}\\s*\\d`) }).click();
+  await page.keyboard.press("Escape");
+}
+
+/* The title row reads like Projects': New task at its end, centred on the title, at the header buttons' 36px and the
+   same end edge. Calendar sits in the toolbar right after Display. */
+async function checkWorkHeaderLikeProjects(page: Page) {
+  const work = await page.evaluate(() => {
+    const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect().toJSON();
+    return { h1: box("#main h1"), action: box("#work-new-task"), display: box('[aria-controls="menu-work-display"]'), cal: box(".work-toolbar > .work-cal-btn"),
+      next: document.querySelector(".work-toolbar > .queue-controls")!.nextElementSibling?.className };
+  });
+  const back = page.url();
+  await page.goto(back.replace(/#.*$/, "#/projects"));
+  const projects = await page.locator("#main .ph-actions").evaluate((el) => el.getBoundingClientRect().toJSON());
+  await page.goto(back);
+  await page.locator("#main h1").first().waitFor();
+  const mid = (r: { top: number; height: number }) => r.top + r.height / 2;
+  assert.ok(Math.abs(mid(work.action) - mid(work.h1)) <= 3, `New task is centred on the title (${mid(work.action)} vs ${mid(work.h1)})`);
+  assert.equal(Math.round(work.action.height), Math.round(projects.height), "New task is as tall as the Projects header actions");
+  assert.equal(Math.round(work.action.right), Math.round(projects.right), "New task ends where the Projects actions end");
+  assert.match(work.next ?? "", /\bwork-cal-btn\b/, "Calendar follows the view controls in the DOM");
+  assert.ok(Math.abs(mid(work.cal) - mid(work.display)) <= 4 && work.cal.left > work.display.right && work.cal.left - work.display.right < 48, "Calendar sits right after Display");
+}
+
+/* Filter is multi-select: several values per facet (any of them), facets combined; the menu stays open while values
+   are ticked, says how many are selected and works from the keyboard */
+async function checkMultiSelectFilter(page: Page, board: ReturnType<Page["locator"]>) {
+  const statusOf = () => board.locator(".bcard").evaluateAll((cards) => cards.map((c) => c.getAttribute("data-board-tip")!.split(" · ")[0]));
+  const all = await statusOf();
+  const want = (s: string[]) => all.filter((x) => s.includes(x)).length;
+  const trigger = page.getByRole("button", { name: /^Filter work/ });
+  await trigger.click();
+  const menu = page.locator("#menu-work-filter");
+  assert.ok(await menu.evaluate((el) => el.matches(":popover-open")), "Filter opens in the top layer");
+  await page.keyboard.press("ArrowRight");
+  const statuses = page.getByRole("group", { name: "Status" });
+  const fresh = statuses.getByRole("menuitemcheckbox", { name: /^New\s*\d/ });
+  await fresh.click();
+  assert.ok(await menu.isVisible(), "The menu stays open after a value is ticked");
+  assert.ok(await focusedIs(statuses.getByRole("menuitemcheckbox", { name: /^New\s*\d/ })), "Focus stays on the ticked value");
+  const blocked = statuses.getByRole("menuitemcheckbox", { name: /^Blocked\s*\d/ });
+  await blocked.focus();
+  await page.keyboard.press("Space");
+  assert.equal(await statuses.getByRole("menuitemcheckbox", { name: /^Blocked\s*\d/ }).getAttribute("aria-checked"), "true", "Space ticks a value");
+  assert.equal(await statuses.locator('[aria-checked="true"]').count(), 2, "Two statuses are selected");
+  const cards = await statusOf();
+  assert.ok(cards.length === want(["New", "Blocked"]) && cards.every((x) => ["New", "Blocked"].includes(x)), `Board shows New or Blocked cards (${cards})`);
+  assert.equal(await trigger.getAttribute("aria-label"), "Filter work, Status New, Blocked, 2 selected", "The trigger names the selection");
+  assert.equal((await trigger.locator(".menu-textbtn-count").innerText()).trim(), "2", "The trigger shows the selection count");
+  await page.keyboard.press("ArrowLeft");
+  assert.ok(await focusedIs(page.getByRole("menuitem", { name: "Status, 2 selected" })), "ArrowLeft returns to the facets, on Status");
+  await page.keyboard.press("Escape");
+  assert.ok(await focusedIs(trigger), "Escape closes the menu onto Filter");
+  const summary = (await page.locator("#work-results > .board-filterbar").innerText()).replace(/\s+/g, " ");
+  assert.match(summary, new RegExp(`^${cards.length} match(es)?\\b.*Status: New, Blocked`), `The summary names both values (${summary})`);
+  await pickFilter(page, "Project", ["Agentic Org v1.0"]);
+  const both = await board.locator(".bcard").evaluateAll((els) => els.map((c) => c.querySelector(".board-project")?.textContent?.trim()));
+  assert.ok(both.length > 0 && both.length <= cards.length && both.every((p) => p?.startsWith("Agentic Org")), `Facets combine (${both})`);
+  await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).click();
+  assert.equal((await statusOf()).length, all.length, "Clear filters brings every card back");
+}
+
+/* Toolbar menus open above the board on every Work surface: on an agent's Work tab, in Board layout, the first Filter
+   item and the first Display item are the topmost elements where they sit (sticky lane headers never paint over) */
+async function checkToolbarMenusOnTop(page: Page) {
+  const back = page.url();
+  await page.goto(back.replace(/#.*$/, "#/members/kai/work"));
+  await page.getByRole("group", { name: "Work layout" }).getByRole("button", { name: "Board" }).click();
+  await page.locator(".board .bcol").first().waitFor();
+  for (const [name, id] of [[/^Filter work/, "scoped-work-filter"], [/^Work display/, "scoped-work-display"]] as const) {
+    await page.getByRole("button", { name }).click();
+    const items = page.locator(`#menu-${id} [role^="menuitem"]`);
+    await items.first().waitFor();
+    const onTop = await items.evaluateAll((els) => els.slice(0, 4).map((el) => {
+      const r = el.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return Boolean(hit && el.contains(hit));
+    }));
+    assert.ok(onTop.length && onTop.every(Boolean), `${id} items are topmost over the board (${onTop})`);
+    await page.keyboard.press("Escape");
+  }
+  await page.goto(back);
+  await page.locator("#main h1").first().waitFor();
 }
 
 /* Preset counts are the cards the Board shows; Done names its history window; priority and severity read in words */
@@ -305,6 +397,7 @@ async function checkCompactCardLabels(page: Page) {
   assert.ok(widths.every((w) => w >= 255), `Lanes keep a readable width at 1024 (${widths.map(Math.round)})`);
   const card = page.locator('.board .bcard[data-work-id="T-A146"]');
   assert.ok(await page.locator('.board .bcard[data-work-id="T-A88"] .bsev').isVisible(), "Compact cards keep severity");
+  assert.equal(await page.locator(".board-lanes").isVisible(), false, "No column jump row at 1024 (the board scrolls)");
   const teams = await page.locator(".board .bcard .board-team").evaluateAll((els) => els.filter((el) => !el.getClientRects().length).length);
   assert.equal(teams, 0, "No card hides its team dot at 1024");
   const progressHeight = await card.locator(".board-progress").evaluate((el) => el.getBoundingClientRect().height);
@@ -400,23 +493,24 @@ async function checkAssigneeRow(page: Page, board: ReturnType<Page["locator"]>) 
   await checkTeamDot(page, card);
 }
 
-/* The team is a dot named by its team; hovering the card, or keyboard focus inside it, shows the name in place */
+/* The team is only a dot, named by its team in its tooltip and accessible name; no name text shows on hover or focus
+   (owner, round 14). Person names stay links carrying data-person for the global person panel. */
 async function checkTeamDot(page: Page, card: ReturnType<Page["locator"]>) {
-  const team = card.locator(".board-team-tag"), name = team.locator(".board-team-name");
+  const team = card.locator(".board-team-tag");
   assert.equal(await team.getAttribute("aria-label"), "Platform (Rust)", "The team dot is named by its team");
   assert.equal(await team.getAttribute("data-icon-tip"), "Platform (Rust)", "…and its tooltip says it");
-  assert.ok((await name.evaluate((el) => el.getBoundingClientRect().width)) <= 1, "At rest the team is only its dot");
+  assert.equal(await page.locator(".board .board-team-name").count(), 0, "No card carries team name text");
+  const width = () => team.evaluate((el) => el.getBoundingClientRect().width);
+  const rest = await width();
+  assert.ok(rest <= 12, `At rest the team is only its dot (${rest}px)`);
   await card.locator(".board-desc").hover({ force: true });
   await page.waitForTimeout(250);
-  assert.ok((await name.evaluate((el) => el.getBoundingClientRect().width)) > 20, "Hovering the card shows the team name");
-  const height = await card.evaluate((el) => el.getBoundingClientRect().height);
+  assert.equal(await width(), rest, "Hovering the card does not reveal the team name");
+  assert.equal((await team.innerText()).trim(), "", "The dot has no text");
   await page.mouse.move(0, 0);
-  await page.waitForTimeout(250);
-  assert.ok(Math.abs(height - (await card.evaluate((el) => el.getBoundingClientRect().height))) <= 1, "Showing the team name never changes the card's height");
   await card.locator(".board-owner-label a").focus();
-  await page.keyboard.press("Shift+Tab");
-  await page.keyboard.press("Tab");
-  assert.ok((await name.evaluate((el) => el.getBoundingClientRect().width)) > 20, "Keyboard focus inside the card shows the team name");
+  assert.equal(await width(), rest, "Keyboard focus inside the card does not reveal it either");
+  assert.ok(await card.locator(".board-owner-label a[data-person]").count() === 1, "The assignee link carries data-person");
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
 
@@ -490,9 +584,7 @@ async function checkCardTooltip(page: Page, board: ReturnType<Page["locator"]>) 
 
 /* Filtered results that leave out archived matches say so beside the count, with the way to reveal them */
 async function checkMixedArchivedMatches(page: Page, board: ReturnType<Page["locator"]>) {
-  await page.getByRole("button", { name: /^Filter work/ }).click();
-  await page.getByRole("group", { name: "Status" }).getByRole("menuitemradio", { name: "Approved", exact: true }).click();
-  await page.keyboard.press("Escape").catch(() => {});
+  await pickFilter(page, "Status", ["Approved"]);
   const summary = page.locator("#work-results > .board-filterbar");
   const text = (await summary.innerText()).replace(/\s+/g, " ");
   const [, shown, archived] = (text.match(/^(\d+) shown\W+(\d+) archived match/) ?? assert.fail(`Mixed results summary: ${text}`)).map(Number);
@@ -687,16 +779,17 @@ async function checkAttentionFirst(page: Page, board: ReturnType<Page["locator"]
   await page.mouse.move(0, 0);
 }
 
-/* A committed chip jump makes its lane current, even when the board cannot scroll it to the start edge, and moves
-   focus to that lane's heading */
+/* No "Columns" chip row above the board at any desktop width, even in Status mode where lanes overflow (owner,
+   round 14); the board scrolls instead. Phones keep the lane picker (checkPhoneLaneJump). */
 async function checkStatusLaneJump(page: Page) {
-  const chips = page.locator(".board-lane-chips button");
-  const last = chips.last();
-  await last.focus();
-  await page.keyboard.press("Enter");
-  await page.waitForFunction(() => document.querySelector(".board-lane-chips button:last-child")?.getAttribute("aria-current") === "true");
-  assert.equal(await page.locator('.board-lane-chips button[aria-current="true"]').count(), 1, "Only the jump target is current");
-  assert.ok(await focusedIs(page.locator(".board .bcol").last().locator(".bcol-title")), "A keyboard jump moves focus to the lane heading");
+  for (const width of [1440, 1024]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.equal(await page.locator(".board-lane-chips, .board-lanes button").count(), 0, `No column chips at ${width}px`);
+    assert.equal(await page.locator(".board-lanes").isVisible(), false, `No column jump row at ${width}px`);
+  }
+  assert.ok(await page.locator(".board").evaluate((el) => el.scrollWidth > el.clientWidth), "Status lanes overflow into a scrolling board");
+  await page.setViewportSize({ width: 1440, height: 900 });
   assert.equal(await page.locator(".board .bcol-title").first().getAttribute("tabindex"), "-1");
   assert.equal(await page.locator(".bcol-older, .bcol-history").count(), 0, "Status lanes have no per-lane history menus");
 }
@@ -745,8 +838,7 @@ async function checkDoneHistory(page: Page, board: ReturnType<Page["locator"]>) 
 
 /* Filtering to a status whose only matches are archived offers to show them instead of a dead end */
 async function checkArchivedOnlyMatches(page: Page, board: ReturnType<Page["locator"]>) {
-  await page.getByRole("button", { name: /^Filter work/ }).click();
-  await page.getByRole("group", { name: "Status" }).getByRole("menuitemradio", { name: "Fixed", exact: true }).click();
+  await pickFilter(page, "Status", ["Fixed"]);
   const filter = page.getByRole("button", { name: "Filter work, Status Fixed" });
   assert.match(await filter.innerText(), /Fixed/, "The Filter trigger shows the active value");
   const reveal = page.locator("#work-results").getByRole("button", { name: /^Show \d+ archived match/ });
@@ -836,7 +928,7 @@ async function checkPhoneLaneJump(page: Page) {
   const board = page.locator(".board");
   const [peek, chipsShown] = await board.evaluate((el) => {
     const view = el.getBoundingClientRect(), next = el.querySelectorAll(".bcol")[1].getBoundingClientRect();
-    return [view.right - next.left, Boolean(document.querySelector(".board-lane-chips")!.getClientRects().length)];
+    return [view.right - next.left, Boolean(document.querySelector(".board-lane-chips"))];
   });
   assert.ok(peek <= 0, `The next lane does not peek in (${peek}px)`);
   assert.equal(chipsShown, false, "Phones navigate lanes with the picker");

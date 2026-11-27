@@ -4,7 +4,8 @@ import { finishBackgroundJob, startBackgroundJob } from "../shell/topbar-utils.j
 import { S } from "../state.js";
 import { av, esc, ic, memberIds, toast } from "../ui.js";
 import { closeContextPicker, contextForTask, contextSummaryHtml, createContextState, refreshContextResults, renderContextSection, runContextAction } from "./task-context.js";
-import { persistCreatedWorkTask, workHref, workSelection } from "./work.js";
+import { clearWorkFilterState, persistCreatedWorkTask, workHref, workSelection } from "./work.js";
+import { singleValue } from "./work-filter.js";
 
 const TASK_TYPES = [
   ["task", "Task"],
@@ -583,7 +584,7 @@ function commitRawTaskNow() {
   const [page] = route();
   closeComposerNow();
   if (page === "work") {
-    Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
+    clearWorkFilterState();
     location.hash = workHref({ ...workSelection(), view: "all", item: created.id });
   } else {
     render(false);
@@ -711,7 +712,7 @@ function inferProjectFromRoute(page, id, projects) {
     const teamProj = projects.find(([, pr]) => pr.teams.includes(id));
     return { proj: teamProj ? teamProj[0] : "none", team: id };
   }
-  const proj = isActiveProject(S.workProject) ? S.workProject : projects[0][0];
+  const only = singleValue("workProject"), proj = isActiveProject(only) ? only : projects[0][0];
   return { proj, team: defaultTeamForProject(proj) };
 }
 
