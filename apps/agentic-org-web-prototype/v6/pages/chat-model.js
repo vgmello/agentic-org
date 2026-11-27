@@ -117,7 +117,10 @@ function matchReason(ch, q) {
   if (projectName(ch).toLowerCase().includes(q)) return `in ${projectName(ch)}`;
   return taskReason(ch, q) ?? (ch.kind === "a2a" ? textReason(ch, q) : null);
 }
-const findConversations = (q) => Object.keys(CH).filter((k) => matchReason(CH[k], q) !== null);
+/* The conversations Chat's list, its finder and the command palette offer: channels and DMs. Agents' conversations
+   are reached from an agent's page. */
+const listedConversations = () => Object.keys(CH).filter((k) => CH[k].kind !== "a2a");
+const findConversations = (q) => listedConversations().filter((k) => matchReason(CH[k], q) !== null);
 /* Recipients for a new message, people first, then agents; existing DMs are included and simply reopen. */
 function recipients(q) {
   const ids = memberIds().filter(canMessage).filter((k) => !q || `${M[k].name} ${M[k].role}`.toLowerCase().includes(q));
@@ -137,6 +140,7 @@ export {
   chatTitle,
   dmSources,
   findConversations,
+  listedConversations,
   inboxItem,
   openAsks,
   openDirectMessage,

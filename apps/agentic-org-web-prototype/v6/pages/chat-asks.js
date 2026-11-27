@@ -139,12 +139,15 @@ function decisionFacts(it) {
   ].filter(Boolean);
   return rows.length ? `<ul class="chat-needs-facts" role="list" aria-label="Scope and risk">${rows.join("")}</ul>` : "";
 }
+/* The deadline is the request's ("Request expires tomorrow"), never to be read as how long a grant lasts; the
+   grant's duration stays in Scope. */
+const requestDeadline = (text) => text.replace(/^Expires\b/, "Request expires");
 /* `where.thread`: the card is shown in that thread's panel, so a follow-up from it posts in the thread. */
 function needsCardHtml(it, msgId, where = {}) {
   const titleId = `needs-${esc(msgId)}`;
   const meta = joinSep([
     taskPhrase(it),
-    it.expires && !it.handled ? `<span class="pin">${ic("clock", "ic14")}${esc(it.expires)}</span>` : "",
+    it.expires && !it.handled ? `<span class="pin">${ic("clock", "ic14")}${esc(requestDeadline(it.expires))}</span>` : "",
   ]);
   return `<section class="chat-needs${it.handled ? " is-done" : ""}" aria-labelledby="${titleId}">
     ${needsHead(it)}

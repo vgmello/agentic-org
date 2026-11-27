@@ -63,9 +63,11 @@
 #main .chat .chat-att-img:hover img { filter: brightness(1.06); }
 #main .chat .chat-att-zoom { position: absolute; top: 6px; right: 6px; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: var(--radius-md); color: var(--white); background: color-mix(in srgb, var(--gray-950) 68%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--white) 18%, transparent); opacity: .9; transition: opacity .12s ease; }
 #main .chat .chat-att-img:is(:hover, :focus-visible) .chat-att-zoom { opacity: 1; background: var(--gray-950); }
-#main .chat .chat-att-cap { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px 5px; font-size: var(--fs-xs); line-height: 1.4; color: var(--gray-300); }
-#main .chat .chat-att-cap .ic14 { flex: none; color: var(--gray-400); }
-#main .chat .chat-att-cap-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#main .chat .chat-att-cap { display: flex; align-items: flex-start; gap: 6px; min-width: 0; padding: 4px 8px 5px; font-size: var(--fs-xs); line-height: 1.4; color: var(--gray-300); }
+#main .chat .chat-att-cap .ic14 { flex: none; margin-block-start: 1px; color: var(--gray-400); }
+/* Up to two lines, broken anywhere, so a narrow tile keeps the end of the name ("…-before.png", "…-after.png") that
+   tells similar files apart. */
+#main .chat .chat-att-cap-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-width: 0; overflow: hidden; overflow-wrap: anywhere; }
 #main .chat .chat-att-img:hover .chat-att-cap-name { color: var(--white); text-decoration: underline; text-underline-offset: 2px; }
 #main .chat .chat-att-img:focus-visible { outline: 2px solid var(--tone-accent); outline-offset: 2px; }
 #main .chat .chat-att-more { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--fs-lg); font-weight: 700; color: var(--white); background: color-mix(in srgb, var(--gray-950) 62%, transparent); }
