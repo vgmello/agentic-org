@@ -919,15 +919,20 @@ function mountOverlays(root) {
   if (panel) inertOutside(panel);
 }
 /* When the full context line under the title would be cut off, the header shows a plain summary instead and offers
-   Details with the full line (always below 640 px, by CSS). The full line stays laid out, hidden, for measuring. */
+   Details with the full line (always below 640 px, by CSS). The full line stays laid out, hidden, for measuring.
+   Swapping the lines resizes the observed element, so the swap waits for the next frame: changing it inside the
+   observer callback raised "ResizeObserver loop completed with undelivered notifications" while the app nav
+   animated (the Bun dev overlay showed it at 1024 px). */
 function watchContext(root) {
   const ctx = root.querySelector(".chhead .chat-context"), full = ctx?.querySelector(".chat-ctx-full");
   if (!full || !root.querySelector(".chat-details-btn")) return;
-  const measure = () => {
+  const measure = () => root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1);
+  let frame = 0;
+  const ro = new ResizeObserver(() => {
     if (!ctx.isConnected) { ro.disconnect(); return; }
-    root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1);
-  };
-  const ro = new ResizeObserver(measure);
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(measure);
+  });
   ro.observe(ctx);
   measure();
 }

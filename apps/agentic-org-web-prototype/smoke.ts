@@ -2753,6 +2753,21 @@ async function runRouteCheck(browser: Awaited<ReturnType<typeof chromium.launch>
   }
 }
 
+const CHAT_SWEEP = ["general", "agency-v1", "platform", "design", "dm-ada", "dm-eden", "dm-maya", "dm-noor", "dm-rowan", "a2a-kai-rowan", "a2a-tomas-sage", "mentions", "threads"];
+/* Each conversation loads fresh at 1024 px, with motion on, where the app nav animates as the page settles. */
+async function sweepChatAtLaptopWidth(page: Page, baseUrl: URL) {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  for (const c of CHAT_SWEEP) {
+    const u = new URL(baseUrl);
+    u.searchParams.set("sweep", c);
+    u.hash = "#/chat/" + c;
+    await page.goto(u.href);
+    await page.locator("#main h1").first().waitFor({ state: "visible" });
+    await page.waitForTimeout(400);
+  }
+}
+
 async function runFullSweep(browser: Awaited<ReturnType<typeof chromium.launch>>, baseUrl: URL) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
   try {
@@ -2761,6 +2776,10 @@ async function runFullSweep(browser: Awaited<ReturnType<typeof chromium.launch>>
     page.on("pageerror", (err) => errors.push(err.message));
     page.on("console", (msg) => { if (msg.type() === "error") errors.push("console.error: " + msg.text()); });
     page.on("response", (res) => { if (res.status() >= 400) failed.push(`${res.status()} ${res.url()}`); });
+    /* Window error events that Playwright does not surface as page errors (a ResizeObserver loop, for one) still
+       raise the Bun dev overlay, so they are collected too. */
+    await page.exposeFunction("__smokeWindowError", (m: string) => errors.push("window error: " + m));
+    await page.addInitScript(() => addEventListener("error", (e) => (window as unknown as { __smokeWindowError: (m: string) => void }).__smokeWindowError(String(e.message))));
     page.setDefaultTimeout(5000);
     await page.goto(baseUrl.href);
     for (const r of SWEEP_ROUTES) {
@@ -2775,6 +2794,7 @@ async function runFullSweep(browser: Awaited<ReturnType<typeof chromium.launch>>
       await page.locator("#main h1").first().waitFor({ state: "visible" });
       assert.equal(await page.locator("html").getAttribute("data-theme"), t);
     }
+    await sweepChatAtLaptopWidth(page, baseUrl);
     assert.deepEqual(failed, [], "No HTTP >=400 responses");
     assert.deepEqual(errors, [], "No page or console errors");
     console.log(`Passed sweep: ${SWEEP_ROUTES.length} routes x ${ALL_THEMES.length} themes (0 errors)`);
