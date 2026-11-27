@@ -15,6 +15,14 @@ pub const MANAGED_SESSION: &str = include_str!("../prompts/managed-session.md");
 /// Extra duties of the organization's built-in HR lead (`INSTR-21`).
 pub const HR_LEAD: &str = include_str!("../prompts/hr-lead.md");
 
+/// Extra duties of the organization's built-in Chief of Staff, Tess (`TASK-80.1`, `AX-11`):
+/// her voice, caller-scope discipline, batching and a topic index of the live commands. Part 5
+/// of her standing prompt, after the release-static parts every agent shares byte for byte.
+pub const CHIEF_OF_STAFF_GUIDANCE: &str = include_str!("../prompts/chief-of-staff-guidance.md");
+
+/// Most bytes [`CHIEF_OF_STAFF_GUIDANCE`] may take (2 KiB).
+pub const CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES: usize = 2_048;
+
 /// Most bytes [`CORE_RULES`] may take (2.5 KiB).
 pub const CORE_RULES_MAX_BYTES: usize = 2_560;
 
@@ -43,5 +51,9 @@ pub const BUILTIN_PROMPTS: &[BuiltinPrompt] = &[
     BuiltinPrompt {
         file: "hr-lead.md",
         body: HR_LEAD,
+    },
+    BuiltinPrompt {
+        file: "chief-of-staff-guidance.md",
+        body: CHIEF_OF_STAFF_GUIDANCE,
     },
 ];

@@ -1,7 +1,7 @@
 // What the Project Releases screens read and change (features-ux §2, organization-data 07 & 09).
 // Keeps product release knowledge (manifest, product changelog, intended flag settings) strictly separate
 // from technical deployment attempts (actual commits, confirmed applied flag snapshots, technical changelog).
-import type { StaleCopy } from '$lib/modules/projects/types';
+import type { StaleCopy } from '$lib/proto';
 
 export type ReleaseStatus = 'planned' | 'in_progress' | 'released' | 'cancelled';
 export type MilestoneStatus = 'planned' | 'in_progress' | 'completed' | 'cancelled';

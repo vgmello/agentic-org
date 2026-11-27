@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
-use super::authentication::Authentication;
 use super::browser::deliver_channel;
 use super::browser_sessions::{browser_now_ms, finish_ended_browser_sessions};
-use super::listener::Connection;
 use super::reply::{answer, not_authorized, ok, secret_response};
 use super::Service;
 use super::{cli_approvals, native_org, office_ops};
+use crate::authentication::Authentication;
+use crate::control_listener::Connection;
 
 impl Service {
     pub(super) fn decide_cli_approval(
@@ -308,7 +308,7 @@ fn session_auth_method(request: &Request) -> bool {
         || request.is::<SessionInspect>()
 }
 
-pub(super) fn acknowledge_descriptors(request: &Request, connection: &Arc<Connection>) {
+pub(crate) fn acknowledge_descriptors(request: &Request, connection: &Arc<Connection>) {
     use org_host_control::ops::FdsReceived;
     let acknowledged = request
         .params::<FdsReceived>()

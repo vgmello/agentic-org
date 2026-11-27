@@ -461,6 +461,11 @@ impl LiveOfficeNode {
         }
     }
 
+    /// Wakes this satellite node's sync loop at once.
+    pub(super) fn notify_sat_sync(&self) {
+        self.sat_wake.notify();
+    }
+
     pub(super) fn hq_fed_addr(&self) -> String {
         self.hq_fed
             .as_ref()
@@ -509,6 +514,7 @@ impl LiveOfficeNode {
                 &run_id,
                 "sess-a2a-e2e",
                 std::process::id() as libc::pid_t,
+                None,
             )
             .unwrap()
             .expose_token()
@@ -684,7 +690,7 @@ pub(super) fn hire_agent_at(
     }
 }
 
-fn sat_custody(org_id: &str, sat_office_id: &str, inc_suffix: u8) -> Custody {
+pub(super) fn sat_custody(org_id: &str, sat_office_id: &str, inc_suffix: u8) -> Custody {
     Custody {
         identity: OfficeIdentity {
             instance_id: Id::parse(&format!(
@@ -1770,6 +1776,7 @@ fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wa
                 subject: None,
                 body: "reply".into(),
                 meta: std::collections::BTreeMap::new(),
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -1868,6 +1875,7 @@ fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wa
                 subject: None,
                 body: "self follow-up".into(),
                 meta: std::collections::BTreeMap::new(),
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -2684,6 +2692,7 @@ fn task141_satellite_agent_addresses_owner_by_handle_and_receives_reply() {
             body: "ack from HQ owner".into(),
             priority: None,
             meta: Default::default(),
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();
@@ -3149,6 +3158,7 @@ fn verify_sat_owner_ask_and_answer(
             }],
             option_id: None,
             text: Some("approved".into()),
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();

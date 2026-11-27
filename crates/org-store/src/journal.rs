@@ -25,11 +25,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    change::{Ack, Actor, Bytes, DurablePath, Id, Outcome, Sha256, Timestamp},
+    change::{Ack, Actor, Bytes, Id, Outcome, Sha256, Timestamp},
     custody::{JournalHead, OfficeIdentity},
     disk::{Disk, DiskFile},
     error::JournalError,
     files::FileOp,
+    path::DurablePath,
     sequences::{successor, FeedPosition, HighWaters},
 };
 

@@ -5,7 +5,7 @@ use crate::binding::{BindingMode, BindingRejection, RunBindingRegistry};
 #[test]
 fn external_tokens_live_apart_from_managed_runs() {
     let reg = RunBindingRegistry::new();
-    let managed = reg.issue("emp-1", "run-1", "sess-1", 4242).unwrap();
+    let managed = reg.issue("emp-1", "run-1", "sess-1", 4242, None).unwrap();
     let external = reg.issue_external("emp-1", "ext-1", u64::MAX).unwrap();
     assert_ne!(managed.expose_token(), external.expose_token());
     assert!(external.is_external() && external.root_pid().is_none());
@@ -15,7 +15,7 @@ fn external_tokens_live_apart_from_managed_runs() {
     reg.revoke("emp-1", None);
     assert!(!reg.has_active("emp-1"));
     assert!(reg.has_active_external("emp-1", 1));
-    let managed = reg.issue("emp-1", "run-2", "sess-2", 4242).unwrap();
+    let managed = reg.issue("emp-1", "run-2", "sess-2", 4242, None).unwrap();
     assert!(reg.revoke_external("emp-1", None));
     assert!(reg.has_active("emp-1"));
     assert!(!reg.has_active_external("emp-1", 1));

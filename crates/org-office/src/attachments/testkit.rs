@@ -101,3 +101,50 @@ impl AttachmentsWrite for MemoryTx {
         Ok(())
     }
 }
+
+/// A real `width` x `height` PNG (left half red, right half blue) that the image sanitizer
+/// accepts: for tests of the attachment flows in other crates.
+pub fn sample_png(width: u32, height: u32) -> Vec<u8> {
+    use image::codecs::png::PngEncoder;
+    use image::{DynamicImage, Rgb, RgbImage};
+    let pixels = RgbImage::from_fn(width, height, |x, _| {
+        if x < width / 2 {
+            Rgb([220, 20, 20])
+        } else {
+            Rgb([20, 20, 220])
+        }
+    });
+    let mut out = Vec::new();
+    DynamicImage::ImageRgb8(pixels)
+        .write_with_encoder(PngEncoder::new(&mut out))
+        .expect("a PNG encodes");
+    out
+}
+
+/// A valid PDF of `pages` pages padded with a comment of about `padding` bytes, so a test can
+/// make one as large as a transfer needs (the validator reads the page tree, not the size).
+pub fn sample_pdf(pages: usize, padding: usize) -> Vec<u8> {
+    let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
+    let mut body = String::from("%PDF-1.7\n%\u{e2}\u{e3}\u{cf}\u{d3}\n");
+    for line in 0..padding / 64 {
+        body.push_str(&format!("%{line:063}\n"));
+    }
+    body.push_str("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    body.push_str(&format!(
+        "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {pages} >>\nendobj\n",
+        kids.join(" ")
+    ));
+    for i in 0..pages {
+        body.push_str(&format!(
+            "{} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n",
+            i + 3
+        ));
+    }
+    let xref = body.len();
+    body.push_str(&format!(
+        "xref\n0 {}\ntrailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        pages + 3,
+        pages + 3
+    ));
+    body.into_bytes()
+}

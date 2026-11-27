@@ -132,9 +132,11 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
                     reply_to: None,
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -170,9 +172,11 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
                     reply_to: None,
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -213,9 +217,11 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
                     reply_to: Some(m2_id.clone()),
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -282,9 +288,11 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
                     reply_to: None,
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -522,9 +530,11 @@ fn messaging_pass1_security_mentions_reactions_snooze_and_org_changes_regression
                     reply_to: None,
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 3,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap_err();
@@ -562,9 +572,11 @@ fn messaging_pass1_security_mentions_reactions_snooze_and_org_changes_regression
                     reply_to: None,
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 3,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -665,9 +677,11 @@ fn messaging_pass1_security_mentions_reactions_snooze_and_org_changes_regression
                     reply_to: None,
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 3,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -885,9 +899,11 @@ fn messaging_pass2_dm_hijack_and_handoff_hr_guard_regressions() {
                     reply_to: None,
                     also_in_channel: false,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 3,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap_err();
@@ -937,9 +953,11 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
                     approval: false,
                     addressed_to: None,
                     meta: Meta::new(),
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_ms: t0_ms,
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap_err();
@@ -1025,9 +1043,11 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
                     approval: false,
                     addressed_to: None,
                     meta: Meta::new(),
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_ms: t0_ms,
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -1061,10 +1081,12 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
                     }],
                     option_id: None,
                     text: None,
+                    attachment_ids: Vec::new(),
                 },
                 reply_id: id(502).as_str().to_owned(),
                 org_seq: 2,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap_err();
@@ -1101,10 +1123,12 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
                     ],
                     option_id: None,
                     text: None,
+                    attachment_ids: Vec::new(),
                 },
                 reply_id: id(503).as_str().to_owned(),
                 org_seq: 2,
                 now_utc: now.clone(),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -1138,9 +1162,11 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
                     approval: true,
                     addressed_to: None,
                     meta: Meta::new(),
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_ms: t0_ms,
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -1304,9 +1330,11 @@ fn send_snooze_fixtures(
                 reply_to: None,
                 also_in_channel: false,
                 reason: None,
+                attachment_ids: Vec::new(),
             },
             org_seq: 2,
             now_utc: now.to_owned(),
+            files: crate::messaging::files::MessageFiles::none(),
         })
         .unwrap()
         .unwrap();
@@ -1338,9 +1366,11 @@ fn send_snooze_fixtures(
                 approval: false,
                 addressed_to: None,
                 meta: Meta::new(),
+                attachment_ids: Vec::new(),
             },
             org_seq: 2,
             now_ms: t0_ms,
+            files: crate::messaging::files::MessageFiles::none(),
         })
         .unwrap()
         .unwrap();

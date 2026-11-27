@@ -500,6 +500,7 @@ mod suite {
             "teams/01900000-0000-7000-8000-000000000011/team.yaml",
             "teams/01900000-0000-7000-8000-000000000011/people/01900000-0000-7000-8000-000000000012/profile.md",
             "teams/01900000-0000-7000-8000-000000000011/agents/01900000-0000-7000-8000-000000000013/profile.md",
+            "teams/01900000-0000-7000-8000-000000000011/agents/01900000-0000-7f42-a58c-30ab693256dd/profile.md",
         ])
     }
 
@@ -957,7 +958,7 @@ mod suite {
 
         let golden = creation_files();
         assert_eq!(text(&bench.state_files()), text(&golden));
-        assert_eq!(golden.len(), 9);
+        assert_eq!(golden.len(), 10);
         let receipts = std::fs::read_dir(bench.root.join("recovery/commands")).expect("receipts");
         let receipts: Vec<_> = receipts
             .map(|entry| entry.expect("an entry").file_name())
@@ -1143,7 +1144,7 @@ mod suite {
             assert_eq!((allocation.number, allocation.team_id), (number, id(team)));
             assert_eq!(allocation.allocated_at, records::time_text(CREATION_AT));
         }
-        assert_eq!(files.len(), 9 + 2 * 2);
+        assert_eq!(files.len(), 10 + 2 * 2);
     }
 
     /// A rule's refusal (an unknown or archived parent, a bad name, a used ID) is a recorded
@@ -1329,7 +1330,7 @@ mod suite {
             Ok(())
         });
         let files = bench.state_files();
-        assert_eq!(files.len(), 9 + 2 * TEAMS as usize);
+        assert_eq!(files.len(), 10 + 2 * TEAMS as usize);
 
         let before = rows(&bench);
         let bench = bench.rebuilt(open).expect("a rebuild");

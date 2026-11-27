@@ -285,6 +285,7 @@ pub(crate) mod lockout {
         pub(crate) fn retry_after_ms(&self) -> i64 {
             self.until_ms.saturating_sub(self.now_ms).max(0)
         }
+        #[cfg(test)]
         pub(crate) fn now_ms(&self) -> i64 {
             self.now_ms
         }

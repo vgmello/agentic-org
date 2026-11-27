@@ -10,7 +10,7 @@ use org_proto::attachments::{
 };
 use org_proto::{ApiError, ErrorCode};
 
-use super::{hq_only, invalid, not_found, Answer, Office};
+use super::{invalid, not_found, Answer, Office};
 use crate::attachments::media::{self, MediaType};
 use crate::attachments::staging::{NewUpload, StagedUpload};
 use crate::authz::{PrincipalContext, ResourceRef};
@@ -64,9 +64,6 @@ impl Office {
         actor: &str,
         params: AttachmentUploadBeginParams,
     ) -> Answer<AttachmentUploadBeginResult> {
-        if self.is_satellite() {
-            return Ok(Err(hq_only()));
-        }
         let caller = match self.attachment_caller(actor)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Err(refusal)),

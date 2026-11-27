@@ -44,6 +44,10 @@ pub struct MsgSendParams {
     pub meta: Meta,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
+    /// Up to [`crate::attachments::MESSAGE_ATTACHMENTS_MAX`] of the caller's committed staged
+    /// uploads, bound to the message (`TASK-98.2`). With files, `body` may be empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 impl fmt::Debug for MsgSendParams {
@@ -57,6 +61,7 @@ impl fmt::Debug for MsgSendParams {
             .field("body", &BodySize(&self.body))
             .field("meta", &MetaSize(&self.meta))
             .field("reply_to", &self.reply_to)
+            .field("attachments", &self.attachment_ids.len())
             .finish()
     }
 }
@@ -103,6 +108,10 @@ pub struct MsgReplyParams {
     pub body: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub meta: Meta,
+    /// Up to [`crate::attachments::MESSAGE_ATTACHMENTS_MAX`] of the caller's committed staged
+    /// uploads, bound to the message (`TASK-98.2`). With files, `body` may be empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 impl fmt::Debug for MsgReplyParams {
@@ -114,6 +123,7 @@ impl fmt::Debug for MsgReplyParams {
             .field("subject", &self.subject)
             .field("body", &BodySize(&self.body))
             .field("meta", &MetaSize(&self.meta))
+            .field("attachments", &self.attachment_ids.len())
             .finish()
     }
 }
@@ -163,6 +173,10 @@ pub struct MsgAskParams {
     pub ttl_ms: Option<u64>,
     /// How long this call holds, at most [`MAX_WAIT_MS`].
     pub wait_ms: u64,
+    /// Up to [`crate::attachments::MESSAGE_ATTACHMENTS_MAX`] of the caller's committed staged
+    /// uploads, bound to the message (`TASK-98.2`). With files, `body` may be empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 impl fmt::Debug for MsgAskParams {
@@ -176,6 +190,7 @@ impl fmt::Debug for MsgAskParams {
             .field("meta", &MetaSize(&self.meta))
             .field("ttl_ms", &self.ttl_ms)
             .field("wait_ms", &self.wait_ms)
+            .field("attachments", &self.attachment_ids.len())
             .finish()
     }
 }

@@ -47,6 +47,11 @@ impl Mailbox {
         optional_size(params.subject.as_deref(), MAX_SUBJECT_BYTES)?;
         optional_size(params.reply_to.as_deref(), MAX_ID_BYTES)?;
         size(&params.body, MAX_BODY_BYTES)?;
+        // The bare mailbox binds no file: a message naming files goes through the office's
+        // chat path (`TASK-98.2`), and one with neither text nor files says nothing.
+        if !params.attachment_ids.is_empty() || params.body.trim().is_empty() {
+            return Err(MailboxError::InvalidRequest);
+        }
         let meta_bytes = if params.meta.is_empty() {
             0
         } else {

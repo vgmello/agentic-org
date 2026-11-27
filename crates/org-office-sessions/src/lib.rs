@@ -24,6 +24,7 @@ mod host_auth;
 pub mod instructions;
 mod lifecycle;
 pub mod manager;
+pub mod partition;
 pub mod preset;
 mod provenance;
 mod pump;

@@ -3,7 +3,7 @@ import type { OrgApi } from '$lib/modules/organization/api';
 import { sampleOrg } from '$lib/modules/organization/sample';
 import { createMockChat } from '../../../../e2e/fakes/modules/chat';
 import { SAMPLE_DIRECTORY, sampleChatFull } from '../../../../e2e/fakes/modules/chat-sample';
-import { OFFICE, SYSTEM_NO_REPLY, tick } from './engine';
+import { OFFICE, SYSTEM_NO_REPLY, tick } from './testing/chat-engine';
 import {
 	browseChannels,
 	cannotRunFor,

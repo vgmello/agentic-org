@@ -10,12 +10,14 @@ use org_proto::sessions::{
 use org_proto::{ApiError, ErrorCode};
 
 use crate::credentials::rfc3339_now;
+use crate::partition::PartitionKey;
 use crate::preset::build_grants_summary;
 use crate::pump::PumpCommand;
 
 use super::lifecycle_ops::reap_replaced_handle;
 use super::spec::canonical_or_spec;
 use super::views::overlay_durable_wake_state;
+use super::warm::LaunchRouteOpts;
 use super::{next_entropy_hex, SessionManager, StartSlotGuard};
 
 impl SessionManager {
@@ -42,6 +44,8 @@ impl SessionManager {
         self.check_not_recovery_required(emp_id)?;
         self.clear_persisted_stall_only(emp_id);
 
+        // The Chief of Staff answers each caller in their own partition (`TASK-80.1`).
+        let partition = Self::turn_partition(&employee, Some(actor_member_id));
         // Composed once, for a live session and a new one alike: an owner instruction the HQ
         // proxied (`hq_attested_owner`) is badged `owner` either way.
         let objective = params.instruction.as_deref().map(|text| {
@@ -52,6 +56,7 @@ impl SessionManager {
             objective.clone(),
             None,
             params.workspace.as_deref(),
+            partition.as_ref(),
         )?;
         if let Some(view) = reservation.live_view {
             return Ok(view);
@@ -62,25 +67,16 @@ impl SessionManager {
         self.clear_persisted_stall_only(emp_id);
         let tokens = self.bindings.active_tokens();
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        let turn = reservation.partition_turn.as_ref();
         let _ = self.store.append_history(
             emp_id,
-            &serde_json::json!({
-                "type": "turn_trigger",
-                "kind": "run",
-                "sender_id": actor_member_id,
-                "source_id": params.command_id,
-                "at": rfc3339_now(),
-            }),
+            &turn_trigger_entry(actor_member_id, &params.command_id, turn),
             &refs,
         );
-        let prepared = self.prepare_and_spawn_raw(
-            &employee,
-            params,
-            objective.unwrap_or_default(),
-            None,
-            None,
-            reservation.start_stop_epoch,
-        )?;
+        let resume = turn.and_then(|turn| turn.resume_runtime_session_id.as_deref());
+        let opts = LaunchRouteOpts::fresh(resume, None, reservation.start_stop_epoch, partition);
+        let prepared =
+            self.prepare_and_spawn_raw(&employee, params, objective.unwrap_or_default(), opts)?;
         self.install_live_session(prepared, slot)
     }
 
@@ -89,6 +85,13 @@ impl SessionManager {
     /// `objective` is the complete turn input: queued wakes compose it, task process deltas
     /// included, through `lifecycle::wake_turn`; `task_ref` only scopes route admission and the
     /// turn permit.
+    ///
+    /// The Chief of Staff's autonomous turns run in `wake_partition`, the one partition the
+    /// claimed wakes belong to ([`Self::wake_partition`]), or in `tess:wake`, acting for nobody,
+    /// when it is `None` (`TASK-80.1`): they resume only that partition's own conversation,
+    /// never the one `resume_runtime_session_id` names (the last run's or a suspended run's,
+    /// which may be another caller's), and never reuse a process serving another partition.
+    /// Anyone else ignores `wake_partition`.
     pub(crate) fn spawn_or_send_autonomous(
         &self,
         employee: &Employee,
@@ -96,17 +99,25 @@ impl SessionManager {
         resume_runtime_session_id: Option<&str>,
         task_ref: Option<&str>,
         trigger_entry: serde_json::Value,
+        wake_partition: Option<PartitionKey>,
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
+        let partition =
+            Self::turn_partition(employee, None).map(|wake| wake_partition.unwrap_or(wake));
         let params = MemberSessionStartParams {
             command_id: format!("auto-{}", next_entropy_hex(8)?),
             employee_id: emp_id.to_owned(),
             instruction: Some(objective.clone()),
             workspace: None,
         };
-        let reservation =
-            self.reserve_start_or_send(employee, Some(objective.clone()), task_ref, None)?;
+        let reservation = self.reserve_start_or_send(
+            employee,
+            Some(objective.clone()),
+            task_ref,
+            None,
+            partition.as_ref(),
+        )?;
         if let Some(view) = reservation.live_view {
             let tokens = self.bindings.active_tokens();
             let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
@@ -119,14 +130,14 @@ impl SessionManager {
         let tokens = self.bindings.active_tokens();
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
-        let prepared = self.prepare_and_spawn_raw(
-            employee,
-            &params,
-            objective,
+        let resume = autonomous_resume(
+            reservation.partition_turn.as_ref(),
+            partition.is_some(),
             resume_runtime_session_id,
-            task_ref,
-            reservation.start_stop_epoch,
-        )?;
+        );
+        let opts =
+            LaunchRouteOpts::fresh(resume, task_ref, reservation.start_stop_epoch, partition);
+        let prepared = self.prepare_and_spawn_raw(employee, &params, objective, opts)?;
         self.install_live_session(prepared, slot)
     }
 
@@ -148,6 +159,7 @@ impl SessionManager {
         let target = employee_id.unwrap_or(caller_id);
         if target != caller_id {
             self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
+            self.authorize_chief_of_staff_target_inner(caller_id, hq_attested_owner, target)?;
         }
         let employee = self.require_agent(target)?;
         let accepted = self.bindings.accepted_commands(target).len() as u64;
@@ -196,6 +208,7 @@ impl SessionManager {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
             self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
+            self.authorize_chief_of_staff_target_inner(caller_id, hq_attested_owner, target)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(
@@ -236,6 +249,7 @@ impl SessionManager {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
             self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
+            self.authorize_chief_of_staff_target_inner(caller_id, hq_attested_owner, target)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(
@@ -469,4 +483,41 @@ pub(super) fn parse_decision(
             "decision must be `allow_once`, `allow_always`, or `deny`",
         )),
     }
+}
+
+/// The conversation an autonomous start resumes: for the Chief of Staff (`partitioned`) only her
+/// partition's own, from the partition ledger, and never `requested` (the last run's or a
+/// suspended run's, which may be a member's); for anyone else, `requested` (`TASK-80.1`).
+pub(crate) fn autonomous_resume<'a>(
+    partition_turn: Option<&'a crate::partition::PartitionTurn>,
+    partitioned: bool,
+    requested: Option<&'a str>,
+) -> Option<&'a str> {
+    if partitioned {
+        return partition_turn.and_then(|turn| turn.resume_runtime_session_id.as_deref());
+    }
+    requested
+}
+
+/// The history entry of a person's `Run`: who asked, and for the Chief of Staff the partition
+/// and the caller her turn acts for, so her turns are on record under her own employee ID with
+/// the member they were for (`TASK-80.1`).
+fn turn_trigger_entry(
+    actor_member_id: &str,
+    command_id: &str,
+    partition: Option<&crate::partition::PartitionTurn>,
+) -> serde_json::Value {
+    let mut entry = serde_json::json!({
+        "type": "turn_trigger",
+        "kind": "run",
+        "sender_id": actor_member_id,
+        "source_id": command_id,
+        "at": rfc3339_now(),
+    });
+    if let Some(turn) = partition {
+        entry["acting_for_caller_id"] = serde_json::json!(actor_member_id);
+        entry["partition"] = serde_json::json!(turn.key.as_str());
+        entry["partition_turn"] = serde_json::json!(turn.turn);
+    }
+    entry
 }

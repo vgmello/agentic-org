@@ -8,7 +8,7 @@
 //! Data Protection Keychain, in the access group compiled in and under this instance's
 //! service, after the host checked its own signature; or `host-secrets/<name>` below the
 //! credential directory setup recorded, which the host opened and checked at its start
-//! (`release_store`). A debug build uses that credential directory too where its setup record
+//! (`credential_store_root`). A debug build uses that credential directory too where its setup record
 //! names one, and otherwise the platform's directory store under the development key folder.
 //!
 //! The development store is plain files: `<base>/host-secrets/<instance id>/<name>`, held by
@@ -45,7 +45,7 @@ const RELEASE_ITEMS: ReleaseItems<'static> = ReleaseItems {
 };
 
 /// The same item store as the host declares it when it opens the release directory
-/// (`release_store`): its directory, its suffix, and this view's name rule, so that only
+/// (`credential_store_root`): its directory, its suffix, and this view's name rule, so that only
 /// what this view would list is counted as a host secret there.
 pub(crate) const RELEASE_ITEM_STORE: ItemStore<'static> = ItemStore {
     directory: RELEASE_ITEMS.directory,

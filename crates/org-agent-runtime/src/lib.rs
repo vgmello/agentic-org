@@ -184,8 +184,8 @@ pub use plan::{
     StopPlan, StopSignal, StopStep,
 };
 pub use plan_rules::{
-    expand_capability_allowlist, runtime_env_add, static_env_names, validate_plan_paths,
-    validate_standard_session_kind,
+    expand_capability_allowlist, runtime_env_add, static_env_names, validate_operator_shell,
+    validate_plan_paths, validate_standard_session_kind,
 };
 pub use probe::{
     DiscoveredModel, ModelEntitlement, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun,

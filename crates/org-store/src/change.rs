@@ -5,7 +5,10 @@ use std::{fmt, sync::Arc};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
-use crate::error::{EngineError, StoreError};
+use crate::{
+    error::{EngineError, StoreError},
+    path::{component_ok, DurablePath},
+};
 
 /// Shared immutable bytes: file contents and replies.
 pub type Bytes = Arc<[u8]>;
@@ -86,25 +89,6 @@ impl<'de> Deserialize<'de> for Sha256 {
     }
 }
 
-/// Temporary files of publication start with this, so no record may.
-pub(crate) const TEMP_PREFIX: &str = ".store-tmp-";
-
-/// One safe path component: what a file name and an ID must both be. Only the portable
-/// set `[a-z0-9._-]`: no file system folds, normalizes or refuses any of it, so two
-/// accepted paths never name one file and every accepted path can be written. (No
-/// uppercase: a case-insensitive volume would make `A` and `a` one file. UUIDv7 text and
-/// every file name of the data contract fit.)
-pub(crate) fn component_ok(text: &str) -> bool {
-    !text.is_empty()
-        && text.len() <= 255
-        && text != "."
-        && text != ".."
-        && !text.starts_with(TEMP_PREFIX)
-        && text
-            .bytes()
-            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'))
-}
-
 /// An identifier a caller supplies. The store mints none and checks only that it is one
 /// safe path component; the family that owns an ID validates its form (UUIDv7).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -149,116 +133,16 @@ impl fmt::Debug for Id {
     }
 }
 
-/// The trees under `durable/`.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Tree {
-    State,
-    Authority,
-    Accounting,
-    Messaging,
-    Recovery,
-    Budgets,
-    Local,
-}
-
-impl Tree {
-    pub const ALL: [Tree; 7] = [
-        Tree::State,
-        Tree::Authority,
-        Tree::Accounting,
-        Tree::Messaging,
-        Tree::Recovery,
-        Tree::Budgets,
-        Tree::Local,
-    ];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Tree::State => "state",
-            Tree::Authority => "authority",
-            Tree::Accounting => "accounting",
-            Tree::Messaging => "messaging",
-            Tree::Recovery => "recovery",
-            Tree::Budgets => "budgets",
-            Tree::Local => "local",
-        }
-    }
-}
-
-/// A relative path under `durable/`, `/`-separated: normal components only, the first
-/// naming a known tree. Ordered by its bytes.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct DurablePath(Arc<str>);
-
+/// The store-facing constructors of a [`DurablePath`]: they refuse a bad path as
+/// [`StoreError::Invalid`], like every other refusal of the commit contract. The path's own
+/// rules are in [`crate::path`].
 impl DurablePath {
-    /// The longest path, in bytes: it must fit a file-system path with the root before it.
-    /// Sized for the deepest data-contract path with headroom: a task comment of a team
-    /// at the organization's deepest team chain (`MAX_TEAM_DEPTH = 16`,
-    /// `state/teams/<16 UUIDs>/work/tasks/<uuid>/comments/<uuid>.md`, 790 bytes).
-    pub const MAX_BYTES: usize = 1024;
-
     pub fn parse(text: &str) -> Result<Self, StoreError> {
-        if text.len() > Self::MAX_BYTES {
-            return Err(StoreError::invalid("a durable path is at most 1024 bytes"));
-        }
-        let mut components = text.split('/');
-        let tree = components.next().unwrap_or_default();
-        if !Tree::ALL.iter().any(|known| known.name() == tree) {
-            return Err(StoreError::invalid(
-                "a durable path starts with a known tree",
-            ));
-        }
-        if !components.all(component_ok) {
-            return Err(StoreError::invalid(
-                "a durable path has only normal components",
-            ));
-        }
-        Ok(Self(text.into()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn tree(&self) -> Tree {
-        let name = self.components().next().unwrap_or_default();
-        Tree::ALL
-            .into_iter()
-            .find(|tree| tree.name() == name)
-            .expect("validated at construction")
-    }
-
-    pub fn components(&self) -> impl Iterator<Item = &str> {
-        self.0.split('/')
-    }
-
-    /// A tree alone names a directory; a file has at least one component below it.
-    pub fn names_a_file(&self) -> bool {
-        self.0.contains('/')
+        Ok(Self::validate(text)?)
     }
 
     pub fn join(&self, component: &str) -> Result<Self, StoreError> {
-        if !component_ok(component) {
-            return Err(StoreError::invalid(
-                "a durable path has only normal components",
-            ));
-        }
-        Ok(Self(format!("{}/{component}", self.0).into()))
-    }
-
-    /// The path one component up; `None` for a tree.
-    pub fn parent(&self) -> Option<Self> {
-        let (above, _) = self.0.rsplit_once('/')?;
-        Some(Self(above.into()))
-    }
-
-    /// `self` is `prefix` or lies under it, by whole components.
-    pub fn is_under(&self, prefix: &DurablePath) -> bool {
-        match self.0.strip_prefix(prefix.as_str()) {
-            Some(rest) => rest.is_empty() || rest.starts_with('/'),
-            None => false,
-        }
+        Ok(self.child(component)?)
     }
 }
 
@@ -266,24 +150,6 @@ impl TryFrom<String> for DurablePath {
     type Error = StoreError;
     fn try_from(text: String) -> Result<Self, StoreError> {
         Self::parse(&text)
-    }
-}
-
-impl From<DurablePath> for String {
-    fn from(path: DurablePath) -> String {
-        path.0.as_ref().to_owned()
-    }
-}
-
-impl fmt::Display for DurablePath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl fmt::Debug for DurablePath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DurablePath({})", self.0)
     }
 }
 
@@ -468,42 +334,46 @@ mod tests {
     }
 
     #[test]
-    fn a_durable_path_is_relative_normal_and_under_a_known_tree() {
-        for good in [
-            "state",
-            "state/organization.yaml",
-            "recovery/commands/01900000-0000-7000-8000-000000000001.json",
-            "local/offices/a/probe/x",
-            "state/teams/a_b-c.d/0.yaml",
+    fn a_bad_durable_path_is_refused_as_invalid_with_its_reason() {
+        let teams = DurablePath::parse("state/teams").unwrap();
+        for (refused, reason) in [
+            (
+                DurablePath::parse("runtime/a"),
+                "a durable path starts with a known tree",
+            ),
+            (
+                DurablePath::parse("state/../a"),
+                "a durable path has only normal components",
+            ),
+            (
+                DurablePath::parse(&format!("state/{}", "a/".repeat(512))),
+                "a durable path is at most 1024 bytes",
+            ),
+            (
+                teams.join("a/b"),
+                "a durable path has only normal components",
+            ),
+            (
+                DurablePath::try_from(String::from("State/a")),
+                "a durable path starts with a known tree",
+            ),
         ] {
-            assert_eq!(path(good).as_str(), good);
+            assert_eq!(refused, Err(StoreError::Invalid(reason.to_owned())));
         }
-        let long = "a".repeat(256);
-        for bad in [
-            "",
-            "/state/a",
-            "state/../authority/a",
-            "state/./a",
-            "state//a",
-            "state/a/",
-            "runtime/a",
-            "State/a",
-            // Only the portable set: nothing a file system folds, normalizes or refuses.
-            "state/Teams/a",
-            "state/teams/ünïcode/team.yaml",
-            "state/a b",
-            "state/a:b",
-            "state/a*",
-            "state/a\nb",
-            "state/a\0b",
-            "state/a\\b",
-            "../state/a",
-            "state/.store-tmp-1-1",
-            &format!("state/{long}"),
-        ] {
-            assert!(DurablePath::parse(bad).is_err(), "accepted {bad:?}");
-        }
-        assert!(DurablePath::parse(&format!("state/{}", "a".repeat(255))).is_ok());
+        assert_eq!(
+            DurablePath::try_from(String::from("state/a")).unwrap(),
+            DurablePath::parse("state/a").unwrap()
+        );
+    }
+
+    #[test]
+    fn an_id_is_one_safe_path_component() {
+        let id = Id::parse("01900000-0000-7000-8000-000000000001").unwrap();
+        assert_eq!(id.as_str(), "01900000-0000-7000-8000-000000000001");
+        assert_eq!(
+            serde_json::to_string(&id).unwrap(),
+            r#""01900000-0000-7000-8000-000000000001""#
+        );
         for bad in [
             "",
             "A",
@@ -515,81 +385,6 @@ mod tests {
             assert!(Id::parse(bad).is_err(), "accepted the ID {bad:?}");
         }
         assert!(Id::parse("01900000-0000-7000-8000-00000000000a").is_ok());
-        assert_eq!(path("state/a/b").parent(), Some(path("state/a")));
-        assert_eq!(path("state").parent(), None);
-        let deep = format!("state/{}", "abcdefg/".repeat(128));
-        let max = DurablePath::MAX_BYTES;
-        assert_eq!(max, 1024);
-        assert!(DurablePath::parse(&deep[..max]).is_ok());
-        assert!(DurablePath::parse(&format!("{}x", &deep[..max])).is_err());
-    }
-
-    #[test]
-    fn the_deepest_team_task_comment_path_fits_with_headroom() {
-        // `MAX_TEAM_DEPTH = 16` team chain (the organization's limit), then a task's
-        // comment: the longest path the data contract names.
-        let uuid = |n: u64| format!("01900000-0000-7000-8000-{n:012x}");
-        let mut folder = String::from("state");
-        for depth in 0..16 {
-            folder.push_str("/teams/");
-            folder.push_str(&uuid(depth));
-        }
-        let comment = format!(
-            "{folder}/work/tasks/{}/comments/{}.md",
-            uuid(0x100),
-            uuid(0x200)
-        );
-        assert_eq!(comment.len(), 790);
-        assert!(DurablePath::parse(&comment).is_ok());
-        // Over 200 bytes (more than a fifth of the limit) are left for anything longer the
-        // contract adds.
-        assert!(
-            comment.len() + 200 <= DurablePath::MAX_BYTES,
-            "{}",
-            comment.len()
-        );
-        for name in ["task.md", "checklist.yaml", "operations.yaml"] {
-            let file = format!("{folder}/work/tasks/{}/{name}", uuid(0x100));
-            assert!(DurablePath::parse(&file).is_ok(), "{name}");
-        }
-        // The history of a task is not under its team: its path is short at any depth.
-        let history = format!("state/work-history/tasks/{}/{}.json", uuid(0x100), i64::MAX);
-        assert!(history.len() < 128);
-        assert!(DurablePath::parse(&history).is_ok());
-    }
-
-    #[test]
-    fn paths_order_by_bytes_and_prefixes_match_whole_components() {
-        let teams = path("state/teams");
-        assert!(path("state/teams/a/team.yaml").is_under(&teams));
-        assert!(path("state/teams").is_under(&teams));
-        assert!(!path("state/teams-old/a").is_under(&teams));
-        assert!(!path("state").is_under(&teams));
-        assert_eq!(teams.join("a").unwrap(), path("state/teams/a"));
-        assert!(teams.join("a/b").is_err());
-        assert!(teams.join("..").is_err());
-        assert_eq!(path("local/a").tree(), Tree::Local);
-        assert!(!path("state").names_a_file());
-        assert!(path("state/a").names_a_file());
-        let mut sorted = [path("state/b"), path("state/a/z"), path("state/a-")];
-        sorted.sort();
-        let texts: Vec<_> = sorted.iter().map(DurablePath::as_str).collect();
-        assert_eq!(texts, ["state/a-", "state/a/z", "state/b"]);
-        assert_eq!(
-            serde_json::from_str::<DurablePath>(r#""state/a""#).unwrap(),
-            path("state/a")
-        );
-        assert!(serde_json::from_str::<DurablePath>(r#""state/../a""#).is_err());
-    }
-
-    #[test]
-    fn an_id_is_one_safe_path_component() {
-        let id = Id::parse("01900000-0000-7000-8000-000000000001").unwrap();
-        assert_eq!(id.as_str(), "01900000-0000-7000-8000-000000000001");
-        assert_eq!(
-            serde_json::to_string(&id).unwrap(),
-            r#""01900000-0000-7000-8000-000000000001""#
-        );
         for bad in ["", ".", "..", "a/b", "a\\b", "a\u{7}", &"a".repeat(256)] {
             assert!(Id::parse(bad).is_err(), "accepted {bad:?}");
             assert!(

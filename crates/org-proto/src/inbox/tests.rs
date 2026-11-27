@@ -123,6 +123,8 @@ fn list_and_hint_share_counts_position_and_degraded_without_a_version_bump() {
             team: Some("team".into()),
             cursor: Some("opaque".into()),
             limit: Some(100),
+            has_file: None,
+            has_image: None,
         };
         assert_eq!(
             serde_json::from_value::<InboxListParams>(serde_json::to_value(&params).unwrap())

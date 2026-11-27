@@ -12,7 +12,7 @@ import {
 } from '$lib/platform/http/gateway-errors';
 import type { OfficesOverview, SatelliteDetails } from './types';
 
-type Rec = Record<string, unknown>;
+import { asRec, asStr, type Rec } from '$lib/platform/http/decode';
 
 const VALID_ROLES = new Set<OfficeRole>(['hq', 'satellite', 'unknown']);
 const VALID_STATUSES = new Set<OfficeStatus>([
@@ -35,10 +35,6 @@ const VALID_REASONS = new Set<OfficeStatusReason>([
 	'stopped_by_owner',
 	'unknown'
 ]);
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
 function asEnum<T extends string>(v: unknown, valid: ReadonlySet<T>): T | undefined {
 	const str = asStr(v);

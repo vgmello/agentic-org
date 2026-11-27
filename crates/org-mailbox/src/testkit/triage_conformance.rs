@@ -1808,6 +1808,7 @@ fn squatted_request(office: &TriageOffice<impl MessageStore>, n: u32) {
         body: "not a notice".into(),
         meta: Meta::new(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     };
     office.mailbox.send(ADA_ID, squat).unwrap();
 }

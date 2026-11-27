@@ -142,6 +142,10 @@ impl Instance {
     }
 
     /// Allocates once under this instance; callers backfill every catalog office before launch.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "office launch does not allocate it yet")
+    )]
     pub(crate) fn allocate_office_temp(&mut self, office: &str) -> Result<PathBuf, Error> {
         if !org_office_launch::is_storage_id(office) {
             return Err(Error::Invalid("office ID must be plain"));

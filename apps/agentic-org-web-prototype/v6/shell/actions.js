@@ -106,7 +106,7 @@ function handle(id, outcome, assignee = null, text = "") {
   });
   applyHandleToWork(w, it, outcome, assignee);
   it.reopen = makeReopenCallback(it, w, prevW, w ? workSnapshot(w) : null, prevSpotIdx);
-  toast(`${outcome}. ${M[it.from].name} has been notified.`, "check-circle", it.reopen);
+  toast(`${it.receipts?.[outcome] || outcome}. ${M[it.from].name} has been notified.`, "check-circle", it.reopen);
   if (inInbox) advanceInboxAfterHandle(id, it, next);
   if (route()[0] === "home") advanceSpotlightAfterHandle();
   render(false);

@@ -16,9 +16,9 @@ use org_host_control::organization::{
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 use serde_json::Value;
 
+use crate::authentication::Authentication;
 use crate::hostdb::accounts::Account;
 use crate::provisioning::Provisioning;
-use crate::service::authentication::Authentication;
 
 /// Answers `request` if it is one of this module's calls; `None` for any other method.
 /// `web` says whether the request arrived on the admitted web connection. `push` queues an
