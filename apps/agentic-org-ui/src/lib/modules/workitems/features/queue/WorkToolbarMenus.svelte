@@ -494,25 +494,25 @@
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
-	.work-menu-trigger:focus-visible,
-	.work-toggle-tab:focus-visible,
-	.work-mode-btn:focus-visible,
-	.work-icon-controls :global(.queue-icon-btn:focus-visible),
-	.work-create-primary:focus-visible,
-	.work-create-chevron:focus-visible {
+	:is(
+		.work-menu-trigger,
+		.work-toggle-tab,
+		.work-mode-btn,
+		.work-create-primary,
+		.work-create-chevron
+	):focus-visible,
+	.work-icon-controls :global(.queue-icon-btn:focus-visible) {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
-
 	@media (max-width: 720px), (pointer: coarse) {
-		.work-mode-btn {
+		:is(.work-mode-btn, .work-toggle-tab, .work-create-primary) {
 			min-height: 44px;
 		}
 		.work-create-chevron {
 			min-width: 44px;
 		}
 	}
-
 	@media (forced-colors: active) {
 		.work-toggle-tab[aria-pressed='true'],
 		.work-mode-btn[aria-pressed='true'] {

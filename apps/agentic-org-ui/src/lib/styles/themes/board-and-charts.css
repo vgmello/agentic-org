@@ -1,0 +1,101 @@
+/*
+ * Agentic Org — Work Board & Insights Chart Theme Tokens (TASK-229 / TASK-194 / TASK-193)
+ *
+ * Scoped across all 7 themes (`ocean`, `classic`, `graphite`, `graphite-light`, `cozy`, `report`, `report-dark`)
+ * so tinted board lanes, borderless raised canonical cards, checklist rings, and gradient SVG insight charts
+ * hold WCAG AA contrast on every theme without hardcoding hex colours inside Svelte components.
+ */
+
+:root {
+	/* Work Board tokens (default dark fallback — Ocean) */
+	--bd-canvas: #12233a;
+	--bd-lane: color-mix(in srgb, #ffffff 4.5%, var(--bd-canvas));
+	--bd-card: #1d3250;
+	--bd-card-hover: #213958;
+	--bd-shadow: 0 1px 2px rgb(0 0 0 / 0.32), 0 1px 1px rgb(0 0 0 / 0.18);
+	--bd-lift: 0 10px 24px -8px rgb(0 0 0 / 0.55), 0 3px 6px rgb(0 0 0 / 0.28);
+	--bd-chip: color-mix(in srgb, #ffffff 8%, var(--bd-card));
+	--bd-pill: color-mix(in srgb, #ffffff 10%, var(--bd-lane));
+	--bd-ink: var(--exec-ink);
+	--bd-body: var(--exec-body);
+	--bd-muted: var(--exec-muted);
+	--bd-ring-track: color-mix(in srgb, #ffffff 16%, var(--bd-card));
+	--bd-ring: var(--tone-accent-ink);
+	--bd-ring-done: var(--tone-ok-ink);
+	--bd-radius-lane: 14px;
+	--bd-radius-card: 12px;
+
+	/* Insights & Sparkline chart tokens */
+	--chart-accent: var(--tone-accent-bar);
+	--chart-tint: var(--tone-accent-ink);
+	--chart-grid: var(--exec-border);
+	--chart-axis: var(--exec-muted);
+	--chart-tip-bg: #0b0d12;
+	--chart-tip-ink: #ffffff;
+}
+
+html[data-ui-theme='ocean'] {
+	--bd-canvas: #12233a;
+	--bd-card: #1d3250;
+	--bd-card-hover: #213958;
+	--chart-accent: #56a8f5;
+	--chart-tint: #93c5fd;
+}
+
+html[data-ui-theme='classic'],
+html[data-ui-theme='report-dark'] {
+	--bd-canvas: #1e2939;
+	--bd-card: color-mix(in srgb, #ffffff 8%, var(--bd-canvas));
+	--bd-card-hover: color-mix(in srgb, #ffffff 11%, var(--bd-canvas));
+	--bd-muted: color-mix(in srgb, var(--exec-muted) 75%, var(--exec-body));
+	--chart-accent: #818cf8;
+	--chart-tint: #a5b4fc;
+}
+
+html[data-ui-theme='graphite'] {
+	--bd-canvas: #18191a;
+	--bd-card: #222427;
+	--bd-card-hover: #292c30;
+	--chart-accent: #7da2c7;
+	--chart-tint: #a3c1df;
+}
+
+html[data-ui-theme='cozy'] {
+	--bd-canvas: #2f2721;
+	--bd-lane: color-mix(in srgb, #fff5e8 5%, var(--bd-canvas));
+	--bd-card: #3d332b;
+	--bd-card-hover: #443930;
+	--bd-muted: color-mix(in srgb, var(--exec-muted) 55%, var(--exec-body));
+	--chart-accent: #6ec4c7;
+	--chart-tint: #9edfe0;
+}
+
+html[data-ui-theme='report'],
+html[data-ui-theme='graphite-light'] {
+	--bd-lane: #f3f4f6;
+	--bd-card: #ffffff;
+	--bd-card-hover: #ffffff;
+	--bd-shadow: 0 1px 2px rgb(16 24 40 / 0.07), 0 1px 3px rgb(16 24 40 / 0.09);
+	--bd-lift: 0 12px 24px -10px rgb(16 24 40 / 0.22), 0 3px 6px rgb(16 24 40 / 0.08);
+	--bd-chip: #f3f4f6;
+	--bd-pill: #e5e7eb;
+	--bd-ring-track: #e5e7eb;
+	--bd-tip: #111827;
+	--chart-tip-bg: #111827;
+	--chart-tip-ink: #ffffff;
+}
+
+html[data-ui-theme='report'] {
+	--bd-canvas: #ffffff;
+	--bd-ring: var(--tone-accent);
+	--chart-accent: #3b6d9c;
+	--chart-tint: #608bb5;
+}
+
+html[data-ui-theme='graphite-light'] {
+	--bd-canvas: #fafafa;
+	--bd-lane: #f1f2f4;
+	--bd-ring: #3f3f46;
+	--chart-accent: #3f5e7d;
+	--chart-tint: #64748b;
+}

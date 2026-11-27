@@ -63,12 +63,15 @@
 	import WorkDetailPage from '../detail/WorkDetailPage.svelte';
 	import { buildActiveFilterChips, type ActiveFilterChip } from './active-chips';
 	import {
+		EMPTY_SAVED_COUNTS,
 		attachWorkSearchShortcuts,
 		buildSubgroupCandidates,
 		extractUniqueFacets,
 		focusWorkSearchInput,
+		groupOptionsForTab,
 		readingPriority,
 		readingStatusTone,
+		resolveBoardBaseRows,
 		restoreInlineDetailFocus
 	} from './work-queue-helpers';
 	import WorkProjectLayoutControls from './WorkProjectLayoutControls.svelte';
@@ -367,28 +370,11 @@
 	);
 
 	const facets = $derived(extractUniqueFacets(queueRead.data?.rows ?? []));
-	const taskGroupOptions = $derived<GroupBy[]>(
-		isOrgScope
-			? ['none', 'status', 'priority', 'project', 'assigned_team', 'team', 'assignee']
-			: ['none', 'status', 'priority', 'assigned_team', 'team', 'assignee']
-	);
-	const bugGroupOptions = $derived<GroupBy[]>(
-		isOrgScope
-			? ['assigned_team', 'severity', 'priority', 'status', 'project', 'team', 'assignee', 'none']
-			: ['assigned_team', 'severity', 'priority', 'status', 'team', 'assignee', 'none']
-	);
-	const requestGroupOptions = $derived<GroupBy[]>(
-		isOrgScope
-			? ['status', 'assigned_team', 'project', 'team', 'assignee', 'none']
-			: ['status', 'assigned_team', 'team', 'assignee', 'none']
-	);
-
 	const archivedIds = $derived.by(() => {
 		const ids = new SvelteSet<string>();
-		const threshold = uiPrefs.archiveAfterDays;
-		if (threshold <= 0) return ids;
+		if (uiPrefs.archiveAfterDays <= 0) return ids;
 		for (const r of queueRead.data?.rows ?? []) {
-			if (isArchivedTaskRow(r, threshold)) ids.add(r.id);
+			if (isArchivedTaskRow(r, uiPrefs.archiveAfterDays)) ids.add(r.id);
 		}
 		return ids;
 	});
@@ -404,14 +390,7 @@
 	const savedCountsState = $derived(
 		queueRead.data
 			? savedFilterCounts(visibleQueueRows, queueRead.data.viewer, activeTab)
-			: {
-					all: 0,
-					owned_by_my_team: 0,
-					assigned_to_my_team: 0,
-					assigned_to_me: 0,
-					reported_by_me: 0,
-					blocked: 0
-				}
+			: EMPTY_SAVED_COUNTS
 	);
 	const primaryGroupState = $derived.by<GroupBy>(() => {
 		if (isOrgScope && showModeState === 'by_project') return 'project';
@@ -425,13 +404,7 @@
 			activeTab !== 'task' ||
 			layout === 'list'
 	);
-	const groupOptionsState = $derived(
-		activeTab === 'bug'
-			? bugGroupOptions
-			: activeTab === 'request'
-				? requestGroupOptions
-				: taskGroupOptions
-	);
+	const groupOptionsState = $derived(groupOptionsForTab(activeTab, isOrgScope));
 	const showGroupMenuState = $derived(
 		isListSurfaceState && (!isOrgScope || showModeState === 'mine')
 	);
@@ -553,10 +526,20 @@
 					showModeState === 'by_project' || showModeState === 'by_assignee' ? 'all' : activeTab,
 					filters
 				)}
-				{@const boardRows =
-					activeTab === 'task' && layout === 'board' && boardMode === 'statuses'
-						? filterRows(baseRows, q.viewer, 'all', filters)
-						: filtered}
+				{@const boardBase = resolveBoardBaseRows({
+					allRows: q.rows,
+					fallbackBase: baseRows,
+					archivedIds,
+					showArchived,
+					scopeMine: scopeMineState,
+					mineFilter: (r) => mineRows(r, q.viewer)
+				})}
+				{@const boardRows = filterRows(
+					boardBase,
+					q.viewer,
+					boardMode === 'statuses' ? 'all' : activeTab,
+					filters
+				)}
 				{@const showNoEmployeeNotice =
 					!q.viewer.employee &&
 					(filters.saved === 'owned_by_my_team' ||
