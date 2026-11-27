@@ -49,7 +49,7 @@
 		loads: number;
 	} = $props();
 
-	const members = new Resource(() => membersApi.directory(organizationId));
+	const members = new Resource((signal) => membersApi.directory(organizationId, signal));
 	// Changes made elsewhere (New › Add a person, a hire, a live office change) invalidate the route's org data; re-read
 	// the rows then, keeping the shown ones until the new answer arrives (§7.1). The first load is the Resource's own.
 	let seenLoad = untrack(() => loads);

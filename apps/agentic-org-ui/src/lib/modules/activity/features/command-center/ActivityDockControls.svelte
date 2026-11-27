@@ -2,6 +2,7 @@
 	import { Tooltip } from 'bits-ui';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Flag from '@lucide/svelte/icons/flag';
+	import { tooltipContentClass } from '$lib/components/classes';
 
 	let {
 		panelOpen,
@@ -40,7 +41,7 @@
 					side="left"
 					sideOffset={6}
 					escapeKeydownBehavior="defer-otherwise-close"
-					class="activity-tooltip-content"
+					class={tooltipContentClass}
 				>
 					Hide release gates
 				</Tooltip.Content>
@@ -72,7 +73,7 @@
 					side="left"
 					sideOffset={6}
 					escapeKeydownBehavior="defer-otherwise-close"
-					class="activity-tooltip-content"
+					class={tooltipContentClass}
 				>
 					{panelOpen ? 'Hide release gates' : 'Show release gates'}
 				</Tooltip.Content>

@@ -65,7 +65,6 @@ src/lib/modules/teams/person.ts eslint=1 svelte=0 effect=0
 src/lib/modules/tess/TessPanel.svelte eslint=0 svelte=0 effect=2
 src/lib/modules/tess/TessToolProgress.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/updates/features/overview/UpdatesPanel.svelte eslint=0 svelte=0 effect=1
-src/lib/modules/workitems/features/budgets/SetBudgetDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/workitems/features/capture/CaptureDialog.svelte eslint=0 svelte=1 effect=1
 src/lib/modules/workitems/features/detail/ChecklistSection.svelte eslint=0 svelte=1 effect=1
 src/lib/modules/workitems/features/detail/RequestSection.svelte eslint=1 svelte=0 effect=1

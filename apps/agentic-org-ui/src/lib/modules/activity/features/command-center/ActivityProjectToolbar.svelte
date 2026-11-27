@@ -4,6 +4,7 @@
 	import Layers from '@lucide/svelte/icons/layers';
 	import ListFilter from '@lucide/svelte/icons/list-filter';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+	import { tooltipContentClass } from '$lib/components/classes';
 	import ActivityDisplayMenu from './ActivityDisplayMenu.svelte';
 	import { STREAM_TABS } from './activity-project-merge';
 	import type { StreamFilterTab } from './assembly-model';
@@ -104,7 +105,7 @@
 								side="bottom"
 								sideOffset={6}
 								escapeKeydownBehavior="defer-otherwise-close"
-								class="activity-tooltip-content"
+								class={tooltipContentClass}
 							>
 								Filter activity
 							</Tooltip.Content>

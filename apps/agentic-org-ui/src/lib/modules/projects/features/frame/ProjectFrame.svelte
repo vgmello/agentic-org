@@ -23,6 +23,7 @@
 	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+	import { tooltipContentClass } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { pageTitle } from '$lib/nav';
 	import { projectsApi } from '../../api';
@@ -277,7 +278,7 @@
 														side="bottom"
 														sideOffset={6}
 														escapeKeydownBehavior="defer-otherwise-close"
-														class="pointer-events-none z-60 rounded-[var(--exec-sm-radius,6px)] border border-line-strong bg-[var(--side-panel-surface,var(--surface-overlay,var(--exec-surface)))] px-2 py-1 text-xs leading-[1.3] font-medium text-[var(--exec-ink)] shadow-[var(--tooltip-shadow)]"
+														class={tooltipContentClass}
 													>
 														More actions
 													</Tooltip.Content>

@@ -67,24 +67,6 @@
       "count": 2
     }
   },
-  "src/lib/modules/work/features/bugs/ReportBugDialog.svelte": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/work/features/requests/NewRequestDialog.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/work/features/tasks/NewTaskDialog.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
   "src/lib/modules/work/requests-view.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
