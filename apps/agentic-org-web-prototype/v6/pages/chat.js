@@ -536,9 +536,10 @@ function headerLead(ch) {
   if (ch.kind === "dm") return av(ch.with, 32);
   return ch.kind === "a2a" ? `<span class="chat-pair" aria-hidden="true">${ch.pair.map((k) => av(k, 24)).join("")}</span>` : "";
 }
-function headerActions(id, title) {
+function headerActions(id, title, meta = "") {
   const open = local.search?.id === id;
   return `<div class="ph-actions chat-actions">
+      ${meta}
       ${filesButton(local.files, title)}
       <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details" title="Details">${ic("info", "ic16")}<span class="chat-details-word">Details</span></button>
       <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)} (/)" aria-keyshortcuts="/">${ic("search", "ic20")}</button>
@@ -570,17 +571,32 @@ function backToAgent(ch) {
   const who = ch.pair.includes(S.chatA2AFrom) ? S.chatA2AFrom : ch.pair[0];
   return `<a class="chat-back" href="#/members/${esc(who)}">${ic("chev-left", "ic16")}Back to ${esc(M[who].name)}</a>`;
 }
+/* A channel's project and members sit with the header actions (owner): a project chip and an avatar stack with the
+   count, so the title is one line. DMs keep their status line under the title. */
+function memberStack(ch) {
+  const who = channelMembers(ch);
+  if (!who.length) return "";
+  return `<button class="btn ghost sm chat-members-btn chat-member-stack" type="button" data-act="chat-members" aria-expanded="${local.members}" aria-controls="chat-members" aria-label="${esc(plural(who.length, "member", "members"))}" title="Members">
+    <span class="chat-stack-avs" aria-hidden="true">${who.slice(0, 3).map((k) => av(k, 24).replace(/ data-person="[^"]*"/, "")).join("")}</span><span class="tnum">${who.length}</span></button>`;
+}
+function channelMeta(ch) {
+  if (ch.kind !== "channel") return "";
+  const proj = ch.proj ? `<span class="chat-proj-chip">${ic("folder", "ic14")}${plink(ch.proj)}</span>` : "";
+  return `<div class="chat-head-meta">${proj}${memberStack(ch)}</div>`;
+}
 function chatHeaderHtml(id, ch, title) {
+  const context = ch.kind === "channel" ? ""
+    : `<p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>`;
   return `<header class="ph chhead">
     ${listButton(id)}
     <div class="ph-t chat-title">
       ${headerLead(ch)}
       <div class="chat-heading">${backToAgent(ch)}${titleLine(title, description(ch))}
-        <p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>
+        ${context}
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
     </div>
-    ${headerActions(id, title)}
+    ${headerActions(id, title, channelMeta(ch))}
     ${detailsPanel(ch, id)}
   </header>`;
 }
