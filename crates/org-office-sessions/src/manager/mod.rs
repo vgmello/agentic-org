@@ -63,6 +63,7 @@ mod sandbox_paths;
 mod sandbox_rules;
 mod sessions_api;
 mod spec;
+mod turn_controls;
 mod views;
 mod warm;
 
@@ -404,6 +405,8 @@ pub struct SessionManager {
     pub(crate) partitions: crate::partition::PartitionLedger,
     /// External (BYOA) pending logins, nonces and the lease cache (`TASK-137`).
     pub(crate) external: crate::external::ExternalAuthState,
+    /// Every run's post-redaction coarse live activity (`TASK-103`).
+    pub(crate) stream_hub: crate::stream_hub::SessionStreamHub,
     enrollment: EnrollmentManager,
     pub(crate) registry: Arc<Mutex<SessionRegistry>>,
     pub(crate) last_states: Arc<Mutex<HashMap<String, SessionView>>>,
@@ -449,6 +452,7 @@ impl SessionManager {
             bindings: RunBindingRegistry::new(),
             partitions: crate::partition::PartitionLedger::new(),
             external: crate::external::ExternalAuthState::default(),
+            stream_hub: crate::stream_hub::SessionStreamHub::new(),
             enrollment,
             registry: Arc::new(Mutex::new(SessionRegistry::default())),
             last_states: Arc::new(Mutex::new(HashMap::new())),
@@ -476,6 +480,12 @@ impl SessionManager {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone()
+    }
+
+    /// The live stream of every run's coarse activity, reply deltas and turn ends; subscribers
+    /// authorize what they hand on (`TASK-103`).
+    pub fn stream_hub(&self) -> &crate::stream_hub::SessionStreamHub {
+        &self.stream_hub
     }
 
     pub fn bindings(&self) -> &RunBindingRegistry {

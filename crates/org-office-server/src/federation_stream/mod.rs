@@ -39,6 +39,8 @@ pub(crate) fn is_proxied_session_method(method: &str) -> bool {
             | "member.session_list"
             | "member.session_approval"
             | "member.session_stop"
+            | "member.session_interrupt"
+            | "member.session_steer"
             | "member.session_start"
             | "member.session_transcript"
             | "member.session_clear_stall"

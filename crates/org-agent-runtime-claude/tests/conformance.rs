@@ -123,6 +123,14 @@ fn passes_org_agent_runtime_testkit_conformance_and_plan_checks() {
     let spec = sample_spec();
     let ctx = sample_ctx();
     let caps = runtime.capabilities();
+    // Claude's step hook waits for the next tool boundary, so a person's steer interrupts the
+    // turn in-band and goes in as the next turn (`TASK-103`).
+    assert!(caps.interrupt_in_band);
+    assert_eq!(
+        caps.steer_route(),
+        Err(org_agent_runtime::ControlError::NeedsInterrupt)
+    );
+    assert!(!caps.supports_native_steer());
     let (plan, _) = runtime.plan_session(&spec, &ctx).expect("plan_session");
 
     testkit::check_plan(&plan, &spec, &ctx, &caps);

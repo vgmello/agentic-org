@@ -89,6 +89,14 @@ impl SessionManager {
             partition: partition.clone().map(|key| {
                 crate::partition::PartitionHandle::new(self.partitions.clone(), emp_id.clone(), key)
             }),
+            stream: Some(crate::stream_hub::StreamPublisher::new(
+                self.stream_hub.clone(),
+                crate::stream_hub::SessionStreamKey {
+                    org_id: self.office.info().org_id.clone(),
+                    employee_id: emp_id.clone(),
+                    partition: partition.as_ref().map(|key| key.as_str().to_owned()),
+                },
+            )),
         };
         let pre_pump_meta = PrePumpHandleMeta {
             tx: tx.clone(),

@@ -1,6 +1,7 @@
 //! The office side of the Chief of Staff's `caller ∩ tess` gate (`TASK-80.1`): who her live run
-//! acts for (its run binding, in RAM), that member's live authority, the hire and conversation
-//! reads the gate narrows by, and the drafts she made for each member while the office runs.
+//! acts for (its run binding, in RAM), that member's live authority, the hire, conversation
+//! and message-file (`TASK-240`) reads the gate narrows by, and the drafts she made for each
+//! member while the office runs.
 //!
 //! Every read fails closed. Her employee ID never changes (she is never offboarded), so once
 //! read it is remembered; until it is, a failed read refuses every bound member rather than
@@ -113,6 +114,15 @@ impl ChiefOfStaffPort for ChiefOfStaffGate {
             .message_conversation_id(message_id)
             .map_err(|error| {
                 crate::logged("chief_of_staff.message_conversation", &error);
+                unavailable()
+            })
+    }
+
+    fn attachment_conversation(&self, attachment_id: &str) -> Result<Option<String>, ApiError> {
+        self.office
+            .attachment_conversation_id(attachment_id)
+            .map_err(|error| {
+                crate::logged("chief_of_staff.attachment_conversation", &error);
                 unavailable()
             })
     }

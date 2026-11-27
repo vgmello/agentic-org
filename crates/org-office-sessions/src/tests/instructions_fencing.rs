@@ -152,7 +152,7 @@ fn a_sender_name_cannot_forge_the_verified_badge() {
 
 #[test]
 fn trigger_and_wake_hints_cite_commands_that_hold_against_the_live_table() {
-    let table = org_agent_cli::table::table();
+    let table = org_agent_cli::table();
     for trigger in triggers("Body") {
         let text = compose_turn_objective(&trigger);
         let problems = verify_command_references(&text, &table);

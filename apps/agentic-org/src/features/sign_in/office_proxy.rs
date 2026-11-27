@@ -18,7 +18,7 @@
 //! the table refuses (exit 2) or answers alone (`--help`, `--schema`) never reaches the host.
 //! `sign-in -- <command>` reads its line the same way ([`sign_in_and_execute`]).
 
-use org_agent_cli::dispatch::{OfficeTransport, TransportOffice};
+use org_agent_cli::{OfficeTransport, TransportOffice};
 use org_cli_shell::context::{ColorMode, ExecutionContext};
 use org_command::{Command, Office, Output, Refusal};
 use org_host::setup_flow::{ApprovedOfficeChannel, HostCliError, HostCliErrorKind};
@@ -105,7 +105,7 @@ impl OfficeTransport for LazyGrantTransport {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
         self.channel_mut()?
             .call_method(method, params)
-            .map_err(org_agent_cli::office::api_refusal)
+            .map_err(org_agent_cli::api_refusal)
     }
 }
 
@@ -233,7 +233,7 @@ pub(super) fn execute(
 fn ask(mut forwarded: Vec<String>, ctx: &ExecutionContext, office: &mut dyn Office) -> Answered {
     let shown = shown(&forwarded, ctx);
     let command = resource_and_verb(&forwarded)
-        .and_then(|(resource, verb)| org_agent_cli::table::runtime_table().find(resource, verb));
+        .and_then(|(resource, verb)| org_agent_cli::runtime_table().find(resource, verb));
     // The words the run adds go right after the command path, before every flag and value
     // the caller wrote and before any `--`: never at the end, where a value-taking flag left
     // without its value (`--body`) would take `--dry-run` or `--format` as its text and a dry

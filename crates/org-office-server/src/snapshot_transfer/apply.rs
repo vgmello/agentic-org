@@ -1,7 +1,7 @@
 //! Applying a staged snapshot in dependency order with bounded native batches, and the initial
 //! paged snapshot sync.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use org_office::Office;
 use org_sync::organization::{install_snapshot, ValidatedSnapshot};
 use org_sync_proto::{Codec, Digest, Epoch, Position};
 
+use super::moves::superseded_paths;
 use super::staging::{
     decode_and_validate_snapshot_files, fetch_and_stage_snapshot_pages, StagedSnapshotImport,
 };
@@ -35,9 +36,25 @@ struct BoundedBatchCommitter<'a> {
     hq_office_id: &'a str,
     operation_id: &'a str,
     single_commit_mode: bool,
+    /// The most a batch holds, unless one record's group alone is larger.
+    max_batch_bytes: usize,
+    /// For each path the snapshot writes, the local paths of the same record at the team
+    /// chain it left (`MoveTeam`, `MovePerson`, `MoveAgent`): removed in the same batch, just
+    /// before the write.
+    superseded: BTreeMap<String, Vec<String>>,
+    /// The superseded paths already pushed for removal: reconciliation never removes them
+    /// again (one batch never changes a path twice).
+    removed: BTreeSet<String>,
     cur: SnapshotFileBatch,
     cur_bytes: usize,
     batch_idx: usize,
+}
+
+/// What a batch counts for each file beside its path and bytes, as staging does.
+const ITEM_OVERHEAD_BYTES: usize = 64;
+
+fn item_bytes(item: &(String, Option<Vec<u8>>)) -> usize {
+    item.0.len() + item.1.as_ref().map_or(0, Vec::len) + ITEM_OVERHEAD_BYTES
 }
 
 impl<'a> BoundedBatchCommitter<'a> {
@@ -47,6 +64,7 @@ impl<'a> BoundedBatchCommitter<'a> {
         hq_office_id: &'a str,
         operation_id: &'a str,
         single_commit_mode: bool,
+        max_batch_bytes: usize,
     ) -> Self {
         Self {
             office,
@@ -54,22 +72,43 @@ impl<'a> BoundedBatchCommitter<'a> {
             hq_office_id,
             operation_id,
             single_commit_mode,
+            max_batch_bytes,
+            superseded: BTreeMap::new(),
+            removed: BTreeSet::new(),
             cur: Vec::new(),
             cur_bytes: 0,
             batch_idx: 0,
         }
     }
 
-    fn push(&mut self, item: (String, Option<Vec<u8>>)) -> Result<(), String> {
-        let item_bytes = item.0.len() + item.1.as_ref().map_or(0, Vec::len) + 64;
-        if !self.cur.is_empty()
-            && self.cur_bytes.saturating_add(item_bytes) > MAX_NATIVE_BATCH_BYTES
+    /// Pushes files that must land in one batch, in order: a batch is flushed first when
+    /// they do not fit beside it.
+    fn push_group(&mut self, group: SnapshotFileBatch) -> Result<(), String> {
+        let group_bytes = group.iter().map(item_bytes).sum::<usize>();
+        if !self.cur.is_empty() && self.cur_bytes.saturating_add(group_bytes) > self.max_batch_bytes
         {
             self.flush()?;
         }
-        self.cur_bytes = self.cur_bytes.saturating_add(item_bytes);
-        self.cur.push(item);
+        self.cur_bytes = self.cur_bytes.saturating_add(group_bytes);
+        self.cur.extend(group);
         Ok(())
+    }
+
+    /// Pushes a snapshot file; the first write of a record the snapshot moved to another
+    /// team chain carries the removal of its old paths, just before it, in the same batch.
+    fn push_put(&mut self, path: String, bytes: Vec<u8>) -> Result<(), String> {
+        let old = self.superseded.remove(&path).unwrap_or_default();
+        let mut group = Vec::with_capacity(old.len() + 1);
+        for old_path in old {
+            self.removed.insert(old_path.clone());
+            group.push((old_path, None));
+        }
+        group.push((path, Some(bytes)));
+        self.push_group(group)
+    }
+
+    fn push_removal(&mut self, path: String) -> Result<(), String> {
+        self.push_group(vec![(path, None)])
     }
 
     fn flush(&mut self) -> Result<(), String> {
@@ -136,17 +175,20 @@ fn stream_org_core_pass(
             } else {
                 bytes
             };
-            committer.push((path, Some(payload)))?;
+            committer.push_put(path, payload)?;
         }
     }
     Ok(())
 }
 
+/// Applies the organization core: in one batch when `org_core_batch_bytes`, its files and the
+/// removals of its moved records' old paths, fit one; else in the cycle-breaking passes.
 fn apply_staged_org_core(
     staged: &StagedSnapshotImport,
+    org_core_batch_bytes: usize,
     committer: &mut BoundedBatchCommitter<'_>,
 ) -> Result<(), String> {
-    if staged.org_core_bytes <= MAX_NATIVE_BATCH_BYTES {
+    if org_core_batch_bytes <= committer.max_batch_bytes {
         stream_org_core_pass(staged, committer, false, None, false)?;
         stream_org_core_pass(staged, committer, true, None, false)?;
         if !committer.single_commit_mode {
@@ -154,8 +196,8 @@ fn apply_staged_org_core(
         }
         return Ok(());
     }
-    // Oversized org_core (> 8 MiB): stream 4 cycle-breaking passes from disk without buffering
-    // all files in RAM (`TASK-52` P6-#4 / P21-#2).
+    // Oversized org_core (> 8 MiB in production): stream 4 cycle-breaking passes from disk
+    // without buffering all files in RAM (`TASK-52` P6-#4 / P21-#2).
     for depth in 0..=staged.max_struct_depth {
         stream_org_core_pass(staged, committer, false, Some(depth), true)?;
     }
@@ -197,7 +239,7 @@ fn apply_staged_non_core_tiers(
                 {
                     continue;
                 }
-                committer.push((path, Some(bytes)))?;
+                committer.push_put(path, bytes)?;
             }
         }
         if !committer.single_commit_mode {
@@ -205,6 +247,78 @@ fn apply_staged_non_core_tiers(
         }
     }
     Ok(())
+}
+
+/// The local files snapshot reconciliation keeps although the snapshot does not name them.
+struct Kept<'a> {
+    /// Work still in this satellite's outbox, not at HQ yet.
+    pending_work_paths: &'a BTreeSet<String>,
+    /// A shared file still in this satellite's outbox is not at HQ yet: its record stays, or
+    /// its bytes would wait in the outbox for a record that is gone (`TASK-98.6`).
+    unshipped_files: BTreeSet<String>,
+}
+
+impl<'a> Kept<'a> {
+    fn load(office: &Office, pending_work_paths: &'a BTreeSet<String>) -> Result<Self, String> {
+        let unshipped_files = office.pending_blob_outbox_state_paths().map_err(|e| {
+            format!("failed listing un-shipped attachment records for snapshot reconciliation: {e}")
+        })?;
+        Ok(Self {
+            pending_work_paths,
+            unshipped_files,
+        })
+    }
+
+    /// Whether reconciliation may remove the local file `path` the snapshot does not name.
+    /// Local task files and append-only history are never removed (a satellite's own tasks
+    /// may not be at HQ yet, `TASK-52` H-9), except the copies in a moved task's old folder
+    /// (`relocated`, `MoveTeam`, `doc-77`).
+    fn may_remove(&self, path: &str, relocated: &BTreeSet<String>) -> bool {
+        !self.pending_work_paths.contains(path)
+            && !self.unshipped_files.contains(path)
+            && (relocated.contains(path)
+                || (!org_office::is_immutable_state_path(path)
+                    && org_office::task_id_for_work_path(path).is_none()))
+    }
+}
+
+fn list_local_state_paths(office: &Office) -> Result<Vec<String>, String> {
+    office
+        .list_local_state_paths()
+        .map_err(|e| format!("failed listing local state paths for snapshot reconciliation: {e}"))
+}
+
+/// The local paths of each record the snapshot moved to another team chain, by the path the
+/// snapshot writes it at, judged on the local files before any batch applies (`TASK-224`).
+fn moved_record_paths(
+    office: &Office,
+    staged: &StagedSnapshotImport,
+    pending_work_paths: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let local_paths = list_local_state_paths(office)?;
+    let kept = Kept::load(office, pending_work_paths)?;
+    let no_task_moves = BTreeSet::new();
+    Ok(superseded_paths(
+        &local_paths,
+        &staged.incoming_paths,
+        |path| kept.may_remove(path, &no_task_moves),
+    ))
+}
+
+/// The bytes the removals of moved records' old paths add to the batches, as [`item_bytes`]
+/// counts them: for the organization core's records, and for all (`TASK-224`).
+fn superseded_bytes(superseded: &BTreeMap<String, Vec<String>>) -> (usize, usize) {
+    let (mut org_core, mut all) = (0usize, 0usize);
+    for (new_path, old_paths) in superseded {
+        let removals = old_paths.iter().fold(0usize, |sum, old| {
+            sum.saturating_add(old.len().saturating_add(ITEM_OVERHEAD_BYTES))
+        });
+        all = all.saturating_add(removals);
+        if is_org_core_put(new_path, true) {
+            org_core = org_core.saturating_add(removals);
+        }
+    }
+    (org_core, all)
 }
 
 fn apply_staged_deletions(
@@ -216,30 +330,22 @@ fn apply_staged_deletions(
 ) -> Result<(), String> {
     // Propagate local state scan errors so a failed scan can never leave buffered writes
     // uncommitted before checkpoint installation (`TASK-52` P26-#1).
-    let local_paths = office.list_local_state_paths().map_err(|e| {
-        format!("failed listing local state paths for snapshot reconciliation: {e}")
-    })?;
-    // Local task files are never removed (a satellite's own tasks may not be at HQ yet),
-    // except the copies a snapshot moved to another folder (`MoveTeam`, `doc-77`) of a task
-    // whose incoming files were applied (not one the satellite protected).
+    let local_paths = list_local_state_paths(office)?;
+    // The copies a snapshot moved to another folder (`MoveTeam`, `doc-77`) of a task whose
+    // incoming files were applied (not one the satellite protected).
     let mut relocated = org_office::relocated_task_paths(&local_paths, &staged.incoming_paths);
     relocated.retain(|path| {
         org_office::task_id_for_work_path(path).is_none_or(|tid| !protected_tasks.contains(&tid))
     });
-    // A shared file still in this satellite's outbox is not at HQ yet: its record stays, or
-    // its bytes would wait in the outbox for a record that is gone (`TASK-98.6`).
-    let unshipped_files = office.pending_blob_outbox_state_paths().map_err(|e| {
-        format!("failed listing un-shipped attachment records for snapshot reconciliation: {e}")
-    })?;
+    let kept = Kept::load(office, pending_work_paths)?;
+    // A moved record's old path went with the batch that wrote its new one: removing it
+    // again would remove the record (`TASK-224`).
     let mut deletes: Vec<String> = local_paths
         .into_iter()
         .filter(|existing| {
             !staged.incoming_paths.contains(existing)
-                && !pending_work_paths.contains(existing)
-                && !unshipped_files.contains(existing)
-                && (relocated.contains(existing)
-                    || (!org_office::is_immutable_state_path(existing)
-                        && org_office::task_id_for_work_path(existing).is_none()))
+                && !committer.removed.contains(existing)
+                && kept.may_remove(existing, &relocated)
         })
         .collect();
     deletes.sort_by(|a, b| {
@@ -248,7 +354,7 @@ fn apply_staged_deletions(
             .then_with(|| a.cmp(b))
     });
     for path in deletes {
-        committer.push((path, None))?;
+        committer.push_removal(path)?;
     }
     committer.flush()
 }
@@ -258,6 +364,16 @@ fn apply_staged_deletions(
 pub(crate) fn sync_initial_snapshot_paged(
     session: &mut SatelliteSyncSession,
     operation_id: &str,
+) -> Result<usize, String> {
+    sync_initial_snapshot_in_batches(session, operation_id, MAX_NATIVE_BATCH_BYTES)
+}
+
+/// [`sync_initial_snapshot_paged`] committing at most `max_batch_bytes` per native batch:
+/// tests force a small snapshot through several batches and the oversized org-core passes.
+pub(crate) fn sync_initial_snapshot_in_batches(
+    session: &mut SatelliteSyncSession,
+    operation_id: &str,
+    max_batch_bytes: usize,
 ) -> Result<usize, String> {
     let cp = session
         .office
@@ -276,16 +392,25 @@ pub(crate) fn sync_initial_snapshot_paged(
             protected_tasks.insert(tid);
         }
     }
-    let single_commit_mode = staged.total_decoded_bytes <= MAX_NATIVE_BATCH_BYTES
-        && staged.org_core_bytes <= MAX_NATIVE_BATCH_BYTES;
+    // A moved record's old path is removed in the batch that writes its new one: the removals
+    // count toward whether the organization core, and the whole snapshot, fit one batch, so the
+    // core is never split without its cycle-breaking passes (`TASK-224`).
+    let superseded = moved_record_paths(&session.office, &staged, &pending_work_paths)?;
+    let (org_core_superseded, all_superseded) = superseded_bytes(&superseded);
+    let org_core_batch_bytes = staged.org_core_bytes.saturating_add(org_core_superseded);
+    let single_commit_mode = staged.total_decoded_bytes.saturating_add(all_superseded)
+        <= max_batch_bytes
+        && org_core_batch_bytes <= max_batch_bytes;
     let mut committer = BoundedBatchCommitter::new(
         &session.office,
         &staged.tasks,
         session.hq_peer.office_id.as_str(),
         operation_id,
         single_commit_mode,
+        max_batch_bytes,
     );
-    apply_staged_org_core(&staged, &mut committer)?;
+    committer.superseded = superseded;
+    apply_staged_org_core(&staged, org_core_batch_bytes, &mut committer)?;
     apply_staged_non_core_tiers(
         &staged,
         &pending_work_paths,

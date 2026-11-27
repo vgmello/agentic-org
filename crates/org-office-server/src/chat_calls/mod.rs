@@ -81,6 +81,11 @@ impl ChatService {
         watcher: Arc<crate::watcher::ChannelWatcher>,
     ) -> Self {
         let owner_id = office.owner_member_id().to_owned();
+        // Where the session manager meets the live feed: agents' coarse turn activity joins
+        // presence for `chat.events_poll` (`TASK-103`).
+        if let Some(sessions) = sessions.as_ref() {
+            crate::live::follow_session_activity(&live, sessions.stream_hub());
+        }
         Self {
             office,
             live,

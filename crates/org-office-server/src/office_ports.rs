@@ -317,6 +317,13 @@ pub(crate) fn build_office_ports(
     sync_wake: Arc<dyn Fn() + Send + Sync>,
 ) -> serve::OfficePorts {
     let session_hooks = build_session_hooks(&office, &session_manager, &hq_fed_slot);
+    // An upload the Chief of Staff stages names the member her run acts for, and binds only
+    // for that member (`TASK-240`). Weak: the session manager already holds the office.
+    let runs = Arc::downgrade(&session_manager);
+    office.set_attachment_acting_for(Box::new(move |member| {
+        runs.upgrade()
+            .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
+    }));
     let hiring = build_hiring_port(
         &office,
         wake,

@@ -13,6 +13,8 @@
 //!   single-active-lease invariant (`TASK-137`)
 //! - Restart continuation & stall watchdog (`ADR-0030` / `LIVE-9..13`)
 //! - Browser-driven provider CLI enrollment & wrapped credential custody (`ADR-0032` / `ENROLL-1..6`)
+//! - Live turn controls: a person's interrupt and mid-turn steer of a warm session, and the
+//!   post-redaction [`SessionStreamHub`] of coarse turn activity (`TASK-103`)
 
 #![forbid(unsafe_code)]
 
@@ -32,6 +34,7 @@ pub mod recovery;
 pub mod redact;
 pub mod router;
 pub mod runtime_registry;
+pub mod stream_hub;
 pub mod subagents;
 pub mod subscription_usage;
 pub mod transcript;
@@ -63,6 +66,10 @@ pub use recovery::{
 };
 pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
 pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
+pub use stream_hub::{
+    SessionActivity, SessionStreamEvent, SessionStreamFrame, SessionStreamHub, SessionStreamKey,
+    SessionStreamSubscription, StreamFilter, TurnEnd,
+};
 pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,
     BackgroundTaskState, BackgroundWake, SubagentDefinition,

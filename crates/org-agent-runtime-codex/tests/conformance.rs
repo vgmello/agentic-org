@@ -138,6 +138,9 @@ fn passes_org_agent_runtime_testkit_conformance_and_plan_checks() {
         org_agent_runtime::MidTurnDelivery::NativeSteer
     );
     assert!(caps.supports_mid_turn_delivery());
+    // A person's steer goes in natively as `turn/steer`, never as an interrupt (`TASK-103`).
+    assert_eq!(caps.steer_route(), Ok(()));
+    assert!(caps.supports_native_steer());
     assert_eq!(caps.cost, CostBasis::None);
     let (plan, _) = runtime.plan_session(&spec, &ctx).expect("plan_session");
 

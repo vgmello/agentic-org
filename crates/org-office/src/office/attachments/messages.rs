@@ -11,7 +11,9 @@
 //!   A refused record leaves them staged; a promoted blob nothing names stays unreadable, as
 //!   every read goes through a record and the policy.
 //! - **Reads**: a bound file is found by its attachment ID and read as its message or answer
-//!   is ([`Office::message_file_record`]).
+//!   is ([`Office::message_file_record`]). The Chief of Staff's gate reads which conversation
+//!   such a file is in ([`Office::attachment_conversation_id`], `TASK-240`), so she touches one
+//!   only for a member who is in that conversation too.
 
 use org_proto::attachments::{check_attachment_ids, AttachmentTargetKind};
 use org_proto::{ApiError, ErrorCode};
@@ -122,6 +124,38 @@ impl Office {
         for file in &files.staged {
             let _ = self.attachments.staging.remove(&file.upload_id);
         }
+    }
+
+    /// The conversation the shared file `attachment_id` is in when it is bound to a message, an
+    /// ask or an answer (`TASK-240`); `None` for any other file and for an unknown ID. A bound
+    /// file whose message is in no conversation is an error, so a gate reading this refuses.
+    pub fn attachment_conversation_id(
+        &self,
+        attachment_id: &str,
+    ) -> Result<Option<String>, OfficeError> {
+        let Some(id) = Id::parse(attachment_id)
+            .ok()
+            .filter(|_| org_proto::is_uuid_v7(attachment_id))
+        else {
+            return Ok(None);
+        };
+        let Some(record) = self.shared_file(&id)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            record.target_kind,
+            AttachmentTargetKind::Message | AttachmentTargetKind::AskAnswer
+        ) {
+            return Ok(None);
+        }
+        let message = record
+            .target_id
+            .ok_or(OfficeError::Invalid("a message's file names no message"))?;
+        self.message_conversation_id(message.as_str())?
+            .map(Some)
+            .ok_or(OfficeError::Invalid(
+                "a message's file names a message in no conversation",
+            ))
     }
 
     /// A file bound to a message or an ask answer, as the attachment record the policy reads:

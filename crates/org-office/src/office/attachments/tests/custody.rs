@@ -342,3 +342,102 @@ fn the_state_snapshot_satellites_install_carries_file_records_never_their_bytes(
         .iter()
         .all(|p| !p.starts_with("blobs/") && !p.starts_with("private/") && !p.contains("blob")));
 }
+
+#[test]
+fn satellite_ingest_cannot_shadow_an_existing_hq_message_file() {
+    use crate::attachments::remote::ShippedAttachment;
+    use crate::store::open::attachment_ops::{
+        attachment_operation, AttachmentWrite, AttachmentWriteOp,
+    };
+    use org_proto::chat::ChatSendParams;
+
+    for engine in ENGINES {
+        let fx = Fixture::new(engine);
+        let msg_bytes = b"DM-ORIGINAL-MESSAGE-FILE".to_vec();
+        let staged = upload(&fx.office, &fx.owner, "dm.txt", "text/plain", &msg_bytes).unwrap();
+        let sent = fx
+            .office
+            .chat_send(
+                &fx.owner,
+                ChatSendParams {
+                    id: next_uuid(),
+                    to: fx.person.clone(),
+                    kind: "msg".into(),
+                    priority: None,
+                    subject: None,
+                    body: "with file".into(),
+                    attachment_ids: vec![staged.upload_id],
+                    meta: Default::default(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let msg_file = &sent.message.attachments[0];
+        let conv_id = sent.result.conversation_id.clone();
+
+        let spoof_bytes = b"SPOOFED-STANDALONE-ORG-FILE".to_vec();
+        let mut spoof = shipped(
+            &fx.person,
+            AttachmentTargetKind::Organization,
+            None,
+            "text/plain",
+            &spoof_bytes,
+        );
+        spoof.id = Id::parse(&msg_file.id).unwrap();
+
+        // 1. Ingest announcement rejects colliding message file ID.
+        let checked = check(&fx, SATELLITE, &spoof).unwrap_err();
+        assert_eq!(checked.code, ErrorCode::Conflict, "{engine:?}");
+
+        // 2. Commit also rejects even if a pre-checked ShippedAttachment raced in.
+        let forged = ShippedAttachment {
+            record: spoof.clone(),
+            media: MediaType::PlainText,
+            origin_office: SATELLITE.into(),
+            present: false,
+        };
+        let committed = fx
+            .office
+            .attachment_ingest_commit(&forged, Some(spoof_bytes))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(committed.code, ErrorCode::Conflict, "{engine:?}");
+
+        // 3. Store write op itself rejects creating a standalone record with a message file ID.
+        let op = attachment_operation(
+            &next_uuid(),
+            "attachment.ingest",
+            &fx.person,
+            &records::encode(&spoof),
+        )
+        .unwrap();
+        let direct = fx
+            .office
+            .store
+            .run(AttachmentWriteOp {
+                operation: op,
+                write: AttachmentWrite::Create(spoof),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(direct.code, ErrorCode::AlreadyExists, "{engine:?}");
+
+        // 4. Peer fetch and conversation lookup stay intact on the original message file.
+        let fetched = fx
+            .office
+            .attachment_peer_fetch(&msg_file.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.byte_count, msg_bytes.len() as u64);
+        assert_eq!(
+            fx.office
+                .attachment_conversation_id(&msg_file.id)
+                .unwrap()
+                .as_deref(),
+            Some(conv_id.as_str())
+        );
+    }
+}

@@ -10,6 +10,7 @@ use crate::escape::sanitize;
 use crate::terminal::{write_out, Terminal};
 
 mod prescan;
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
 pub use prescan::{prescan, Prescan};

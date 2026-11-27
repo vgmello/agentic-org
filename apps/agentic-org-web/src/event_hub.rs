@@ -3,6 +3,11 @@
 //!
 //! A leaf: the office bridge (`office`) publishes into it and the SSE streams (`sse`)
 //! subscribe to it, so neither depends on the other through the hub.
+//!
+//! The streams reach it through [`EventBus`], a two-method seam (`doc-104` P0): today one
+//! in-process implementation, [`InMemoryEventBus`] over [`EventHub`]'s bounded broadcast.
+//! A shared bus for several web processes would be a second implementation, nothing more; no
+//! broker is linked.
 
 use org_proto::web::{Feed, ResyncReason};
 use serde_json::Value;
@@ -38,11 +43,56 @@ pub enum HubEvent {
         cursor: String,
         data: Value,
     },
+    /// An agent's coalesced coarse live activity (`member.activity_changed` on the
+    /// `presence` feed, `TASK-103`): a phase and a tool's name only.
+    ///
+    /// **Invariant:** the [`EventBus`] is shared by every subscriber of the organization, so
+    /// only what every member may see is published here. A caller-scoped or owner-private
+    /// frame (such as the Chief of Staff's `active_tool_name`, which only the owner sees) must
+    /// never be published on the bus; it reaches its caller only through that caller's own
+    /// poll, filtered by the office.
+    ActivityChanged {
+        org_id: String,
+        cursor: String,
+        data: Value,
+    },
     OrgResync {
         org_id: String,
         feed: Feed,
         reason: ResyncReason,
     },
+}
+
+/// Publishes live events and subscribes streams to them (`doc-104` P0). Delivery is a bounded
+/// broadcast: a subscriber that falls behind is told it lagged
+/// ([`broadcast::error::RecvError::Lagged`]) and resyncs; nothing is replayed.
+pub trait EventBus: Send + Sync {
+    /// Hands `event` to every current subscriber; never blocks.
+    fn publish(&self, event: HubEvent);
+    /// Every event published from now on.
+    fn subscribe(&self) -> broadcast::Receiver<HubEvent>;
+}
+
+/// The in-process [`EventBus`]: this web process's [`EventHub`].
+#[derive(Clone, Default)]
+pub struct InMemoryEventBus {
+    hub: EventHub,
+}
+
+impl InMemoryEventBus {
+    pub fn new(hub: EventHub) -> Self {
+        Self { hub }
+    }
+}
+
+impl EventBus for InMemoryEventBus {
+    fn publish(&self, event: HubEvent) {
+        self.hub.publish(event);
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<HubEvent> {
+        self.hub.subscribe()
+    }
 }
 
 /// Broadcast hub connecting host/office events to active SSE streams.

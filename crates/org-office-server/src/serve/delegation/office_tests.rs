@@ -20,6 +20,9 @@ use serde_json::{json, Value};
 use super::{scope, ChiefOfStaffPort, Delegation};
 use crate::chief_of_staff_port::ChiefOfStaffGate;
 
+mod files;
+mod sends;
+
 fn next_id() -> String {
     let ms = org_office::organization_family::testkit::CREATION_AT.0;
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(7000);
@@ -45,6 +48,7 @@ fn next_id() -> String {
 /// each holding one message from that person to her.
 struct World {
     office: Arc<Office>,
+    sessions: Arc<org_office_sessions::SessionManager>,
     gate: ChiefOfStaffGate,
     owner: String,
     tess: String,
@@ -71,11 +75,12 @@ fn world() -> World {
         Arc::clone(&office),
         org_office_sessions::SessionManagerConfig::production(tmp.path().join("office.sock")),
     ));
-    let gate = ChiefOfStaffGate::new(Arc::clone(&office), sessions);
+    let gate = ChiefOfStaffGate::new(Arc::clone(&office), Arc::clone(&sessions));
     let (owner_dm, owner_message) = dm_with(&office, &owner, &tess, "the owner's private plan");
     let (bob_dm, bob_message) = dm_with(&office, &bob, &tess, "bob's private worry");
     World {
         office,
+        sessions,
         gate,
         owner,
         tess,
