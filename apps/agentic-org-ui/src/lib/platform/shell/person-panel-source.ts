@@ -4,6 +4,7 @@ import type { MemberProfile } from '$lib/modules/members/types';
 import { workItemsApi } from '$lib/modules/workitems/api';
 import { taskHref } from '$lib/modules/workitems/present';
 import type { TaskRow } from '$lib/modules/workitems/types';
+import { isBuiltInHandle } from '$lib/proto';
 import type {
 	PersonPanelDataSource,
 	PersonPanelLoadedData,
@@ -40,6 +41,7 @@ function mapProfile(profile: MemberProfile): PersonPanelProfile {
 		kind: profile.kind,
 		kindLabel: kindWord(profile.kind),
 		owner: profile.owner,
+		isBuiltIn: isBuiltInHandle(profile.kind, profile.handle, profile.role),
 		role: profile.role,
 		status: profile.status,
 		isSelf: profile.viewer.isSelf,

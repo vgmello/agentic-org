@@ -14,6 +14,7 @@
 	import ExecutiveSidebarOrgNav from './ExecutiveSidebarOrgNav.svelte';
 	import ExecutiveSidebarWorkspaceNav from './ExecutiveSidebarWorkspaceNav.svelte';
 	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
+	import { tooltipLinkProps } from './tooltip-link-props';
 	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
 	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
 
@@ -84,7 +85,7 @@
 		onpointerleave={onPointerLeave}
 		onfocusin={onFocusIn}
 		onfocusout={onFocusOut}
-		class="exec-sidebar flex h-full min-w-0 flex-col overflow-hidden"
+		class="exec-sidebar flex h-full w-full min-w-0 flex-col overflow-hidden"
 		data-collapsed={collapsed ? 'true' : undefined}
 	>
 		<div
@@ -97,7 +98,7 @@
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
 						<a
-							{...props}
+							{...tooltipLinkProps(props)}
 							href={resolve('/home')}
 							onclick={(event) => onNavigate?.(event, '/home')}
 							aria-label="{connection.organization.name} home"
@@ -119,7 +120,7 @@
 					{/snippet}
 				</Tooltip.Trigger>
 				<Tooltip.Portal>
-					<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+					<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 						>{connection.organization.name}</Tooltip.Content
 					>
 				</Tooltip.Portal>
@@ -153,7 +154,11 @@
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Portal>
-								<Tooltip.Content side="bottom" sideOffset={6} class={tooltipContentClass}
+								<Tooltip.Content
+									role="tooltip"
+									side="bottom"
+									sideOffset={6}
+									class={tooltipContentClass}
 									>{pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}</Tooltip.Content
 								>
 							</Tooltip.Portal>
@@ -171,7 +176,7 @@
 							<button
 								{...props}
 								type="button"
-								disabled={offline}
+								aria-disabled={offline ? 'true' : undefined}
 								onclick={() => {
 									if (!offline) onOpenSearch();
 								}}
@@ -179,7 +184,9 @@
 								data-testid="sidebar-search-trigger"
 								class={[
 									'exec-sidebar-search flex items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
-									collapsed ? 'size-10 justify-center p-0' : 'w-full gap-2 px-2.5 py-1.5 text-left',
+									collapsed
+										? 'size-10 justify-center p-0 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11'
+										: 'w-full gap-2 px-2.5 py-1.5 text-left',
 									offline && 'is-offline'
 								]}
 							>
@@ -192,7 +199,7 @@
 						{/snippet}
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
-						<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+						<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 							>{offline ? 'Search unavailable while offline' : 'Search (⌘K)'}</Tooltip.Content
 						>
 					</Tooltip.Portal>
@@ -219,7 +226,7 @@
 							<Tooltip.Trigger>
 								{#snippet child({ props })}
 									<a
-										{...props}
+										{...tooltipLinkProps(props)}
 										href={resolve('/home')}
 										onclick={(e) => onNavigate?.(e, '/home')}
 										aria-current={isActive('/home') ? 'page' : undefined}
@@ -235,8 +242,11 @@
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Portal>
-								<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
-									>Home</Tooltip.Content
+								<Tooltip.Content
+									role="tooltip"
+									side="right"
+									sideOffset={6}
+									class={tooltipContentClass}>Home</Tooltip.Content
 								>
 							</Tooltip.Portal>
 						</Tooltip.Root>
@@ -246,7 +256,7 @@
 							<Tooltip.Trigger>
 								{#snippet child({ props })}
 									<a
-										{...props}
+										{...tooltipLinkProps(props)}
 										href={resolve('/inbox')}
 										onclick={(e) => onNavigate?.(e, '/inbox')}
 										aria-current={isActive('/inbox') ? 'page' : undefined}
@@ -267,7 +277,11 @@
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Portal>
-								<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+								<Tooltip.Content
+									role="tooltip"
+									side="right"
+									sideOffset={6}
+									class={tooltipContentClass}
 									>{totalInboxAttention > 0
 										? `Inbox (${totalInboxAttention} needing attention)`
 										: 'Inbox'}</Tooltip.Content
@@ -419,13 +433,13 @@
 			color 0.14s ease,
 			box-shadow 0.14s ease;
 	}
-	.exec-sidebar-search:hover:not(:disabled) {
+	.exec-sidebar-search:hover:not([aria-disabled='true']) {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
 	}
 	.exec-sidebar-search.is-offline,
-	.exec-sidebar-search:disabled {
+	.exec-sidebar-search[aria-disabled='true'] {
 		opacity: 0.55;
 		cursor: not-allowed;
 	}

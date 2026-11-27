@@ -48,7 +48,7 @@
 	const snapshotMember = $derived(
 		memberId ? snapshot?.members.find((m) => m.id === memberId) : undefined
 	);
-	const builtIn = $derived(isBuiltInAgent(snapshotMember));
+	const builtIn = $derived(isBuiltInAgent(snapshotMember) || Boolean(profile?.isBuiltIn));
 	const displayName = $derived(profile?.name ?? snapshotMember?.name ?? 'Member');
 	const displayKind = $derived<'agent' | 'person'>(
 		profile?.kind ?? (snapshotMember?.kind === 'agent' ? 'agent' : 'person')

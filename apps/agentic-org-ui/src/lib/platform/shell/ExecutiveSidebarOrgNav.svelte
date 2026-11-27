@@ -15,6 +15,7 @@
 		uiPrefs,
 		type OrgNavId
 	} from '$lib/platform/workspace/ui-preferences.svelte';
+	import { tooltipLinkProps } from './tooltip-link-props';
 
 	interface OrgNavMeta {
 		id: OrgNavId;
@@ -49,6 +50,8 @@
 	let moreDropActive = $state(false);
 	let moreUserOpen = $state<boolean | null>(null);
 	let liveAnnouncement = $state('');
+	const uid = $props.id();
+	const moreListId = `${uid}-org-more`;
 	let navListEl = $state<HTMLUListElement | null>(null);
 
 	function isOrgItemActive(id: OrgNavId): boolean {
@@ -177,6 +180,13 @@
 		if (pinned && uiPrefs.orgNav.length <= 1) return;
 		uiPrefs.toggleOrgPin(item.id);
 		announce(pinned ? `Moved ${item.label} to More.` : `Pinned ${item.label} to Organization.`);
+		if (pinned) {
+			void tick().then(() => {
+				navListEl?.querySelector<HTMLElement>('[data-testid="organization-more-toggle"]')?.focus();
+			});
+		} else {
+			focusItem(item.id);
+		}
 	}
 </script>
 
@@ -213,7 +223,7 @@
 					<Tooltip.Trigger>
 						{#snippet child({ props })}
 							<a
-								{...mergeProps(props, {
+								{...mergeProps(tooltipLinkProps(props), {
 									onclick: (e: MouseEvent) => onNavigate?.(e, item.href),
 									onkeydown: (e: KeyboardEvent) => handleItemKeydown(e, item.id, 'pinned')
 								})}
@@ -233,7 +243,7 @@
 						{/snippet}
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
-						<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+						<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 							>{item.label}</Tooltip.Content
 						>
 					</Tooltip.Portal>
@@ -255,8 +265,11 @@
 							{/snippet}
 						</Tooltip.Trigger>
 						<Tooltip.Portal>
-							<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
-								>Move to More</Tooltip.Content
+							<Tooltip.Content
+								role="tooltip"
+								side="right"
+								sideOffset={6}
+								class={tooltipContentClass}>Move to More</Tooltip.Content
 							>
 						</Tooltip.Portal>
 					</Tooltip.Root>
@@ -280,7 +293,7 @@
 					type="button"
 					onclick={() => (moreUserOpen = !moreOpen)}
 					aria-expanded={moreOpen}
-					aria-controls="exec-nav-org-more-list"
+					aria-controls={moreListId}
 					data-testid="organization-more-toggle"
 					class="exec-nav-item w-full"
 				>
@@ -296,7 +309,8 @@
 				</button>
 				{#if moreOpen}
 					<ul
-						id="exec-nav-org-more-list"
+						id={moreListId}
+						data-testid="organization-more-list"
 						class="mt-0.5 flex flex-col gap-0.5 pl-3"
 						aria-label="More organization pages"
 						data-org-zone="more"
@@ -340,8 +354,11 @@
 										{/snippet}
 									</Tooltip.Trigger>
 									<Tooltip.Portal>
-										<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
-											>Pin to Organization</Tooltip.Content
+										<Tooltip.Content
+											role="tooltip"
+											side="right"
+											sideOffset={6}
+											class={tooltipContentClass}>Pin to Organization</Tooltip.Content
 										>
 									</Tooltip.Portal>
 								</Tooltip.Root>

@@ -66,8 +66,8 @@
 	<div class="max-w-4xl">
 		<h3 id="settings-theme-h" class="text-base/7 font-semibold text-fg">Appearance &amp; Theme</h3>
 		<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">
-			Choose between Ocean, Classic, Graphite, Cozy Glass, Report (Modern 2D Day), or Report Night.
-			Saved on this browser.
+			Choose between Ocean, Classic, Graphite, Graphite Light, Cozy Glass, Report (Modern 2D Day),
+			or Report Night. Saved on this browser.
 		</p>
 
 		<div

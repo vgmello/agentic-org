@@ -84,6 +84,26 @@ describe('PersonPanelState', () => {
 		panel.dispose();
 	});
 
+	it('closes without restoring focus when switching organizations via setOrganization', () => {
+		const panel = new PersonPanelState();
+		panel.setOrganization('org-a');
+		panel.open('rowan');
+		expect(panel.isOpen).toBe(true);
+
+		// Same organization is a no-op
+		panel.setOrganization('org-a');
+		expect(panel.isOpen).toBe(true);
+		expect(panel.memberId).toBe('rowan');
+
+		// Switching to a different organization closes without restoring stale focus
+		panel.setOrganization('org-b');
+		expect(panel.isOpen).toBe(false);
+		expect(panel.memberId).toBeNull();
+		expect(panel.restoreFocusOnClose).toBe(false);
+
+		panel.dispose();
+	});
+
 	it('unsubscribes session listener and clears listeners on dispose', () => {
 		const panel = new PersonPanelState();
 		const unsubSpy = vi.fn();

@@ -41,7 +41,10 @@
 	} = $props();
 </script>
 
-<div data-shell-header class="flex shrink-0 items-center gap-2 px-4 min-[640px]:hidden">
+<header
+	data-shell-header
+	class="exec-topbar flex min-h-14 shrink-0 items-center gap-2 px-4 min-[640px]:hidden"
+>
 	<MobileNavigation
 		bind:open
 		{connection}
@@ -65,24 +68,24 @@
 						<button
 							{...props}
 							type="button"
-							disabled={offline}
+							aria-disabled={offline ? 'true' : undefined}
 							onclick={() => {
 								if (!offline) onOpenSearch();
 							}}
 							aria-label={offline ? 'Search unavailable while offline' : 'Search'}
 							data-testid="mobile-search-trigger"
-							class="-mr-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50"
+							class="-mr-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:hover:text-fg-muted"
 						>
 							<Search class="size-5" aria-hidden="true" />
 						</button>
 					{/snippet}
 				</Tooltip.Trigger>
 				<Tooltip.Portal>
-					<Tooltip.Content side="bottom" sideOffset={6} class={tooltipContentClass}
+					<Tooltip.Content role="tooltip" side="bottom" sideOffset={6} class={tooltipContentClass}
 						>{offline ? 'Search unavailable while offline' : 'Search'}</Tooltip.Content
 					>
 				</Tooltip.Portal>
 			</Tooltip.Root>
 		</Tooltip.Provider>
 	{/if}
-</div>
+</header>

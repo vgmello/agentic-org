@@ -36,6 +36,8 @@
 		onNavigate?: (event: MouseEvent, href: string) => void;
 	} = $props();
 
+	const uid = $props.id();
+	const favsListId = `${uid}-favs`;
 	let favoritesOpen = $state(true);
 	const favoriteList = $derived.by(() => {
 		const byId = new Map(projects.filter((p) => !p.archived).map((p) => [p.id, p]));
@@ -59,7 +61,7 @@
 						type="button"
 						onclick={() => (favoritesOpen = !favoritesOpen)}
 						aria-expanded={favoritesOpen}
-						aria-controls="exec-nav-favs"
+						aria-controls={favsListId}
 						aria-label={favoritesOpen ? 'Collapse favorite projects' : 'Expand favorite projects'}
 						class="exec-icon-btn flex size-9 items-center justify-center rounded-md [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
 					>
@@ -74,7 +76,7 @@
 				{/snippet}
 			</Tooltip.Trigger>
 			<Tooltip.Portal>
-				<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+				<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 					>{favoritesOpen
 						? 'Collapse favorite projects'
 						: 'Expand favorite projects'}</Tooltip.Content
@@ -83,7 +85,12 @@
 		</Tooltip.Root>
 	</div>
 	{#if favoritesOpen}
-		<ul id="exec-nav-favs" aria-label="Favorite projects" class="flex flex-col gap-0.5">
+		<ul
+			id={favsListId}
+			data-sidebar-favs=""
+			aria-label="Favorite projects"
+			class="flex flex-col gap-0.5"
+		>
 			{#if favoriteList.length === 0}
 				<li class="exec-fav-empty px-2.5 py-1 text-xs">No favorite projects yet.</li>
 			{:else}
@@ -120,6 +127,7 @@
 								/>
 							{/if}
 							<span class="truncate">{proj.name}</span>
+							<span class="sr-only">, {offline ? 'Offline' : health.label}</span>
 						</a>
 						<Tooltip.Root>
 							<Tooltip.Trigger>
@@ -136,8 +144,11 @@
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Portal>
-								<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
-									>Unpin from favorites</Tooltip.Content
+								<Tooltip.Content
+									role="tooltip"
+									side="right"
+									sideOffset={6}
+									class={tooltipContentClass}>Unpin from favorites</Tooltip.Content
 								>
 							</Tooltip.Portal>
 						</Tooltip.Root>

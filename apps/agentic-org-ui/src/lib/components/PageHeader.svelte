@@ -84,10 +84,10 @@
 			{/if}
 		</div>
 		{#if actions || (showSearch && shellCommand)}
-			<div class="flex flex-wrap items-center justify-end gap-3">
+			<div class="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-3">
 				{#if actions}{@render actions()}{/if}
 				{#if showSearch && shellCommand}
-					<InteriorSearchBar class="w-full sm:w-[clamp(18rem,28vw,25rem)]" />
+					<InteriorSearchBar class="w-full max-w-full sm:w-[clamp(18rem,28vw,25rem)]" />
 				{/if}
 			</div>
 		{/if}
@@ -95,6 +95,9 @@
 </header>
 
 <style>
+	.page-header-lit {
+		container-type: inline-size;
+	}
 	.ph-title-row {
 		display: flex;
 		flex-wrap: wrap;
@@ -110,17 +113,34 @@
 		background: var(--toolbar-divider-color, var(--line));
 	}
 	.ph-sub {
+		flex: 1 1 16rem;
 		margin: 0;
 		min-width: 0;
 	}
 	@media (max-width: 639px) {
 		.ph-title-row {
 			flex-direction: column;
-			align-items: flex-start;
+			align-items: stretch;
 			gap: 4px;
 		}
 		.ph-sep {
 			display: none;
+		}
+		.ph-sub {
+			flex: none;
+		}
+	}
+	@container (max-width: 30rem) {
+		.ph-title-row {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 4px;
+		}
+		.ph-sep {
+			display: none;
+		}
+		.ph-sub {
+			flex: none;
 		}
 	}
 </style>

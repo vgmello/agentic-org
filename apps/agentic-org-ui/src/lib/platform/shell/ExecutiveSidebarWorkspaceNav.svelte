@@ -17,6 +17,7 @@
 		uiPrefs,
 		type WorkspaceNavId
 	} from '$lib/platform/workspace/ui-preferences.svelte';
+	import { tooltipLinkProps } from './tooltip-link-props';
 
 	interface WorkspaceNavMeta {
 		id: WorkspaceNavId;
@@ -48,6 +49,8 @@
 	let moreDropActive = $state(false);
 	let moreUserOpen = $state<boolean | null>(null);
 	let liveAnnouncement = $state('');
+	const uid = $props.id();
+	const moreListId = `${uid}-ws-more`;
 	let navListEl = $state<HTMLUListElement | null>(null);
 
 	const pinnedItems = $derived(uiPrefs.workspaceNav.map((id) => WORKSPACE_META[id]));
@@ -199,7 +202,7 @@
 					<Tooltip.Trigger>
 						{#snippet child({ props })}
 							<a
-								{...mergeProps(props, {
+								{...mergeProps(tooltipLinkProps(props), {
 									onclick: (e: MouseEvent) => onNavigate?.(e, item.href),
 									onkeydown: (e: KeyboardEvent) => handleItemKeydown(e, item.id, 'pinned')
 								})}
@@ -219,7 +222,7 @@
 						{/snippet}
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
-						<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+						<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 							>{item.label}</Tooltip.Content
 						>
 					</Tooltip.Portal>
@@ -241,8 +244,11 @@
 							{/snippet}
 						</Tooltip.Trigger>
 						<Tooltip.Portal>
-							<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
-								>Move to More</Tooltip.Content
+							<Tooltip.Content
+								role="tooltip"
+								side="right"
+								sideOffset={6}
+								class={tooltipContentClass}>Move to More</Tooltip.Content
 							>
 						</Tooltip.Portal>
 					</Tooltip.Root>
@@ -266,7 +272,7 @@
 					type="button"
 					onclick={() => (moreUserOpen = !moreOpen)}
 					aria-expanded={moreOpen}
-					aria-controls="exec-nav-more-list"
+					aria-controls={moreListId}
 					data-testid="workspace-more-toggle"
 					class="exec-nav-item w-full"
 				>
@@ -282,7 +288,8 @@
 				</button>
 				{#if moreOpen}
 					<ul
-						id="exec-nav-more-list"
+						id={moreListId}
+						data-testid="workspace-more-list"
 						class="mt-0.5 flex flex-col gap-0.5 pl-3"
 						aria-label="More workspace items"
 						data-ws-zone="more"
@@ -326,8 +333,11 @@
 										{/snippet}
 									</Tooltip.Trigger>
 									<Tooltip.Portal>
-										<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
-											>Pin to Workspace</Tooltip.Content
+										<Tooltip.Content
+											role="tooltip"
+											side="right"
+											sideOffset={6}
+											class={tooltipContentClass}>Pin to Workspace</Tooltip.Content
 										>
 									</Tooltip.Portal>
 								</Tooltip.Root>

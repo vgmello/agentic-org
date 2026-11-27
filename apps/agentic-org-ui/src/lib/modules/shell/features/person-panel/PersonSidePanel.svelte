@@ -51,6 +51,7 @@
 	const isOpenDesktop = $derived(Boolean(open && memberId && !isNarrow));
 
 	let desktopPanelEl: HTMLElement | null = null;
+	let lastHandledSeq = 0;
 	let lastOpener = $state.raw<HTMLElement | null>(null);
 
 	function trackDesktopPanel(node: HTMLElement) {
@@ -112,12 +113,11 @@
 	function syncMemberLoad(node: HTMLElement) {
 		const orgId = organizationId;
 		const id = memberId;
+		const seq = openSeq;
 		const incomingOpener = opener;
-		void openSeq;
-		if (incomingOpener) {
-			lastOpener = incomingOpener;
-		} else if (!lastOpener?.isConnected) {
-			lastOpener = captureOverlayOpener(node);
+		if (seq !== lastHandledSeq) {
+			lastHandledSeq = seq;
+			lastOpener = incomingOpener ?? captureOverlayOpener(node);
 		}
 		if (!id) return;
 		node.scrollTop = 0;
@@ -190,7 +190,7 @@
 			void tick().then(() => focusHeading());
 		}}
 		onCloseAutoFocus={(event) => {
-			if (!restoreFocusOnClose) event.preventDefault();
+			if (!restoreFocusOnClose || open) event.preventDefault();
 		}}
 		data-testid="person-side-panel"
 		data-mode="modal"

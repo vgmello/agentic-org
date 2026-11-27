@@ -64,16 +64,13 @@ for (const width of [959, 720]) {
 			'Chat',
 			'Activity',
 			'Projects',
+			'Insights',
 			'Teams',
-			'Org chart',
-			'Members',
-			'Processes',
-			'Offices',
 			'Settings'
 		]) {
 			const link = nav.getByRole('link', { name, exact: true });
 			await expect(link).toBeVisible();
-			await expect(link).toHaveAttribute('title', name);
+			await expect(link).not.toHaveAttribute('type', 'button');
 		}
 		const account = page.getByRole('button', { name: 'You · Owner, account menu', exact: true });
 		await expect(account.locator('svg')).toBeVisible();
@@ -100,7 +97,7 @@ for (const width of [959, 720]) {
 		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(264);
 		for (
 			let i = 0;
-			i < 8 && !(await activity.evaluate((el) => el === document.activeElement));
+			i < 16 && !(await activity.evaluate((el) => el === document.activeElement));
 			i++
 		) {
 			await page.keyboard.press(tabKey);
@@ -485,29 +482,39 @@ test(
 		await nav.getByRole('link', { name: 'Home', exact: true }).focus();
 		const initial = await nav.evaluate((el) => el.scrollTop);
 		const key = browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
-		for (const name of ['Inbox', 'Work', 'Chat', 'Activity', 'Projects']) {
-			await page.keyboard.press(key);
-			await expect(
-				nav.getByRole('link', {
-					name: name === 'Inbox' ? /^Inbox/ : name,
-					exact: name !== 'Inbox'
-				})
-			).toBeFocused();
+		const tabToNavLink = async (name: string) => {
+			const target = nav.getByRole('link', {
+				name: name === 'Inbox' ? /^Inbox/ : name,
+				exact: name !== 'Inbox'
+			});
+			for (let step = 0; step < 6; step++) {
+				await page.keyboard.press(key);
+				if (await target.evaluate((el) => el === document.activeElement)) return;
+			}
+			await expect(target).toBeFocused();
+		};
+		for (const name of ['Inbox', 'Work', 'Chat', 'Activity', 'Projects', 'Insights']) {
+			await tabToNavLink(name);
 		}
 		const favToggle = nav.getByRole('button', { name: 'Collapse favorite projects', exact: true });
 		if (await favToggle.isVisible()) {
-			await page.keyboard.press(key);
+			for (let step = 0; step < 4; step++) {
+				await page.keyboard.press(key);
+				if (await favToggle.evaluate((el) => el === document.activeElement)) break;
+			}
 			await expect(favToggle).toBeFocused();
-			const favLinks = nav.locator('#exec-nav-favs a');
+			const favLinks = nav.locator('[data-sidebar-favs] a');
 			const favCount = await favLinks.count();
 			for (let i = 0; i < favCount; i++) {
-				await page.keyboard.press(key);
+				for (let step = 0; step < 3; step++) {
+					await page.keyboard.press(key);
+					if (await favLinks.nth(i).evaluate((el) => el === document.activeElement)) break;
+				}
 				await expect(favLinks.nth(i)).toBeFocused();
 			}
 		}
-		for (const name of ['Teams', 'Org chart', 'Members', 'Processes', 'Offices', 'Settings']) {
-			await page.keyboard.press(key);
-			await expect(nav.getByRole('link', { name, exact: true })).toBeFocused();
+		for (const name of ['Teams', 'Settings']) {
+			await tabToNavLink(name);
 		}
 		const settingsLink = nav.getByRole('link', { name: 'Settings', exact: true });
 		await expect.poll(() => nav.evaluate((el) => el.scrollTop)).toBeGreaterThan(initial);
@@ -533,19 +540,22 @@ test(
 		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-		const inboxName = /^Inbox(?:\s*,\s*|\s+)3 waiting on you$/i;
+		const inboxName = /^Inbox(?:\s*,\s*|\s+)3 (?:waiting on you|needing attention)$/i;
 		const inbox = nav.getByRole('link', { name: inboxName });
 		await expect(inbox).toBeVisible();
 		const dot = inbox.locator('.exec-nav-dot');
 		await expect(dot).toBeInViewport({ ratio: 1 });
-		await expect(inbox).toHaveAttribute('title', 'Inbox (3 waiting on you)');
 		await shot(page, 'shell-badge-full');
 		await page.setViewportSize({ width: 720, height: 900 });
 		await collapseToRail(page, 720);
 		const railInbox = nav.getByRole('link', { name: inboxName });
 		await expect(railInbox).toBeVisible();
 		await expect(railInbox.locator('.exec-nav-dot')).toBeInViewport({ ratio: 1 });
-		await expect(railInbox).toHaveAttribute('title', 'Inbox (3 waiting on you)');
+		await railInbox.focus();
+		await expect(
+			page.getByRole('tooltip', { name: /Inbox \(3 needing attention\)/ })
+		).toBeVisible();
+		await page.keyboard.press('Escape');
 		await shot(page, 'shell-badge-rail');
 	}
 );
@@ -559,11 +569,15 @@ test(
 			.getByRole('navigation', { name: 'Main', exact: true })
 			.getByRole('link', { name: 'Chat', exact: true })
 			.click();
-		await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
+		await page
+			.getByRole('navigation', { name: 'Chat', exact: true })
+			.getByRole('button', { name: /Mentions/ })
+			.click();
+		await expect(page).toHaveTitle('Mentions · Chat · Agentic Org');
 		await page.evaluate(() => {
 			window.location.hash = 'shell-page-title';
 		});
-		await expect(page).toHaveURL(/\/chat#shell-page-title$/);
+		await expect(page).toHaveURL(/\/chat\?v=mentions#shell-page-title$/);
 		await page
 			.getByRole('navigation', { name: 'Chat', exact: true })
 			.getByTestId('conversation-link')
@@ -585,8 +599,8 @@ test(
 		await expect(composer).toHaveValue('Keep this unsent draft');
 		await shot(page, 'shell-menu-back-preserves-chat-draft');
 		await page.evaluate(() => window.history.back());
-		await expect(page).toHaveURL(/\/chat#shell-page-title$/);
-		await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
+		await expect(page).toHaveURL(/\/chat\?v=mentions#shell-page-title$/);
+		await expect(page).toHaveTitle('Mentions · Chat · Agentic Org');
 		await expect(composer).toHaveCount(0);
 	}
 );

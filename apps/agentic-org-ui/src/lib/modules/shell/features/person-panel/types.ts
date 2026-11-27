@@ -14,6 +14,7 @@ export interface PersonPanelProfile {
 	kind: 'agent' | 'person';
 	kindLabel: string;
 	owner: boolean;
+	isBuiltIn?: boolean;
 	role?: string;
 	status: string;
 	isSelf: boolean;

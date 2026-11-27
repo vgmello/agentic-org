@@ -108,6 +108,26 @@ describe('personPanelDataSource', () => {
 		expect(result.openWork.map((item) => item.ref)).toEqual(['ORG-1', 'ORG-2', 'ORG-3']);
 	});
 
+	it('marks built-in HR and Tess profiles via isBuiltInHandle fallback', async () => {
+		profileMock.mockResolvedValue({
+			...makeProfile('tess', 'Tess'),
+			handle: 'tess',
+			role: 'Chief of Staff'
+		});
+		queueMock.mockResolvedValue({
+			rows: [],
+			viewer: { employee: null, teamIds: [], owner: true },
+			needsMeSources: []
+		});
+
+		const result = await personPanelDataSource.loadMember(
+			'org-1',
+			'tess',
+			new AbortController().signal
+		);
+		expect(result.profile?.isBuiltIn).toBe(true);
+	});
+
 	it('surfaces profile errors cleanly when profile fetch fails', async () => {
 		profileMock.mockRejectedValue(new Error('Member offline'));
 		queueMock.mockResolvedValue({

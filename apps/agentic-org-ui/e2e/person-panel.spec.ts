@@ -137,3 +137,42 @@ test(
 		await expect(sep).toBeHidden();
 	}
 );
+
+test(
+	'Offline Search controls expose accessible tooltips via aria-disabled and block palette open',
+	{ tag: '@webkit' },
+	async ({ page }) => {
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await visit(page, '/home?mock=poc');
+
+		const sidebarSearch = page.getByTestId('sidebar-search-trigger');
+		await expect(sidebarSearch).toBeVisible();
+		await page.evaluate(() => {
+			(
+				window as unknown as { __mockOrgLive?: (organizationId: string, live: boolean) => void }
+			).__mockOrgLive?.('poc-agentic-org', false);
+		});
+		await expect(sidebarSearch).toHaveAttribute('aria-disabled', 'true');
+		expect(await sidebarSearch.evaluate((el) => el.hasAttribute('disabled'))).toBe(false);
+		await sidebarSearch.hover();
+		await expect(
+			page.getByRole('tooltip', { name: 'Search unavailable while offline' })
+		).toBeVisible();
+		await page.keyboard.press('Escape');
+		await sidebarSearch.click({ force: true });
+		await expect(page.locator('.exec-cmdk-dialog')).toHaveCount(0);
+
+		await page.setViewportSize({ width: 390, height: 844 });
+		const mobileSearch = page.getByTestId('mobile-search-trigger');
+		await expect(mobileSearch).toBeVisible();
+		await expect(mobileSearch).toHaveAttribute('aria-disabled', 'true');
+		expect(await mobileSearch.evaluate((el) => el.hasAttribute('disabled'))).toBe(false);
+		await mobileSearch.focus();
+		await expect(
+			page.getByRole('tooltip', { name: 'Search unavailable while offline' })
+		).toBeVisible();
+		await page.keyboard.press('Escape');
+		await mobileSearch.click({ force: true });
+		await expect(page.locator('.exec-cmdk-dialog')).toHaveCount(0);
+	}
+);

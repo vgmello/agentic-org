@@ -12,6 +12,7 @@ export class PersonPanelState {
 	#openListeners: Array<(memberId: string) => void> = [];
 	#closeListeners: Array<() => void> = [];
 	#sessionUnsub: (() => void) | undefined;
+	#organizationId: string | undefined;
 
 	get isOpen(): boolean {
 		return this.#open;
@@ -65,6 +66,14 @@ export class PersonPanelState {
 		}
 	}
 
+	/** Close any open panel when switching between organizations. */
+	setOrganization(organizationId: string): void {
+		if (this.#organizationId !== undefined && this.#organizationId !== organizationId) {
+			this.close(false);
+		}
+		this.#organizationId = organizationId;
+	}
+
 	/** Bind panel cleanup to an external session-ended hook without importing platform/auth here. */
 	bindSessionEnd(subscribe: (listener: () => void) => () => void): () => void {
 		this.#sessionUnsub?.();
@@ -99,6 +108,7 @@ export class PersonPanelState {
 	dispose(): void {
 		this.#sessionUnsub?.();
 		this.#sessionUnsub = undefined;
+		this.#organizationId = undefined;
 		this.close(false);
 		this.#openListeners = [];
 		this.#closeListeners = [];

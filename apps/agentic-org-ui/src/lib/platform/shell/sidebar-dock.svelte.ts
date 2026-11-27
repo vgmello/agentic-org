@@ -15,10 +15,12 @@ export class SidebarDockController {
 	hovered = $state(false);
 	focused = $state(false);
 	menuOpen = $state(false);
+	textReflowRail = $state(false);
 
 	#hoverTimer: ReturnType<typeof setTimeout> | undefined;
 	#focusTimer: ReturnType<typeof setTimeout> | undefined;
 	#focusRaf: number | undefined;
+	#reflowObserver: ResizeObserver | undefined;
 	#disposed = false;
 
 	constructor(options: SidebarDockOptions) {
@@ -116,12 +118,33 @@ export class SidebarDockController {
 		}
 	}
 
+	attachReflow = (node: HTMLElement): (() => void) => {
+		const measure = () => {
+			if (this.#disposed || typeof document === 'undefined') return;
+			const containerWidth = node.parentElement?.getBoundingClientRect().width ?? window.innerWidth;
+			const rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+			this.textReflowRail = containerWidth >= 640 && containerWidth < 40 * rootFont;
+		};
+		measure();
+		if (typeof ResizeObserver === 'undefined') return () => undefined;
+		const observer = new ResizeObserver(measure);
+		this.#reflowObserver = observer;
+		observer.observe(node);
+		if (node.parentElement) observer.observe(node.parentElement);
+		return () => {
+			observer.disconnect();
+			if (this.#reflowObserver === observer) this.#reflowObserver = undefined;
+		};
+	};
+
 	dispose(): void {
 		this.#disposed = true;
 		clearTimeout(this.#hoverTimer);
 		clearTimeout(this.#focusTimer);
 		this.#hoverTimer = undefined;
 		this.#focusTimer = undefined;
+		this.#reflowObserver?.disconnect();
+		this.#reflowObserver = undefined;
 		if (this.#focusRaf !== undefined && typeof cancelAnimationFrame !== 'undefined') {
 			cancelAnimationFrame(this.#focusRaf);
 			this.#focusRaf = undefined;

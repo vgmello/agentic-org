@@ -44,6 +44,7 @@
 	let { data, children } = $props();
 	const organizationId = $derived(data.connection.organization.id);
 	const isHome = $derived(page.url.pathname === '/home');
+	const isChat = $derived(page.url.pathname === '/chat' || page.url.pathname.startsWith('/chat/'));
 	const chatDrafts = provideDraftStore(() => organizationId);
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
@@ -60,6 +61,7 @@
 	);
 	$effect(() => {
 		tessPanel.setOrganization(organizationId);
+		personPanel.setOrganization(organizationId);
 	});
 	onDestroy(() => tessPanel.dispose());
 	const stopCommentCleanup = appSession.onSessionEnded(() => clearInboxDeviceComments());
@@ -159,7 +161,7 @@
 		const routeChanged = move.from?.url?.pathname !== move.to?.url?.pathname;
 		if (routeChanged) {
 			navKeys.cancel(false);
-			mobileMenuOpen = false;
+			if (move.type !== 'popstate') mobileMenuOpen = false;
 			personPanel.close(false);
 			tessPanel.noteRouteChange();
 		}
@@ -211,7 +213,6 @@
 	$effect(() => {
 		const id = organizationId;
 		const reset = untrack(() => shellData.loadedOrganizationId !== id);
-		if (reset) personPanel.close(false);
 		const { cancel } = shellData.load(id, reset);
 		return cancel;
 	});
@@ -309,8 +310,9 @@
 	});
 </script>
 
-<!-- The app fills the window edge to edge. -->
-<div class="exec-canvas fixed inset-0 overflow-hidden" {@attach navKeys.attach}>
+<!-- The app fills the window edge to edge. At 200% text (32px root), 960–1279px viewports (< 40rem)
+  reflow the sidebar to a 4rem (128px) rail so page content stays >= 400px without horizontal scroll (SHELL-30). -->
+<div class="exec-canvas fixed inset-0 @container overflow-hidden" {@attach navKeys.attach}>
 	<div class="cozy-room" aria-hidden="true">
 		<div class="cozy-alcove"></div>
 		<div class="cozy-credenza"></div>
@@ -320,9 +322,10 @@
 	<div class="cozy-shell" aria-hidden="true"></div>
 	<div
 		bind:this={desktopNavigation}
+		{@attach sidebarDock.attachReflow}
 		class={[
-			'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-300 ease-out motion-reduce:transition-none min-[640px]:flex',
-			sidebarDock.collapsed ? 'w-[68px]' : 'w-[264px]'
+			'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-300 ease-out motion-reduce:transition-none min-[640px]:flex @max-[40rem]:transition-none',
+			sidebarDock.collapsed ? 'w-[68px]' : 'w-16 @min-[40rem]:w-[264px]'
 		]}
 	>
 		<ExecutiveSidebar
@@ -332,7 +335,7 @@
 			workItems={shellData.workItems}
 			inboxItems={shellData.inboxItems}
 			projectTeams={shellData.snapshot?.project_teams}
-			collapsed={sidebarDock.collapsed}
+			collapsed={sidebarDock.collapsed || sidebarDock.textReflowRail}
 			pinned={sidebarDock.pinned}
 			tessOpen={tessPanel.open}
 			offline={showPaused}
@@ -349,8 +352,10 @@
 	</div>
 	<div
 		class={[
-			'exec-shell-main exec-legacy-compat relative z-10 flex h-full flex-col overflow-hidden transition-[padding] duration-300 ease-out motion-reduce:transition-none',
-			sidebarDock.collapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
+			'exec-shell-main exec-legacy-compat relative z-10 flex h-full flex-col overflow-hidden transition-[padding] duration-300 ease-out motion-reduce:transition-none @max-[40rem]:transition-none',
+			sidebarDock.collapsed
+				? 'min-[640px]:pl-[68px]'
+				: 'min-[640px]:pl-16 min-[640px]:@min-[40rem]:pl-[264px]'
 		]}
 	>
 		<MobileHeaderBar
@@ -397,6 +402,9 @@
 								onretry={retry}
 							/>
 						</div>{/if}
+					{#if isChat}
+						<h1 id="shell-page-title" tabindex="-1" class="sr-only focus:outline-none">Chat</h1>
+					{/if}
 					{@render children()}
 				</main>
 			</div>

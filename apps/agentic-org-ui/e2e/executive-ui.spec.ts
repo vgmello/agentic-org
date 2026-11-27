@@ -138,18 +138,21 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		'No favorite projects yet.'
 	);
 
-	// Organization "More" reveals Processes and lets the user pin/unpin it across reloads
+	// Organization "More" reveals Processes and lets the user pin/unpin it across reloads with focus preservation
 	await page.getByTestId('organization-more-toggle').click();
-	const orgMoreList = page.locator('#exec-nav-org-more-list');
+	const orgMoreList = page.getByTestId('organization-more-list');
 	const pinnedOrgItems = page.locator('ul[data-org-zone="pinned"] > li[data-org-zone="pinned"]');
 	await expect(orgMoreList.getByRole('link', { name: 'Processes' })).toBeVisible();
 	await page.getByRole('button', { name: 'Pin Processes to Organization' }).click({ force: true });
-	await expect(pinnedOrgItems.getByRole('link', { name: 'Processes' })).toBeVisible();
+	const pinnedProcesses = pinnedOrgItems.getByRole('link', { name: 'Processes' });
+	await expect(pinnedProcesses).toBeVisible();
+	await expect(pinnedProcesses).toBeFocused();
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
-	await expect(pinnedOrgItems.getByRole('link', { name: 'Processes' })).toBeVisible();
+	await expect(pinnedProcesses).toBeVisible();
 	await page.getByRole('button', { name: 'Move Processes to More' }).click({ force: true });
-	await expect(pinnedOrgItems.getByRole('link', { name: 'Processes' })).toHaveCount(0);
+	await expect(pinnedProcesses).toHaveCount(0);
+	await expect(page.getByTestId('organization-more-toggle')).toBeFocused();
 
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-ocean.png` });
@@ -493,7 +496,9 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
 	const favSection = page.getByTestId('favorite-projects-section');
-	const favLink = favSection.getByRole('link', { name: 'Office federation' });
+	const favLink = favSection.getByRole('link', {
+		name: /^Office federation\s*,\s*(?:On track|At risk|Off track|Offline)$/
+	});
 	await expect(favLink).toBeVisible();
 	await expect(favLink).toHaveAttribute('href', /\/projects\/office-federation$/);
 	await expect(favLink.locator('[data-health-tone]')).toHaveAttribute(

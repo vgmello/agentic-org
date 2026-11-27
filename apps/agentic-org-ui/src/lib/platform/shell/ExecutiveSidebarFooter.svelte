@@ -9,6 +9,7 @@
 	import { tooltipContentClass } from '$lib/components/classes';
 	import type { Connection } from '$lib/proto';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
+	import { tooltipLinkProps } from './tooltip-link-props';
 
 	interface FooterOfficeState {
 		label: string;
@@ -94,7 +95,9 @@
 						aria-label="Tess — Chief of staff ({tessStatus.label}, ⌘/)"
 						class={[
 							'exec-tess-contact flex items-center rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
-							collapsed ? 'size-10 justify-center p-0' : 'w-full gap-2.5 px-2 py-1.5',
+							collapsed
+								? 'size-10 justify-center p-0 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11'
+								: 'w-full gap-2.5 px-2 py-1.5',
 							tessOpen && 'is-open'
 						]}
 					>
@@ -121,7 +124,7 @@
 				{/snippet}
 			</Tooltip.Trigger>
 			<Tooltip.Portal>
-				<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+				<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 					>Tess · {tessStatus.label} (⌘/)</Tooltip.Content
 				>
 			</Tooltip.Portal>
@@ -144,7 +147,7 @@
 		<Tooltip.Trigger>
 			{#snippet child({ props })}
 				<a
-					{...props}
+					{...tooltipLinkProps(props)}
 					href={resolve('/settings/offices')}
 					onclick={(e) => onNavigate?.(e, '/settings/offices')}
 					aria-label={officeStatusLabel}
@@ -189,7 +192,7 @@
 			{/snippet}
 		</Tooltip.Trigger>
 		<Tooltip.Portal>
-			<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+			<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 				>{officeStatusLabel}</Tooltip.Content
 			>
 		</Tooltip.Portal>
