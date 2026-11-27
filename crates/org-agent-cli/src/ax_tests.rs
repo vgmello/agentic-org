@@ -405,7 +405,14 @@ fn msg_ask_builds_one_question_from_scalar_flags_and_never_mixes_the_forms() {
     let questions = r#"{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"}]}"#;
     for line in [
         &[
-            "msg", "ask", "--to", "owner", "--prompt", "Ship?", "--json", questions,
+            "msg",
+            "ask",
+            "--to",
+            "owner",
+            "--prompt",
+            "Ship?",
+            "--input-json",
+            questions,
         ][..],
         &["msg", "ask", "--to", "owner"],
         &["msg", "ask", "--to", "owner", "--option", "a"],
@@ -770,4 +777,86 @@ fn shorthands_read_the_same_in_help_and_schema() {
         assert_eq!(a, b, "{short}");
         assert_eq!(a.exit_code, 0, "{short}: {}", a.stdout);
     }
+}
+
+#[test]
+fn agent_os_format_env_precedence_and_json_switch_before_and_after_subcommand() {
+    let words = |line: &[&str]| line.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let mut office = Office::with(&[("tasks.list", json!({"tasks": [], "total": 0}))]);
+
+    // 1. AGENT_OS_FORMAT=yaml applies when no CLI flag is passed.
+    let yaml = crate::execute_with_office_and_env(
+        "agent-os",
+        &words(&["task", "list"]),
+        &mut office,
+        Some("YAML"),
+    );
+    assert_eq!(yaml.exit_code, 0, "{}", yaml.stdout);
+    assert!(yaml.stdout.starts_with("ok: true\n"), "{}", yaml.stdout);
+
+    // 2. `--json` before OR after subcommand beats AGENT_OS_FORMAT=yaml.
+    for line in [
+        &["--json", "task", "list"][..],
+        &["task", "list", "--json"],
+        &["--json", "context", "--offline"],
+        &["context", "--offline", "--json"],
+    ] {
+        let out =
+            crate::execute_with_office_and_env("agent-os", &words(line), &mut office, Some("yaml"));
+        assert_eq!(out.exit_code, 0, "{line:?}: {}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["ok"], true, "{line:?}");
+    }
+
+    // 3. Offline skills honor AGENT_OS_FORMAT=yaml and explicit `--json` override.
+    let skill_yaml = crate::execute_with_office_and_env(
+        "agent-os",
+        &words(&["skill", "list", "--offline"]),
+        &mut office,
+        Some("yaml"),
+    );
+    assert_eq!(skill_yaml.exit_code, 0, "{}", skill_yaml.stdout);
+    assert!(
+        skill_yaml.stdout.contains("mode: offline_builtin_only"),
+        "{}",
+        skill_yaml.stdout
+    );
+
+    let skill_json = crate::execute_with_office_and_env(
+        "agent-os",
+        &words(&["--json", "skill", "list", "--offline"]),
+        &mut office,
+        Some("yaml"),
+    );
+    assert_eq!(skill_json.exit_code, 0, "{}", skill_json.stdout);
+    let env: Value = serde_json::from_str(&skill_json.stdout).unwrap();
+    assert_eq!(env["data"]["mode"], "offline_builtin_only");
+
+    // 4. Invalid AGENT_OS_FORMAT without explicit flag fails closed with exit 2.
+    let bad = crate::execute_with_office_and_env(
+        "agent-os",
+        &words(&["task", "list"]),
+        &mut office,
+        Some("bogus"),
+    );
+    assert_eq!(bad.exit_code, 2, "{}", bad.stdout);
+    let env: Value = serde_json::from_str(&bad.stdout).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_request");
+
+    // 5. `--input-json` accepts a structured request body alongside `--json` output switch.
+    let both = crate::execute_with_office_and_env(
+        "agent-os",
+        &words(&[
+            "--json",
+            "task",
+            "list",
+            "--input-json",
+            r#"{"status":"todo"}"#,
+        ]),
+        &mut office,
+        Some("yaml"),
+    );
+    assert_eq!(both.exit_code, 0, "{}", both.stdout);
+    let env: Value = serde_json::from_str(&both.stdout).unwrap();
+    assert_eq!(env["ok"], true);
 }

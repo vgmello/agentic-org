@@ -48,7 +48,7 @@ fn the_four_audited_inaccuracies_fail_the_guard() {
     for good in [
         "`agent-os channel summarize --channel <ch> --question <text>`",
         "`agent-os task transition --task <ref> --status blocked --blocked-reason <text> --if-match <rev>`",
-        r#"`agent-os msg ask --to @<handle> --json '{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"}]}'`"#,
+        r#"`agent-os msg ask --to @<handle> --input-json '{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"}]}'`"#,
         "`agent-os msg ask --to @<handle> --prompt <text> --question-type choice --option <id>=<label> --default-value <id>`",
         "`agent-os member set-hiring --member <id> --allow --if-match <rev>`",
         "`agent-os process create --kind standard --title <t> --non-overridable --input-file <path>`",
@@ -176,7 +176,7 @@ fn aliases_help_grammar_and_attach_are_understood() {
 fn json_placeholders_keep_every_key_and_type_so_unknown_fields_and_wrong_types_fail() {
     // A placeholder leaf never hides the field it sits in.
     assert_fails(
-        r#"`agent-os task list --json '{"nonexistent":"<x>"}'`"#,
+        r#"`agent-os task list --input-json '{"nonexistent":"<x>"}'`"#,
         "`nonexistent` is not a field",
     );
     assert_fails(
@@ -184,16 +184,16 @@ fn json_placeholders_keep_every_key_and_type_so_unknown_fields_and_wrong_types_f
         "`nonexistent` is not a field",
     );
     assert_fails(
-        r#"`agent-os task list --json='{"status":"<s>","bogus":{"deep":"<x>"}}'`"#,
+        r#"`agent-os task list --input-json='{"status":"<s>","bogus":{"deep":"<x>"}}'`"#,
         "`bogus` is not a field",
     );
     // A literal of the wrong type still fails next to placeholders.
     assert_fails(
-        r#"`agent-os task list --json '{"status":"finished","query":"<q>"}'`"#,
+        r#"`agent-os task list --input-json '{"status":"finished","query":"<q>"}'`"#,
         "`status` must be one of",
     );
     assert_fails(
-        r#"`agent-os msg wait --json '{"timeout_ms":"many"}'`"#,
+        r#"`agent-os msg wait --input-json '{"timeout_ms":"many"}'`"#,
         "`timeout_ms` must be a whole number",
     );
     assert_fails(
@@ -202,14 +202,14 @@ fn json_placeholders_keep_every_key_and_type_so_unknown_fields_and_wrong_types_f
     );
     // JSON that is not JSON is not waved through either.
     assert_fails(
-        "`agent-os msg wait --json '{\"timeout_ms\": <n>}'`",
-        "--json",
+        "`agent-os msg wait --input-json '{\"timeout_ms\": <n>}'`",
+        "--input-json",
     );
     // Placeholder leaves become values of their declared types; a bare placeholder is `{}`.
     for good in [
-        r#"`agent-os task list --json '{"status":"<status>","exclude_status":["<status>"],"labels":["<label>"]}'`"#,
-        r#"`agent-os task list --json '{"labels":"<labels>","label_match":"<mode>"}'`"#,
-        "`agent-os task list --json '<json>'`",
+        r#"`agent-os task list --input-json '{"status":"<status>","exclude_status":["<status>"],"labels":["<label>"]}'`"#,
+        r#"`agent-os task list --input-json '{"labels":"<labels>","label_match":"<mode>"}'`"#,
+        "`agent-os task list --input-json '<json>'`",
         "```text\n{\"command\":\"msg wait\",\"input\":{\"timeout_ms\":\"<n>\"}}\n```",
     ] {
         assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));

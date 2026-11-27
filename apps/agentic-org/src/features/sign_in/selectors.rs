@@ -41,7 +41,7 @@ const COMMON_VALUE_OPTIONS: [&str; 9] = [
     "fields",
     "limit",
     "cursor",
-    "json",
+    "input-json",
     "input-file",
     "input-format",
     "idempotency-key",
@@ -195,13 +195,6 @@ pub(super) fn split(args: &[String]) -> Result<Selectors, String> {
         scanned.forwarded.push(arg.clone());
     }
     match awaiting {
-        // The command's own `--json` takes the input as JSON; the global `--json` (JSON
-        // output) is written before the resource.
-        Some("--json") => Err(
-            "--json needs a value: after the command it is the input as JSON; for JSON output \
-             write --json before the command (`agentic-org --json task list`)"
-                .to_owned(),
-        ),
         Some(flag) => Err(format!("{flag} needs a value")),
         None => Ok(scanned),
     }
@@ -283,16 +276,44 @@ mod tests {
             (&["msg", "send", "--to", "ada", "--body"][..], "--body"),
             (&["task", "create", "--title"], "--title"),
             (&["task", "list", "--format"], "--format"),
-            (&["task", "list", "--json"], "before the command"),
+            (&["task", "list", "--input-json"], "--input-json"),
             (&["task", "create", "-q", "--title"], "--title"),
         ] {
             let error = split(&words(list)).unwrap_err();
             assert!(error.contains(flag), "{list:?}: {error}");
         }
+        // Bare `--json` after the command is a boolean output switch (not value-taking).
+        let bare_json = split(&words(&["task", "list", "--json"])).unwrap();
+        assert_eq!(bare_json.forwarded, words(&["task", "list", "--json"]));
+
+        // Flag-like values passed to `--input-json` stay attached as its value, never read as
+        // selectors, global flags, or `--help`.
+        let help_val = split(&words(&["task", "list", "--input-json", "--help"])).unwrap();
+        assert_eq!(
+            help_val.forwarded,
+            words(&["task", "list", "--input-json", "--help"])
+        );
+        assert!(!has_flag(&help_val.forwarded, &["--help", "-h"]));
+
+        let quiet_val = split(&words(&["task", "list", "--input-json", "-q"])).unwrap();
+        assert!(!quiet_val.quiet);
+        assert_eq!(
+            quiet_val.forwarded,
+            words(&["task", "list", "--input-json", "-q"])
+        );
+
+        let office_val = split(&words(&["task", "list", "--input-json", "--office"])).unwrap();
+        assert_eq!(office_val.office, None);
+        assert_eq!(
+            office_val.forwarded,
+            words(&["task", "list", "--input-json", "--office"])
+        );
+
         // A value that reads like a flag is still a value; `--name=value` needs nothing more.
         for list in [
             &["msg", "send", "--to", "ada", "--body", "--body"][..],
             &["task", "create", "--title=x"],
+            &["task", "list", "--input-json={}"],
             &["msg", "send", "--to", "ada", "--", "--body"],
         ] {
             assert!(split(&words(list)).is_ok(), "{list:?}");

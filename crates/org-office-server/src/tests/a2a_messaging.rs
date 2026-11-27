@@ -959,7 +959,7 @@ fn same_office_a2a_dm_reply_channel_mentions_ask_and_handoff() {
         let args = vec![
             "msg".to_owned(),
             "ask".to_owned(),
-            "--json".to_owned(),
+            "--input-json".to_owned(),
             ask_json,
         ];
         let out = org_agent_cli::execute(&args, ask_binding.binding.clone());
@@ -1375,7 +1375,7 @@ fn verify_cross_office_ask_and_answer(
         let args = vec![
             "msg".to_owned(),
             "ask".to_owned(),
-            "--json".to_owned(),
+            "--input-json".to_owned(),
             ask_json,
         ];
         let out = org_agent_cli::execute(&args, ask_binding.binding.clone());
@@ -1443,7 +1443,7 @@ fn verify_cross_office_withdraw_and_handoff(
         "hold_ms": 0
     })
     .to_string();
-    let w_ask = hq_node.cli_ok(ada, &["msg", "ask", "--json", &w_ask_json]);
+    let w_ask = hq_node.cli_ok(ada, &["msg", "ask", "--input-json", &w_ask_json]);
     let w_ask_id = w_ask["ask_id"].as_str().unwrap().to_owned();
     wait_until(
         Duration::from_secs(10),
@@ -3143,7 +3143,7 @@ fn verify_sat_owner_ask_and_answer(
         let args = vec![
             "msg".to_owned(),
             "ask".to_owned(),
-            "--json".to_owned(),
+            "--input-json".to_owned(),
             ask_json,
         ];
         let out = org_agent_cli::execute(&args, ask_binding.binding.clone());

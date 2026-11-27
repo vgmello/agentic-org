@@ -194,6 +194,8 @@ fn global_flags_after_setups_words_are_refused_not_ignored() {
         (&["--name", "lab", "--json"][..], "--json"),
         (&["--name", "lab", "-q"], "--quiet"),
         (&["--port", "7421", "--quiet"], "--quiet"),
+        (&["--name", "lab", "--format", "json"], "--format"),
+        (&["--name", "lab", "--format=yaml"], "--format"),
         (&["--name", "lab", "--dry-run"], "--dry-run"),
         (
             &["--non-interactive", "--config", "/tmp/x.json", "--json"],

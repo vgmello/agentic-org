@@ -16,10 +16,12 @@ pub const DEFAULT_LIMIT: u32 = 20;
 pub const MAX_LIMIT: u32 = 200;
 const MAX_KEY_LEN: usize = 64;
 /// The most a command reads from `--input-file` or `--stdin` as text or JSON, and the longest
-/// `--json` value: 1 MiB.
+/// `--input-json` value: 1 MiB.
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
 /// The most a command reads with `--input-format yaml`: the bound of the YAML reader, 64 KiB.
 pub const MAX_YAML_INPUT_BYTES: usize = org_docs::MAX_FRONT_MATTER_BYTES;
+/// Environment variable selecting the default output format across `agent-os` and `agentic-org`.
+pub const OUTPUT_FORMAT_ENV: &str = "AGENT_OS_FORMAT";
 
 /// Whether `key` is an idempotency key: 1 to 64 letters, digits and hyphens.
 pub(crate) fn is_key(key: &str) -> bool {
@@ -29,10 +31,34 @@ pub(crate) fn is_key(key: &str) -> bool {
 
 /// How the answer is printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Format {
+pub enum Format {
     Json,
     Yaml,
     Compact,
+}
+
+impl Format {
+    /// Parses a format word (case-insensitive, surrounding whitespace ignored).
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "json" => Some(Self::Json),
+            "yaml" => Some(Self::Yaml),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
+}
+
+/// Parses `AGENT_OS_FORMAT` for `org-command` (`json`, `yaml`, or `compact`, case-insensitive).
+/// Empty or whitespace-only values are treated as unset (`Ok(None)`).
+pub fn parse_env_format(raw: &str) -> Result<Option<Format>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Format::parse(trimmed)
+        .map(Some)
+        .ok_or_else(|| format!("{OUTPUT_FORMAT_ENV} is json, yaml or compact, not `{trimmed}`."))
 }
 
 /// A command line that could not be read: `invalid_request`, exit code 2.
@@ -54,13 +80,45 @@ pub(crate) enum Parsed {
     Call(Box<Invocation>),
 }
 
+/// Strips a leading `--json` switch before `<resource> <verb>` (e.g. `agent-os --json task list`).
+fn strip_leading_json<'a>(
+    table: &CommandTable,
+    program: &str,
+    args: &'a [String],
+) -> Result<(bool, &'a [String]), Usage> {
+    let mut leading_json = false;
+    let mut rest = args;
+    while let Some(first) = rest.first() {
+        if first == "--json" {
+            if leading_json {
+                return Err(Usage {
+                    message: "--json is given twice.".into(),
+                    hint: help::resources_hint(table, program),
+                });
+            }
+            leading_json = true;
+            rest = &rest[1..];
+        } else if first.starts_with("--json=") {
+            return Err(Usage {
+                message: "--json is a yes-or-no flag for JSON output and takes no value; pass a JSON object with --input-json <object>.".into(),
+                hint: help::resources_hint(table, program),
+            });
+        } else {
+            break;
+        }
+    }
+    Ok((leading_json, rest))
+}
+
 pub(crate) fn parse(
     table: &CommandTable,
     program: &str,
     args: &[String],
     sources: &mut dyn Sources,
+    env_format: Option<&str>,
 ) -> Result<Parsed, Usage> {
     let usage = |message: String, hint: String| Usage { message, hint };
+    let (leading_json, args) = strip_leading_json(table, program, args)?;
     // A shorthand is read as the command it stands for, whatever follows it.
     let args = table.expand(args);
     let args = args.as_ref();
@@ -104,7 +162,10 @@ pub(crate) fn parse(
     }
     let mut read = || -> Result<Parsed, Problem> {
         let scanned = scan(command, rest)?;
-        let format = scanned.format()?;
+        if leading_json && scanned.options.contains_key("json") {
+            return Err(Problem::from("--json is given twice.".to_owned()));
+        }
+        let format = scanned.format(leading_json, env_format)?;
         if scanned.options.contains_key("schema") {
             return Ok(Parsed::Schema(command, format));
         }
@@ -189,12 +250,23 @@ impl Scanned {
         self.options.get(name).map(String::as_str)
     }
 
-    fn format(&self) -> Result<Format, String> {
-        match self.option("format") {
-            None | Some("json") => Ok(Format::Json),
-            Some("yaml") => Ok(Format::Yaml),
-            Some("compact") => Ok(Format::Compact),
-            Some(other) => Err(format!("--format is json, yaml or compact, not `{other}`.")),
+    fn format(&self, leading_json: bool, env_format: Option<&str>) -> Result<Format, String> {
+        let has_json = leading_json || self.options.contains_key("json");
+        match (has_json, self.option("format")) {
+            (true, None | Some("json")) => Ok(Format::Json),
+            (true, Some(other)) => Err(format!(
+                "--json cannot be combined with --format `{other}`."
+            )),
+            (false, Some("json")) => Ok(Format::Json),
+            (false, Some("yaml")) => Ok(Format::Yaml),
+            (false, Some("compact")) => Ok(Format::Compact),
+            (false, Some(other)) => {
+                Err(format!("--format is json, yaml or compact, not `{other}`."))
+            }
+            (false, None) => match env_format {
+                Some(raw) => Ok(parse_env_format(raw)?.unwrap_or(Format::Json)),
+                None => Ok(Format::Json),
+            },
         }
     }
 }
@@ -227,7 +299,7 @@ fn scan(command: &'static Command, rest: &[String]) -> Result<Scanned, Problem> 
             (Some(option), _) => option.value.is_some(),
             (None, Some(field)) if !field.is_flag() => {
                 return Err(Problem::from(format!(
-                    "`{}` has structure and is not a flag. Give it in --json, or in a file with --input-format json or yaml.",
+                    "`{}` has structure and is not a flag. Give it in --input-json, or in a file with --input-format json or yaml.",
                     field.name
                 )))
             }
@@ -242,6 +314,12 @@ fn scan(command: &'static Command, rest: &[String]) -> Result<Scanned, Problem> 
                     .ok_or_else(|| format!("--{name} needs a value."))?;
                 at += 1;
                 value.clone()
+            }
+            (false, Some(_)) if name == "json" => {
+                return Err(Problem::from(
+                    "--json is a yes-or-no flag for JSON output and takes no value; pass a JSON object with --input-json <object>."
+                        .to_owned(),
+                ))
             }
             (false, Some(_)) => {
                 return Err(Problem::from(format!(
@@ -299,7 +377,7 @@ fn flag_value(field: &Field, written: &[String]) -> Result<Value, String> {
     let flag = field.flag();
     let one = |ty: &Type, text: &str| -> Result<Value, String> {
         match ty {
-            // The same range as an integer in `--json`: an `i64`, or a `u64` above it.
+            // The same range as an integer in `--input-json`: an `i64`, or a `u64` above it.
             Type::Integer => text
                 .parse::<i64>()
                 .map(Value::from)
@@ -481,13 +559,13 @@ fn build(
     for (field, written) in &scanned.fields {
         input.insert(field.name.to_owned(), flag_value(field, written)?);
     }
-    if let Some(text) = scanned.option("json") {
+    if let Some(text) = scanned.option("input-json") {
         if text.len() > MAX_INPUT_BYTES {
-            return Err(too_long("--json", MAX_INPUT_BYTES));
+            return Err(too_long("--input-json", MAX_INPUT_BYTES));
         }
-        let mut object = json_object(text, "--json")?;
+        let mut object = json_object(text, "--input-json")?;
         shape::normalize(command.input, &mut object);
-        merge(&mut input, object, "--json")?;
+        merge(&mut input, object, "--input-json")?;
     }
     let input_format = scanned.option("input-format");
     if !matches!(input_format, None | Some("text" | "json" | "yaml")) {

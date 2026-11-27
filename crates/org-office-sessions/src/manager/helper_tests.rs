@@ -1235,3 +1235,54 @@ fn session_manager_build_employee_preset_propagates_host_credential_denies() {
         );
     }
 }
+
+#[test]
+fn managed_session_environment_exports_agent_os_format_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let helper_dir = root.join("helpers");
+    let home_dir = root.join("home");
+    let ws_dir = root.join("workspace");
+    let tmp_dir = root.join("tmp");
+    for d in [&helper_dir, &home_dir, &ws_dir, &tmp_dir] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let binding_file = tmp_dir.join("session-binding.v1");
+    std::fs::write(&binding_file, b"tok").unwrap();
+
+    let office = std::sync::Arc::new(org_office::Office::for_test(
+        org_office::TestOffice::default(),
+    ));
+    let mut cfg = super::SessionManagerConfig::production(root.join("office.sock"));
+    cfg.helper_dir = Some(helper_dir);
+    let mgr = super::SessionManager::new(office, cfg);
+
+    assert!(
+        office_env_names()
+            .iter()
+            .any(|name| name.as_str() == "AGENT_OS_FORMAT"),
+        "office_env_names must declare AGENT_OS_FORMAT so runtimes pass it through"
+    );
+
+    let env = mgr
+        .build_environment(super::environment::SessionEnvInput {
+            home: &home_dir,
+            workspace: &ws_dir,
+            tmpdir: &tmp_dir,
+            employee_id: "0193a5c0-0000-7000-8000-000000000010",
+            employee_name: "Backend Agent",
+            employee_handle: "backend",
+            session_id: "0193a5c0-0000-7000-8000-000000000020",
+            token: "test-session-token",
+            binding_file: &binding_file,
+            sandbox_enabled: true,
+            operator: false,
+        })
+        .expect("build_environment should succeed with AGENT_OS_FORMAT");
+
+    let debug_names = format!("{env:?}");
+    assert!(
+        debug_names.contains("AGENT_OS_FORMAT"),
+        "managed runtime env must export AGENT_OS_FORMAT: {debug_names}"
+    );
+}

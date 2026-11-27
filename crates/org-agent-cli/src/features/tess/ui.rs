@@ -26,7 +26,7 @@ fn decode_vec<T: DeserializeOwned>(request: &Request, field: &str) -> Result<Vec
         Refusal::new(
             ErrorCode::InvalidRequest,
             format!("invalid `{field}` payload: {e}"),
-            "Pass structured fields via `--json` matching `agent-os ui present --schema`.",
+            "Pass structured fields via `--input-json` matching `agent-os ui present --schema`.",
         )
     })
 }

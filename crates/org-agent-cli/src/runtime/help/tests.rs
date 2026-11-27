@@ -147,7 +147,7 @@ fn literal_help_flag_value_is_not_mistaken_for_help_request() {
         &[
             "msg".to_owned(),
             "send".to_owned(),
-            "--json".to_owned(),
+            "--input-json".to_owned(),
             "--help".to_owned(),
         ],
         &mut panic_office,

@@ -1,10 +1,33 @@
 //! Argument groups several commands share. The vertical slices and the grammar (`cli.rs`)
 //! use it; it uses only the completers.
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use clap_complete::engine::ArgValueCompleter;
+use org_cli_shell::context::OutputFormat;
 
 use crate::completers;
+
+/// `--format` across the global CLI and local operator `agent` verbs.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FormatArg {
+    Json,
+    Compact,
+    Yaml,
+    Tsv,
+    Table,
+}
+
+impl FormatArg {
+    pub(crate) fn into_shell(self) -> OutputFormat {
+        match self {
+            Self::Json => OutputFormat::Json,
+            Self::Compact => OutputFormat::Compact,
+            Self::Yaml => OutputFormat::Yaml,
+            Self::Tsv => OutputFormat::Tsv,
+            Self::Table => OutputFormat::Table,
+        }
+    }
+}
 
 /// The instance a host command acts on (`--name`, also `--instance`).
 #[derive(Args, Debug, Clone, Default)]

@@ -10,6 +10,7 @@
 //! Its own argument grammar is kept as it is: the order of its refusals (satellite flags,
 //! then root, then the options) is a tested contract.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal, Write};
 
 use org_host_setup::Request;
@@ -58,10 +59,11 @@ fn usage(message: impl Into<String>) -> SetupError {
 
 /// The global flags setup cannot honour (it reports in prose and has no preview), written
 /// among its own words where the global parser does not see them: refused, never ignored.
-const REFUSED_GLOBALS: [(&str, &str); 4] = [
+const REFUSED_GLOBALS: [(&str, &str); 5] = [
     ("--json", "--json"),
     ("-q", "--quiet"),
     ("--quiet", "--quiet"),
+    ("--format", "--format"),
     ("--dry-run", "--dry-run"),
 ];
 
@@ -76,6 +78,68 @@ pub(crate) fn run(
     run_as(arguments, org_host::Config::refuse_root, can_prompt, out)
 }
 
+/// Returns the canonical flag name if any argument is a global flag `setup` refuses.
+fn refused_global(arguments: &[String]) -> Option<&'static str> {
+    REFUSED_GLOBALS
+        .iter()
+        .find(|(word, _)| {
+            arguments
+                .iter()
+                .any(|arg| arg == word || (*word == "--format" && arg.starts_with("--format=")))
+        })
+        .map(|(_, flag)| *flag)
+}
+
+fn has_satellite_flag(arguments: &[String]) -> bool {
+    arguments.iter().any(|arg| {
+        matches!(arg.as_str(), "--hq" | "--satellite" | "--invitation")
+            || arg.starts_with("--hq=")
+            || arg.starts_with("--invitation=")
+    })
+}
+
+fn is_help_request(arguments: &[String]) -> bool {
+    matches!(arguments, [flag] if flag == "--help" || flag == "-h")
+}
+
+fn run_non_interactive(
+    options: &BTreeMap<String, String>,
+    file: &str,
+    out: &mut dyn Write,
+) -> Result<SetUp, SetupError> {
+    if options.contains_key("--port") {
+        return Err(usage(
+            "--port is not used with --config: the address is in the file",
+        ));
+    }
+    if options.contains_key("--federation-bind") || options.contains_key("--federation-advertise") {
+        return Err(usage(
+            "--federation-bind and --federation-advertise are not used with --config: \
+             set \"federation\" in the file",
+        ));
+    }
+    host::configured(
+        std::path::Path::new(file),
+        options.get("--name").map(String::as_str),
+        out,
+    )
+    .map(|()| SetUp::Done)
+    .map_err(SetupError::Failed)
+}
+
+fn try_non_interactive(
+    non_interactive: bool,
+    options: &BTreeMap<String, String>,
+    out: &mut dyn Write,
+) -> Result<Option<SetUp>, SetupError> {
+    match (non_interactive, options.get("--config")) {
+        (true, Some(file)) => run_non_interactive(options, file, out).map(Some),
+        (true, None) => Err(usage("--non-interactive needs --config <file>")),
+        (false, Some(_)) => Err(usage("--config is read only with --non-interactive")),
+        (false, None) => Ok(None),
+    }
+}
+
 /// [`run`], with the check of who may own an instance and its service given by the caller
 /// (the composition passes the host's root refusal; a test passes its own). `can_prompt`
 /// says whether someone may be asked for the port (the run's `can_prompt`, with
@@ -86,23 +150,16 @@ pub(super) fn run_as(
     can_prompt: bool,
     out: &mut dyn Write,
 ) -> Result<SetUp, SetupError> {
-    if let Some((_, flag)) = REFUSED_GLOBALS
-        .iter()
-        .find(|(word, _)| arguments.iter().any(|arg| arg == word))
-    {
+    if let Some(flag) = refused_global(arguments) {
         return Err(usage(format!("`setup` does not take {flag}")));
     }
     // Never write a fake HQ or enroll a satellite from here.
-    if arguments.iter().any(|arg| {
-        matches!(arg.as_str(), "--hq" | "--satellite" | "--invitation")
-            || arg.starts_with("--hq=")
-            || arg.starts_with("--invitation=")
-    }) {
+    if has_satellite_flag(arguments) {
         return Err(usage(
             "setup creates HQ only; use HQ's Add office flow for satellites",
         ));
     }
-    if matches!(arguments, [flag] if flag == "--help" || flag == "-h") {
+    if is_help_request(arguments) {
         return Ok(SetUp::Help);
     }
     // Setup reserves the instance, makes its custody and registers a service that runs as
@@ -114,7 +171,7 @@ pub(super) fn run_as(
     let non_interactive = arguments.iter().any(|arg| arg == "--non-interactive");
     let arguments: Vec<String> = arguments
         .iter()
-        .filter(|arg| *arg != "--non-interactive" && *arg != NO_INPUT)
+        .filter(|arg| !matches!(arg.as_str(), "--non-interactive" | NO_INPUT))
         .cloned()
         .collect();
     let options = crate::host::options(
@@ -128,34 +185,8 @@ pub(super) fn run_as(
         ],
     )
     .map_err(SetupError::Usage)?;
-    match (non_interactive, options.get("--config")) {
-        (true, Some(file)) => {
-            if options.contains_key("--port") {
-                return Err(usage(
-                    "--port is not used with --config: the address is in the file",
-                ));
-            }
-            if options.contains_key("--federation-bind")
-                || options.contains_key("--federation-advertise")
-            {
-                return Err(usage(
-                    "--federation-bind and --federation-advertise are not used with --config: \
-                     set \"federation\" in the file",
-                ));
-            }
-            return host::configured(
-                std::path::Path::new(file),
-                options.get("--name").map(String::as_str),
-                out,
-            )
-            .map(|()| SetUp::Done)
-            .map_err(SetupError::Failed);
-        }
-        (true, None) => return Err(usage("--non-interactive needs --config <file>")),
-        (false, Some(_)) => {
-            return Err(usage("--config is read only with --non-interactive"));
-        }
-        (false, None) => {}
+    if let Some(done) = try_non_interactive(non_interactive, &options, out)? {
+        return Ok(done);
     }
     let port = options
         .get("--port")
