@@ -97,7 +97,7 @@ describe('personPanelDataSource', () => {
 		const controller = new AbortController();
 		const result = await personPanelDataSource.loadMember('org-1', 'rowan', controller.signal);
 
-		expect(profileMock).toHaveBeenCalledWith('org-1', 'rowan');
+		expect(profileMock).toHaveBeenCalledWith('org-1', 'rowan', controller.signal);
 		expect(queueMock).toHaveBeenCalledWith('org-1', { kind: 'organization' }, controller.signal);
 		expect(result.error).toBeUndefined();
 		expect(result.profile?.name).toBe('Rowan');

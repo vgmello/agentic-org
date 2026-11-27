@@ -141,13 +141,17 @@ export function createHttpMembersApi({
 		return map;
 	}
 
-	async function loadProfile(organizationId: string, memberId: string): Promise<MemberProfile> {
+	async function loadProfile(
+		organizationId: string,
+		memberId: string,
+		signal?: AbortSignal
+	): Promise<MemberProfile> {
 		const [{ snapshot }, accessById, org, workRows, officeNames] = await Promise.all([
-			orgApi.view(organizationId),
-			readAccessMap(organizationId),
-			readOrgView(organizationId),
-			safeWorkRows(organizationId),
-			readOfficeNames(organizationId)
+			orgApi.view(organizationId, signal),
+			readAccessMap(organizationId, signal),
+			readOrgView(organizationId, signal),
+			safeWorkRows(organizationId, signal),
+			readOfficeNames(organizationId, signal)
 		]);
 		const member = snapshot.members.find((m) => m.id === memberId);
 		if (!member) {

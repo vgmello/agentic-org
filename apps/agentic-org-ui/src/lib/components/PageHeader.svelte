@@ -5,7 +5,7 @@
   plus an optional real count, right-aligned actions (at most one primary) and, on a detail page,
   one named back link above the heading instead of a breadcrumb (app-shell-ux §6a).
 
-  The shell's top bar holds the page's `h1` (the area name), so a page header is an `h2` by default.
+  Default heading level is `h2` (pass `level={1}` on standalone routes that own the page's primary `h1`).
   Usage:
     <PageHeader title="Members" count={12} countLabel="members" description="People and agents.">
       {#snippet actions()}<Button variant="outline">Add a person</Button>{/snippet}

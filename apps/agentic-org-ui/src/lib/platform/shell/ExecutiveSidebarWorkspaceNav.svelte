@@ -166,6 +166,13 @@
 		if (pinned && uiPrefs.workspaceNav.length <= 1) return;
 		uiPrefs.toggleWorkspacePin(item.id);
 		announce(pinned ? `Moved ${item.label} to More.` : `Pinned ${item.label} to Workspace.`);
+		if (pinned) {
+			void tick().then(() => {
+				navListEl?.querySelector<HTMLElement>('[data-testid="workspace-more-toggle"]')?.focus();
+			});
+		} else {
+			focusItem(item.id);
+		}
 	}
 </script>
 
@@ -237,7 +244,7 @@
 									})}
 									type="button"
 									aria-label="Move {item.label} to More"
-									class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100"
+									class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100 [@media(width<=720px)]:size-11"
 								>
 									<Minus class="size-3.5" aria-hidden="true" />
 								</button>
@@ -326,7 +333,7 @@
 												})}
 												type="button"
 												aria-label="Pin {item.label} to Workspace"
-												class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100"
+												class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100 [@media(width<=720px)]:size-11"
 											>
 												<Plus class="size-3.5" aria-hidden="true" />
 											</button>

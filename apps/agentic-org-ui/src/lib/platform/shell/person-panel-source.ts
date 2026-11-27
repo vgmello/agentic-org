@@ -84,7 +84,7 @@ export const personPanelDataSource: PersonPanelDataSource = {
 		signal: AbortSignal
 	): Promise<PersonPanelLoadedData> {
 		const [profileResult, workResult] = await Promise.allSettled([
-			membersApi.profile(organizationId, memberId),
+			membersApi.profile(organizationId, memberId, signal),
 			workItemsApi.queue(organizationId, { kind: 'organization' }, signal)
 		]);
 
