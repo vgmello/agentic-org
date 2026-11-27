@@ -4,7 +4,7 @@
 
 use std::sync::atomic::AtomicBool;
 
-use org_agent_cli::dispatch::{OfficeTransport, Refusal, TransportOffice};
+use org_agent_cli::{OfficeTransport, Refusal, TransportOffice};
 use org_proto::chat::{
     ChatChannels, ChatChannelsParams, ChatMarkRead, ChatMarkReadParams, ConversationSummary,
     SNIPPET_MAX_CHARS,

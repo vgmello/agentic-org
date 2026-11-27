@@ -557,7 +557,7 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
     let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
     cfg.runtimes = registry;
     cfg.helper_dir = Some(tmp.path().to_path_buf());
-    cfg.command_catalogue = Some(org_agent_cli::table::table);
+    cfg.command_catalogue = Some(org_agent_cli::table);
     let manager = SessionManager::new(Arc::clone(&office), cfg);
 
     let enrolled = manager

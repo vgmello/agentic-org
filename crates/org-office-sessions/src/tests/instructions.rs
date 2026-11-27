@@ -57,7 +57,7 @@ fn input<'a>(
 }
 
 fn live_table() -> org_command::CommandTable {
-    org_agent_cli::table::table()
+    org_agent_cli::table()
 }
 
 fn common_prefix_len(a: &str, b: &str) -> usize {
@@ -153,12 +153,12 @@ fn agent_os_boot_answers_the_same_rules_and_guide_index_as_the_office() {
     // `agent-os boot --offline` answers from the binary alone; what it carries must be what a
     // managed session receives: the same core rules, and every built-in guide's key and
     // description in `skill list` order.
-    assert_eq!(org_agent_cli::boot::CORE_RULES, CORE_RULES);
+    assert_eq!(org_agent_cli::CORE_RULES, CORE_RULES);
     let served: Vec<(&str, &str)> = list_builtin_skills()
         .iter()
         .map(|skill| (skill.key, skill.description))
         .collect();
-    assert_eq!(org_agent_cli::boot::SKILL_INDEX, served.as_slice());
+    assert_eq!(org_agent_cli::SKILL_INDEX, served.as_slice());
 }
 
 #[test]
@@ -597,8 +597,7 @@ fn command_table_or_empty_without_an_installed_catalogue_is_an_empty_table() {
         empty.catalogue()
     );
 
-    let live =
-        crate::instructions::command_table_or_empty(Some(org_agent_cli::table::catalogue_table));
+    let live = crate::instructions::command_table_or_empty(Some(org_agent_cli::catalogue_table));
     assert!(
         !live.rows().is_empty(),
         "an installed catalogue is used as given"

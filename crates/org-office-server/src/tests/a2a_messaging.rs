@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_agent_cli::office::Binding;
+use org_agent_cli::Binding;
 use org_agent_runtime::{
     encode_line, AgentRuntime, Capabilities, Control, ControlError, CostBasis, ExitInfo,
     LaunchContext, LaunchPlan, Output, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult,
