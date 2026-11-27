@@ -186,6 +186,14 @@ describe('captureOverlayOpener & returnFocus (WebKit pointer-open support)', () 
 			(globalThis.document as unknown as { activeElement: unknown }).activeElement = tabbedBtn;
 			dispatch('keydown', tabbedBtn);
 			expect(captureOverlayOpener(null)).toBe(tabbedBtn);
+
+			// Clicking a non-interactive background element clears the remembered pointer opener.
+			const backdrop = new FakeElement('div');
+			(globalThis.document as unknown as { activeElement: unknown }).activeElement = body;
+			dispatch('pointerdown', clickedBtn);
+			expect(captureOverlayOpener(null)).toBe(clickedBtn);
+			dispatch('pointerdown', backdrop);
+			expect(captureOverlayOpener(null)).toBeNull();
 		} finally {
 			vi.useRealTimers();
 		}

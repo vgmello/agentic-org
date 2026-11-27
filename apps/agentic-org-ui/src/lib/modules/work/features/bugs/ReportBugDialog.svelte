@@ -176,8 +176,7 @@
 	}
 
 	function resetOnOpen() {
-		title = happened = severity = expected = steps = '';
-		sentence = '';
+		title = happened = severity = expected = steps = sentence = '';
 		before = drafted = suggested = undefined;
 		draftedValues = {};
 		flow.cancel();
@@ -185,8 +184,7 @@
 		// Prefilled from where the app runs; the reporter can change it.
 		environment = environmentLine();
 		error = undefined;
-		busy = false;
-		touched = false;
+		busy = touched = false;
 	}
 
 	const similar = $derived(similarBugs(bugs, title));
@@ -354,8 +352,10 @@
 								<li>
 									<button
 										type="button"
-										class="text-left text-brand-text underline underline-offset-2"
+										disabled={busy}
+										class="text-left text-brand-text underline underline-offset-2 disabled:opacity-50"
 										onclick={() => {
+											if (busy) return;
 											setOpen(false);
 											onopen(b.id);
 										}}>{bugRef(b)} · {b.title}</button
