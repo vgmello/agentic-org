@@ -72,7 +72,7 @@ fn keychain_service(instance_id: Option<&str>) -> String {
 /// Where the host keeps every office's secrets key (see the module docs). Office ids are plain
 /// ids ([`org_office_launch::is_plain_id`]); a store refuses any other
 /// ([`KeyStoreError::NotPlainId`]).
-pub(crate) trait OfficeSecretsKeys: Send + Sync {
+pub trait OfficeSecretsKeys: Send + Sync {
     /// Stores `key` as office `office_id`'s key. Add-only: an existing item is
     /// [`KeyStoreError::Exists`] and is left as it is. On any other error no key is replaced
     /// and no partial item is left. One error can follow a complete store: in the
@@ -96,7 +96,7 @@ pub(crate) trait OfficeSecretsKeys: Send + Sync {
 
 /// Why a key store call failed. It never holds key bytes, and neither does its `Display`.
 #[derive(Debug)]
-pub(crate) enum KeyStoreError {
+pub enum KeyStoreError {
     /// `create`: the store already has an item for that office (it was left as it is).
     Exists,
     /// `load`: the item isn't a key.
@@ -118,7 +118,7 @@ pub(crate) enum KeyStoreError {
 impl KeyStoreError {
     /// Whether the office's key is to be treated as missing: only an item that isn't a key.
     /// Every other error, a refused platform included, is a store failure.
-    pub(crate) fn means_no_key(&self) -> bool {
+    pub fn means_no_key(&self) -> bool {
         matches!(self, Self::Corrupt)
     }
 }

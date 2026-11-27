@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::accounts::identity::AccountId;
 use crate::control_listener::Connection;
 use crate::host_secrets::HostSecrets;
-use crate::hostdb::{accounts::Account, journal::Verifier, HostDb};
+use crate::hostdb::{accounts::Account, journal::Verifier, HostDb, HostStore};
 
 mod grants;
 mod sign_in;
@@ -34,7 +34,9 @@ const ABSOLUTE: Duration = Duration::from_secs(12 * 3600);
 const IDLE: Duration = Duration::from_secs(30 * 60);
 
 pub(crate) struct Authentication {
-    db: Arc<HostDb>,
+    db: Arc<dyn HostStore>,
+    #[cfg(test)]
+    sqlite_for_test: Option<Arc<HostDb>>,
     // Retain custody lifetime (including the debug store's exclusive lock).
     _custody: Arc<dyn HostSecrets>,
     dummy: Verifier,
@@ -185,12 +187,12 @@ pub(super) fn wall_ms() -> Result<u64, ApiError> {
 /// Expired operation journal rows, with their account-create verifiers, go before any request
 /// is admitted. Maintenance only: lookup already refuses expired rows and every journaled write
 /// prunes again, so a failure is logged and the start goes on.
-fn prune_expired_journal(db: &HostDb) {
+fn prune_expired_journal(db: &dyn HostStore) {
     let pruned = wall_ms()
         .ok()
         .and_then(|wall| i64::try_from(wall).ok())
         .ok_or(crate::hostdb::Error::Unsafe)
-        .and_then(|wall| db.prune_expired(wall));
+        .and_then(|wall| db.journal_prune_expired(wall));
     match pruned {
         Ok(outcome) if outcome.more_remaining => {
             crate::host_log::log(&format!(
@@ -246,8 +248,16 @@ fn random_handle() -> Result<SessionHandle, ApiError> {
     .map_err(|_| unavailable())
 }
 impl Authentication {
-    pub(crate) fn provisioning_storage(&self) -> (Arc<HostDb>, Arc<dyn HostSecrets>) {
+    pub(crate) fn provisioning_storage(&self) -> (Arc<dyn HostStore>, Arc<dyn HostSecrets>) {
         (Arc::clone(&self.db), Arc::clone(&self._custody))
+    }
+    #[cfg(test)]
+    pub(crate) fn sqlite_for_test(&self) -> Arc<HostDb> {
+        Arc::clone(
+            self.sqlite_for_test
+                .as_ref()
+                .expect("SQLite test fixture required"),
+        )
     }
     /// The name the organization was created with; empty when no create of this host
     /// made it. A registry that cannot be read is an error, never an empty name: a
@@ -346,7 +356,7 @@ impl Authentication {
     }
     pub(crate) fn flush_touches(&self, force: bool) {
         if let Ok(ms) = wall_ms().and_then(|v| i64::try_from(v).map_err(|_| unavailable())) {
-            self.touch_batcher.flush(&self.db, ms, force);
+            self.touch_batcher.flush(&*self.db, ms, force);
         }
     }
     pub(crate) fn revoke_browser_sessions(&self, ended: &[crate::sessions::Ended]) {
@@ -378,7 +388,7 @@ impl Authentication {
     ) -> std::io::Result<Arc<crate::writer::Writers>> {
         crate::writer::Writers::open(
             Arc::clone(&self._custody),
-            Arc::clone(&self.db) as Arc<dyn crate::hostdb::HostStore>,
+            Arc::clone(&self.db),
             instance,
             root,
         )
@@ -410,16 +420,26 @@ impl Authentication {
         custody: Arc<dyn HostSecrets>,
         instance: &str,
     ) -> Result<Self, ApiError> {
-        let db = Arc::new(HostDb::open(home, &*custody).map_err(|e| match e {
+        let sqlite = Arc::new(HostDb::open(home, &*custody).map_err(|e| match e {
             crate::hostdb::Error::Outdated => {
                 ApiError::new(ErrorCode::Unavailable, crate::hostdb::sessions::OUTDATED)
             }
             e => storage(e),
         })?);
-        Self::new(db, custody, instance)
+        #[cfg(test)]
+        let sqlite_for_test = Some(Arc::clone(&sqlite));
+        let db: Arc<dyn HostStore> = sqlite;
+        let auth = Self::with_store(db, custody, instance)?;
+        #[cfg(test)]
+        let mut auth = auth;
+        #[cfg(test)]
+        {
+            auth.sqlite_for_test = sqlite_for_test;
+        }
+        Ok(auth)
     }
-    fn new(
-        db: Arc<HostDb>,
+    pub(crate) fn with_store(
+        db: Arc<dyn HostStore>,
         custody: Arc<dyn HostSecrets>,
         instance: &str,
     ) -> Result<Self, ApiError> {
@@ -427,13 +447,15 @@ impl Authentication {
         // Frozen acknowledgement deletion must finish before any office or
         // gateway can become ready. Missing custody without intent is an error.
         db.recovery_reconcile(&*custody).map_err(storage)?;
-        prune_expired_journal(&db);
+        prune_expired_journal(&*db);
         let dummy_password = random_handle()?;
         let dummy = hash_password(
             &Password::new(dummy_password.expose().to_owned()).map_err(|_| unavailable())?,
         )?;
         Ok(Self {
             db,
+            #[cfg(test)]
+            sqlite_for_test: None,
             _custody: custody,
             dummy,
             hashing: AtomicUsize::new(0),

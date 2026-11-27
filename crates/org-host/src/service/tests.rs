@@ -768,8 +768,7 @@ fn tls_set_needs_the_administrators_session_on_host_sock() {
     )
     .unwrap();
     authentication
-        .provisioning_storage()
-        .0
+        .sqlite_for_test()
         .seed_account(
             &crate::ids::generate().unwrap(),
             "Member",
@@ -964,7 +963,7 @@ fn admin_calls_are_unavailable_before_install_admin() {
 /// the web process's) before any registry read, and issues no link.
 #[test]
 fn admin_calls_off_a_non_local_channel_are_refused_and_issue_nothing() {
-    use crate::links::{LinkKind, OneTimeLinks, Subject};
+    use crate::links::{LinkKind, Subject};
     use org_host_control::admin::{AdminLinkInitial, AdminLinkInitialParams, AdminReset};
     let home = tempfile::tempdir().unwrap();
     let (_registry, admin) = crate::admin::tests::admin();

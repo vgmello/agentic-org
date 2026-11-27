@@ -139,7 +139,7 @@ struct Parts {
 impl Parts {
     fn provisioning(&self, db: &Arc<HostDb>, custody: &Arc<dyn HostSecrets>) -> Arc<Provisioning> {
         Arc::new(Provisioning::new(
-            Arc::clone(db),
+            Arc::clone(db) as Arc<dyn crate::hostdb::HostStore>,
             Arc::clone(custody),
             self.keys.clone(),
             Arc::clone(&self.writers),
@@ -159,7 +159,8 @@ fn subscribe(provisioning: &Provisioning) -> Arc<Events> {
 fn host(worker: Worker) -> Host {
     let instance = crate::ids::uuid_v7().unwrap();
     let (root, authentication, _) = crate::authentication::tests::fixture_for(&instance);
-    let (db, custody) = authentication.provisioning_storage();
+    let (store, custody) = authentication.provisioning_storage();
+    let db = authentication.sqlite_for_test();
     let state = tempfile::tempdir().unwrap();
     std::fs::set_permissions(
         state.path(),
@@ -179,7 +180,7 @@ fn host(worker: Worker) -> Host {
         .unwrap();
     let parts = Parts {
         keys: Arc::new(crate::keys::memory::MemoryKeys::default()),
-        writers: Writers::open(custody.clone(), db.clone(), &instance, &state_root).unwrap(),
+        writers: Writers::open(custody.clone(), store, &instance, &state_root).unwrap(),
         instance,
         office_home,
     };
@@ -1219,7 +1220,10 @@ fn an_administrator_revoked_inside_the_reservation_commit_is_not_authorized_and_
     let clean = host.custody_names();
     let auth = host.sign_in("Owner", 1);
     // Every check before the commit passes; the commit's own check refuses.
-    host.provisioning.revoke_before_next_reservation();
+    let db = Arc::clone(&host.db);
+    host.provisioning.revoke_before_next_reservation(move |id| {
+        db.change_authority_fixture(id, true).unwrap();
+    });
     assert_eq!(
         code(host.create(&auth, &op(), &plan("Example", "example"))),
         ErrorCode::NotAuthorized

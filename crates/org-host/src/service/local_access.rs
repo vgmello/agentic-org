@@ -165,7 +165,7 @@ fn execute_tls_enable(
             (checked, crate::web_tls::Source::Supplied)
         }
     };
-    let fp = crate::web_tls::WebTls::install_for_upgrade(&db, &*secrets, &checked, source)
+    let fp = crate::web_tls::WebTls::install_for_upgrade(&*db, &*secrets, &checked, source)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not store TLS certificate"))?;
     instance
         .upgrade_browser_to_https(&https_listen)

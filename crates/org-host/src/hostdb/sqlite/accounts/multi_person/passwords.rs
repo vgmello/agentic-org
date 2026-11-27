@@ -12,23 +12,8 @@ use crate::sessions::Ended;
 
 use super::{
     account_subject, active_admin_in, delete_account_sessions, parse_account_subject, unavailable,
+    MemberResetIssueError, SetPasswordOutcome,
 };
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum MemberResetIssueError {
-    NotLinked,
-    Store,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SetPasswordOutcome {
-    Updated {
-        account_id: AccountId,
-        login: String,
-        ended: Vec<Ended>,
-    },
-    Link(Refused),
-}
 
 impl HostDb {
     /// Atomically issues a one-time `set_password` link for the active administrator

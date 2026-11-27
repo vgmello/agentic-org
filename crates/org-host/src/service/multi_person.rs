@@ -19,7 +19,7 @@ use super::Service;
 use crate::accounts::identity::AccountId;
 use crate::authentication::Authentication;
 use crate::control_listener::Connection;
-use crate::hostdb::sqlite::accounts::multi_person::{
+use crate::hostdb::multi_person::{
     AdminHandoverOutcome, InviteIssueError, MemberResetIssueError, OrgOwnerHandoverOutcome,
     RemoveAccessOutcome,
 };

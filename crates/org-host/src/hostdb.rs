@@ -5,6 +5,7 @@
 //! imports `rusqlite` or holds SQL), [`memory`] provides a second in-memory adapter in
 //! tests, and `contract_tests` runs one conformance suite against both.
 
+pub mod multi_person;
 pub(crate) mod pending_recovery;
 pub(crate) mod sqlite;
 
@@ -18,19 +19,26 @@ pub(crate) use testing::memory;
 use std::collections::BTreeSet;
 use std::io;
 
+use org_host_control::browser_accounts::OrgAccessEntry;
 use org_office_launch::recovery::PublicRecord;
 
 use crate::accounts::identity::{AccountId, LoginKey};
-use crate::accounts::store::AccountStore;
+use crate::accounts::rules::Username;
+use crate::accounts::store::{AccountStore, NewAccount, StoreError as AccountStoreError};
+use crate::accounts::verifier::Verifier;
 use crate::host_secrets::HostSecrets;
-use crate::links::{Issued, LinkKind, OneTimeLinks, Subject};
-use crate::sessions::BrowserSessions;
+use crate::links::{Issued, LinkKind, OneTimeLinks, Subject, Token};
+use crate::sessions::{BrowserSessions, Ended};
 
 pub(crate) use sqlite::HostDb;
 
+/// Sentinel password PHC stored for the implicit local-authless placeholder account (ADR-0034).
+/// It is deliberately not a valid Argon2id PHC and can never satisfy password verification.
+pub(crate) const LOCAL_AUTHLESS_VERIFIER: &str = "!local-authless";
+
 /// Engine-neutral class of storage failure (ADR-0018).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StoreFault {
+pub enum StoreFault {
     /// The store is busy or locked by another writer (transient).
     Busy,
     /// A transient I/O failure in the storage engine.
@@ -48,13 +56,13 @@ pub(crate) enum StoreFault {
 impl StoreFault {
     /// Whether this storage fault may pass on its own and warrants retry rather than
     /// permanent refusal.
-    pub(crate) fn is_transient(self) -> bool {
+    pub fn is_transient(self) -> bool {
         matches!(self, Self::Busy | Self::TransientIo | Self::OutOfMemory)
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Error {
+pub enum Error {
     InvalidId,
     Expired,
     ClockSkew,
@@ -98,19 +106,19 @@ pub(crate) struct HostDbInit {
 }
 
 /// Engine-neutral account snapshot types.
-pub(crate) mod accounts {
+pub mod accounts {
     use super::journal::Verifier;
     use crate::accounts::identity::AccountId;
 
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) struct Link {
+    pub struct Link {
         pub(in crate::hostdb) org_id: String,
         pub(in crate::hostdb) member_id: String,
     }
 
     /// Stored authority, including revoked accounts; office IDs come from the catalog later.
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) struct Account {
+    pub struct Account {
         pub(in crate::hostdb) account_id: AccountId,
         pub(in crate::hostdb) login: String,
         pub(in crate::hostdb) admin: bool,
@@ -122,75 +130,121 @@ pub(crate) mod accounts {
     }
 
     /// An owned PHC for hashing outside the database lock; deliberately has no Debug.
-    pub(crate) struct Credentials {
+    pub struct Credentials {
         pub(in crate::hostdb) account: Account,
         pub(in crate::hostdb) verifier: Verifier,
     }
 
     impl Link {
-        pub(crate) fn org_id(&self) -> &str {
+        pub fn new(org_id: String, member_id: String) -> Self {
+            Self { org_id, member_id }
+        }
+        pub fn org_id(&self) -> &str {
             &self.org_id
         }
-        pub(crate) fn member_id(&self) -> &str {
+        pub fn member_id(&self) -> &str {
             &self.member_id
         }
     }
 
     impl Account {
-        pub(crate) fn account_id(&self) -> &str {
+        pub fn new(
+            account_id: AccountId,
+            login: String,
+            admin: bool,
+            revoked_at_ms: Option<i64>,
+            password_changed_at_ms: i64,
+            links: Vec<Link>,
+        ) -> Self {
+            Self {
+                account_id,
+                login,
+                admin,
+                revoked_at_ms,
+                password_changed_at_ms,
+                links,
+                time_zone: None,
+                last_org_id: None,
+            }
+        }
+        pub fn with_preferences(
+            mut self,
+            time_zone: Option<String>,
+            last_org_id: Option<String>,
+        ) -> Self {
+            self.time_zone = time_zone;
+            self.last_org_id = last_org_id;
+            self
+        }
+        pub fn account_id(&self) -> &str {
             self.account_id.as_str()
         }
-        pub(crate) fn login(&self) -> &str {
+        pub fn login(&self) -> &str {
             &self.login
         }
-        pub(crate) fn admin(&self) -> bool {
+        pub fn admin(&self) -> bool {
             self.admin
         }
-        pub(crate) fn revoked_at_ms(&self) -> Option<i64> {
+        pub fn revoked_at_ms(&self) -> Option<i64> {
             self.revoked_at_ms
         }
-        pub(crate) fn password_changed_at_ms(&self) -> i64 {
+        pub fn password_changed_at_ms(&self) -> i64 {
             self.password_changed_at_ms
         }
-        pub(crate) fn links(&self) -> &[Link] {
+        pub fn links(&self) -> &[Link] {
             &self.links
         }
-        pub(crate) fn time_zone(&self) -> Option<&str> {
+        pub fn time_zone(&self) -> Option<&str> {
             self.time_zone.as_deref()
         }
-        pub(crate) fn last_org_id(&self) -> Option<&str> {
+        pub fn last_org_id(&self) -> Option<&str> {
             self.last_org_id.as_deref()
         }
     }
 
     impl Credentials {
-        pub(crate) fn account(&self) -> &Account {
+        pub fn new(account: Account, verifier: Verifier) -> Self {
+            Self { account, verifier }
+        }
+        pub fn account(&self) -> &Account {
             &self.account
         }
         /// Borrow the checked verifier; password hashing belongs outside the registry lock.
-        pub(crate) fn verifier(&self) -> &Verifier {
+        pub fn verifier(&self) -> &Verifier {
             &self.verifier
         }
     }
 }
 
 /// Engine-neutral operation journal types.
-pub(crate) mod journal {
+pub mod journal {
     use super::Error;
     use org_host_control::{journal::Journaled, HostOpResult};
 
-    pub(in crate::hostdb) const DAY: i64 = 86_400_000;
-    pub(crate) type Stored = HostOpResult<serde_json::Value>;
+    pub const DAY: i64 = 86_400_000;
+    /// The most expired rows one journal maintenance batch removes, bounding every
+    /// journaled write's work.
+    pub const PRUNE_BATCH: u16 = 256;
+    /// Hard upper bound on startup prune batches (1,024 × 256 = 262,144 rows per boot).
+    pub const MAX_PRUNE_BATCHES: usize = 1024;
+    pub type Stored = HostOpResult<serde_json::Value>;
 
-    pub(crate) struct Attempt<'a> {
-        pub(crate) id: &'a str,
-        pub(crate) kind: &'static str,
-        pub(crate) fingerprint: [u8; 32],
-        pub(crate) account: &'a str,
+    /// Summary of one startup [`HostStore::journal_prune_expired`](super::HostStore::journal_prune_expired) pass.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct PruneOutcome {
+        pub removed: u64,
+        pub more_remaining: bool,
+    }
+
+    pub struct Attempt<'a> {
+        pub id: &'a str,
+        pub kind: &'static str,
+        pub fingerprint: [u8; 32],
+        pub account: &'a str,
     }
 
     impl<'a> Attempt<'a> {
-        pub(crate) fn new<J: Journaled>(op: &'a J, account: &'a str) -> Result<Self, Error> {
+        pub fn new<J: Journaled>(op: &'a J, account: &'a str) -> Result<Self, Error> {
             Ok(Self {
                 id: op.operation_id(),
                 kind: J::METHOD,
@@ -201,47 +255,26 @@ pub(crate) mod journal {
         }
     }
 
-    pub(crate) use crate::accounts::verifier::Verifier;
+    pub use crate::accounts::verifier::Verifier;
 
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "hostdb idempotency contract consumed by upcoming host wiring and tests"
-        )
-    )]
-    pub(crate) enum Lookup {
+    pub enum Lookup {
         Vacant,
         Replay(Stored),
         NeedsVerification { verifier: Verifier, stored: Stored },
     }
 
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "hostdb idempotency contract consumed by upcoming host wiring and tests"
-        )
-    )]
-    pub(crate) struct Effect {
-        pub(crate) stored: Stored,
+    pub struct Effect {
+        pub stored: Stored,
         /// Created account, not the acting account. Required only for a successful account.create.
-        pub(crate) verifier: Option<(String, Verifier)>,
+        pub verifier: Option<(String, Verifier)>,
     }
 
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "hostdb idempotency contract consumed by upcoming host wiring and tests"
-        )
-    )]
-    pub(crate) enum Write {
+    pub enum Write {
         Committed(Stored),
         Existing(Lookup),
     }
 
-    pub(in crate::hostdb) fn id_time(id: &str) -> Result<i64, Error> {
+    pub fn id_time(id: &str) -> Result<i64, Error> {
         org_proto::uuid_v7_time_ms(id)
             .and_then(|n| i64::try_from(n).ok())
             .ok_or(Error::InvalidId)
@@ -249,15 +282,15 @@ pub(crate) mod journal {
 }
 
 /// Engine-neutral login lockout types.
-pub(crate) mod lockout {
+pub mod lockout {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-    pub(crate) enum Socket {
+    pub enum Socket {
         Control,
         Local,
     }
 
     impl Socket {
-        pub(in crate::hostdb) fn as_str(self) -> &'static str {
+        pub fn as_str(self) -> &'static str {
             match self {
                 Self::Control => "control",
                 Self::Local => "local",
@@ -265,8 +298,8 @@ pub(crate) mod lockout {
         }
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(crate) enum Outcome {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Outcome {
         Failure,
         Success,
         /// Only an already authorized password/reset operation may request this.
@@ -274,35 +307,41 @@ pub(crate) mod lockout {
     }
 
     #[derive(Debug, PartialEq, Eq)]
-    pub(crate) struct State {
+    pub struct State {
         pub(in crate::hostdb) now_ms: i64,
         pub(in crate::hostdb) locked: bool,
         pub(in crate::hostdb) until_ms: i64,
     }
 
     impl State {
+        pub fn new(now_ms: i64, locked: bool, until_ms: i64) -> Self {
+            Self {
+                now_ms,
+                locked,
+                until_ms,
+            }
+        }
         /// How long until the key accepts another attempt; zero when unlocked.
-        pub(crate) fn retry_after_ms(&self) -> i64 {
+        pub fn retry_after_ms(&self) -> i64 {
             self.until_ms.saturating_sub(self.now_ms).max(0)
         }
-        #[cfg(test)]
-        pub(crate) fn now_ms(&self) -> i64 {
+        pub fn now_ms(&self) -> i64 {
             self.now_ms
         }
-        pub(crate) fn is_locked(&self) -> bool {
+        pub fn is_locked(&self) -> bool {
             self.locked
         }
     }
 }
 
 /// Engine-neutral selected HQ provisioning types.
-pub(crate) mod provisioning {
+pub mod provisioning {
     use org_proto::selected_bootstrap::PreparedV1;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
-    pub(crate) struct Reservation {
+    pub struct Reservation {
         pub operation_id: String,
         pub account: String,
         pub fingerprint: [u8; 32],
@@ -315,20 +354,20 @@ pub(crate) mod provisioning {
 
     /// Which of a plan's two catalog-unique values another create already holds.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) enum Taken {
+    pub enum Taken {
         Name,
         Slug,
     }
 }
 
 /// Engine-neutral REC-DEL-1 recovery ledger types.
-pub(crate) mod recovery {
+pub mod recovery {
     use org_office_launch::recovery::Request;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
-    pub(crate) enum State {
+    pub enum State {
         Pending,
         Delivered,
         AckPending,
@@ -348,7 +387,7 @@ pub(crate) mod recovery {
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
-    pub(crate) struct Ledger {
+    pub struct Ledger {
         pub version: u32,
         pub binding: Request,
         pub public_key: String,
@@ -371,27 +410,27 @@ pub(crate) mod sessions {
 }
 
 /// Engine-neutral web TLS persistence types.
-pub(crate) mod web_tls {
+pub mod web_tls {
     use org_host_control::ops::TlsRefusal;
     use org_host_control::HostOpResult;
 
     /// Who made the stored pair: the instance itself, or the operator (setup's configuration, or
     /// `tls.set`).
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub(crate) enum Source {
+    pub enum Source {
         Made,
         Supplied,
     }
 
     impl Source {
-        pub(crate) fn as_str(self) -> &'static str {
+        pub fn as_str(self) -> &'static str {
             match self {
                 Source::Made => "made",
                 Source::Supplied => "supplied",
             }
         }
 
-        pub(crate) fn parse(text: &str) -> Option<Self> {
+        pub fn parse(text: &str) -> Option<Self> {
             match text {
                 "made" => Some(Source::Made),
                 "supplied" => Some(Source::Supplied),
@@ -402,22 +441,22 @@ pub(crate) mod web_tls {
 
     /// The stored pair, as the registry holds it.
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) struct StoredPair {
-        pub(crate) source: Source,
+    pub struct StoredPair {
+        pub source: Source,
         /// The chain, in the normal form `web_tls::check` returns.
-        pub(crate) cert_pem: String,
+        pub cert_pem: String,
         /// Names the key in the host's secrets (`tls.<hex>`).
-        pub(crate) pair_fp: [u8; 32],
-        pub(crate) set_at_ms: i64,
+        pub pair_fp: [u8; 32],
+        pub set_at_ms: i64,
     }
 
     /// `tls.set`'s journaled result: `completed` (`{}`), or `rejected` with the one refusal that
     /// is stored, `tls_key_mismatch`.
-    pub(crate) type TlsStored = HostOpResult<serde_json::Value, TlsRefusal>;
+    pub type TlsStored = HostOpResult<serde_json::Value, TlsRefusal>;
 
     /// A `tls.set` journal lookup.
     #[derive(Debug, PartialEq)]
-    pub(crate) enum TlsLookup {
+    pub enum TlsLookup {
         Vacant,
         Replay(TlsStored),
     }
@@ -427,16 +466,7 @@ pub(crate) mod web_tls {
 ///
 /// Consuming host subsystems depend on this trait (or its focused sub-contracts
 /// [`AccountStore`], [`OneTimeLinks`], [`BrowserSessions`]) rather than on SQLite internals.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "HostStore trait methods are tested now and composed as host wiring lands"
-    )
-)]
-pub(crate) trait HostStore:
-    AccountStore + OneTimeLinks + BrowserSessions + Send + Sync
-{
+pub trait HostStore: AccountStore + OneTimeLinks + BrowserSessions + Send + Sync {
     // Instance & organization ownership
     fn verify_instance(&self, instance: &str) -> Result<(), Error>;
     fn establish_organization_owner(
@@ -447,7 +477,7 @@ pub(crate) trait HostStore:
     ) -> Result<(), Error>;
     fn verify_selected_owner(&self, org: &str, account: &str, member: &str) -> Result<(), Error>;
 
-    // Accounts & administrator
+    // Accounts, preferences & administrator
     fn has_administrator(&self) -> Result<bool, Error>;
     fn account_credentials(
         &self,
@@ -455,6 +485,95 @@ pub(crate) trait HostStore:
     ) -> Result<Option<accounts::Credentials>, Error>;
     fn account_authority(&self, account_id: &AccountId)
         -> Result<Option<accounts::Account>, Error>;
+    fn set_account_preferences(
+        &self,
+        account_id: &AccountId,
+        time_zone: Option<Option<&str>>,
+        last_org_id: Option<Option<&str>>,
+    ) -> Result<(Option<String>, Option<String>), Error>;
+
+    // Local authless onboarding (ADR-0034)
+    fn init_local_authless_if_empty(&self, now_ms: i64) -> Result<Option<AccountId>, Error>;
+    fn local_authless_account(&self) -> Result<Option<AccountId>, Error>;
+    fn auth_enabled(&self) -> Result<bool, Error> {
+        Ok(self.local_authless_account()?.is_none())
+    }
+    fn enable_local_auth(
+        &self,
+        username: &Username,
+        verifier: &Verifier,
+        now_ms: i64,
+    ) -> Result<AccountId, Error>;
+
+    // Multi-person accounts, invitations, resets & handovers
+    fn active_administrator_account(&self) -> Result<Option<(AccountId, String)>, Error>;
+    fn active_account_login(&self, account_id: &AccountId) -> Result<Option<String>, Error>;
+    fn org_owner(&self, org_id: &str) -> Result<Option<(AccountId, String)>, Error>;
+    fn list_org_access(&self, org_id: &str, now_ms: i64) -> Result<Vec<OrgAccessEntry>, Error>;
+    fn issue_org_invite(
+        &self,
+        org_id: &str,
+        member_id: &str,
+        now_ms: i64,
+    ) -> Result<Issued, multi_person::InviteIssueError>;
+    fn redeem_invite_register(
+        &self,
+        token: &Token,
+        new: &NewAccount,
+        now_ms: i64,
+    ) -> Result<multi_person::InviteRegistration, AccountStoreError>;
+    fn redeem_invite_attach(
+        &self,
+        token: &Token,
+        account_id: &AccountId,
+        now_ms: i64,
+    ) -> Result<multi_person::InviteAttach, AccountStoreError>;
+    fn issue_admin_password_reset_link(
+        &self,
+        now_ms: i64,
+    ) -> Result<Option<(String, Issued)>, crate::links::Error>;
+    fn issue_member_password_reset_link(
+        &self,
+        org_id: &str,
+        member_id: &str,
+        now_ms: i64,
+    ) -> Result<Issued, multi_person::MemberResetIssueError>;
+    fn redeem_set_password(
+        &self,
+        token: &Token,
+        verifier: &Verifier,
+        now_ms: i64,
+    ) -> Result<multi_person::SetPasswordOutcome, AccountStoreError>;
+    fn change_own_password(
+        &self,
+        account_id: &AccountId,
+        keep_session_id: &str,
+        verifier: &Verifier,
+        now_ms: i64,
+    ) -> Result<Vec<Ended>, Error>;
+    fn remove_org_access(
+        &self,
+        org_id: &str,
+        member_id: &str,
+        now_ms: i64,
+    ) -> Result<multi_person::RemoveAccessOutcome, Error>;
+    fn handover_org_owner(
+        &self,
+        org_id: &str,
+        from_account: &AccountId,
+        to_member_id: &str,
+    ) -> Result<multi_person::OrgOwnerHandoverOutcome, Error>;
+    fn restore_org_owner(
+        &self,
+        org_id: &str,
+        account: &AccountId,
+        member_id: &str,
+    ) -> Result<(), Error>;
+    fn handover_administrator(
+        &self,
+        from_account: &AccountId,
+        to_account: &AccountId,
+    ) -> Result<multi_person::AdminHandoverOutcome, Error>;
 
     // One-time links with administrator guard
     fn issue_unless_administrator(
@@ -463,6 +582,20 @@ pub(crate) trait HostStore:
         subject: &Subject,
         now_ms: i64,
     ) -> Result<Option<Issued>, crate::links::Error>;
+
+    // Operation journal
+    fn journal_lookup(
+        &self,
+        op: &journal::Attempt<'_>,
+        wall_ms: i64,
+    ) -> Result<journal::Lookup, Error>;
+    fn journal_commit(
+        &self,
+        op: &journal::Attempt<'_>,
+        wall_ms: i64,
+        effect: journal::Effect,
+    ) -> Result<journal::Write, Error>;
+    fn journal_prune_expired(&self, wall_ms: i64) -> Result<journal::PruneOutcome, Error>;
 
     // Login lockout
     fn login_lockout(

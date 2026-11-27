@@ -243,11 +243,7 @@ impl Service {
         let Some(authentication) = &self.authentication else {
             return Ok(Administrator::None);
         };
-        match authentication
-            .provisioning_storage()
-            .0
-            .administrator_exists()
-        {
+        match authentication.provisioning_storage().0.has_administrator() {
             Ok(true) => Ok(Administrator::Present),
             Ok(false) => Ok(Administrator::None),
             Err(_) => Err(ApiError::new(

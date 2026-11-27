@@ -447,3 +447,60 @@ fn a_failed_replacement_keeps_the_previous_pending_link() {
         );
     });
 }
+
+#[test]
+fn peek_link_subject_reports_subject_only_when_pending_and_not_expired() {
+    each(|links| {
+        let s = subject("invite:org-1:mem-1");
+        let first = links.issue(REG, &s, NOW).unwrap();
+        let unknown = Token::parse(&"A".repeat(43)).unwrap();
+        assert_eq!(
+            links.peek_link_subject(REG, &unknown, NOW).unwrap(),
+            Err(Refused::Unknown)
+        );
+        // Peeking is non-consuming and returns the bound subject.
+        for _ in 0..3 {
+            assert_eq!(
+                links.peek_link_subject(REG, &first.token, NOW).unwrap(),
+                Ok(s.as_str().to_owned())
+            );
+        }
+        // Wrong kind uses a distinct digest, so it is unknown.
+        assert_eq!(
+            links
+                .peek_link_subject(LinkKind::SetPassword, &first.token, NOW)
+                .unwrap(),
+            Err(Refused::Unknown)
+        );
+        // Expired link reports Expired without consuming.
+        let expired_at = NOW + REGISTRATION_TTL_MS;
+        assert_eq!(
+            links
+                .peek_link_subject(REG, &first.token, expired_at)
+                .unwrap(),
+            Err(Refused::Expired)
+        );
+        // Replacing cancels the first link; consuming marks the second used.
+        let second = links.issue(REG, &s, NOW + 1).unwrap();
+        assert_eq!(
+            links.peek_link_subject(REG, &first.token, NOW + 2).unwrap(),
+            Err(Refused::Cancelled)
+        );
+        assert_eq!(
+            links
+                .peek_link_subject(REG, &second.token, NOW + 2)
+                .unwrap(),
+            Ok(s.as_str().to_owned())
+        );
+        assert_eq!(
+            links.consume(REG, &second.token.encode(), NOW + 3).unwrap(),
+            Ok(second.link_id)
+        );
+        assert_eq!(
+            links
+                .peek_link_subject(REG, &second.token, NOW + 4)
+                .unwrap(),
+            Err(Refused::Used)
+        );
+    });
+}

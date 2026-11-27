@@ -259,7 +259,7 @@ mod tests {
         tempfile::TempDir,
         tempfile::TempDir,
         tempfile::TempDir,
-        Arc<crate::hostdb::HostDb>,
+        Arc<dyn crate::hostdb::HostStore>,
         Arc<crate::offices::Offices>,
         Arc<crate::service::Service>,
     ) {
@@ -311,10 +311,9 @@ mod tests {
             .unwrap(),
         );
         let (db_for_prov, custody_for_prov) = auth.provisioning_storage();
-        let store_for_writers = Arc::clone(&db_for_prov) as Arc<dyn crate::hostdb::HostStore>;
         let writers = Writers::open(
             Arc::clone(&custody_for_prov),
-            store_for_writers,
+            Arc::clone(&db_for_prov),
             &instance,
             &state_root,
         )

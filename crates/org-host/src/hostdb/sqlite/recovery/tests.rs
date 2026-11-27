@@ -17,7 +17,8 @@ struct Fixture {
 fn fixture() -> Fixture {
     let instance = crate::ids::uuid_v7().unwrap();
     let (dir, auth, _) = crate::authentication::tests::fixture_for(&instance);
-    let (db, custody) = auth.provisioning_storage();
+    let (_, custody) = auth.provisioning_storage();
+    let db = auth.sqlite_for_test();
     let credentials = db
         .account_credentials(&crate::accounts::identity::LoginKey::new("Owner").unwrap())
         .unwrap()

@@ -17,7 +17,7 @@ use crate::accounts::rules::Username;
 use crate::hostdb::journal::Verifier;
 
 pub(super) const LOCAL_AUTHLESS_META: &str = "local_authless_account";
-pub(crate) const LOCAL_AUTHLESS_VERIFIER: &str = "!local-authless";
+pub(crate) use crate::hostdb::LOCAL_AUTHLESS_VERIFIER;
 const LOCAL_OWNER_LOGIN: &str = "local-owner";
 
 pub(super) fn local_authless_id(tx: &Transaction<'_>) -> Result<Option<String>, Error> {
