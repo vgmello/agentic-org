@@ -4,21 +4,14 @@
 use org_store::{Actor, DurablePath, Engine, Id, OfficeIdentity, Refusal, Stream, Timestamp};
 use org_store::{StoreError, UnitOfWork};
 
-use super::{invalid, reply, OrgRejection, RejectCode, NOT_AUTHORIZED};
+use super::super::ops::RejectCode;
+pub(crate) use super::super::ops::{check_revision, checked_dod_items, reject, touched};
+use super::{invalid, NOT_AUTHORIZED};
 use crate::organization::{
     names::name_key,
     ports::{OrganizationRead, TeamDependents, MAX_TEAM_DEPTH},
-    records::{self, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Organization, Team},
+    records::{self, By, EmployeeKind, EmployeeStatus, OfficeRole, Organization, Team},
 };
-
-/// A rule refused the change: recorded with its operation, so a retry gets this answer.
-pub(crate) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Refusal> {
-    let rejection = OrgRejection {
-        code,
-        message: message.into(),
-    };
-    Err(Refusal::rejected(reply(&rejection)))
-}
 
 /// What an admitted change knows before it reads its records.
 pub(crate) struct Admitted {
@@ -69,27 +62,6 @@ where
         organization,
         by: By::Employee(owner.clone()),
     })
-}
-
-/// `meta` after one more change by `by` at `now`.
-pub(crate) fn touched(meta: &Meta, by: &By, now: Timestamp) -> Meta {
-    Meta {
-        revision: meta.revision + 1,
-        updated_at: Some(records::time_text(now)),
-        updated_by: by.clone(),
-        ..meta.clone()
-    }
-}
-
-/// A stale `expected_revision`: told after every other rule but `already_exists`.
-pub(crate) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal> {
-    if current == expected {
-        return Ok(());
-    }
-    reject(
-        RejectCode::Conflict,
-        "it changed since you last looked; refresh and try again",
-    )
 }
 
 /// Whether `id` names any record of the organization, whatever its kind.

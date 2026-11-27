@@ -170,6 +170,7 @@ where
         name: command.name.clone(),
         organization_repository_id: command.repository_id.clone(),
         state_branch: command.state_branch.clone(),
+        default_dod: None,
         meta: meta.clone(),
     };
     let repository = Repository {

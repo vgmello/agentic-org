@@ -6,7 +6,10 @@ use super::records::{
     ChecklistStepWire, PatchField, TaskCommentWire, TaskDependenciesResult, TaskDetailsWire,
     TaskEventWire, TaskInspectResult, TaskLabelSummary, TaskView,
 };
-use super::{LabelMatchMode, TaskPriority, TaskSortMode, TaskStatus, TaskStatusScope, WorkType};
+use super::{
+    ChecklistSection, LabelMatchMode, TaskPriority, TaskSortMode, TaskStatus, TaskStatusScope,
+    WorkType,
+};
 use crate::calls::Call;
 
 /// `tasks.create`: create a unified task (`task`, `bug`, `request`, ...), minting its final
@@ -53,6 +56,12 @@ pub struct TasksCreateParams {
     pub depends_on: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<TaskDetailsWire>,
+    /// The task's definition of done (`TASK-88`), copied into its checklist's `dod` section as
+    /// required steps in the create's own commit. Absent: the project's `default_dod`, or else
+    /// the organization's, as they stand at create; `[]`: none. Later changes to either
+    /// default never change a task already created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dod: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,6 +221,14 @@ impl Call for TasksUpdate {
 }
 
 /// `tasks.transition`: change a task's status (`todo`, `in_progress`, `blocked`, `cancelled`, `done`).
+///
+/// Completing a task (`done` with resolution `completed`, the default, or `fixed`) while a
+/// required checklist step is unticked is refused as `checklist_incomplete`, naming the steps,
+/// unless `done_anyway_reason` says why (`TASK-88`); the office then records the reason and
+/// the steps on the task and in its `status_changed` event, and clears them when the task
+/// leaves `done`. `cancelled` and other resolutions are never gated. `final_summary` sets the
+/// task's attributed closing summary in the same commit, on a transition to `done` or
+/// `cancelled` only.
 pub struct TasksTransition;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,11 +243,34 @@ pub struct TasksTransitionParams {
     pub resolution: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_anyway_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_summary: Option<String>,
 }
 
 impl Call for TasksTransition {
     const METHOD: &'static str = "tasks.transition";
     type Params = TasksTransitionParams;
+    type Result = TasksMutationResult;
+}
+
+/// `tasks.final_summary`: set a task's attributed closing summary at `expected_revision`
+/// (`TASK-88`). Nothing else ever overwrites it: not comments, watches, checklist ticks nor
+/// other edits.
+pub struct TasksFinalSummary;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TasksFinalSummaryParams {
+    pub command_id: String,
+    pub task: String,
+    pub expected_revision: u64,
+    pub final_summary: String,
+}
+
+impl Call for TasksFinalSummary {
+    const METHOD: &'static str = "tasks.final_summary";
+    type Params = TasksFinalSummaryParams;
     type Result = TasksMutationResult;
 }
 
@@ -416,7 +456,9 @@ impl Call for TasksLabels {
     type Result = TasksLabelsResult;
 }
 
-/// `tasks.checklist.add`: append a checklist step to a task.
+/// `tasks.checklist.add`: append a step to the end of one section of a task's checklist
+/// (`work` when absent). `required` defaults to `true` for `acceptance` and `dod` and to
+/// `false` for `work` (`TASK-88`).
 pub struct TasksChecklistAdd;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,8 +467,10 @@ pub struct TasksChecklistAddParams {
     pub task: String,
     pub step_id: String,
     pub text: String,
-    #[serde(default)]
-    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<ChecklistSection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -494,7 +538,8 @@ impl Call for TasksChecklistRemove {
     type Result = TasksChecklistResult;
 }
 
-/// `tasks.checklist.move`: reorder a checklist step to a zero-based `position`.
+/// `tasks.checklist.move`: move a checklist step to a zero-based `position` within `section`
+/// (its own section when absent; `TASK-88`). Positions stay contiguous in every section.
 pub struct TasksChecklistMove;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -503,6 +548,8 @@ pub struct TasksChecklistMoveParams {
     pub task: String,
     pub step_id: String,
     pub position: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<ChecklistSection>,
 }
 
 impl Call for TasksChecklistMove {

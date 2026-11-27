@@ -39,6 +39,24 @@ struct Harness<'a> {
     store: &'a dyn HostStore,
     seed: &'a dyn Fn(&str, &str, bool),
     revoke: &'a dyn Fn(&AccountId),
+    seed_exempt_journal: &'a dyn Fn(&str, &str, &str, i64),
+}
+
+fn uuid_v7_at(at: i64, sequence: u64) -> String {
+    let ms = u64::try_from(at).unwrap();
+    let rand_a = ((sequence >> 62) & 0x0fff) as u16;
+    let rand_b = sequence & ((1u64 << 62) - 1);
+    let hi = (ms << 16) | (0x7 << 12) | u64::from(rand_a);
+    let lo = (0b10u64 << 62) | rand_b;
+    let hex = format!("{hi:016x}{lo:016x}");
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 fn each(case: impl Fn(Harness<'_>)) {
@@ -60,6 +78,9 @@ fn each(case: impl Fn(Harness<'_>)) {
                 .unwrap();
         },
         revoke: &|id| sqlite.change_authority_fixture(id, true).unwrap(),
+        seed_exempt_journal: &|reserved_id, staged_id, account, expires_at_ms| {
+            sqlite.seed_expired_exempt_journal_rows(reserved_id, staged_id, account, expires_at_ms);
+        },
     });
 
     let memory = MemoryHostStore::new(INSTANCE, now);
@@ -71,6 +92,9 @@ fn each(case: impl Fn(Harness<'_>)) {
                 .unwrap();
         },
         revoke: &|id| memory.revoke_account(id),
+        seed_exempt_journal: &|reserved_id, staged_id, account, expires_at_ms| {
+            memory.seed_expired_exempt_journal_rows(reserved_id, staged_id, account, expires_at_ms);
+        },
     });
 }
 
@@ -918,6 +942,374 @@ fn operation_journal_lookup_and_commit_conformance() {
             Some(Error::OperationReused)
         );
     });
+}
+
+#[test]
+fn operation_journal_prune_expired_and_rollback_conformance() {
+    use super::journal::{Effect, Lookup, PruneOutcome, Stored, Write, DAY, PRUNE_BATCH};
+    use org_proto::{ApiError, ErrorCode};
+
+    each(|h| {
+        let t0 = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
+        let payload = Stored::Completed {
+            result: serde_json::json!({"restarted": true}),
+        };
+
+        // Commit an initial row plus a multi-batch backlog (> PRUNE_BATCH) and an expired
+        // account.create row, all expiring at t0 + 30 * DAY.
+        let first_attempt = Attempt {
+            id: OP_ID,
+            kind: "office.restart",
+            fingerprint: [0x42; 32],
+            account: ADMIN_ID,
+        };
+        assert!(matches!(
+            h.store
+                .journal_commit(
+                    &first_attempt,
+                    t0,
+                    Effect {
+                        stored: payload.clone(),
+                        verifier: None,
+                    },
+                )
+                .unwrap(),
+            Write::Committed(_)
+        ));
+        let extra = usize::from(PRUNE_BATCH) + 5;
+        for seq in 0..extra {
+            let ident = uuid_v7_at(t0, 100 + seq as u64);
+            let op = Attempt {
+                id: &ident,
+                kind: "office.restart",
+                fingerprint: [0x51; 32],
+                account: ADMIN_ID,
+            };
+            h.store
+                .journal_commit(
+                    &op,
+                    t0,
+                    Effect {
+                        stored: payload.clone(),
+                        verifier: None,
+                    },
+                )
+                .unwrap();
+        }
+        let expired_create_id = uuid_v7_at(t0, 900);
+        let expired_create = Attempt {
+            id: &expired_create_id,
+            kind: "account.create",
+            fingerprint: [0x52; 32],
+            account: ADMIN_ID,
+        };
+        h.store
+            .journal_commit(
+                &expired_create,
+                t0,
+                Effect {
+                    stored: Stored::Completed {
+                        result: serde_json::json!({"account": "expired-acct"}),
+                    },
+                    verifier: Some(("expired-acct".into(), Verifier::new(PHC.into()).unwrap())),
+                },
+            )
+            .unwrap();
+
+        // Failed journal_commit calls at a future wall_ms must not advance clock_high_ms or prune
+        // rows.
+        let bad_refusal_id = uuid_v7_at(t0 + 30 * DAY + 1_000, 1);
+        let bad_refusal = Attempt {
+            id: &bad_refusal_id,
+            kind: "office.restart",
+            fingerprint: [0x11; 32],
+            account: ADMIN_ID,
+        };
+        assert!(matches!(
+            h.store.journal_commit(
+                &bad_refusal,
+                t0 + 30 * DAY + 1_000,
+                Effect {
+                    stored: Stored::Rejected {
+                        refusal: ApiError::new(ErrorCode::NotAuthorized, "not stored"),
+                    },
+                    verifier: None,
+                },
+            ),
+            Err(Error::Unsafe)
+        ));
+        let bad_create_id = uuid_v7_at(t0 + 30 * DAY + 1_000, 2);
+        let bad_create = Attempt {
+            id: &bad_create_id,
+            kind: "account.create",
+            fingerprint: [0x12; 32],
+            account: ADMIN_ID,
+        };
+        assert!(matches!(
+            h.store.journal_commit(
+                &bad_create,
+                t0 + 30 * DAY + 1_000,
+                Effect {
+                    stored: Stored::Completed {
+                        result: serde_json::json!({"account": "created"}),
+                    },
+                    verifier: None,
+                },
+            ),
+            Err(Error::Unsafe)
+        ));
+
+        // Live rows at t0 + DAY still commit cleanly (proving clock_high_ms did not jump to
+        // t0 + 30 * DAY + 1_000), and first_attempt still replays just before expiry (proving it
+        // was not pruned).
+        let live_restart_id = uuid_v7_at(t0 + DAY, 901);
+        let live_restart = Attempt {
+            id: &live_restart_id,
+            kind: "office.restart",
+            fingerprint: [0x53; 32],
+            account: ADMIN_ID,
+        };
+        h.store
+            .journal_commit(
+                &live_restart,
+                t0 + DAY,
+                Effect {
+                    stored: payload.clone(),
+                    verifier: None,
+                },
+            )
+            .unwrap();
+        let live_create_id = uuid_v7_at(t0 + DAY, 902);
+        let live_create = Attempt {
+            id: &live_create_id,
+            kind: "account.create",
+            fingerprint: [0x54; 32],
+            account: ADMIN_ID,
+        };
+        h.store
+            .journal_commit(
+                &live_create,
+                t0 + DAY,
+                Effect {
+                    stored: Stored::Completed {
+                        result: serde_json::json!({"account": "live-acct"}),
+                    },
+                    verifier: Some(("live-acct".into(), Verifier::new(PHC.into()).unwrap())),
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            h.store
+                .journal_lookup(&first_attempt, t0 + 30 * DAY - 1)
+                .unwrap(),
+            Lookup::Replay(ref stored) if stored == &payload
+        ));
+
+        // Seed one expired reserved row and one expired staged row whose UUIDv7 timestamps are
+        // within 29 days of prune_at: if they were deleted, lookup at prune_at would return Vacant
+        // rather than Expired.
+        let prune_at = t0 + 30 * DAY;
+        let reserved_id = uuid_v7_at(t0 + 2 * DAY, 903);
+        let staged_id = uuid_v7_at(t0 + 2 * DAY, 904);
+        (h.seed_exempt_journal)(&reserved_id, &staged_id, ADMIN_ID, prune_at);
+
+        assert_eq!(h.store.journal_prune_expired(-1), Err(Error::Unsafe));
+        let expected_removed = 1 + extra as u64 + 1;
+        assert_eq!(
+            h.store.journal_prune_expired(prune_at).unwrap(),
+            PruneOutcome {
+                removed: expected_removed,
+                more_remaining: false,
+            }
+        );
+        assert_eq!(
+            h.store.journal_prune_expired(prune_at).unwrap(),
+            PruneOutcome {
+                removed: 0,
+                more_remaining: false,
+            }
+        );
+
+        // Live rows and verifiers remain intact.
+        assert!(matches!(
+            h.store.journal_lookup(&live_restart, prune_at).unwrap(),
+            Lookup::Replay(ref stored) if stored == &payload
+        ));
+        assert!(matches!(
+            h.store.journal_lookup(&live_create, prune_at).unwrap(),
+            Lookup::NeedsVerification { .. }
+        ));
+        // Expired create row is gone / refused.
+        assert!(matches!(
+            h.store.journal_lookup(&expired_create, prune_at),
+            Err(Error::Expired)
+        ));
+        // Exempt reserved and staged rows remain present (Expired, not Vacant).
+        for exempt_id in [&reserved_id, &staged_id] {
+            let exempt = Attempt {
+                id: exempt_id,
+                kind: "organization.create",
+                fingerprint: [7u8; 32],
+                account: ADMIN_ID,
+            };
+            assert!(matches!(
+                h.store.journal_lookup(&exempt, prune_at),
+                Err(Error::Expired)
+            ));
+        }
+    });
+}
+
+#[test]
+fn memory_journal_prune_batch_cap_and_startup_wiring() {
+    use std::sync::Arc;
+
+    use super::journal::{Effect, Lookup, PruneOutcome, Stored, DAY, PRUNE_BATCH};
+    use crate::authentication::Authentication;
+
+    const HOUR: i64 = 3_600_000;
+    let live_now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    // Expires one hour before startup, so the later live write at `live_now - DAY` does not
+    // prune these entries prematurely.
+    let expired_at = live_now - 30 * DAY - HOUR;
+
+    // 1. Bounded batch cap sets `more_remaining: true` when rows remain past the cap.
+    let capped = MemoryHostStore::new(INSTANCE, expired_at);
+    for seq in 0..(usize::from(PRUNE_BATCH) + 5) {
+        let ident = uuid_v7_at(expired_at, seq as u64);
+        let op = Attempt {
+            id: &ident,
+            kind: "office.restart",
+            fingerprint: [0x31; 32],
+            account: ADMIN_ID,
+        };
+        capped
+            .journal_commit(
+                &op,
+                expired_at,
+                Effect {
+                    stored: Stored::Completed {
+                        result: serde_json::json!({"ok": true}),
+                    },
+                    verifier: None,
+                },
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        capped.journal_prune_expired_capped(live_now, 1).unwrap(),
+        PruneOutcome {
+            removed: u64::from(PRUNE_BATCH),
+            more_remaining: true,
+        }
+    );
+    assert_eq!(
+        capped.journal_prune_expired(live_now).unwrap(),
+        PruneOutcome {
+            removed: 5,
+            more_remaining: false,
+        }
+    );
+
+    // 2. Authentication::with_store invokes journal_prune_expired at startup on any HostStore.
+    let memory = Arc::new(MemoryHostStore::new(INSTANCE, expired_at));
+    let expired_create_id = uuid_v7_at(expired_at, 1);
+    memory
+        .journal_commit(
+            &Attempt {
+                id: &expired_create_id,
+                kind: "account.create",
+                fingerprint: [0x61; 32],
+                account: ADMIN_ID,
+            },
+            expired_at,
+            Effect {
+                stored: Stored::Completed {
+                    result: serde_json::json!({"account": "expired-acct"}),
+                },
+                verifier: Some(("expired-acct".into(), Verifier::new(PHC.into()).unwrap())),
+            },
+        )
+        .unwrap();
+    for seq in 0..(usize::from(PRUNE_BATCH) + 10) {
+        let ident = uuid_v7_at(expired_at, 100 + seq as u64);
+        memory
+            .journal_commit(
+                &Attempt {
+                    id: &ident,
+                    kind: "office.restart",
+                    fingerprint: [0x62; 32],
+                    account: ADMIN_ID,
+                },
+                expired_at,
+                Effect {
+                    stored: Stored::Completed {
+                        result: serde_json::json!({"ok": true}),
+                    },
+                    verifier: None,
+                },
+            )
+            .unwrap();
+    }
+    let live_create_id = uuid_v7_at(live_now - DAY, 2);
+    let live_create = Attempt {
+        id: &live_create_id,
+        kind: "account.create",
+        fingerprint: [0x63; 32],
+        account: ADMIN_ID,
+    };
+    memory
+        .journal_commit(
+            &live_create,
+            live_now - DAY,
+            Effect {
+                stored: Stored::Completed {
+                    result: serde_json::json!({"account": "live-acct"}),
+                },
+                verifier: Some(("live-acct".into(), Verifier::new(PHC.into()).unwrap())),
+            },
+        )
+        .unwrap();
+    let reserved_id = uuid_v7_at(live_now - DAY, 3);
+    let staged_id = uuid_v7_at(live_now - DAY, 4);
+    memory.seed_expired_exempt_journal_rows(&reserved_id, &staged_id, ADMIN_ID, live_now - 1_000);
+    assert_eq!(memory.op_verifier_accounts().len(), 2);
+
+    let store: Arc<dyn HostStore> = Arc::clone(&memory) as Arc<dyn HostStore>;
+    let secrets: Arc<dyn HostSecrets> = Arc::new(MemorySecrets::default());
+    let _auth = Authentication::with_store(Arc::clone(&store), secrets, INSTANCE)
+        .expect("Authentication::with_store succeeds and prunes expired journal");
+
+    assert_eq!(memory.op_verifier_accounts(), vec!["live-acct"]);
+    assert_eq!(
+        store.journal_prune_expired(live_now).unwrap(),
+        PruneOutcome {
+            removed: 0,
+            more_remaining: false,
+        }
+    );
+    assert!(matches!(
+        store.journal_lookup(&live_create, live_now).unwrap(),
+        Lookup::NeedsVerification { .. }
+    ));
+    for exempt_id in [&reserved_id, &staged_id] {
+        let exempt = Attempt {
+            id: exempt_id,
+            kind: "organization.create",
+            fingerprint: [7u8; 32],
+            account: ADMIN_ID,
+        };
+        assert!(matches!(
+            store.journal_lookup(&exempt, live_now),
+            Err(Error::Expired)
+        ));
+    }
 }
 
 #[test]

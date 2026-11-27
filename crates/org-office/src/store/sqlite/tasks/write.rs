@@ -11,13 +11,37 @@ use super::super::{
     SqliteTx,
 };
 use super::{opt_text_val, opt_u64_val, DETAIL_COLS, TASK_COLS};
+use crate::organization::records::yaml::canonical_json;
 use crate::tasks::{
     ports::TasksWrite,
     records::{
-        ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord, TaskDetailsRecord,
-        TaskEventRecord, TaskLinkRecord, TaskRecord, TaskWatcherRecord,
+        ChecklistStepRecord, FinalSummaryRecord, OfficeTaskCounterRecord, TaskCommentRecord,
+        TaskDetailsRecord, TaskEventRecord, TaskLinkRecord, TaskRecord, TaskWatcherRecord,
     },
 };
+
+/// `{"reason": ..., "steps": [...]}`, canonical, or null (`TASK-88`).
+fn done_anyway_value(details: &TaskDetailsRecord) -> Value {
+    details.done_anyway.as_ref().map_or(Value::Null, |done| {
+        let steps: Vec<&str> = done.steps.iter().map(Id::as_str).collect();
+        text(&canonical_json(
+            &serde_json::json!({"reason": done.reason, "steps": steps}),
+        ))
+    })
+}
+
+/// The four `final_summary*` values of a task row, all null or all set (`TASK-88`).
+fn final_summary_values(summary: Option<&FinalSummaryRecord>, values: &mut Vec<Value>) {
+    match summary {
+        None => values.extend([Value::Null, Value::Null, Value::Null, Value::Null]),
+        Some(s) => values.extend([
+            text(&s.text),
+            text(&s.at),
+            text(FinalSummaryRecord::BY_KIND),
+            text(s.by_id.as_str()),
+        ]),
+    }
+}
 
 fn put_task_details_row(
     db: &Connection,
@@ -35,7 +59,6 @@ fn put_task_details_row(
     let values = vec![
         text(scope),
         text(task_id.as_str()),
-        opt_text_val(det.definition_of_done.as_deref()),
         opt_text_val(det.what_happened.as_deref()),
         opt_text_val(det.expected.as_deref()),
         opt_text_val(det.steps.as_deref()),
@@ -53,6 +76,7 @@ fn put_task_details_row(
         optional_id_value(det.merged_into_task_id.as_ref()),
         optional_id_value(det.suggested_triager_id.as_ref()),
         optional_id_value(det.suggested_verifier_id.as_ref()),
+        done_anyway_value(det),
     ];
     let columns = format!("organization_id, task_id, {DETAIL_COLS}");
     put(db, "task_details", &columns, 2, values)
@@ -96,6 +120,7 @@ impl TasksWrite for SqliteTx {
             opt_text_val(record.blocked_reason.as_deref()),
             opt_u64_val(record.rank_order)?,
         ];
+        final_summary_values(record.final_summary.as_ref(), &mut values);
         meta_values(&meta, &mut values)?;
         let columns = format!("organization_id, {TASK_COLS}, schema_version, {META}");
         put(db, "tasks", &columns, 2, values)?;
@@ -265,13 +290,14 @@ impl TasksWrite for SqliteTx {
             run(
                 db,
                 "INSERT INTO checklist_steps \
-                 (organization_id, target_kind, target_id, id, position, text, required, done, \
-                  linked_task_id, checked_by_employee_id, checked_at, revision) \
-                 VALUES (?1, 'task', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 (organization_id, target_kind, target_id, id, section, position, text, \
+                  required, done, linked_task_id, checked_by_employee_id, checked_at, revision) \
+                 VALUES (?1, 'task', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 vec![
                     text(scope),
                     text(task_id.as_str()),
                     text(s.id.as_str()),
+                    text(s.section.as_str()),
                     whole(s.position)?,
                     text(&s.text),
                     Value::Integer(i64::from(s.required)),

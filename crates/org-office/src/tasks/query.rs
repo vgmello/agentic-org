@@ -6,7 +6,7 @@
 //! A page therefore costs a fixed number of reads, whether the organization holds 10 tasks
 //! or 10,000; nothing here reads storage.
 
-use org_proto::tasks::{LabelMatchMode, TaskSortMode, TaskStatus};
+use org_proto::tasks::{ChecklistSection, LabelMatchMode, TaskSortMode, TaskStatus};
 use org_store::Id;
 
 use super::records::TaskRecord;
@@ -131,17 +131,41 @@ pub struct TaskListPage {
     pub total: u64,
 }
 
+/// How many steps one checklist section has, and how many are ticked (`TASK-88`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SectionCount {
+    pub total: u64,
+    pub done: u64,
+}
+
 /// What a task's list row shows of its children and links.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskRollup {
     pub checklist_total: u64,
     pub checklist_done: u64,
+    /// Per section, in [`ChecklistSection::ALL`] order (`TASK-88`).
+    pub sections: [SectionCount; 3],
     pub comment_count: u64,
     pub watcher_count: u64,
     /// Tasks this task directly depends on, sorted and unique.
     pub depends_on: Vec<Id>,
     /// Tasks that directly depend on this task, sorted and unique.
     pub dependents: Vec<Id>,
+}
+
+impl TaskRollup {
+    /// Counts `total` steps of `section`, `done` of them ticked, in the section and overall.
+    pub fn add_steps(&mut self, section: ChecklistSection, total: u64, done: u64) {
+        let count = &mut self.sections[section as usize];
+        count.total += total;
+        count.done += done;
+        self.checklist_total += total;
+        self.checklist_done += done;
+    }
+
+    pub fn section(&self, section: ChecklistSection) -> SectionCount {
+        self.sections[section as usize]
+    }
 }
 
 /// What a rebuild checks of one task's history (`doc-79`).

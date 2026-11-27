@@ -17,7 +17,10 @@ use org_host::ports::accounts::{
 use org_host::ports::host_secrets::{Error as SecretError, Name, Value, MAX_BYTES};
 use org_host::ports::host_store::{
     accounts::{Account, Credentials as HostCredentials, Link},
-    journal::{Attempt as JournalAttempt, Effect, Lookup, Stored, Write},
+    journal::{
+        id_time, Attempt as JournalAttempt, Effect, Lookup, PruneOutcome, Stored, Write, DAY,
+        MAX_PRUNE_BATCHES, PRUNE_BATCH,
+    },
     lockout::{Outcome, Socket, State as LockoutState},
     multi_person::{
         account_subject, invite_subject, parse_account_subject, parse_invite_subject,
@@ -27,8 +30,9 @@ use org_host::ports::host_store::{
     provisioning::{Reservation, Taken},
     recovery::{Ledger, State as RecoveryState},
     web_tls::{Source, StoredPair, TlsLookup, TlsStored},
-    CreatorV1, Error as HostStoreError, HostOpResult, OrgAccessEntry, PlanV1, PreparedV1,
-    PublicRecord, RecoveryAudit, RecoveryBinding, RecoveryStatusResult, TlsRefusal,
+    ApiError, CreatorV1, Error as HostStoreError, ErrorCode, HostOpResult, Journaled,
+    OrgAccessEntry, PlanV1, PreparedV1, PublicRecord, RecoveryAudit, RecoveryBinding,
+    RecoveryStatusResult, TlsRefusal,
 };
 use org_host::ports::keys::{is_storage_id, KeyStoreError, OfficeSecretsKey};
 use org_host::ports::links::{
@@ -54,6 +58,7 @@ const MEMBER_BOB: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c3";
 const MEMBER_BOB_2: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c4";
 const OP_ID: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607110";
 const OP_ID_2: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607111";
+const OP_ID_3: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607112";
 const ADMIN_ID: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1";
 const BOB_ID: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a2";
 const PHC_1: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -179,7 +184,7 @@ struct State {
     sessions: BTreeMap<String, StoredSession>,
     throttles: BTreeMap<String, (i64, i64)>,
     lockouts: BTreeMap<(Socket, String), (u32, u64, u64)>,
-    journal: BTreeMap<String, ([u8; 32], Stored)>,
+    journal: BTreeMap<String, ([u8; 32], Stored, i64)>,
     reservations: BTreeMap<String, Reservation>,
     recoveries: BTreeMap<String, (Ledger, Vec<RecoveryAudit>)>,
     tls_pair: Option<StoredPair>,
@@ -1293,12 +1298,16 @@ impl HostStore for ExternalHostStore {
     fn journal_lookup(
         &self,
         op: &JournalAttempt<'_>,
-        _wall_ms: i64,
+        wall_ms: i64,
     ) -> Result<Lookup, HostStoreError> {
-        let state = self.state.lock().unwrap();
-        let Some((fp, stored)) = state.journal.get(op.id) else {
+        let mut state = self.state.lock().unwrap();
+        let now = state.advance(wall_ms);
+        let Some((fp, stored, expires_at_ms)) = state.journal.get(op.id) else {
             return Ok(Lookup::Vacant);
         };
+        if *expires_at_ms <= now {
+            return Err(HostStoreError::Expired);
+        }
         if fp != &op.fingerprint {
             return Err(HostStoreError::OperationReused);
         }
@@ -1308,20 +1317,72 @@ impl HostStore for ExternalHostStore {
     fn journal_commit(
         &self,
         op: &JournalAttempt<'_>,
-        _wall_ms: i64,
+        wall_ms: i64,
         effect: Effect,
     ) -> Result<Write, HostStoreError> {
         let mut state = self.state.lock().unwrap();
-        if let Some((fp, stored)) = state.journal.get(op.id) {
+        let now = state.advance(wall_ms);
+        if let Some((fp, stored, expires_at_ms)) = state.journal.get(op.id) {
+            if *expires_at_ms <= now {
+                return Err(HostStoreError::Expired);
+            }
             if fp != &op.fingerprint {
                 return Err(HostStoreError::OperationReused);
             }
             return Ok(Write::Existing(Lookup::Replay(stored.clone())));
         }
-        state
-            .journal
-            .insert(op.id.to_owned(), (op.fingerprint, effect.stored.clone()));
+        match &effect.stored {
+            Stored::Completed { .. } => {}
+            Stored::Rejected { refusal }
+                if matches!(
+                    refusal.code,
+                    ErrorCode::AlreadyExists | ErrorCode::InvalidName
+                ) => {}
+            _ => return Err(HostStoreError::Unsafe),
+        }
+        let expires_at_ms = id_time(op.id)? + 30 * DAY;
+        state.journal.insert(
+            op.id.to_owned(),
+            (op.fingerprint, effect.stored.clone(), expires_at_ms),
+        );
         Ok(Write::Committed(effect.stored))
+    }
+
+    fn journal_prune_expired(&self, wall_ms: i64) -> Result<PruneOutcome, HostStoreError> {
+        if wall_ms < 0 {
+            return Err(HostStoreError::Unsafe);
+        }
+        let mut removed: u64 = 0;
+        for _ in 0..MAX_PRUNE_BATCHES {
+            let batch = {
+                let mut state = self.state.lock().unwrap();
+                let now = state.advance(wall_ms);
+                let mut expired: Vec<(i64, String)> = state
+                    .journal
+                    .iter()
+                    .filter(|(_, (_, _, expires))| *expires <= now)
+                    .map(|(id, (_, _, expires))| (*expires, id.clone()))
+                    .collect();
+                expired.sort();
+                let mut count = 0usize;
+                for (_, id) in expired.into_iter().take(usize::from(PRUNE_BATCH)) {
+                    state.journal.remove(&id);
+                    count += 1;
+                }
+                count
+            };
+            removed = removed.saturating_add(u64::try_from(batch).unwrap_or(u64::MAX));
+            if batch < usize::from(PRUNE_BATCH) {
+                return Ok(PruneOutcome {
+                    removed,
+                    more_remaining: false,
+                });
+            }
+        }
+        Ok(PruneOutcome {
+            removed,
+            more_remaining: true,
+        })
     }
 
     fn login_lockout(
@@ -2046,12 +2107,24 @@ fn external_host_store_implements_all_four_registry_ports() {
     ));
 
     // 4. Journal, lockouts, provisioning, recovery reconciliation, and web TLS.
-    let attempt = JournalAttempt {
-        id: OP_ID,
-        kind: "office.restart",
-        fingerprint: [0x12; 32],
-        account: ADMIN_ID,
+    struct ExternalRestartOp<'a> {
+        operation_id: &'a str,
+        office_id: &'a str,
+    }
+    impl Journaled for ExternalRestartOp<'_> {
+        const METHOD: &'static str = "office.restart";
+        fn operation_id(&self) -> &str {
+            self.operation_id
+        }
+        fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+            serde_json::to_string(&json!({ "office_id": self.office_id }))
+        }
+    }
+    let restart_op = ExternalRestartOp {
+        operation_id: OP_ID,
+        office_id: OFFICE_ID,
     };
+    let attempt = JournalAttempt::new(&restart_op, ADMIN_ID).unwrap();
     assert!(matches!(
         store.journal_lookup(&attempt, now + 50).unwrap(),
         Lookup::Vacant
@@ -2075,6 +2148,40 @@ fn external_host_store_implements_all_four_registry_ports() {
     assert!(matches!(
         store.journal_lookup(&attempt, now + 51).unwrap(),
         Lookup::Replay(ref s) if s == &stored
+    ));
+    // Refusal-code validation uses `org_host::ports::host_store::{ApiError, ErrorCode}`.
+    let refusal_op = ExternalRestartOp {
+        operation_id: OP_ID_3,
+        office_id: OFFICE_ID,
+    };
+    let refusal_attempt = JournalAttempt::new(&refusal_op, ADMIN_ID).unwrap();
+    assert!(matches!(
+        store.journal_commit(
+            &refusal_attempt,
+            now + 52,
+            Effect {
+                stored: HostOpResult::Rejected {
+                    refusal: ApiError::new(ErrorCode::NotAuthorized, "not stored"),
+                },
+                verifier: None,
+            },
+        ),
+        Err(HostStoreError::Unsafe)
+    ));
+    assert!(matches!(
+        store
+            .journal_commit(
+                &refusal_attempt,
+                now + 52,
+                Effect {
+                    stored: HostOpResult::Rejected {
+                        refusal: ApiError::new(ErrorCode::InvalidName, "bad name"),
+                    },
+                    verifier: None,
+                },
+            )
+            .unwrap(),
+        Write::Committed(_)
     ));
 
     assert!(!store
@@ -2175,6 +2282,22 @@ fn external_host_store_implements_all_four_registry_ports() {
         Ok(None)
     );
     assert_eq!(store.web_tls_pair(), Ok(Some(pair)));
+
+    let prune_at = id_time(OP_ID).unwrap() + 30 * DAY;
+    assert_eq!(
+        store.journal_prune_expired(prune_at).unwrap(),
+        PruneOutcome {
+            removed: 2,
+            more_remaining: false,
+        }
+    );
+    assert_eq!(
+        store.journal_prune_expired(prune_at).unwrap(),
+        PruneOutcome {
+            removed: 0,
+            more_remaining: false,
+        }
+    );
 }
 
 #[test]

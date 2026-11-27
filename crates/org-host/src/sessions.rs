@@ -1,9 +1,12 @@
 //! Browser sessions (A3, plan B3; SES-4, SES-6, D8).
 //!
-//! The web process mints a 32-byte random cookie value and a 32-byte proof for
-//! each browser session. The host never sees either: it stores and compares only
-//! the domain-separated digests defined on [`SessionDigest`], so a copied
-//! registry yields no usable cookie.
+//! The web process mints 32 random bytes each for a browser session's cookie
+//! value (base64url) and proof (lowercase hex), and hashes that text itself:
+//! `SHA-256(domain ‖ value)` with a distinct domain per value (`agentic-org-web`
+//! `session::cookie`). The host never sees either value and never hashes one: it
+//! adopts each wire `Digest32` unchanged as a [`SessionDigest`]
+//! (`authentication::browser::digest`), then stores and compares only those
+//! digests, so a copied registry yields no usable cookie.
 //!
 //! `BrowserSessions` is the consumer-owned, engine-independent host-storage
 //! contract (ADR-0018). The SQLite registry implements it in `hostdb::sessions`;
@@ -34,12 +37,14 @@ const PROOF_DOMAIN: &[u8] = b"agentic-org/session-proof/v1";
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SessionDigest(pub [u8; 32]);
 impl SessionDigest {
-    /// `SHA-256("agentic-org/session-cookie/v1" ‖ value)`. The domain is a
-    /// fixed-length constant, so the concatenation is unambiguous.
+    /// Tests and fixtures only: `SHA-256("agentic-org/session-cookie/v1" ‖ value)`, a
+    /// fixture digest. The live one comes from the web process under its own domain
+    /// (see the module docs); stores treat either as 32 opaque bytes.
     pub fn cookie(value: &[u8]) -> Self {
         Self(digest(COOKIE_DOMAIN, value))
     }
-    /// `SHA-256("agentic-org/session-proof/v1" ‖ value)`.
+    /// Tests and fixtures only: `SHA-256("agentic-org/session-proof/v1" ‖ value)`, a
+    /// fixture digest like [`Self::cookie`].
     pub fn proof(value: &[u8]) -> Self {
         Self(digest(PROOF_DOMAIN, value))
     }

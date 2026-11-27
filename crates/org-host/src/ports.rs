@@ -28,6 +28,7 @@ pub mod host_store {
         HostStore, StoreFault,
     };
     pub use org_host_control::browser_accounts::OrgAccessEntry;
+    pub use org_host_control::journal::Journaled;
     pub use org_host_control::ops::TlsRefusal;
     pub use org_host_control::recovery::{
         Audit as RecoveryAudit, DeliveryState as RecoveryDeliveryState,
@@ -36,6 +37,7 @@ pub mod host_store {
     pub use org_host_control::HostOpResult;
     pub use org_office_launch::recovery::{PublicRecord, Request as RecoveryBinding};
     pub use org_proto::selected_bootstrap::{CreatorV1, PlanV1, PreparedV1};
+    pub use org_proto::{ApiError, ErrorCode};
 }
 
 /// Public types, checked identities, and shared throttle rules for [`AccountStore`].

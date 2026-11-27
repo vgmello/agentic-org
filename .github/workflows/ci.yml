@@ -177,6 +177,46 @@ jobs:
           esac
           python3 .github/scripts/platform_allowlist_shrinks.py "$base"
 
+  # TASK-234 (P0-INT-4): crate non-test LOC ratchet, shrink-only concrete infra coupling &
+  # port `#[allow(dead_code)]` guard, and workspace Cargo DAG / Layer-0 stability check.
+  architecture-health:
+    name: Architecture health and coupling boundaries
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Architecture health script unit tests
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Check architecture health and shrink-only boundaries
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base=""
+          if [ -n "$PR_BASE" ]; then
+            base="$PR_BASE"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] || [ "$GITHUB_REF" = "refs/heads/v1" ]; then
+            base="$BEFORE"
+          elif git rev-parse --verify origin/v1 >/dev/null 2>&1; then
+            base="$(git merge-base HEAD origin/v1)" || {
+              echo "This branch shares no history with v1."; exit 1; }
+          elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+            base="$(git merge-base HEAD origin/main)" || {
+              echo "This branch shares no history with main."; exit 1; }
+          fi
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              echo "No base commit to compare with; running live architecture health checks only."
+              python3 .github/scripts/check_architecture_health.py
+              ;;
+            *)
+              python3 .github/scripts/check_architecture_health.py --base "$base"
+              ;;
+          esac
+
   # TASK-178: a change never raises a count in .github/large-files.allow, and adds a path only for a
   # listed file renamed (its old path gone), at no more than its old count. The same base as
   # platform-list; the comparison is the ignored test of file_size_ratchet, which also runs the

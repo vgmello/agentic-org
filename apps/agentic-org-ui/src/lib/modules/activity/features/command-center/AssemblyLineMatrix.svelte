@@ -1,13 +1,11 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import Layers from '@lucide/svelte/icons/layers';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-	import {
-		formatTelemetryHours,
-		type ActivityCommandCenterModel,
-		type FeedPhase
-	} from './assembly-model';
+	import AssemblyLegendBar from './AssemblyLegendBar.svelte';
+	import AssemblyStageCell from './AssemblyStageCell.svelte';
+	import AssemblySummaryStrip from './AssemblySummaryStrip.svelte';
+	import type { ActivityCommandCenterModel, FeedPhase } from './assembly-model';
 
 	let {
 		model,
@@ -65,18 +63,10 @@
 		}
 	});
 
-	const agentsBusyLabel = $derived(
-		model.activeAgentsCount > 0
-			? `${model.busyAgentsCount} / ${model.activeAgentsCount}`
-			: String(model.stageCounts.agents)
-	);
 	const dataUnavailable = $derived(loading || Boolean(unavailableReason));
 	const totalTracks = $derived(
 		model.milestones.reduce((sum, milestone) => sum + milestone.lanes.length, 0)
 	);
-	const summaryEyebrow = $derived(model.scopeEyebrow);
-	const summaryTitle = $derived(projectScope ? 'Assembly line' : model.scopeTitle);
-	const avgCycleLabel = $derived(formatTelemetryHours(model.avgCycleHours));
 
 	function handleRetryClick(event: MouseEvent) {
 		const section = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>(
@@ -88,81 +78,7 @@
 </script>
 
 <section class="assembly-view" tabindex="-1" aria-label="Assembly line pipeline">
-	<!-- Summary Strip -->
-	<div class="assembly-summary">
-		<div class="min-w-0">
-			<div class="assembly-eyebrow">{summaryEyebrow}</div>
-			<div class="mt-0.5 flex flex-wrap items-center gap-2.5">
-				<h2 class="assembly-scope-title">{summaryTitle}</h2>
-				<span class="assembly-live-pill">
-					<span class="assembly-live-dot" aria-hidden="true"></span>
-					<span>
-						{#if loading}
-							Loading pipeline…
-						{:else if unavailableReason}
-							Work data unavailable
-						{:else}
-							{model.liveStatusText}
-						{/if}
-					</span>
-				</span>
-			</div>
-		</div>
-
-		<dl class="assembly-metrics">
-			<div>
-				<dt>Readiness</dt>
-				<dd class={dataUnavailable ? '' : 'assembly-metric-sky'}>
-					{dataUnavailable ? '—' : `${model.readinessPct}%`}
-				</dd>
-				<progress
-					class={['assembly-progress-bar', !dataUnavailable && model.isComplete && 'is-complete']}
-					value={dataUnavailable ? 0 : model.mergedItems}
-					max={Math.max(1, model.totalItems)}
-					aria-label={dataUnavailable
-						? 'Readiness unavailable'
-						: `${projectScope ? 'Project' : 'Portfolio'} readiness: ${model.readinessPct}%`}
-				></progress>
-			</div>
-			<div>
-				<dt>Merged</dt>
-				<dd>{dataUnavailable ? '—' : `${model.mergedItems} / ${model.totalItems}`}</dd>
-			</div>
-			<div>
-				<dt>Agents busy</dt>
-				<dd>{dataUnavailable ? '—' : agentsBusyLabel}</dd>
-			</div>
-			<div>
-				<dt>Human review</dt>
-				<dd
-					class={!dataUnavailable && (model.stageCounts.review > 0 || inboxPhase === 'error')
-						? 'assembly-review-text'
-						: ''}
-				>
-					{#if dataUnavailable}
-						—
-					{:else if inboxPhase === 'loading'}
-						Checking…
-					{:else if inboxPhase === 'error'}
-						{model.stageCounts.review} (Inbox unavailable)
-					{:else}
-						{model.stageCounts.review}
-					{/if}
-				</dd>
-			</div>
-			{#if projectScope}
-				<div>
-					<dt>Avg. cycle time</dt>
-					<dd data-testid="assembly-avg-cycle">{dataUnavailable ? '—' : avgCycleLabel}</dd>
-				</div>
-			{:else}
-				<div>
-					<dt>Open</dt>
-					<dd>{dataUnavailable ? '—' : model.openItems}</dd>
-				</div>
-			{/if}
-		</dl>
-	</div>
+	<AssemblySummaryStrip {model} {loading} {unavailableReason} {inboxPhase} {projectScope} />
 
 	{#if loading}
 		<div class="assembly-empty" role="status" aria-live="polite">
@@ -208,7 +124,7 @@
 			</p>
 		</div>
 	{:else}
-		<!-- 7-Column Swimlane Pipeline Table -->
+		<!-- scrollable table container needs keyboard focus for horizontal scrolling -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div class="assembly-table-wrap" tabindex="0" role="region" aria-label="Assembly line matrix">
 			<table class="assembly-table" bind:this={tableEl}>
@@ -294,118 +210,11 @@
 									<div class="assembly-lane-name">{lane.name}</div>
 									<small>{lane.subtitle}</small>
 								</th>
-
-								<!-- Queue -->
-								<td>
-									<div class="assembly-cell">
-										{#if lane.stages.queue.length === 0}
-											<span class="assembly-dash" aria-label="None">—</span>
-										{:else}
-											{#each lane.stages.queue as chip (chip.id)}
-												<a
-													href={resolve(chip.href as '/work')}
-													class="assembly-chip"
-													data-chip-id={chip.id}
-													data-stage="queue"
-													title={chip.tooltip}
-												>
-													{chip.shortId}
-												</a>
-											{/each}
-										{/if}
-									</div>
-								</td>
-
-								<!-- Agents -->
-								<td>
-									<div class="assembly-cell">
-										{#if lane.stages.agents.length === 0}
-											<span class="assembly-dash" aria-label="None">—</span>
-										{:else}
-											{#each lane.stages.agents as chip (chip.id)}
-												<a
-													href={resolve(chip.href as '/work')}
-													class="assembly-chip"
-													data-chip-id={chip.id}
-													data-stage="agents"
-													title={chip.tooltip}
-												>
-													<span class="agent-pulse-dot" aria-hidden="true"></span>
-													<span>
-														{chip.shortId}{#if chip.agentFirstName}
-															· {chip.agentFirstName}
-														{/if}
-													</span>
-												</a>
-											{/each}
-										{/if}
-									</div>
-								</td>
-
-								<!-- CI / Checks ready -->
-								<td>
-									<div class="assembly-cell">
-										{#if lane.stages.ci.length === 0}
-											<span class="assembly-dash" aria-label="None">—</span>
-										{:else}
-											{#each lane.stages.ci as chip (chip.id)}
-												<a
-													href={resolve(chip.href as '/work')}
-													class="assembly-chip"
-													data-chip-id={chip.id}
-													data-stage="ci"
-													title={chip.tooltip}
-												>
-													{chip.shortId}
-												</a>
-											{/each}
-										{/if}
-									</div>
-								</td>
-
-								<!-- Human Review -->
-								<td>
-									<div class="assembly-cell">
-										{#if lane.stages.review.length === 0}
-											<span class="assembly-dash" aria-label="None">—</span>
-										{:else}
-											{#each lane.stages.review as chip (chip.id)}
-												<a
-													href={resolve(chip.href as '/inbox')}
-													class="assembly-chip"
-													data-chip-id={chip.id}
-													data-stage="review"
-													title={chip.tooltip}
-												>
-													{chip.shortId}
-												</a>
-											{/each}
-										{/if}
-									</div>
-								</td>
-
-								<!-- Merged -->
-								<td>
-									<div class="assembly-cell">
-										{#if lane.stages.merged.length === 0}
-											<span class="assembly-dash" aria-label="None">—</span>
-										{:else}
-											{#each lane.stages.merged as chip (chip.id)}
-												<a
-													href={resolve(chip.href as '/work')}
-													class="assembly-chip"
-													data-chip-id={chip.id}
-													data-stage="merged"
-													title={chip.tooltip}
-												>
-													{chip.shortId}
-												</a>
-											{/each}
-										{/if}
-									</div>
-								</td>
-
-								<!-- Into Release -->
+								<AssemblyStageCell stage="queue" chips={lane.stages.queue} />
+								<AssemblyStageCell stage="agents" chips={lane.stages.agents} />
+								<AssemblyStageCell stage="ci" chips={lane.stages.ci} />
+								<AssemblyStageCell stage="review" chips={lane.stages.review} />
+								<AssemblyStageCell stage="merged" chips={lane.stages.merged} />
 								<td>
 									<div class="assembly-progress">
 										<span class={['assembly-pct tabular-nums', lane.isComplete && 'is-complete']}>
@@ -428,51 +237,7 @@
 		</div>
 	{/if}
 
-	<!-- Bottom Legend & Overall Readiness Bar -->
-	<div class="assembly-legend">
-		<div class="assembly-legend-items" aria-label="Pipeline stage legend">
-			<span class="legend-item" data-stage="queue">
-				<span class="legend-dot" aria-hidden="true"></span>
-				<span>Queue</span>
-			</span>
-			<span class="legend-item" data-stage="agents">
-				<span class="legend-dot" aria-hidden="true"></span>
-				<span>Agents</span>
-			</span>
-			<span class="legend-item" data-stage="ci">
-				<span class="legend-dot" aria-hidden="true"></span>
-				<span>Ready for checks</span>
-			</span>
-			<span class="legend-item" data-stage="review">
-				<span class="legend-dot" aria-hidden="true"></span>
-				<span>Human review</span>
-			</span>
-			<span class="legend-item" data-stage="merged">
-				<span class="legend-dot" aria-hidden="true"></span>
-				<span>Merged</span>
-			</span>
-		</div>
-
-		{#if !projectScope}
-			<div class="assembly-progress assembly-overall-progress">
-				<span class="tabular-nums">
-					{#if dataUnavailable}
-						—
-					{:else}
-						{model.readinessPct}% · {model.mergedItems}/{model.totalItems} merged
-					{/if}
-				</span>
-				<progress
-					class={!dataUnavailable && model.isComplete ? 'is-complete' : ''}
-					value={dataUnavailable ? 0 : model.mergedItems}
-					max={Math.max(1, model.totalItems)}
-					aria-label={dataUnavailable
-						? 'Overall readiness unavailable'
-						: `Overall readiness: ${model.readinessPct}%`}
-				></progress>
-			</div>
-		{/if}
-	</div>
+	<AssemblyLegendBar {model} {projectScope} {dataUnavailable} />
 </section>
 
 <style>
@@ -487,93 +252,9 @@
 		border-radius: 0;
 		background-color: var(--assembly-surface, var(--exec-surface));
 	}
-
-	.assembly-summary {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px 20px;
-		padding: 14px var(--activity-gutter, 24px);
-		border-bottom: 1px solid var(--line);
-	}
-
-	.assembly-eyebrow {
-		color: var(--tone-accent-ink);
-		font-size: 0.6875rem;
-		font-weight: 650;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-	}
-
-	.assembly-scope-title {
-		color: var(--exec-ink);
-		font-size: 1.125rem;
-		font-weight: 650;
-		line-height: 1.3;
-		min-width: 0;
-		overflow-wrap: anywhere;
-	}
-
-	.assembly-live-pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 2px 9px;
-		border-radius: var(--exec-pill-radius, 999px);
-		background: var(--tone-accent-bg);
-		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
-		color: var(--tone-accent-ink);
-		font-size: 0.75rem;
-		font-weight: 550;
-	}
-
-	.assembly-live-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 999px;
-		background: var(--tone-accent-ink);
-		flex-shrink: 0;
-	}
-
-	.assembly-metrics {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px 20px;
-		margin: 0;
-	}
-
-	.assembly-metrics dt {
-		color: var(--fg-secondary);
-		font-size: 0.6875rem;
-		font-weight: 550;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	.assembly-metrics dd {
-		margin: 2px 0 0;
-		color: var(--exec-ink);
-		font-size: 1rem;
-		font-weight: 650;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.assembly-metrics dd.assembly-metric-sky {
-		color: var(--exec-sky);
-	}
-
-	.assembly-metrics .assembly-progress-bar {
-		display: block;
-		width: clamp(60px, 6cqi, 92px);
-		margin-block-start: 4px;
-	}
-
-	.assembly-review-text,
-	.assembly-metrics dd.assembly-review-text {
+	.assembly-review-text {
 		color: var(--exec-warn);
 	}
-
 	.assembly-empty {
 		display: flex;
 		flex-direction: column;
@@ -582,19 +263,16 @@
 		padding: 48px 24px;
 		text-align: center;
 	}
-
 	.assembly-empty h3 {
 		color: var(--exec-ink);
 		font-size: 0.9375rem;
 		font-weight: 600;
 	}
-
 	.assembly-empty p {
 		max-width: 28rem;
 		color: var(--fg-secondary);
 		font-size: 0.8125rem;
 	}
-
 	.assembly-retry-btn {
 		display: inline-flex;
 		align-items: center;
@@ -610,27 +288,22 @@
 		font-weight: 600;
 		cursor: pointer;
 	}
-
 	.assembly-retry-btn:hover {
 		background: var(--exec-surface-hi);
 	}
-
 	.assembly-retry-btn:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
 	}
-
 	.assembly-table-wrap {
 		flex: 1 0 auto;
 		overflow-x: auto;
 		max-width: 100%;
 	}
-
 	.assembly-table-wrap:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
-
 	.assembly-table {
 		width: 100%;
 		min-width: 760px;
@@ -640,26 +313,23 @@
 		font-size: 0.8125rem;
 		line-height: 1.45;
 	}
-
 	.assembly-table :is(th, td) {
 		padding: 10px 10px;
 		text-align: start;
 		vertical-align: top;
 	}
-
 	:global(html[data-assembly-dividers])
 		.assembly-table
 		tbody
 		tr:not(.assembly-milestone)
 		+ tr
-		> :is(th, td) {
+		> :global(:is(th, td)) {
 		border-block-start: 1px solid var(--line);
 	}
-
-	.assembly-table tr > :is(th, td) + :is(th, td) {
+	.assembly-table thead th + th,
+	.assembly-table tbody td {
 		border-inline-start: 1px solid var(--line);
 	}
-
 	.assembly-table thead th {
 		background: var(--workspace-secondary-surface, var(--exec-well));
 		border-block-end: 1px solid var(--line);
@@ -667,25 +337,20 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 	}
-
 	.assembly-table thead th:first-child {
 		width: 22%;
 	}
-
 	.assembly-table thead th:last-child {
 		width: 13%;
 	}
-
 	.assembly-table thead th.col-track {
 		min-width: 156px;
 		padding-inline-start: var(--activity-gutter, 24px);
 	}
-
 	.assembly-table thead th.col-release {
 		min-width: 112px;
 		padding-inline-end: var(--activity-gutter, 24px);
 	}
-
 	.assembly-table small {
 		display: block;
 		margin-top: 2px;
@@ -693,7 +358,6 @@
 		font-size: 0.75rem;
 		font-weight: 400;
 	}
-
 	.assembly-milestone th {
 		padding: 9px 16px;
 		border-block: 1px solid var(--line-strong);
@@ -701,7 +365,6 @@
 		color: var(--exec-ink);
 		font-weight: 650;
 	}
-
 	.assembly-milestone-row {
 		display: flex;
 		flex-wrap: wrap;
@@ -709,7 +372,6 @@
 		gap: 6px 14px;
 		min-width: 0;
 	}
-
 	.assembly-milestone-name {
 		color: var(--tone-accent-ink);
 		font-size: 0.8125rem;
@@ -717,121 +379,23 @@
 		min-width: 0;
 		overflow-wrap: anywhere;
 	}
-
 	.assembly-milestone-key,
 	.assembly-milestone-summary {
 		color: var(--fg-secondary);
 		font-weight: 500;
 		overflow-wrap: anywhere;
 	}
-
 	.assembly-lane-row:hover {
 		background: var(--surface-raised);
 	}
-
 	.assembly-lane-head {
 		padding-inline-start: var(--activity-gutter, 24px);
 		font-weight: 550;
 	}
-
 	.assembly-lane-name {
 		color: var(--exec-ink);
 		font-weight: 600;
 	}
-
-	.assembly-cell {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-
-	.assembly-chip {
-		--stage-color: var(--fg-secondary);
-		--stage-bg: var(--exec-well);
-		--stage-ring: var(--exec-border-hi);
-		position: relative;
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		min-height: 36px;
-		max-width: 100%;
-		padding: 4px 10px;
-		border-radius: var(--exec-sm-radius, 6px);
-		background: var(--stage-bg);
-		box-shadow: inset 0 0 0 1px var(--stage-ring);
-		color: var(--stage-color);
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-		font-size: 0.75rem;
-		font-weight: 550;
-		line-height: 1.25;
-		text-decoration: none;
-		overflow-wrap: anywhere;
-		transition: box-shadow 0.15s ease;
-	}
-
-	.assembly-chip:hover,
-	.assembly-chip:focus-visible {
-		box-shadow: inset 0 0 0 1.5px var(--stage-color);
-	}
-
-	.assembly-chip:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 1px;
-	}
-
-	.assembly-chip[data-stage='agents'],
-	.legend-item[data-stage='agents'] {
-		--stage-color: var(--tone-accent-ink);
-		--stage-bg: var(--tone-accent-bg);
-		--stage-ring: var(--tone-accent-ring);
-	}
-
-	.assembly-chip[data-stage='ci'],
-	.legend-item[data-stage='ci'] {
-		--stage-color: var(--exec-sky);
-		--stage-bg: var(--exec-sky-bg);
-		--stage-ring: var(--exec-sky-ring);
-	}
-
-	.assembly-chip[data-stage='review'],
-	.legend-item[data-stage='review'] {
-		--stage-color: var(--exec-warn);
-		--stage-bg: var(--exec-warn-bg);
-		--stage-ring: var(--exec-warn-ring);
-	}
-
-	.assembly-chip[data-stage='merged'],
-	.legend-item[data-stage='merged'] {
-		--stage-color: var(--exec-ok);
-		--stage-bg: var(--exec-ok-bg);
-		--stage-ring: var(--exec-ok-ring);
-	}
-
-	.agent-pulse-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 999px;
-		background: var(--tone-accent-ink);
-		flex-shrink: 0;
-		animation: assembly-pulse 1.8s ease-in-out infinite;
-	}
-
-	@keyframes assembly-pulse {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.35;
-		}
-	}
-
-	.assembly-dash {
-		color: var(--fg-secondary);
-		font-size: 0.8125rem;
-		line-height: 36px;
-	}
-
 	.assembly-progress {
 		display: grid;
 		justify-items: start;
@@ -840,7 +404,6 @@
 		font-size: 0.75rem;
 		white-space: nowrap;
 	}
-
 	.assembly-milestone-progress {
 		display: inline-flex;
 		flex-wrap: wrap;
@@ -849,25 +412,14 @@
 		font-weight: 500;
 		white-space: normal;
 	}
-
-	.assembly-overall-progress {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		font-weight: 500;
-	}
-
 	.assembly-pct {
 		color: var(--exec-ink);
 		font-weight: 650;
 	}
-
 	.assembly-pct.is-complete {
 		color: var(--exec-ok);
 	}
-
-	.assembly-progress progress,
-	.assembly-progress-bar {
+	.assembly-progress progress {
 		appearance: none;
 		width: 78px;
 		height: 7px;
@@ -877,114 +429,23 @@
 		color: var(--tone-accent-ink);
 		overflow: hidden;
 	}
-
 	.assembly-milestone .assembly-progress progress {
 		width: clamp(96px, 12cqi, 144px);
 	}
-
-	.assembly-legend .assembly-progress progress {
-		background: var(--exec-surface);
-	}
-
-	.assembly-progress progress::-webkit-progress-bar,
-	.assembly-progress-bar::-webkit-progress-bar {
+	.assembly-progress progress::-webkit-progress-bar {
 		border-radius: inherit;
 		background: var(--exec-well);
 	}
-
-	.assembly-legend .assembly-progress progress::-webkit-progress-bar {
-		background: var(--exec-surface);
-	}
-
 	.assembly-progress progress::-webkit-progress-value,
-	.assembly-progress-bar::-webkit-progress-value {
+	.assembly-progress progress::-moz-progress-bar {
 		border-radius: inherit;
 		background: var(--tone-accent-ink);
 	}
-
-	.assembly-progress progress::-moz-progress-bar,
-	.assembly-progress-bar::-moz-progress-bar {
-		border-radius: inherit;
-		background: var(--tone-accent-ink);
-	}
-
 	.assembly-progress progress.is-complete::-webkit-progress-value,
-	.assembly-progress-bar.is-complete::-webkit-progress-value {
+	.assembly-progress progress.is-complete::-moz-progress-bar {
 		background: var(--exec-ok);
 	}
-
-	.assembly-progress progress.is-complete::-moz-progress-bar,
-	.assembly-progress-bar.is-complete::-moz-progress-bar {
-		background: var(--exec-ok);
-	}
-
-	.assembly-legend {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px 16px;
-		padding: 11px var(--activity-gutter, 24px);
-		background: var(--exec-well);
-	}
-
-	.assembly-legend-items {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 8px 14px;
-	}
-
-	.legend-item {
-		--stage-color: var(--exec-muted);
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		color: var(--fg-secondary);
-		font-size: 0.75rem;
-	}
-
-	.legend-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 2px;
-		background: var(--stage-color);
-		flex-shrink: 0;
-	}
-
-	@media (width < 40rem), (pointer: coarse) {
-		.assembly-chip {
-			min-height: 44px;
-			padding: 6px 12px;
-		}
-		.assembly-dash {
-			line-height: 44px;
-		}
-	}
-
-	@media (width < 40rem) {
-		.assembly-summary,
-		.assembly-legend {
-			padding: 12px;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.agent-pulse-dot {
-			animation: none;
-		}
-		.assembly-chip {
-			transition: none;
-		}
-	}
-
 	@media (forced-colors: active) {
-		.assembly-chip {
-			border: 1px solid CanvasText;
-		}
-		.assembly-live-pill {
-			border: 1px solid Highlight;
-		}
 		.assembly-retry-btn {
 			border: 1px solid ButtonText;
 		}

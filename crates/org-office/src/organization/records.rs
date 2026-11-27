@@ -22,6 +22,7 @@ pub use org::{
     encode_repositories, office_codes_path, office_path, organization_path, repositories_path,
     Office, OfficeCode, Organization, Repository, MAX_CA_ESCROW_BYTES,
 };
+pub(crate) use org::{read_default_dod, write_default_dod};
 pub(crate) use teams::team_folder;
 pub use teams::{
     decode_team, decode_team_allocation, decode_team_counter, encode_team, encode_team_allocation,

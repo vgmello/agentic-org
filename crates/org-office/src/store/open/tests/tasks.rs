@@ -196,6 +196,7 @@ fn create_basic(
                     expected: Some("Idempotent reply".into()),
                     ..Default::default()
                 }),
+                dod: None,
             },
         })
         .unwrap()
@@ -217,6 +218,8 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 blocked_reason: None,
                 resolution: None,
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         })
         .unwrap()
@@ -263,6 +266,8 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 blocked_reason: None,
                 resolution: None,
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         })
         .unwrap()
@@ -282,6 +287,8 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 blocked_reason: None,
                 resolution: None,
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         })
         .unwrap()
@@ -300,6 +307,8 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 blocked_reason: None,
                 resolution: None,
                 note: Some("Starting work".into()),
+                done_anyway_reason: None,
+                final_summary: None,
             },
         })
         .unwrap()
@@ -323,7 +332,8 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                     task: task_key.to_owned(),
                     step_id,
                     text: text.into(),
-                    required,
+                    required: Some(required),
+                    section: None,
                 },
             })
             .unwrap()
@@ -337,6 +347,7 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 task: task_key.to_owned(),
                 step_id: step2.clone(),
                 position: 0,
+                section: None,
             },
         })
         .unwrap()
@@ -863,6 +874,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
         modified_files: vec![],
         depends_on: vec![],
         details: None,
+        dod: None,
     };
     let first = s
         .store
@@ -961,6 +973,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         })
         .unwrap()
@@ -997,6 +1010,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                     duplicate_of_task_id: Some(next_uuid()),
                     ..Default::default()
                 }),
+                dod: None,
             },
         })
         .unwrap()
@@ -1030,6 +1044,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         })
         .unwrap()

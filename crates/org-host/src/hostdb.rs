@@ -222,7 +222,19 @@ pub mod journal {
     use org_host_control::{journal::Journaled, HostOpResult};
 
     pub const DAY: i64 = 86_400_000;
+    /// The most expired rows one journal maintenance batch removes, bounding every
+    /// journaled write's work.
+    pub const PRUNE_BATCH: u16 = 256;
+    /// Hard upper bound on startup prune batches (1,024 × 256 = 262,144 rows per boot).
+    pub const MAX_PRUNE_BATCHES: usize = 1024;
     pub type Stored = HostOpResult<serde_json::Value>;
+
+    /// Summary of one startup [`HostStore::journal_prune_expired`](super::HostStore::journal_prune_expired) pass.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct PruneOutcome {
+        pub removed: u64,
+        pub more_remaining: bool,
+    }
 
     pub struct Attempt<'a> {
         pub id: &'a str,
@@ -583,6 +595,7 @@ pub trait HostStore: AccountStore + OneTimeLinks + BrowserSessions + Send + Sync
         wall_ms: i64,
         effect: journal::Effect,
     ) -> Result<journal::Write, Error>;
+    fn journal_prune_expired(&self, wall_ms: i64) -> Result<journal::PruneOutcome, Error>;
 
     // Login lockout
     fn login_lockout(

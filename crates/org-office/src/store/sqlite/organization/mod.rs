@@ -23,6 +23,9 @@ mod rows;
 mod tests;
 mod write;
 
+pub(super) use rows::default_dod;
+pub(super) use write::default_dod_value;
+
 /// The columns of document 08's fields, as every attributed table has them.
 pub(super) const META: &str = "revision, created_at, created_by_kind, created_by_id, updated_at, \
                     updated_by_kind, updated_by_id";
@@ -150,7 +153,8 @@ pub(super) fn whole(value: u64) -> Result<Value, EngineError> {
         .map_err(|_| EngineError::new("a number is too large to store"))
 }
 
-const ORGANIZATION: &str = "id, slug, name, organization_repository_id, state_branch";
+const ORGANIZATION: &str =
+    "id, slug, name, organization_repository_id, state_branch, default_dod_json";
 const REPOSITORY: &str = "id, key, kind, remote_url";
 const OFFICE: &str = "id, slug, name, role";
 const ROLE: &str = "id, key, name, body_markdown";

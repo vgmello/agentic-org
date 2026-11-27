@@ -1,5 +1,6 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import {
+	INBOX_DIVIDERS_STORAGE_KEY,
 	inboxCommentsStorageKey,
 	MAX_INBOX_COMMENT_LENGTH,
 	parseInboxCommentsJson,
@@ -101,6 +102,24 @@ export function appendInboxDeviceComment(
 		return next;
 	} catch {
 		return undefined;
+	}
+}
+
+export function readInboxDividersPreference(): boolean {
+	if (typeof window === 'undefined') return false;
+	try {
+		return window.localStorage.getItem(INBOX_DIVIDERS_STORAGE_KEY) === '1';
+	} catch {
+		return false;
+	}
+}
+
+export function writeInboxDividersPreference(enabled: boolean): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(INBOX_DIVIDERS_STORAGE_KEY, enabled ? '1' : '0');
+	} catch {
+		/* Ignore private mode / quota failures cleanly. */
 	}
 }
 

@@ -193,6 +193,9 @@ impl HostStore for HostDb {
     ) -> Result<journal::Write, Error> {
         HostDb::write(self, op, wall_ms, |_| Ok(effect))
     }
+    fn journal_prune_expired(&self, wall_ms: i64) -> Result<journal::PruneOutcome, Error> {
+        HostDb::prune_expired(self, wall_ms)
+    }
     fn login_lockout(
         &self,
         socket: lockout::Socket,

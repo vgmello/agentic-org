@@ -4,8 +4,9 @@
 //! symbolic link. A development build may move the root with `AGENT_OS_STATE_DIR` or
 //! `ORG_DEV_ACCOUNT_BASE`; a release build refuses both.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Read;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use org_command::Refusal;
@@ -160,20 +161,89 @@ pub fn candidate_roots(cwd: &Path) -> Vec<PathBuf> {
 /// One workspace's state folder.
 #[derive(Debug, Clone)]
 pub struct WorkspaceState {
+    state_root: Option<PathBuf>,
     dir: PathBuf,
+}
+
+fn check_real_owned_dir(path: &Path, uid: u32, require_exists: bool) -> Result<bool, Refusal> {
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(refusal(format!(
+            "the workspace state folder {} must not contain `..`",
+            path.display()
+        )));
+    }
+    let norm: PathBuf = path.components().collect();
+    match std::fs::symlink_metadata(&norm) {
+        Ok(meta) => {
+            if !meta.file_type().is_dir() {
+                return Err(refusal(format!(
+                    "{} must be a real directory (never a symbolic link)",
+                    norm.display()
+                )));
+            }
+            if meta.uid() != uid {
+                return Err(refusal(format!(
+                    "{} is not owned by the current account",
+                    norm.display()
+                )));
+            }
+            Ok(true)
+        }
+        Err(e) if !require_exists && e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(refusal(format!(
+            "cannot inspect the workspace state folder {}: {e}",
+            norm.display()
+        ))),
+    }
+}
+
+fn check_owner_only_dir(path: &Path, uid: u32, require_exists: bool) -> Result<bool, Refusal> {
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(refusal(format!(
+            "the workspace state folder {} must not contain `..`",
+            path.display()
+        )));
+    }
+    let norm: PathBuf = path.components().collect();
+    match std::fs::symlink_metadata(&norm) {
+        Ok(_) => {
+            org_platform::fs::verify_owner_only_dir(&norm, uid)
+                .map_err(|e| refusal(format!("the workspace state folder is not safe: {e}")))?;
+            Ok(true)
+        }
+        Err(e) if !require_exists && e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(refusal(format!(
+            "cannot inspect the workspace state folder {}: {e}",
+            norm.display()
+        ))),
+    }
 }
 
 impl WorkspaceState {
     /// The state folder of `canonical_root` under `root` (not created).
     pub fn for_root(root: &Path, canonical_root: &Path) -> Self {
+        let state_root: PathBuf = root.components().collect();
         Self {
-            dir: root.join("workspaces").join(workspace_key(canonical_root)),
+            dir: state_root
+                .join("workspaces")
+                .join(workspace_key(canonical_root)),
+            state_root: Some(state_root),
         }
     }
 
     /// An existing state folder, as recorded in a resolved binding.
     pub fn at(dir: PathBuf) -> Self {
-        Self { dir }
+        let norm: PathBuf = dir.components().collect();
+        let state_root = norm
+            .parent()
+            .filter(|parent| parent.file_name() == Some(OsStr::new("workspaces")))
+            .and_then(Path::parent)
+            .filter(|root| !root.as_os_str().is_empty())
+            .map(Path::to_path_buf);
+        Self {
+            state_root,
+            dir: norm,
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -185,19 +255,43 @@ impl WorkspaceState {
         std::fs::symlink_metadata(self.dir.join(BINDING_FILE)).is_ok_and(|m| m.is_file())
     }
 
-    /// Creates the folder (and its missing parents) owner-only and checks it is a real,
-    /// owner-only folder of this account (never a symbolic link).
+    /// Creates the folder (and its missing parents) owner-only and checks that `state_root`,
+    /// `state_root/workspaces`, and `self.dir` are all real, safe directories of this account
+    /// (never symbolic links).
     pub fn ensure(&self) -> Result<(), Refusal> {
+        self.preflight()?;
         org_platform::fs::create_owner_only_dir_all(&self.dir)
             .map_err(|e| refusal(format!("cannot create the workspace state folder: {e}")))?;
         self.verify()
     }
 
+    /// Checks every existing directory in `[state_root, state_root/workspaces, self.dir]` without
+    /// creating any directory: `state_root` must be a real directory owned by the current uid,
+    /// and `state_root/workspaces` and `self.dir` must be owner-only (`0700`) real directories.
+    pub fn preflight(&self) -> Result<(), Refusal> {
+        let uid = org_platform::fs::effective_uid()
+            .map_err(|e| refusal(format!("cannot read this account's id: {e}")))?;
+        if let Some(root) = &self.state_root {
+            if !check_real_owned_dir(root, uid, false)? {
+                return Ok(());
+            }
+            if !check_owner_only_dir(&root.join("workspaces"), uid, false)? {
+                return Ok(());
+            }
+        }
+        let _ = check_owner_only_dir(&self.dir, uid, false)?;
+        Ok(())
+    }
+
     fn verify(&self) -> Result<(), Refusal> {
         let uid = org_platform::fs::effective_uid()
             .map_err(|e| refusal(format!("cannot read this account's id: {e}")))?;
-        org_platform::fs::verify_owner_only_dir(&self.dir, uid)
-            .map_err(|e| refusal(format!("the workspace state folder is not safe: {e}")))
+        if let Some(root) = &self.state_root {
+            check_real_owned_dir(root, uid, true)?;
+            check_owner_only_dir(&root.join("workspaces"), uid, true)?;
+        }
+        check_owner_only_dir(&self.dir, uid, true)?;
+        Ok(())
     }
 
     fn read_file(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Refusal> {
@@ -266,6 +360,16 @@ impl WorkspaceState {
     pub fn write_token(&self, token: &TokenFile) -> Result<(), Refusal> {
         let bytes = Zeroizing::new(serde_json::to_vec(token).map_err(|e| refusal(e.to_string()))?);
         self.write_file(TOKEN_FILE, &bytes)
+    }
+
+    /// Removes any cached fast token (`token.v1`), ignoring a missing file.
+    pub fn remove_token(&self) -> Result<(), Refusal> {
+        self.preflight()?;
+        match std::fs::remove_file(self.dir.join(TOKEN_FILE)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(refusal(format!("cannot remove {TOKEN_FILE}: {e}"))),
+        }
     }
 
     /// Removes the binding, key and token (and the folder when it is then empty).

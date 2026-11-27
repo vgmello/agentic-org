@@ -217,12 +217,6 @@
 {/if}
 
 <style>
-	.tess-panel-scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 82;
-		background: var(--exec-scrim-bg, color-mix(in srgb, var(--surface-sunken) 72%, transparent));
-	}
 	.tess-panel {
 		position: fixed;
 		right: 20px;

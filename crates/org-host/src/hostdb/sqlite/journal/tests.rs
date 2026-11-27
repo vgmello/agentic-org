@@ -1097,3 +1097,288 @@ fn malformed_stored_replay_verifier_refuses_instead_of_exposing_unchecked_phc() 
         "invalid sensitive PHC"
     );
 }
+
+/// The real wall clock: what `Authentication::open` prunes at, unlike the fixed [`NOW`].
+fn wall_now() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+/// `count` settled rows plus one `reserved` and one staged row, all expired since `at - DAY`.
+fn seed_expired(db: &HostDb, at: i64, count: u64) {
+    let refusal =
+        serde_json::to_string(&rejected(org_proto::ErrorCode::InvalidName).stored).unwrap();
+    let mut c = db.connection.lock().unwrap();
+    let tx = c.transaction().unwrap();
+    for seq in 0..count + 2 {
+        let ident = id(at - 31 * DAY, 10_000 + seq);
+        let (state, result) = if seq == count {
+            ("reserved", None)
+        } else if seq == count + 1 {
+            ("abandoned", Some(&refusal))
+        } else {
+            ("rejected", Some(&refusal))
+        };
+        tx.execute(
+            "INSERT INTO op_journal VALUES (?1,'organization.create',?2,'creator',?3,?4,?5)",
+            (&ident, [7u8; 32], state, result, at - DAY),
+        )
+        .unwrap();
+        if state == "abandoned" {
+            tx.execute(
+                "INSERT INTO org_create_staging VALUES (?1,'name','org','office','member')",
+                [&ident],
+            )
+            .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+}
+#[test]
+fn prune_expired_drains_whole_batches_one_transaction_each() {
+    let (_home, _secrets, db) = super::super::tests::fixture();
+    let live = id(NOW - DAY, 1);
+    db.write(&attempt(&live), NOW - DAY, |_| Ok(completed()))
+        .unwrap();
+    // An exact multiple of the batch: two full batches, then one that finds nothing.
+    seed_expired(&db, NOW, 2 * u64::from(PRUNE_BATCH));
+    BEGIN_COUNT.with(|count| count.set(0));
+    assert_eq!(
+        db.prune_expired(NOW).unwrap(),
+        PruneOutcome {
+            removed: 2 * u64::from(PRUNE_BATCH),
+            more_remaining: false,
+        }
+    );
+    assert_eq!(BEGIN_COUNT.with(|count| count.get()), 3);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 3);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM org_create_staging"), 1);
+    assert_replay(&db, &attempt(&live), NOW, completed().stored);
+    assert_eq!(
+        db.prune_expired(NOW).unwrap(),
+        PruneOutcome {
+            removed: 0,
+            more_remaining: false,
+        }
+    );
+}
+/// TASK-235: a host start (`Authentication::open`, as `startup_authentication` opens the
+/// registry) prunes every verifier that expired while the host was down, past one batch,
+/// and keeps the live verifier and the rows still owed a reconciliation.
+#[test]
+fn host_start_prunes_expired_verifiers_and_keeps_live_ones() {
+    const HOUR: i64 = 3_600_000;
+    let (home, secrets, db) = super::super::tests::fixture();
+    let now = wall_now();
+    fn create(ident: &str) -> Attempt<'_> {
+        Attempt {
+            kind: "account.create",
+            ..attempt(ident)
+        }
+    }
+    // Expires an hour before the start; the later live write's own prune runs too early for it.
+    let expired = id(now - 30 * DAY - HOUR, 1);
+    db.write(&create(&expired), now - 30 * DAY - HOUR, |_| {
+        Ok(create_effect("expired"))
+    })
+    .unwrap();
+    let live = id(now - DAY, 2);
+    db.write(&create(&live), now - DAY, |_| Ok(create_effect("live")))
+        .unwrap();
+    seed_expired(&db, now, u64::from(PRUNE_BATCH) + 44);
+    assert_eq!(
+        scalar(&db, "SELECT count(*) FROM op_journal"),
+        2 + i64::from(PRUNE_BATCH) + 46
+    );
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_verifiers"), 2);
+    drop(db);
+
+    let custody: std::sync::Arc<dyn crate::host_secrets::HostSecrets> =
+        std::sync::Arc::new(secrets);
+    let instance = super::super::tests::init().instance_id;
+    let started = crate::authentication::Authentication::open(
+        home.path(),
+        std::sync::Arc::clone(&custody),
+        &instance,
+    )
+    .unwrap();
+    drop(started);
+
+    let db = HostDb::open(home.path(), &*custody).unwrap();
+    // The live create, the reserved row and the staged row.
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 3);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM org_create_staging"), 1);
+    let kept: Vec<String> = db
+        .connection
+        .lock()
+        .unwrap()
+        .prepare("SELECT created_account FROM op_verifiers")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(kept, ["live"]);
+    assert!(matches!(
+        db.lookup(&create(&live), now),
+        Ok(Lookup::NeedsVerification { .. })
+    ));
+    assert!(matches!(
+        db.lookup(&create(&expired), now),
+        Err(Error::Expired)
+    ));
+}
+/// A prune that fails at start is maintenance lost, not a refused start: the registry opens,
+/// nothing is half-deleted, and the clock does not move past what was served.
+#[test]
+fn host_start_survives_a_failing_prune_without_deleting_anything() {
+    let (home, secrets, db) = super::super::tests::fixture();
+    seed_expired(&db, wall_now(), 3);
+    db.connection
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER fail_prune BEFORE DELETE ON op_journal \
+             BEGIN SELECT RAISE(ABORT,'prune failed'); END;",
+        )
+        .unwrap();
+    drop(db);
+
+    let custody: std::sync::Arc<dyn crate::host_secrets::HostSecrets> =
+        std::sync::Arc::new(secrets);
+    let instance = super::super::tests::init().instance_id;
+    let (started, lines) = crate::host_log::capture(|| {
+        crate::authentication::Authentication::open(
+            home.path(),
+            std::sync::Arc::clone(&custody),
+            &instance,
+        )
+        .unwrap()
+    });
+    drop(started);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("expired operation journal entries were not pruned at start")),
+        "expected startup prune failure warning, got {lines:?}"
+    );
+
+    let db = HostDb::open(home.path(), &*custody).unwrap();
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 5);
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key='clock_high_ms'"
+        ),
+        123
+    );
+}
+
+#[test]
+fn prune_expired_stops_deterministically_at_batch_cap_under_after_delete_trigger() {
+    let (_home, _secrets, db) = super::super::tests::fixture();
+    seed_expired(&db, NOW, u64::from(PRUNE_BATCH) + 5);
+    // An AFTER DELETE trigger that re-inserts every deleted expired row would trap an
+    // unbounded loop forever; prune_expired_capped must stop cleanly at the batch cap.
+    db.connection
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reinsert_expired AFTER DELETE ON op_journal \
+             BEGIN \
+               INSERT INTO op_journal \
+               (operation_id, kind, fingerprint, account, state, result, expires_at_ms) \
+               VALUES (OLD.operation_id, OLD.kind, OLD.fingerprint, OLD.account, OLD.state, \
+                       OLD.result, OLD.expires_at_ms); \
+             END;",
+        )
+        .unwrap();
+    BEGIN_COUNT.with(|count| count.set(0));
+    let outcome = db.prune_expired_capped(NOW, 3).unwrap();
+    assert_eq!(
+        outcome,
+        PruneOutcome {
+            removed: 3 * u64::from(PRUNE_BATCH),
+            more_remaining: true,
+        }
+    );
+    assert_eq!(BEGIN_COUNT.with(|count| count.get()), 3);
+}
+
+#[test]
+fn host_start_logs_warning_when_prune_reaches_batch_cap() {
+    let (home, secrets, db) = super::super::tests::fixture();
+    seed_expired(&db, wall_now(), u64::from(PRUNE_BATCH) + 5);
+    // Re-inserting deleted expired rows forces startup prune_expired to hit MAX_PRUNE_BATCHES
+    // without needing 262k fixture rows; verify startup completes and logs the cap warning.
+    db.connection
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reinsert_for_cap AFTER DELETE ON op_journal \
+             BEGIN \
+               INSERT INTO op_journal \
+               (operation_id, kind, fingerprint, account, state, result, expires_at_ms) \
+               VALUES (OLD.operation_id, OLD.kind, OLD.fingerprint, OLD.account, OLD.state, \
+                       OLD.result, OLD.expires_at_ms); \
+             END;",
+        )
+        .unwrap();
+    drop(db);
+
+    let custody: std::sync::Arc<dyn crate::host_secrets::HostSecrets> =
+        std::sync::Arc::new(secrets);
+    let instance = super::super::tests::init().instance_id;
+    let (started, lines) = crate::host_log::capture(|| {
+        crate::authentication::Authentication::open(
+            home.path(),
+            std::sync::Arc::clone(&custody),
+            &instance,
+        )
+        .unwrap()
+    });
+    drop(started);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("reached its batch limit after removing")),
+        "expected startup prune batch-cap warning, got {lines:?}"
+    );
+}
+
+impl HostDb {
+    /// Test fixture for `hostdb::contract_tests`: inserts one expired `reserved` row and one
+    /// expired `abandoned` row referenced by `org_create_staging`.
+    pub(crate) fn seed_expired_exempt_journal_rows(
+        &self,
+        reserved_id: &str,
+        staged_id: &str,
+        account: &str,
+        expires_at_ms: i64,
+    ) {
+        let refusal =
+            serde_json::to_string(&rejected(org_proto::ErrorCode::InvalidName).stored).unwrap();
+        let mut c = self.connection.lock().unwrap();
+        let tx = c.transaction().unwrap();
+        tx.execute(
+            "INSERT INTO op_journal VALUES (?1,'organization.create',?2,?3,'reserved',NULL,?4)",
+            (reserved_id, [7u8; 32], account, expires_at_ms),
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO op_journal VALUES (?1,'organization.create',?2,?3,'abandoned',?4,?5)",
+            (staged_id, [7u8; 32], account, refusal, expires_at_ms),
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO org_create_staging VALUES (?1,'name','org','office','member')",
+            [staged_id],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+}

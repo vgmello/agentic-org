@@ -21,7 +21,10 @@ use crate::accounts::store::{
 };
 use crate::host_secrets::{HostSecrets, Name};
 use crate::hostdb::accounts::{Account, Credentials, Link};
-use crate::hostdb::journal::{id_time, Attempt, Effect, Lookup, Stored, Verifier, Write, DAY};
+use crate::hostdb::journal::{
+    id_time, Attempt, Effect, Lookup, PruneOutcome, Stored, Verifier, Write, DAY,
+    MAX_PRUNE_BATCHES, PRUNE_BATCH,
+};
 use crate::hostdb::lockout::{Outcome, Socket, State as LockoutState};
 use crate::hostdb::multi_person::{
     account_subject, invite_subject, parse_account_subject, parse_invite_subject,
@@ -93,7 +96,7 @@ struct JournalRow {
     fingerprint: [u8; 32],
     account: String,
     state: &'static str,
-    result: String,
+    result: Option<String>,
     expires_at_ms: i64,
 }
 
@@ -112,6 +115,7 @@ struct Inner {
     web_tls_pair: Option<StoredPair>,
     journal: BTreeMap<String, JournalRow>,
     op_verifiers: BTreeMap<String, (String, Verifier)>,
+    staged_creates: BTreeSet<String>,
 }
 
 impl Inner {
@@ -309,7 +313,7 @@ impl Inner {
             if row.state == "reserved" {
                 return Err(Error::Conflict);
             }
-            return Ok(Some((row.state, row.result.clone())));
+            return Ok(Some((row.state, row.result.clone().ok_or(Error::Unsafe)?)));
         }
         let issued = id_time(op.id)?;
         if issued < now.saturating_sub(29 * DAY) {
@@ -360,19 +364,26 @@ impl Inner {
         Ok(Lookup::Replay(stored))
     }
 
-    fn maintain_journal(&mut self, now: i64) {
+    fn maintain_journal(&mut self, now: i64) -> usize {
         self.advance_clock(now);
         let mut expired: Vec<(i64, String)> = self
             .journal
             .iter()
-            .filter(|(_, r)| r.expires_at_ms <= now && r.state != "reserved")
+            .filter(|(id, r)| {
+                r.expires_at_ms <= now
+                    && r.state != "reserved"
+                    && !self.staged_creates.contains(*id)
+            })
             .map(|(id, r)| (r.expires_at_ms, id.clone()))
             .collect();
         expired.sort();
-        for (_, id) in expired.into_iter().take(256) {
+        let mut removed = 0;
+        for (_, id) in expired.into_iter().take(usize::from(PRUNE_BATCH)) {
             self.journal.remove(&id);
             self.op_verifiers.remove(&id);
+            removed += 1;
         }
+        removed
     }
 }
 
@@ -401,6 +412,7 @@ impl MemoryHostStore {
                 web_tls_pair: None,
                 journal: BTreeMap::new(),
                 op_verifiers: BTreeMap::new(),
+                staged_creates: BTreeSet::new(),
             }),
         }
     }
@@ -442,6 +454,79 @@ impl MemoryHostStore {
         if let Some(row) = self.inner.lock().unwrap().accounts.get_mut(id.as_str()) {
             row.revoked_at_ms = Some(1);
         }
+    }
+
+    pub(crate) fn journal_prune_expired_capped(
+        &self,
+        wall_ms: i64,
+        max_batches: usize,
+    ) -> Result<PruneOutcome, Error> {
+        let mut removed: u64 = 0;
+        for _ in 0..max_batches {
+            let batch = {
+                let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+                let now = s.now(wall_ms)?;
+                s.maintain_journal(now)
+            };
+            removed = removed.saturating_add(u64::try_from(batch).unwrap_or(u64::MAX));
+            if batch < usize::from(PRUNE_BATCH) {
+                return Ok(PruneOutcome {
+                    removed,
+                    more_remaining: false,
+                });
+            }
+        }
+        Ok(PruneOutcome {
+            removed,
+            more_remaining: true,
+        })
+    }
+
+    pub(crate) fn seed_expired_exempt_journal_rows(
+        &self,
+        reserved_id: &str,
+        staged_id: &str,
+        account: &str,
+        expires_at_ms: i64,
+    ) {
+        let refusal = serde_json::to_string(&Stored::Rejected {
+            refusal: org_proto::ApiError::new(org_proto::ErrorCode::InvalidName, "refused"),
+        })
+        .unwrap();
+        let mut s = self.inner.lock().unwrap();
+        s.journal.insert(
+            reserved_id.to_owned(),
+            JournalRow {
+                kind: "organization.create",
+                fingerprint: [7u8; 32],
+                account: account.to_owned(),
+                state: "reserved",
+                result: None,
+                expires_at_ms,
+            },
+        );
+        s.journal.insert(
+            staged_id.to_owned(),
+            JournalRow {
+                kind: "organization.create",
+                fingerprint: [7u8; 32],
+                account: account.to_owned(),
+                state: "abandoned",
+                result: Some(refusal),
+                expires_at_ms,
+            },
+        );
+        s.staged_creates.insert(staged_id.to_owned());
+    }
+
+    pub(crate) fn op_verifier_accounts(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .op_verifiers
+            .values()
+            .map(|(account, _)| account.clone())
+            .collect()
     }
 }
 
@@ -1626,7 +1711,6 @@ impl HostStore for MemoryHostStore {
         if op.kind == "bootstrap" {
             return Err(Error::Unsafe);
         }
-        s.maintain_journal(now);
         let Effect { stored, verifier } = effect;
         let state = match &stored {
             Stored::Completed { .. } => "completed",
@@ -1652,6 +1736,7 @@ impl HostStore for MemoryHostStore {
         }
         let result = serde_json::to_string(&stored).map_err(|_| Error::Unsafe)?;
         let expires = id_time(op.id)? + 30 * DAY;
+        let _ = s.maintain_journal(now);
         s.journal.insert(
             op.id.to_owned(),
             JournalRow {
@@ -1659,7 +1744,7 @@ impl HostStore for MemoryHostStore {
                 fingerprint: op.fingerprint,
                 account: op.account.to_owned(),
                 state,
-                result,
+                result: Some(result),
                 expires_at_ms: expires,
             },
         );
@@ -1667,6 +1752,10 @@ impl HostStore for MemoryHostStore {
             s.op_verifiers.insert(op.id.to_owned(), (created, verifier));
         }
         Ok(Write::Committed(stored))
+    }
+
+    fn journal_prune_expired(&self, wall_ms: i64) -> Result<PruneOutcome, Error> {
+        self.journal_prune_expired_capped(wall_ms, MAX_PRUNE_BATCHES)
     }
 
     fn issue_unless_administrator(
@@ -2261,16 +2350,16 @@ impl HostStore for MemoryHostStore {
                 return Err(error);
             }
         }
-        s.maintain_journal(now);
         let state = match stored {
             TlsStored::Completed { .. } => "completed",
             _ => "rejected",
         };
+        let result = serde_json::to_string(stored).map_err(|_| Error::Unsafe)?;
+        let expires = id_time(op.id)? + 30 * DAY;
+        let _ = s.maintain_journal(now);
         if let Some(pair) = pair {
             s.web_tls_pair = Some(pair.clone());
         }
-        let result = serde_json::to_string(stored).map_err(|_| Error::Unsafe)?;
-        let expires = id_time(op.id)? + 30 * DAY;
         s.journal.insert(
             op.id.to_owned(),
             JournalRow {
@@ -2278,7 +2367,7 @@ impl HostStore for MemoryHostStore {
                 fingerprint: op.fingerprint,
                 account: op.account.to_owned(),
                 state,
-                result,
+                result: Some(result),
                 expires_at_ms: expires,
             },
         );

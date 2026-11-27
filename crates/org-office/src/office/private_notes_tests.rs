@@ -110,6 +110,7 @@ pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -126,6 +127,51 @@ pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
         agent_a,
         agent_b,
         task_key: task.key,
+    }
+}
+
+/// `f` closed, its whole `runtime/<office-id>/` deleted, and opened again on SQLite: every
+/// projection and index rebuilt from the durable root.
+pub(super) fn rebuilt_sqlite(f: PrivateNoteFixture) -> PrivateNoteFixture {
+    let office_id = f.office.info().office_id.clone();
+    let instance_id = f.custody.identity.instance_id.as_str().to_owned();
+    let PrivateNoteFixture {
+        _tmp,
+        folder,
+        roots,
+        custody,
+        office,
+        owner,
+        agent_a,
+        agent_b,
+        task_key,
+    } = f;
+    office.close().expect("close office");
+    std::fs::remove_dir_all(roots.runtime.join(&office_id)).expect("remove runtime office dir");
+    let office = Office::open_with(
+        folder.clone(),
+        None,
+        &instance_id,
+        roots.clone(),
+        custody.clone(),
+        Options {
+            engine: EngineChoice::Sqlite,
+            clock: Arc::new(FixedClock(CREATION_AT)),
+            testing: Default::default(),
+            before_final_checks: None,
+        },
+    )
+    .expect("reopen rebuilt office");
+    PrivateNoteFixture {
+        _tmp,
+        folder,
+        roots,
+        custody,
+        office,
+        owner,
+        agent_a,
+        agent_b,
+        task_key,
     }
 }
 
@@ -561,6 +607,8 @@ fn assert_pn04_sqlite_restart_and_runtime_wipe_survival(
                 blocked_reason: None,
                 resolution: Some("completed".into()),
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )
         .unwrap()

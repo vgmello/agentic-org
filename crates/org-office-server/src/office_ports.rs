@@ -9,8 +9,8 @@ use crate::federation_runtime::HqFederationSlot;
 use crate::session_proxy::build_session_hooks;
 use crate::{
     attachment_calls, chat_calls, cost_calls, directory, doc_calls, federation_calls, follow,
-    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, serve, task_calls,
-    wake_bridge, watcher,
+    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, search_calls, serve,
+    task_calls, wake_bridge, watcher,
 };
 use org_office::{Office, OfficeError};
 
@@ -427,6 +427,12 @@ pub(crate) fn build_office_ports(
             let o = Arc::clone(&office);
             Some(gate_rpc_port(&office, move |member, request| {
                 doc_calls::dispatch_doc_rpc(&o, member, request)
+            }))
+        },
+        search: {
+            let o = Arc::clone(&office);
+            Some(gate_rpc_port(&office, move |member, request| {
+                search_calls::dispatch_search_rpc(&o, member, request)
             }))
         },
         costs: {

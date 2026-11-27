@@ -15,24 +15,33 @@
 //! An office whose counter is missing or behind the numbers its code already has cannot
 //! prove its sequence (a lost or restored-from-backup `task-counter.yaml`): it refuses to
 //! create rather than reissue or reconstruct a number (`doc-80`).
+//!
+//! The task's definition of done (`TASK-88`) is copied into its `checklist.yaml` `dod`
+//! section as required steps in the same entry: the create's own `dod`, or else its project's
+//! `default_dod`, or else the organization's, as this office's projection has them. So a
+//! create works offline, and a later change to a default never changes a task already made.
+//! Each step's ID derives from the task and the item's index, so a retry makes the same one.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use org_proto::tasks::{TaskPriority, TaskStatus, TasksCreateParams, TASK_MAX_DEPENDENCIES};
+use org_proto::tasks::{
+    normalize_dod_items, ChecklistSection, TaskPriority, TaskStatus, TasksCreateParams,
+    TASK_MAX_DEPENDENCIES,
+};
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::organization::records::EmployeeKind;
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{
-    self, normalize_file_paths, normalize_labels, OfficeTaskCounterRecord, TaskLinkRecord,
-    TaskMeta, TaskRecord,
+    self, normalize_file_paths, normalize_labels, ChecklistStepRecord, OfficeTaskCounterRecord,
+    TaskLinkRecord, TaskMeta, TaskRecord,
 };
 use crate::time::format_rfc3339_ms;
 
-use super::core::derive_link_id;
-use super::write::{task_location, Writer};
+use super::core::{derive_link_id, derived_id};
+use super::write::{child_bytes, task_location, too_deep, Writer};
 use super::{
     parse_details, parse_uuid_v7, refuse, require_active_employee, require_office_code,
     require_task, storage_refusal, validate_active_employee, validate_active_team, validate_body,
@@ -207,7 +216,11 @@ impl CreateTask {
                 format!("task `{task_id}` already exists"),
             ));
         }
-        let (team_id, project_id) = resolve_scope(uow.view(), &self.params)?;
+        let Scope {
+            team_id,
+            project_id,
+            project_dod,
+        } = resolve_scope(uow.view(), &self.params)?;
         let assigned_team_id = match self.params.assigned_team_id.as_deref() {
             Some(tid) => Some(validate_active_team(uow.view(), tid, "assigned_team_id")?),
             None => None,
@@ -237,6 +250,12 @@ impl CreateTask {
             None => None,
         };
         let links = build_initial_depends_on(uow.view(), &task_id, &self.params.depends_on)?;
+        let dod = definition_of_done(
+            uow.view(),
+            &task_id,
+            self.params.dod.as_deref(),
+            project_dod,
+        )?;
 
         // Mint final `T-<CODE><N>` reference locally using this office's active office_code.
         let office_code = require_office_code(uow.view(), &here.office_id)?;
@@ -276,17 +295,27 @@ impl CreateTask {
             modified_files,
             repositories: Vec::new(),
             details,
+            final_summary: None,
             meta: TaskMeta::created(&actor.id, &at),
         };
 
         let location = task_location(uow.view(), &task)?;
         let writer = Writer::new(uow.view(), &actor.id, &at, &self.params.command_id)?;
         let known_facts = records::task_md::task_fields(&task, &links);
-        let created = records::created_change(known_facts, &task.body_markdown);
-        let change = Change::new(ack).put(
+        let mut created = records::created_change(known_facts, &task.body_markdown);
+        let mut change = Change::new(ack).put(
             records::counter_path(&here.office_id),
             records::encode_counter(&here.office_id, &counter),
         );
+        if !dod.is_empty() {
+            let path = records::checklist_path(&location, &task_id).map_err(too_deep)?;
+            change = change.put(path, child_bytes(records::encode_checklist(&dod))?);
+            let copied: Vec<serde_json::Value> = dod
+                .iter()
+                .map(|s| serde_json::json!({ "step_id": s.id.as_str(), "text": s.text }))
+                .collect();
+            created["dod"] = serde_json::Value::Array(copied);
+        }
         let change = writer.task_and_event(change, &location, &task, &links, created)?;
         Ok(CreatedTask {
             change,
@@ -297,10 +326,63 @@ impl CreateTask {
     }
 }
 
-fn resolve_scope<R: TasksRead>(
+/// The ID of the `index`-th item of a task's definition of done copied at create.
+pub(crate) fn dod_step_id(task: &Id, index: usize) -> Id {
+    let index = (index as u64).to_be_bytes();
+    derived_id(&[
+        b"task-checklist-step-v1:",
+        task.as_str().as_bytes(),
+        b":",
+        ChecklistSection::Dod.as_str().as_bytes(),
+        b":",
+        &index,
+    ])
+}
+
+/// The `dod` steps a new task starts with: `explicit` when given (`[]` for none), else its
+/// project's default when the project names one, else the organization's.
+fn definition_of_done<R: TasksRead>(
     view: &R,
-    params: &TasksCreateParams,
-) -> Result<(Id, Option<Id>), Refusal> {
+    task_id: &Id,
+    explicit: Option<&[String]>,
+    project_dod: Option<Vec<String>>,
+) -> Result<Vec<ChecklistStepRecord>, Refusal> {
+    let items = match (explicit, project_dod) {
+        (Some(items), _) => normalize_dod_items(items).map_err(|e| refuse(e.code, e.message))?,
+        (None, Some(items)) => items,
+        (None, None) => view
+            .organization()
+            .map_err(storage_refusal)?
+            .and_then(|org| org.default_dod)
+            .unwrap_or_default(),
+    };
+    Ok(items
+        .into_iter()
+        .enumerate()
+        .map(|(index, text)| ChecklistStepRecord {
+            id: dod_step_id(task_id, index),
+            section: ChecklistSection::Dod,
+            position: index as u64,
+            text,
+            required: true,
+            done: false,
+            linked_task_id: None,
+            checked_by_employee_id: None,
+            checked_at: None,
+            revision: 1,
+        })
+        .collect())
+}
+
+/// Where a new task belongs: its owning team, its project, and that project's own
+/// `default_dod` when it names one (`TASK-88`).
+struct Scope {
+    team_id: Id,
+    project_id: Option<Id>,
+    project_dod: Option<Vec<String>>,
+}
+
+fn resolve_scope<R: TasksRead>(view: &R, params: &TasksCreateParams) -> Result<Scope, Refusal> {
     if let Some(proj_ref) = params.project_id.as_deref() {
         let project = view
             .resolve_project(proj_ref)
@@ -326,7 +408,11 @@ fn resolve_scope<R: TasksRead>(
                 ));
             }
         }
-        return Ok((project.owner_team_id, Some(project.id)));
+        return Ok(Scope {
+            team_id: project.owner_team_id,
+            project_id: Some(project.id),
+            project_dod: project.default_dod,
+        });
     }
     let Some(team_str) = params.team_id.as_deref() else {
         return Err(refuse(
@@ -335,7 +421,11 @@ fn resolve_scope<R: TasksRead>(
         ));
     };
     let team_id = validate_active_team(view, team_str, "team_id")?;
-    Ok((team_id, None))
+    Ok(Scope {
+        team_id,
+        project_id: None,
+        project_dod: None,
+    })
 }
 
 fn build_initial_depends_on<R: TasksRead>(

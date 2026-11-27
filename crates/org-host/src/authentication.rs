@@ -184,6 +184,32 @@ pub(super) fn wall_ms() -> Result<u64, ApiError> {
         .and_then(|d| u64::try_from(d.as_millis()).ok())
         .ok_or_else(unavailable)
 }
+/// Expired operation journal rows, with their account-create verifiers, go before any request
+/// is admitted. Maintenance only: lookup already refuses expired rows and every journaled write
+/// prunes again, so a failure is logged and the start goes on.
+fn prune_expired_journal(db: &dyn HostStore) {
+    let pruned = wall_ms()
+        .ok()
+        .and_then(|wall| i64::try_from(wall).ok())
+        .ok_or(crate::hostdb::Error::Unsafe)
+        .and_then(|wall| db.journal_prune_expired(wall));
+    match pruned {
+        Ok(outcome) if outcome.more_remaining => {
+            crate::host_log::log(&format!(
+                "expired operation journal startup prune reached its batch limit after removing \
+                 {} entries; remaining expired entries will drain on subsequent journaled writes",
+                outcome.removed
+            ));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            crate::host_log::log(&format!(
+                "expired operation journal entries were not pruned at start ({error:?}); \
+                 each journaled write still prunes a batch of them"
+            ));
+        }
+    }
+}
 fn argon() -> Result<Argon2<'static>, ApiError> {
     Ok(Argon2::new(
         Algorithm::Argon2id,
@@ -421,6 +447,7 @@ impl Authentication {
         // Frozen acknowledgement deletion must finish before any office or
         // gateway can become ready. Missing custody without intent is an error.
         db.recovery_reconcile(&*custody).map_err(storage)?;
+        prune_expired_journal(&*db);
         let dummy_password = random_handle()?;
         let dummy = hash_password(
             &Password::new(dummy_password.expose().to_owned()).map_err(|_| unavailable())?,

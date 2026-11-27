@@ -90,10 +90,29 @@ fn every_record_reads_back_as_it_was_written() {
         name: "Example \"Org\": Zoë".into(),
         organization_repository_id: id(3),
         state_branch: "org/state".into(),
+        default_dod: None,
         meta: meta(),
     };
     let bytes = encode_organization(&organization);
-    assert_eq!(decode_organization(&bytes), Ok(organization));
+    assert_eq!(decode_organization(&bytes), Ok(organization.clone()));
+    // `TASK-88`: a default definition of done is written only when set, so a record without
+    // one keeps the bytes it had; `[]` and a list read back as they were.
+    assert!(!String::from_utf8_lossy(&bytes).contains("default_dod"));
+    for default_dod in [
+        Some(vec![]),
+        Some(vec!["Tests pass".into(), "Docs \"done\"".into()]),
+    ] {
+        let with = Organization {
+            default_dod,
+            ..organization.clone()
+        };
+        assert_eq!(decode_organization(&encode_organization(&with)), Ok(with));
+    }
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    for bad in ["[\"  padded\"]", "[\"\"]", "[\"two\\nlines\"]", "\"one\""] {
+        let broken = format!("{text}default_dod: {bad}\n");
+        assert!(decode_organization(broken.as_bytes()).is_err(), "{bad}");
+    }
 
     let system = Meta::created(&By::System, Timestamp(1));
     let repositories = vec![

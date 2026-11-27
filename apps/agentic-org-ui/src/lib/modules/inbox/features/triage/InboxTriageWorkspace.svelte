@@ -4,51 +4,54 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { navigating, page } from '$app/state';
-	import { mergeProps, Tooltip } from 'bits-ui';
 	import { toast } from 'svelte-sonner';
-	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import ListFilter from '@lucide/svelte/icons/list-filter';
-	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
-	import InlineSearchRow from '$lib/components/InlineSearchRow.svelte';
-	import InlineSearchToggle from '$lib/components/InlineSearchToggle.svelte';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { executeDecisionAction } from '../../decisions';
-	import { isDenyAction } from '../../spotlight';
 	import { accountZone } from '$lib/modules/preferences';
 	import { toAppError } from '$lib/proto';
-	import NotificationsButton from '$lib/platform/shell/NotificationsButton.svelte';
 	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
-	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
+	import { singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { inboxApi } from '../../api';
-	import { readInboxCommentDrafts, writeInboxCommentDrafts } from '../../device-comments';
+	import { readInboxDividersPreference, writeInboxDividersPreference } from '../../device-comments';
 	import type { InboxItem, InboxScope } from '../../types';
 	import InboxDetailPane from './InboxDetailPane.svelte';
 	import InboxNotificationsSplit from './InboxNotificationsSplit.svelte';
 	import InboxQueueList from './InboxQueueList.svelte';
 	import InboxSnoozeDialog from './InboxSnoozeDialog.svelte';
-	import { formatSnoozeError, formatSnoozeReturn } from './snooze-presets';
+	import InboxTriageHeader from './InboxTriageHeader.svelte';
+	import InboxTriageSkeleton from './InboxTriageSkeleton.svelte';
+	import { formatSnoozeError } from './snooze-presets';
+	import {
+		buildNextTriageUrl,
+		createTriageActionHandlers,
+		focusElementFallback,
+		isTriageSourceFresh,
+		selectNextVisibleAfterResolve,
+		type TriageActionOutcome,
+		type TriageActionResult,
+		type TriageUrlPatch
+	} from './triage-action-exec';
+	import { TriageDraftStore } from './triage-drafts.svelte';
 	import {
 		deriveTriageItems,
 		filterTriageItems,
 		flattenGroups,
 		groupTriageItems,
-		INBOX_DIVIDERS_STORAGE_KEY,
-		isOverflowTab,
 		matchesScope,
 		neighborCandidatesAfterResolve,
 		openWaitingCount,
-		OVERFLOW_TABS,
 		parseTriageTab,
-		PRIMARY_TABS,
 		splitHref,
-		triageScopeOptions,
 		triageTabCounts,
 		type TriageItem,
 		type TriageOrder,
 		type TriageTab
 	} from './triage-model';
+	import {
+		attachWorkspaceShortcuts,
+		computeRelativeSelectionId,
+		mergeScopeOptions
+	} from './triage-workspace-helpers';
 
 	let {
 		organizationId,
@@ -68,26 +71,9 @@
 		onRefresh: () => Promise<ShellRefreshResult>;
 	} = $props();
 
-	function safeReadDividers(): boolean {
-		if (typeof window === 'undefined') return false;
-		try {
-			return window.localStorage.getItem(INBOX_DIVIDERS_STORAGE_KEY) === '1';
-		} catch {
-			return false;
-		}
-	}
-
-	function safeWriteDividers(enabled: boolean): void {
-		if (typeof window === 'undefined') return;
-		try {
-			window.localStorage.setItem(INBOX_DIVIDERS_STORAGE_KEY, enabled ? '1' : '0');
-		} catch {
-			// Ignore private mode / quota failures cleanly.
-		}
-	}
-
 	const wide = new MediaQuery('min-width: 960px');
 	const notifications = useNotifications();
+	const drafts = new TriageDraftStore();
 	const notifTotalCount = $derived(
 		(notifications?.runningJobs.length ?? 0) + (notifications?.items.length ?? 0)
 	);
@@ -95,7 +81,6 @@
 		(notifications?.runningJobs.length ?? 0) + (notifications?.unreadCount ?? 0)
 	);
 
-	// Writable derived states stay synced with URL query params and org changes without $effect state writes.
 	let viewingNotifications = $derived(
 		(page.url.searchParams.get('tab') ?? '').trim().toLowerCase() === 'notifications'
 	);
@@ -112,11 +97,8 @@
 	let searchOpen = $state(false);
 	let urgentOnly = $state(false);
 	let sortOrder = $state<TriageOrder>('priority');
-	let showDividers = $state(safeReadDividers());
-	let filterMenuOpen = $state(false);
-	let displayMenuOpen = $state(false);
+	let showDividers = $state(readInboxDividersPreference());
 
-	// Monotonic operation token prevents stale in-flight actions from clearing newer busy/selection state.
 	let actionSeq = 0;
 	let activeAction = $state<{ token: number; orgId: string; itemId: string } | undefined>(
 		undefined
@@ -126,18 +108,12 @@
 		activeAction && activeAction.orgId === organizationId ? activeAction.itemId : undefined
 	);
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
-
-	// Monotonic selection version incremented only on explicit user navigation/selection changes.
 	let selectionVersion = 0;
 
 	let decliningId = $derived.by<string | undefined>(() => {
 		void organizationId;
 		return undefined;
 	});
-	// Keyed by `${organizationId}:${itemId}` so drafts never leak across items or organizations.
-	let denyDrafts = $state<Record<string, string>>({});
-	let replyDrafts = $state<Record<string, string>>({});
-	let commentDrafts = $state<Record<string, string>>(readInboxCommentDrafts());
 	let nowMs = $state(Date.now());
 	let searchInputEl = $state<HTMLInputElement | null>(null);
 	let snoozeDialog = $state<ReturnType<typeof InboxSnoozeDialog>>();
@@ -160,12 +136,9 @@
 		return () => clearInterval(timer);
 	});
 
-	// Composes overlapping syncUrl() updates while an earlier goto() is still settling.
 	let pendingUrl: URL | undefined;
 	let pendingBaseHref = '';
 	let navSeq = 0;
-
-	// Track mount lifetime and pending cross-route navigations so late actions never hijack outgoing routes.
 	const inboxPathname = resolve('/inbox');
 	let destroyed = false;
 	onDestroy(() => {
@@ -176,7 +149,6 @@
 		page.url.pathname !== inboxPathname ||
 		Boolean(navigating.to && navigating.to.url.pathname !== inboxPathname);
 
-	const draftKey = (orgId: string, itemId: string) => `${orgId}:${itemId}`;
 	const isCurrentAction = (token: number, targetOrg: string) =>
 		!destroyed &&
 		!isLeavingInbox() &&
@@ -189,24 +161,7 @@
 		return inboxApi.snoozedError?.(organizationId);
 	});
 	const totalOpenCount = $derived(openWaitingCount(allItems));
-	const scopeOpts = $derived.by(() => {
-		const fromItems = triageScopeOptions(allItems);
-		const teams: Record<string, string> = {};
-		for (const t of fromItems.teams) teams[t.id] = t.name;
-		for (const t of snapshot.teams ?? []) {
-			if (!Object.hasOwn(teams, t.id)) teams[t.id] = t.name;
-		}
-		const projects: Record<string, string> = {};
-		for (const p of fromItems.projects) projects[p.id] = p.name;
-		for (const p of snapshot.projects ?? []) {
-			if (!p.archived && !Object.hasOwn(projects, p.id)) projects[p.id] = p.name;
-		}
-		const toSorted = (record: Record<string, string>) =>
-			Object.entries(record)
-				.map(([id, name]) => ({ id, name }))
-				.sort((a, b) => a.name.localeCompare(b.name));
-		return { teams: toSorted(teams), projects: toSorted(projects) };
-	});
+	const scopeOpts = $derived(mergeScopeOptions(allItems, snapshot));
 	const counts = $derived(triageTabCounts(allItems, scope));
 	const filtered = $derived(
 		filterTriageItems(allItems, {
@@ -232,13 +187,7 @@
 	const isFiltered = $derived(Boolean(urgentOnly || scope.team || scope.project));
 	const displayActive = $derived(sortOrder === 'date' || showDividers);
 	const hasActiveFilters = $derived(Boolean(searchQuery.trim() || isFiltered));
-	const overflowActive = $derived(isOverflowTab(activeTab));
-	const overflowActiveLabel = $derived(
-		OVERFLOW_TABS.find((t) => t.id === activeTab)?.label ?? 'More'
-	);
 
-	// Hand off focus to the detail heading whenever mobile detail opens (including ?item= deep links).
-	// Record lastFocusedMobileId only after focus() runs so a same-ID refresh before tick() never skips focus.
 	let lastFocusedMobileId: string | undefined;
 	$effect(() => {
 		const id = showingMobileDetail ? selectedItem?.id : undefined;
@@ -260,99 +209,26 @@
 		};
 	});
 
-	const activeDeclineReason = $derived(
-		selectedItem ? (denyDrafts[draftKey(organizationId, selectedItem.id)] ?? '') : ''
-	);
-	const activeReplyText = $derived(
-		selectedItem ? (replyDrafts[draftKey(organizationId, selectedItem.id)] ?? '') : ''
-	);
-	const activeCommentDraft = $derived(
-		selectedItem ? (commentDrafts[draftKey(organizationId, selectedItem.id)] ?? '') : ''
-	);
+	const activeDeclineReason = $derived(drafts.getDeny(organizationId, selectedItem?.id));
+	const activeReplyText = $derived(drafts.getReply(organizationId, selectedItem?.id));
+	const activeCommentDraft = $derived(drafts.getComment(organizationId, selectedItem?.id));
 
-	function updateDenyDraft(itemId: string, value: string) {
-		denyDrafts = { ...denyDrafts, [draftKey(organizationId, itemId)]: value };
-	}
-
-	function updateReplyDraft(itemId: string, value: string) {
-		replyDrafts = { ...replyDrafts, [draftKey(organizationId, itemId)]: value };
-	}
-
-	function updateCommentDraft(itemId: string, value: string) {
-		const next = { ...commentDrafts, [draftKey(organizationId, itemId)]: value };
-		commentDrafts = next;
-		writeInboxCommentDrafts(next);
-	}
-
-	function clearCommentDraft(orgId: string, itemId: string) {
-		const key = draftKey(orgId, itemId);
-		if (key in commentDrafts) {
-			const next = { ...commentDrafts };
-			delete next[key];
-			commentDrafts = next;
-			writeInboxCommentDrafts(next);
-		}
-	}
-
-	function clearItemDrafts(orgId: string, itemId: string) {
-		const key = draftKey(orgId, itemId);
-		if (key in denyDrafts) {
-			const next = { ...denyDrafts };
-			delete next[key];
-			denyDrafts = next;
-		}
-		if (key in replyDrafts) {
-			const next = { ...replyDrafts };
-			delete next[key];
-			replyDrafts = next;
-		}
-	}
-
-	function syncUrl(next: {
-		tab?: TriageTab | 'notifications';
-		item?: string | null;
-		team?: string | null;
-		project?: string | null;
-	}) {
+	function syncUrl(patch: TriageUrlPatch) {
 		if (destroyed || isLeavingInbox()) return;
 		const liveHref = page.url.href;
 		const hasPending = Boolean(pendingUrl && liveHref === pendingBaseHref);
-		const url = hasPending && pendingUrl ? new URL(pendingUrl) : new URL(page.url);
+		const base = hasPending && pendingUrl ? pendingUrl : page.url;
 		pendingBaseHref = liveHref;
-
-		const nextTab = next.tab ?? (viewingNotifications ? 'notifications' : activeTab);
-		if (nextTab === 'all') url.searchParams.delete('tab');
-		else url.searchParams.set('tab', nextTab);
-
-		if ('item' in next) {
-			if (next.item) url.searchParams.set('item', next.item);
-			else url.searchParams.delete('item');
-		}
-		if ('team' in next) {
-			if (next.team) url.searchParams.set('team', next.team);
-			else url.searchParams.delete('team');
-		}
-		if ('project' in next) {
-			if (next.project) url.searchParams.set('project', next.project);
-			else url.searchParams.delete('project');
-		}
-
-		// Supersede pending navigation even when target matches current page.url (e.g., immediate Back).
+		const url = buildNextTriageUrl(base, viewingNotifications ? 'notifications' : activeTab, patch);
 		const shouldNavigate = hasPending ? pendingUrl?.href !== url.href : url.href !== liveHref;
+		if (!shouldNavigate) return;
 
-		// Preserve cloned URL query/hash without passing dynamic fragments through resolve().
-		if (shouldNavigate) {
-			const seq = ++navSeq;
-			pendingUrl = new URL(url);
-			// eslint-disable-next-line svelte/no-navigation-without-resolve -- cloned page.url preserves deployment base path and arbitrary query/hash fragments
-			void goto(url, {
-				replaceState: true,
-				keepFocus: true,
-				noScroll: true
-			}).finally(() => {
-				if (seq === navSeq) pendingUrl = undefined;
-			});
-		}
+		const seq = ++navSeq;
+		pendingUrl = new URL(url);
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- cloned page.url preserves deployment base path and arbitrary query/hash fragments
+		void goto(url, { replaceState: true, keepFocus: true, noScroll: true }).finally(() => {
+			if (seq === navSeq) pendingUrl = undefined;
+		});
 	}
 
 	function selectTab(tab: TriageTab) {
@@ -380,15 +256,19 @@
 		syncUrl({ tab: 'notifications', item: null });
 	}
 
+	function focusSearchInput() {
+		searchOpen = true;
+		void tick().then(() => {
+			if (!destroyed) searchInputEl?.focus();
+		});
+	}
+
 	function toggleInlineSearch() {
 		if (searchOpen && !searchQuery.trim()) {
 			searchOpen = false;
 			return;
 		}
-		searchOpen = true;
-		void tick().then(() => {
-			if (!destroyed) searchInputEl?.focus();
-		});
+		focusSearchInput();
 	}
 
 	function closeInlineSearch() {
@@ -400,9 +280,7 @@
 		selectionVersion += 1;
 		selectedId = id;
 		decliningId = undefined;
-		if (!wide.current) {
-			mobileDetailOpen = true;
-		}
+		if (!wide.current) mobileDetailOpen = true;
 		syncUrl({ item: id });
 	}
 
@@ -417,36 +295,14 @@
 			const row = returnId
 				? document.querySelector<HTMLElement>(`[data-triage-row="${CSS.escape(returnId)}"]`)
 				: null;
-			(row ?? searchInputEl ?? document.getElementById('shell-page-title'))?.focus();
+			focusElementFallback(row, searchInputEl, document.getElementById('shell-page-title'));
 		});
-	}
-
-	function setSearchQuery(value: string) {
-		selectionVersion += 1;
-		searchQuery = value;
-	}
-
-	function setUrgentOnly(next: boolean) {
-		selectionVersion += 1;
-		urgentOnly = next;
-		decliningId = undefined;
-	}
-
-	function setSortOrder(next: TriageOrder) {
-		selectionVersion += 1;
-		sortOrder = next;
-	}
-
-	function toggleRowDividers(checked: boolean) {
-		showDividers = checked;
-		safeWriteDividers(checked);
 	}
 
 	function setScope(nextScope: InboxScope, preserveSelection = false) {
 		selectionVersion += 1;
 		scope = nextScope;
 		decliningId = undefined;
-
 		const keepSelected =
 			preserveSelection && selectedItem !== undefined && matchesScope(selectedItem, nextScope);
 		if (keepSelected && selectedItem) {
@@ -458,27 +314,19 @@
 			});
 			return;
 		}
-
 		const wasMobileDetail = showingMobileDetail;
 		mobileDetailOpen = false;
-		syncUrl({
-			team: nextScope.team ?? null,
-			project: nextScope.project ?? null,
-			item: null
-		});
+		syncUrl({ team: nextScope.team ?? null, project: nextScope.project ?? null, item: null });
 		if (wasMobileDetail) {
 			void tick().then(() => {
 				if (destroyed) return;
-				const firstRow = document.querySelector<HTMLElement>('[data-triage-row]');
-				(firstRow ?? searchInputEl ?? document.getElementById('shell-page-title'))?.focus();
+				focusElementFallback(
+					document.querySelector<HTMLElement>('[data-triage-row]'),
+					searchInputEl,
+					document.getElementById('shell-page-title')
+				);
 			});
 		}
-	}
-
-	function clearFilterMenu() {
-		selectionVersion += 1;
-		urgentOnly = false;
-		setScope({});
 	}
 
 	function resetFilters() {
@@ -499,59 +347,53 @@
 	}
 
 	async function completeAndAdvance(
-		token: number,
-		targetOrg: string,
+		ctx: {
+			token: number;
+			targetOrg: string;
+			startSelVersion: number;
+			startHref: string;
+			candidateIds: readonly string[];
+		},
 		resolvedId: string,
 		sourceKind: TriageItem['sourceKind'],
-		startSelVersion: number,
-		startHref: string,
-		candidateNeighborIds: readonly string[],
 		message: string,
-		clearDrafts = true
+		clearDrafts: boolean
 	) {
-		// Clear draft and armed Deny guard immediately once the mutation succeeds, unless preserved across snooze.
-		if (clearDrafts) clearItemDrafts(targetOrg, resolvedId);
-		if (organizationId === targetOrg && decliningId === resolvedId) decliningId = undefined;
+		if (clearDrafts) drafts.clearActionDrafts(ctx.targetOrg, resolvedId);
+		if (organizationId === ctx.targetOrg && decliningId === resolvedId) decliningId = undefined;
 		if (message) toast.success(message);
-
-		// Verify route lifetime, active token, and org match before refreshing.
-		if (!isCurrentAction(token, targetOrg)) return;
+		if (!isCurrentAction(ctx.token, ctx.targetOrg)) return;
 		const refreshed = await onRefresh();
-		if (!isCurrentAction(token, targetOrg)) return;
-
-		// Only advance selection when the owning data source actually published fresh rows.
-		const isSourceFresh = (kind: TriageItem['sourceKind']) =>
-			kind === 'inbox' ? refreshed.inboxUpdated : refreshed.workUpdated;
-		if (!isSourceFresh(sourceKind)) return;
-
+		if (!isCurrentAction(ctx.token, ctx.targetOrg) || !isTriageSourceFresh(sourceKind, refreshed)) {
+			return;
+		}
 		nowMs = Date.now();
 		await tick();
-
-		// Guard: only mutate live UI state if action is current, URL hasn't changed (e.g., Browser Back), and user hasn't navigated/filtered.
-		if (!isCurrentAction(token, targetOrg)) return;
-		if (selectionVersion !== startSelVersion || page.url.href !== startHref || navigating.to)
+		if (
+			!isCurrentAction(ctx.token, ctx.targetOrg) ||
+			selectionVersion !== ctx.startSelVersion ||
+			page.url.href !== ctx.startHref ||
+			navigating.to ||
+			visibleItems.some((i) => i.id === resolvedId)
+		) {
 			return;
-		if (visibleItems.some((i) => i.id === resolvedId)) return;
-
-		// Skip candidate neighbors whose own backing source failed to publish fresh data.
-		const surviving = visibleItems.filter(
-			(i) => i.id !== resolvedId && isSourceFresh(i.sourceKind)
+		}
+		const nextId = selectNextVisibleAfterResolve(
+			visibleItems,
+			resolvedId,
+			ctx.candidateIds,
+			refreshed,
+			wide.current
 		);
-		const refreshedIds = new Set(surviving.map((i) => i.id));
-		const nextId =
-			candidateNeighborIds.find((id) => refreshedIds.has(id)) ??
-			(wide.current ? surviving[0]?.id : undefined);
-
 		selectedId = nextId;
 		if (!wide.current) {
-			if (nextId && mobileDetailOpen) {
-				syncUrl({ item: nextId });
-			} else {
+			if (nextId && mobileDetailOpen) syncUrl({ item: nextId });
+			else {
 				mobileDetailOpen = false;
 				syncUrl({ item: null });
 				await tick();
 				if (!destroyed && !isLeavingInbox()) {
-					(searchInputEl ?? document.getElementById('shell-page-title'))?.focus();
+					focusElementFallback(searchInputEl, document.getElementById('shell-page-title'));
 				}
 			}
 			return;
@@ -559,206 +401,49 @@
 		syncUrl({ item: nextId ?? null });
 	}
 
-	async function runPrimaryAction(item: TriageItem) {
-		if (actionLocked || !item.decision) return;
-		const token = ++actionSeq;
-		const targetOrg = organizationId;
-		const startSelVersion = selectionVersion;
-		const startHref = pendingUrl?.href ?? page.url.href;
-		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
-		const reason = denyDrafts[draftKey(targetOrg, item.id)] ?? '';
-		activeAction = { token, orgId: targetOrg, itemId: item.id };
-		try {
-			const res = await executeDecisionAction(
-				targetOrg,
-				item.decision,
-				'primary',
-				snapshot,
-				reason
-			);
-			if (res.navigateTo) {
-				if (!isCurrentAction(token, targetOrg) || page.url.href !== startHref || navigating.to)
-					return;
-				await navigateToResolved(res.navigateTo);
-				return;
-			}
-			await completeAndAdvance(
-				token,
-				targetOrg,
-				item.id,
-				item.sourceKind,
-				startSelVersion,
-				startHref,
-				candidateIds,
-				res.message
-			);
-		} catch (e) {
-			toast.error(toAppError(e).message);
-		} finally {
-			if (activeAction?.token === token) activeAction = undefined;
-		}
-	}
-
-	async function runSecondaryAction(item: TriageItem) {
-		if (actionLocked) return;
-		const targetOrg = organizationId;
-		const canDenyItem =
-			item.inboxItem?.actions.includes('deny') || isDenyAction(item.decision?.secondaryAction);
-		if (canDenyItem && decliningId !== item.id) {
-			decliningId = item.id;
-			return;
-		}
-
-		const token = ++actionSeq;
-		const startSelVersion = selectionVersion;
-		const startHref = pendingUrl?.href ?? page.url.href;
-		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
-		const reason = denyDrafts[draftKey(targetOrg, item.id)] ?? '';
-		activeAction = { token, orgId: targetOrg, itemId: item.id };
-		try {
-			if (item.decision && isDenyAction(item.decision.secondaryAction)) {
-				const res = await executeDecisionAction(
-					targetOrg,
-					item.decision,
-					'secondary',
-					snapshot,
-					reason
-				);
-				if (res.navigateTo) {
-					if (!isCurrentAction(token, targetOrg) || page.url.href !== startHref || navigating.to)
-						return;
-					await navigateToResolved(res.navigateTo);
-					return;
-				}
-				await completeAndAdvance(
-					token,
-					targetOrg,
-					item.id,
-					item.sourceKind,
-					startSelVersion,
-					startHref,
-					candidateIds,
-					res.message
-				);
-			} else if (item.inboxItem?.actions.includes('deny')) {
-				const finalReason = reason.trim() || 'Declined from executive review';
-				await inboxApi.act(targetOrg, item.inboxItem.id, { type: 'deny', reason: finalReason });
-				await completeAndAdvance(
-					token,
-					targetOrg,
-					item.id,
-					item.sourceKind,
-					startSelVersion,
-					startHref,
-					candidateIds,
-					`Denied “${item.inboxItem.title}”.`
-				);
-			}
-		} catch (e) {
-			toast.error(toAppError(e).message);
-		} finally {
-			if (activeAction?.token === token) activeAction = undefined;
-		}
-	}
-
-	async function runChooseAction(item: TriageItem, choiceId: string, choiceLabel: string) {
-		if (actionLocked || !item.inboxItem) return;
-		const token = ++actionSeq;
-		const targetOrg = organizationId;
-		const startSelVersion = selectionVersion;
-		const startHref = pendingUrl?.href ?? page.url.href;
-		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
-		activeAction = { token, orgId: targetOrg, itemId: item.id };
-		try {
-			await inboxApi.act(targetOrg, item.inboxItem.id, { type: 'choose', choice: choiceId });
-			await completeAndAdvance(
-				token,
-				targetOrg,
-				item.id,
-				item.sourceKind,
-				startSelVersion,
-				startHref,
-				candidateIds,
-				`Recorded “${choiceLabel}”.`
-			);
-		} catch (e) {
-			toast.error(toAppError(e).message);
-		} finally {
-			if (activeAction?.token === token) activeAction = undefined;
-		}
-	}
-
-	async function runReplyAction(item: TriageItem, text: string) {
-		if (actionLocked || !item.inboxItem || !text.trim()) return;
-		const token = ++actionSeq;
-		const targetOrg = organizationId;
-		const startSelVersion = selectionVersion;
-		const startHref = pendingUrl?.href ?? page.url.href;
-		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
-		activeAction = { token, orgId: targetOrg, itemId: item.id };
-		try {
-			await inboxApi.act(targetOrg, item.inboxItem.id, { type: 'reply', text: text.trim() });
-			await completeAndAdvance(
-				token,
-				targetOrg,
-				item.id,
-				item.sourceKind,
-				startSelVersion,
-				startHref,
-				candidateIds,
-				`Sent reply to ${item.actorName}.`
-			);
-		} catch (e) {
-			toast.error(toAppError(e).message);
-		} finally {
-			if (activeAction?.token === token) activeAction = undefined;
-		}
-	}
-
-	async function runDeferAction(
+	async function runItemAction(
 		item: TriageItem,
-		untilIso: string,
-		note?: string
-	): Promise<{ ok: true } | { ok: false; error: string }> {
-		if (actionLocked || !item.inboxItem) return { ok: false, error: 'Action already in progress.' };
-		const untilMs = Date.parse(untilIso);
-		if (Number.isNaN(untilMs) || untilMs <= Date.now()) {
-			const msg = 'Return time must be in the future.';
-			toast.error(msg);
-			return { ok: false, error: msg };
-		}
+		execute: (targetOrg: string) => Promise<TriageActionOutcome>,
+		formatError: (msg: string) => string = (m) => m
+	): Promise<TriageActionResult> {
 		const token = ++actionSeq;
 		const targetOrg = organizationId;
-		const startSelVersion = selectionVersion;
-		const startHref = pendingUrl?.href ?? page.url.href;
-		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
-		const wasSnoozed = item.state === 'snoozed';
+		const ctx = {
+			token,
+			targetOrg,
+			startSelVersion: selectionVersion,
+			startHref: pendingUrl?.href ?? page.url.href,
+			candidateIds: neighborCandidatesAfterResolve(visibleItems, item.id)
+		};
 		activeAction = { token, orgId: targetOrg, itemId: item.id };
 		try {
-			await inboxApi.defer(targetOrg, item.inboxItem.id, untilIso, note);
-			const shortLabel = formatSnoozeReturn(untilIso, new Date(), accountZone.zone).short;
-			if (wasSnoozed) {
-				toast.success(`Snooze updated to ${shortLabel}.`);
+			const outcome = await execute(targetOrg);
+			if (outcome.kind === 'navigate') {
+				if (
+					isCurrentAction(token, targetOrg) &&
+					page.url.href === ctx.startHref &&
+					!navigating.to
+				) {
+					await navigateToResolved(outcome.href);
+				}
+			} else if (outcome.kind === 'refresh') {
+				toast.success(outcome.message);
 				if (isCurrentAction(token, targetOrg)) {
 					await onRefresh();
 					nowMs = Date.now();
 				}
-			} else {
+			} else if (outcome.kind === 'advance') {
 				await completeAndAdvance(
-					token,
-					targetOrg,
+					ctx,
 					item.id,
 					item.sourceKind,
-					startSelVersion,
-					startHref,
-					candidateIds,
-					`Snoozed until ${shortLabel}.`,
-					false
+					outcome.message,
+					outcome.clearDrafts
 				);
 			}
 			return { ok: true };
 		} catch (e) {
-			const msg = formatSnoozeError(toAppError(e).message);
+			const msg = formatError(toAppError(e).message);
 			toast.error(msg);
 			return { ok: false, error: msg };
 		} finally {
@@ -766,33 +451,20 @@
 		}
 	}
 
-	async function runUnsnoozeAction(item: TriageItem) {
-		if (actionLocked || !item.inboxItem) return;
-		const token = ++actionSeq;
-		const targetOrg = organizationId;
-		const startSelVersion = selectionVersion;
-		const startHref = pendingUrl?.href ?? page.url.href;
-		const candidateIds = neighborCandidatesAfterResolve(visibleItems, item.id);
-		activeAction = { token, orgId: targetOrg, itemId: item.id };
-		try {
-			await inboxApi.unsnooze(targetOrg, item.inboxItem.id);
-			await completeAndAdvance(
-				token,
-				targetOrg,
-				item.id,
-				item.sourceKind,
-				startSelVersion,
-				startHref,
-				candidateIds,
-				`Returned “${item.title}” to Inbox.`,
-				false
-			);
-		} catch (e) {
-			toast.error(toAppError(e).message);
-		} finally {
-			if (activeAction?.token === token) activeAction = undefined;
-		}
-	}
+	const actions = createTriageActionHandlers({
+		isLocked: () => actionLocked,
+		getOrgId: () => organizationId,
+		getSnapshot: () => snapshot,
+		getZone: () => accountZone.zone,
+		getDecliningId: () => decliningId,
+		setDecliningId: (id) => {
+			decliningId = id;
+		},
+		getDenyDraft: (orgId, itemId) => drafts.getDeny(orgId, itemId),
+		onError: (msg) => toast.error(msg),
+		runItemAction,
+		formatSnoozeError
+	});
 
 	function openCustomSnoozeDialog(item: TriageItem, from: HTMLElement | null) {
 		snoozeOpener = from;
@@ -801,134 +473,43 @@
 
 	function restoreSnoozeFocus(event: Event) {
 		event.preventDefault();
-		const target =
-			(snoozeOpener?.isConnected ? snoozeOpener : null) ??
-			document.getElementById('triage-detail-heading') ??
-			document.querySelector<HTMLElement>('[data-triage-row]') ??
-			searchInputEl ??
-			document.getElementById('shell-page-title');
-		target?.focus();
+		focusElementFallback(
+			snoozeOpener,
+			document.getElementById('triage-detail-heading'),
+			document.querySelector<HTMLElement>('[data-triage-row]'),
+			searchInputEl,
+			document.getElementById('shell-page-title')
+		);
 	}
 
-	function navigateRelative(delta: number) {
-		if (visibleItems.length === 0) return;
-		const currentIdx = visibleItems.findIndex((i) => i.id === effectiveSelectedId);
-		const startIdx = currentIdx < 0 ? 0 : currentIdx;
-		const nextIdx = Math.max(0, Math.min(visibleItems.length - 1, startIdx + delta));
-		const next = visibleItems[nextIdx];
-		if (next) selectItem(next.id);
+	function dismissMobileDetailIfOpen() {
+		if (!showingMobileDetail) return;
+		selectionVersion += 1;
+		mobileDetailOpen = false;
+		syncUrl({ item: null });
 	}
 
-	function handleWorkspaceKeydown(event: KeyboardEvent) {
-		if (
-			event.defaultPrevented ||
-			event.isComposing ||
-			event.metaKey ||
-			event.ctrlKey ||
-			event.altKey ||
-			event.shiftKey
-		) {
-			return;
-		}
-		if (document.querySelector('[role="dialog"], [role="menu"]')) return;
-		if (isEditableTarget(event.target)) return;
-
-		// Always stop unmodified `/` from bubbling to ExecutiveCommandBar before repeat/deny/pref early returns.
-		if (event.key === '/') {
-			event.stopPropagation();
-			if (!shortcutsEnabled || event.repeat || denyGuardVisible) return;
-			event.preventDefault();
-			if (showingMobileDetail) {
-				selectionVersion += 1;
-				mobileDetailOpen = false;
-				syncUrl({ item: null });
-			}
-			searchOpen = true;
-			void tick().then(() => {
-				if (!destroyed) searchInputEl?.focus();
-			});
-			return;
-		}
-
-		if (!shortcutsEnabled || event.repeat || denyGuardVisible) return;
-		if (
-			event.target instanceof Element &&
-			event.target.closest('#triage-categories, .triage-toolbar, aside.exec-sidebar')
-		) {
-			return;
-		}
-
-		if (event.key === 'j') {
-			event.preventDefault();
-			navigateRelative(1);
-		} else if (event.key === 'k') {
-			event.preventDefault();
-			navigateRelative(-1);
-		} else if (event.key === 'a' && selectedItem?.state === 'open' && !actionLocked) {
-			const primaryKind = selectedItem.decision?.primaryAction.kind;
-			if (primaryKind === 'approve_inbox' || primaryKind === 'approve_request') {
-				event.preventDefault();
-				void runPrimaryAction(selectedItem);
-			}
-		} else if (event.key === 'd' && selectedItem?.state === 'open' && !actionLocked) {
-			const canDenySelected =
-				selectedItem.inboxItem?.actions.includes('deny') ||
-				isDenyAction(selectedItem.decision?.secondaryAction);
-			if (canDenySelected) {
-				event.preventDefault();
-				decliningId = selectedItem.id;
-			}
-		}
-	}
-
-	// Scope single-character shortcuts strictly to the triage workspace container (WCAG 2.1.4).
 	function workspaceShortcuts(node: HTMLElement) {
-		const listener = (event: KeyboardEvent) => handleWorkspaceKeydown(event);
-		const onNavTabSelect = (event: Event) => {
-			const tabId = (event as CustomEvent<{ tabId?: string }>).detail?.tabId;
-			if (tabId) selectTab(parseTriageTab(tabId));
-		};
-		const onShowCategories = () => {
-			if (showingMobileDetail) {
-				selectionVersion += 1;
-				mobileDetailOpen = false;
-				syncUrl({ item: null });
-			}
-		};
-		node.addEventListener('keydown', listener);
-		node.addEventListener('inbox:select-tab', onNavTabSelect);
-		node.addEventListener('inbox:show-categories', onShowCategories);
-		return () => {
-			node.removeEventListener('keydown', listener);
-			node.removeEventListener('inbox:select-tab', onNavTabSelect);
-			node.removeEventListener('inbox:show-categories', onShowCategories);
-		};
-	}
-
-	function handleCategoryKeydown(event: KeyboardEvent) {
-		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-		if (
-			event.key !== 'ArrowLeft' &&
-			event.key !== 'ArrowRight' &&
-			event.key !== 'Home' &&
-			event.key !== 'End'
-		) {
-			return;
-		}
-		const row = (event.currentTarget as HTMLElement | null)?.closest('.primary-tab-row');
-		if (!row) return;
-		const options = [...row.querySelectorAll<HTMLButtonElement>('.queue-tab')];
-		const index = options.indexOf(event.currentTarget as HTMLButtonElement);
-		if (index < 0 || options.length === 0) return;
-		const next =
-			event.key === 'Home'
-				? 0
-				: event.key === 'End'
-					? options.length - 1
-					: (index + (event.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length;
-		event.preventDefault();
-		options[next]?.focus();
-		options[next]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		return attachWorkspaceShortcuts(node, {
+			shortcutsEnabled: () => shortcutsEnabled,
+			denyGuardVisible: () => denyGuardVisible,
+			selectedItem: () => selectedItem,
+			actionLocked: () => actionLocked,
+			onOpenSearch: () => {
+				dismissMobileDetailIfOpen();
+				focusSearchInput();
+			},
+			onNavigateRelative: (delta) => {
+				const nextId = computeRelativeSelectionId(visibleItems, effectiveSelectedId, delta);
+				if (nextId) selectItem(nextId);
+			},
+			onApprove: (item) => void actions.primary(item),
+			onArmDeny: (itemId) => {
+				decliningId = itemId;
+			},
+			onSelectTab: selectTab,
+			onShowCategories: dismissMobileDetailIfOpen
+		});
 	}
 </script>
 
@@ -944,334 +525,57 @@
 		data-inbox-dividers={showDividers ? '' : undefined}
 		class="triage-workspace flex min-h-0 w-full flex-1 flex-col overflow-hidden"
 	>
-		<!-- Header & Controls (poc/operations.css queue-header) -->
-		<Tooltip.Provider delayDuration={150}>
-			<header class="inbox-head triage-header queue-header section-header">
-				<div class="queue-headline">
-					<div class="ph-t">
-						<h1 id="shell-page-title" tabindex="-1" class="triage-h1">Inbox</h1>
-						<span role="status" class="queue-count">
-							<i class={[totalOpenCount === 0 && 'is-ok']} aria-hidden="true"></i>
-							<span class="tabular-nums">
-								{totalOpenCount === 0 ? '0 waiting on you' : `${totalOpenCount} waiting on you`}
-							</span>
-						</span>
-					</div>
+		<InboxTriageHeader
+			{totalOpenCount}
+			{viewingNotifications}
+			{activeTab}
+			{counts}
+			{notifTotalCount}
+			{notifAttentionCount}
+			{shortcutsEnabled}
+			{searchOpen}
+			{searchQuery}
+			{urgentOnly}
+			{scope}
+			{scopeOpts}
+			{sortOrder}
+			{showDividers}
+			{isFiltered}
+			{displayActive}
+			bind:searchInputEl
+			onSelectTab={selectTab}
+			onSelectNotificationsTab={selectNotificationsTab}
+			onToggleInlineSearch={toggleInlineSearch}
+			onCloseInlineSearch={closeInlineSearch}
+			onSearchQueryChange={(val) => {
+				selectionVersion += 1;
+				searchQuery = val;
+			}}
+			onSetUrgentOnly={(next) => {
+				selectionVersion += 1;
+				urgentOnly = next;
+				decliningId = undefined;
+			}}
+			onSetScope={(nextScope) => setScope(nextScope)}
+			onClearFilterMenu={() => {
+				selectionVersion += 1;
+				urgentOnly = false;
+				setScope({});
+			}}
+			onSetSortOrder={(next) => {
+				selectionVersion += 1;
+				sortOrder = next;
+			}}
+			onToggleRowDividers={(checked) => {
+				showDividers = checked;
+				writeInboxDividersPreference(checked);
+			}}
+		/>
 
-					<div class="queue-headline-end">
-						<NotificationsButton />
-					</div>
-				</div>
-
-				<!-- Primary Categories + Notifications + More dropdown + Search, Filter & Display icon menus -->
-				<div class="triage-toolbar queue-toolbar section-toolbar">
-					<div
-						id="triage-categories"
-						role="group"
-						aria-label="Inbox categories"
-						aria-keyshortcuts={shortcutsEnabled ? 'M' : undefined}
-						data-overflow-tabs={JSON.stringify(
-							OVERFLOW_TABS.map((t) => ({ id: t.id, label: t.label }))
-						)}
-						class="primary-tab-row"
-					>
-						{#each PRIMARY_TABS as tab (tab.id)}
-							{@const isSelected = !viewingNotifications && activeTab === tab.id}
-							<button
-								type="button"
-								data-triage-tab={tab.id}
-								data-triage-label={tab.label}
-								aria-pressed={isSelected}
-								onclick={() => selectTab(tab.id)}
-								onkeydown={handleCategoryKeydown}
-								class="queue-tab"
-							>
-								<span>{tab.label}</span>
-								<span class="queue-tab-count">{counts[tab.id]}</span>
-							</button>
-						{/each}
-
-						<button
-							type="button"
-							data-triage-tab="notifications"
-							data-triage-label="Notifications"
-							aria-pressed={viewingNotifications}
-							onclick={selectNotificationsTab}
-							onkeydown={handleCategoryKeydown}
-							class="queue-tab"
-						>
-							<span>Notifications</span>
-							{#if notifAttentionCount > 0}
-								<span class="queue-tab-dot" aria-hidden="true"></span>
-							{/if}
-							<span class="queue-tab-count">{notifTotalCount}</span>
-						</button>
-
-						<span class="triage-more-wrap">
-							<DropdownMenu.Root>
-								<DropdownMenu.Trigger>
-									{#snippet child({ props })}
-										<button
-											{...mergeProps(props, { onkeydown: handleCategoryKeydown })}
-											type="button"
-											data-triage-more=""
-											data-current-kind={!viewingNotifications && overflowActive ? '' : undefined}
-											title={!viewingNotifications && overflowActive
-												? `Viewing ${overflowActiveLabel}`
-												: undefined}
-											class="queue-tab"
-										>
-											<span>More</span>
-											<ChevronDown class="size-3.5 shrink-0 opacity-75" aria-hidden="true" />
-										</button>
-									{/snippet}
-								</DropdownMenu.Trigger>
-								<DropdownMenu.Content
-									preventScroll={false}
-									align="start"
-									class="triage-menu-surface w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-								>
-									<DropdownMenu.RadioGroup
-										value={!viewingNotifications && overflowActive ? activeTab : ''}
-										onValueChange={(val) => {
-											if (val) selectTab(val as TriageTab);
-										}}
-									>
-										{#each OVERFLOW_TABS as tab (tab.id)}
-											<DropdownMenu.RadioItem
-												value={tab.id}
-												closeOnSelect={true}
-												class="flex min-h-9 items-center justify-between gap-3 pr-8 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-											>
-												<span>{tab.label}</span>
-												<span class="triage-menu-count font-mono text-xs tabular-nums">
-													{counts[tab.id]}
-												</span>
-											</DropdownMenu.RadioItem>
-										{/each}
-									</DropdownMenu.RadioGroup>
-								</DropdownMenu.Content>
-							</DropdownMenu.Root>
-						</span>
-					</div>
-
-					<div class="queue-controls" role="group" aria-label="Inbox view controls">
-						<InlineSearchToggle
-							open={searchOpen}
-							hasQuery={searchQuery.trim().length > 0}
-							label={viewingNotifications ? 'Search notifications' : 'Search inbox'}
-							onToggle={toggleInlineSearch}
-						/>
-						<DropdownMenu.Root bind:open={filterMenuOpen}>
-							<Tooltip.Root disabled={filterMenuOpen}>
-								<Tooltip.Trigger>
-									{#snippet child({ props: tipProps })}
-										<DropdownMenu.Trigger>
-											{#snippet child({ props: menuProps })}
-												<button
-													{...mergeProps(tipProps, menuProps)}
-													type="button"
-													aria-label="Filter inbox"
-													data-active={isFiltered ? '' : undefined}
-													class="queue-icon-btn"
-												>
-													<ListFilter class="size-5" aria-hidden="true" />
-												</button>
-											{/snippet}
-										</DropdownMenu.Trigger>
-									{/snippet}
-								</Tooltip.Trigger>
-								<Tooltip.Portal>
-									<Tooltip.Content
-										side="bottom"
-										sideOffset={6}
-										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-										>Filter inbox</Tooltip.Content
-									>
-								</Tooltip.Portal>
-							</Tooltip.Root>
-							<DropdownMenu.Content
-								preventScroll={false}
-								align="end"
-								class="triage-menu-surface max-h-[min(60dvh,28rem)] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-							>
-								<DropdownMenu.Label>Urgency</DropdownMenu.Label>
-								<DropdownMenu.RadioGroup
-									value={urgentOnly ? 'urgent' : 'all'}
-									onValueChange={(val) => setUrgentOnly(val === 'urgent')}
-								>
-									<DropdownMenu.RadioItem
-										value="all"
-										closeOnSelect={true}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										All items
-									</DropdownMenu.RadioItem>
-									<DropdownMenu.RadioItem
-										value="urgent"
-										closeOnSelect={true}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										Urgent only
-									</DropdownMenu.RadioItem>
-								</DropdownMenu.RadioGroup>
-								<DropdownMenu.Separator />
-								<DropdownMenu.Label>Project</DropdownMenu.Label>
-								<DropdownMenu.RadioGroup
-									value={scope.project ?? ''}
-									onValueChange={(val) => setScope({ ...scope, project: val || undefined })}
-								>
-									<DropdownMenu.RadioItem
-										value=""
-										closeOnSelect={true}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										All projects
-									</DropdownMenu.RadioItem>
-									{#each scopeOpts.projects as proj (proj.id)}
-										<DropdownMenu.RadioItem
-											value={proj.id}
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											{proj.name}
-										</DropdownMenu.RadioItem>
-									{/each}
-								</DropdownMenu.RadioGroup>
-								<DropdownMenu.Separator />
-								<DropdownMenu.Label>Team</DropdownMenu.Label>
-								<DropdownMenu.RadioGroup
-									value={scope.team ?? ''}
-									onValueChange={(val) => setScope({ ...scope, team: val || undefined })}
-								>
-									<DropdownMenu.RadioItem
-										value=""
-										closeOnSelect={true}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										All teams
-									</DropdownMenu.RadioItem>
-									{#each scopeOpts.teams as team (team.id)}
-										<DropdownMenu.RadioItem
-											value={team.id}
-											closeOnSelect={true}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											{team.name}
-										</DropdownMenu.RadioItem>
-									{/each}
-								</DropdownMenu.RadioGroup>
-								{#if isFiltered}
-									<DropdownMenu.Separator />
-									<DropdownMenu.Group>
-										<DropdownMenu.Item
-											onSelect={clearFilterMenu}
-											class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-										>
-											Reset filters
-										</DropdownMenu.Item>
-									</DropdownMenu.Group>
-								{/if}
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
-
-						<DropdownMenu.Root bind:open={displayMenuOpen}>
-							<Tooltip.Root disabled={displayMenuOpen}>
-								<Tooltip.Trigger>
-									{#snippet child({ props: tipProps })}
-										<DropdownMenu.Trigger>
-											{#snippet child({ props: menuProps })}
-												<button
-													{...mergeProps(tipProps, menuProps)}
-													type="button"
-													aria-label="Inbox display"
-													data-active={displayActive ? '' : undefined}
-													class="queue-icon-btn"
-												>
-													<SlidersHorizontal class="size-5" aria-hidden="true" />
-												</button>
-											{/snippet}
-										</DropdownMenu.Trigger>
-									{/snippet}
-								</Tooltip.Trigger>
-								<Tooltip.Portal>
-									<Tooltip.Content
-										side="bottom"
-										sideOffset={6}
-										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-										>Inbox display</Tooltip.Content
-									>
-								</Tooltip.Portal>
-							</Tooltip.Root>
-							<DropdownMenu.Content
-								preventScroll={false}
-								align="end"
-								class="triage-menu-surface w-52 max-w-[calc(100vw-2rem)] motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
-							>
-								<DropdownMenu.Label>Grouping</DropdownMenu.Label>
-								<DropdownMenu.RadioGroup
-									value={sortOrder}
-									onValueChange={(val) => {
-										if (val === 'priority' || val === 'date') setSortOrder(val);
-									}}
-								>
-									<DropdownMenu.RadioItem
-										value="priority"
-										closeOnSelect={true}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										Priority first
-									</DropdownMenu.RadioItem>
-									<DropdownMenu.RadioItem
-										value="date"
-										closeOnSelect={true}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										By date
-									</DropdownMenu.RadioItem>
-								</DropdownMenu.RadioGroup>
-								<DropdownMenu.Separator />
-								<DropdownMenu.CheckboxItem
-									checked={showDividers}
-									onCheckedChange={(checked) => toggleRowDividers(Boolean(checked))}
-									class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-								>
-									Row dividers
-								</DropdownMenu.CheckboxItem>
-							</DropdownMenu.Content>
-						</DropdownMenu.Root>
-					</div>
-				</div>
-				{#if searchOpen || searchQuery.trim().length > 0}
-					<InlineSearchRow
-						bind:inputEl={searchInputEl}
-						id="triage-search-input"
-						value={searchQuery}
-						onValueChange={setSearchQuery}
-						label={viewingNotifications ? 'Search notifications' : 'Search inbox'}
-						placeholder={viewingNotifications ? 'Search notifications…' : 'Search inbox…'}
-						onClose={closeInlineSearch}
-					/>
-				{/if}
-			</header>
-		</Tooltip.Provider>
-
-		<!-- Split Master-Detail Body -->
 		{#if viewingNotifications}
 			<InboxNotificationsSplit {searchQuery} {nowMs} />
 		{:else if loading}
-			<div class="triage-split flex-1" aria-busy="true" aria-label="Loading inbox">
-				<div class="triage-skeleton-col flex flex-col gap-3 p-4">
-					{#each [1, 2, 3, 4] as n (n)}
-						<div class="triage-skel-row h-20"></div>
-					{/each}
-				</div>
-				<div class="hidden flex-col gap-4 p-8 min-[960px]:flex">
-					<div class="triage-skel-row h-10 w-64"></div>
-					<div class="triage-skel-row h-24 w-full max-w-xl"></div>
-					<div class="triage-skel-row h-32 w-full max-w-xl"></div>
-				</div>
-			</div>
+			<InboxTriageSkeleton />
 		{:else}
 			<div class="triage-split min-h-0 flex-1">
 				<InboxQueueList
@@ -1304,24 +608,24 @@
 					commentDraft={activeCommentDraft}
 					zone={accountZone.zone}
 					{nowMs}
-					onDeclineReasonChange={updateDenyDraft}
-					onReplyTextChange={updateReplyDraft}
-					onCommentDraftChange={updateCommentDraft}
-					onCommentDraftClear={clearCommentDraft}
+					onDeclineReasonChange={(id, val) => drafts.setDeny(organizationId, id, val)}
+					onReplyTextChange={(id, val) => drafts.setReply(organizationId, id, val)}
+					onCommentDraftChange={(id, val) => drafts.setComment(organizationId, id, val)}
+					onCommentDraftClear={(orgId, id) => drafts.clearComment(orgId, id)}
 					onBackMobile={closeMobileDetail}
-					onPrimaryAction={(it) => void runPrimaryAction(it)}
-					onSecondaryAction={(it) => void runSecondaryAction(it)}
+					onPrimaryAction={(it) => void actions.primary(it)}
+					onSecondaryAction={(it) => void actions.secondary(it)}
 					onArmDeny={(id) => {
 						decliningId = id;
 					}}
 					onCancelDeny={() => {
 						decliningId = undefined;
 					}}
-					onChoose={(it, choiceId, label) => void runChooseAction(it, choiceId, label)}
-					onReply={(it, text) => void runReplyAction(it, text)}
-					onDefer={(it, untilIso, note) => void runDeferAction(it, untilIso, note)}
+					onChoose={(it, choiceId, label) => void actions.choose(it, choiceId, label)}
+					onReply={(it, text) => void actions.reply(it, text)}
+					onDefer={(it, untilIso, note) => void actions.defer(it, untilIso, note)}
 					onOpenCustomSnooze={openCustomSnoozeDialog}
-					onUnsnooze={(it) => void runUnsnoozeAction(it)}
+					onUnsnooze={(it) => void actions.unsnooze(it)}
 				/>
 			</div>
 		{/if}
@@ -1332,7 +636,7 @@
 	bind:this={snoozeDialog}
 	zone={accountZone.zone}
 	busy={actionLocked}
-	onsubmit={runDeferAction}
+	onsubmit={actions.defer}
 	onCloseAutoFocus={restoreSnoozeFocus}
 />
 
@@ -1359,212 +663,15 @@
 			--triage-control-height: 44px;
 		}
 	}
-	.queue-header {
-		position: relative;
-		z-index: 1;
-		container: queue-header / inline-size;
-		border-bottom: 1px solid var(--exec-border);
-	}
-	.queue-headline {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: flex-start;
-		gap: 8px 16px;
-		padding: 14px var(--triage-gutter) 4px;
-	}
-	.ph-t {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 8px 14px;
-		min-width: 0;
-	}
-	.triage-h1 {
-		color: var(--exec-ink);
-		font-size: clamp(1.375rem, 2.2vw, 1.875rem);
-		line-height: 1.22;
-		font-weight: 600;
-		letter-spacing: -0.03em;
-	}
-	.triage-h1:focus {
-		outline: none;
-	}
-	.triage-h1:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 2px;
-	}
-	.queue-count {
-		display: inline-flex;
-		align-items: center;
-		gap: 7px;
-		color: var(--exec-muted);
-		font-size: 0.8125rem;
-		font-weight: 500;
-	}
-	.queue-count i {
-		display: inline-block;
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--tone-accent);
-		flex: none;
-	}
-	.queue-count i.is-ok {
-		background: var(--tone-ok);
-	}
-	.queue-headline-end {
-		display: flex;
-		align-items: center;
-		margin-inline-start: auto;
-	}
-	.queue-tab-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--tone-accent);
-		flex: none;
-	}
-	.queue-toolbar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: stretch;
-		gap: 6px 8px;
-		padding: 4px var(--triage-gutter) 1px;
-	}
-	.queue-toolbar > :not(.primary-tab-row) {
-		align-self: center;
-	}
-	.primary-tab-row {
-		position: relative;
-		display: flex;
-		flex-wrap: wrap;
-		align-items: stretch;
-		gap: 2px 4px;
-		min-inline-size: 0;
-		max-inline-size: 100%;
-	}
-	.primary-tab-row::after {
-		content: '';
-		position: absolute;
-		inset-block-start: 100%;
-		inset-inline-start: calc(-1 * var(--triage-gutter));
-		inline-size: 100cqi;
-		border-block-start: 1px solid var(--exec-border);
-		pointer-events: none;
-	}
-	.triage-more-wrap {
-		display: inline-flex;
-		flex: none;
-		align-items: stretch;
-	}
-	.queue-controls {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		margin-block: 4px;
-	}
-	.queue-tab {
-		display: inline-flex;
-		flex: none;
-		align-items: center;
-		gap: 6px;
-		padding: 6px 12px 5px;
-		min-height: var(--triage-control-height);
-		border: 1px solid transparent;
-		border-block-end-width: 2px;
-		border-radius: var(--exec-ctrl-radius) var(--exec-ctrl-radius) 0 0;
-		background: transparent;
-		color: var(--exec-body);
-		font-size: 0.875rem;
-		font-weight: 600;
-		white-space: nowrap;
-		cursor: pointer;
-		transition:
-			background-color 120ms ease-out,
-			color 120ms ease-out;
-	}
-	.queue-tab:hover {
-		background: var(--exec-btn-ghost-bg-hover);
-		color: var(--exec-ink);
-	}
-	.queue-tab:is([aria-pressed='true'], [data-current-kind]) {
-		border-block-end-color: var(--tone-accent-ink);
-		color: var(--exec-ink);
-	}
-	.queue-tab[aria-expanded='true'] {
-		background: var(--exec-btn-ghost-bg-hover);
-		color: var(--exec-ink);
-	}
-	.queue-tab-count,
-	.triage-menu-count {
-		color: var(--exec-muted);
-		font-variant-numeric: tabular-nums;
-		font-size: 0.75rem;
-	}
-	.queue-tab[aria-pressed='true'] .queue-tab-count {
-		color: var(--tone-accent-ink);
-	}
-	.queue-icon-btn {
-		position: relative;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: var(--triage-control-height);
-		min-height: var(--triage-control-height);
-		border-radius: var(--exec-ctrl-radius);
-		background: transparent;
-		color: var(--exec-body);
-		cursor: pointer;
-		transition:
-			background-color 120ms ease-out,
-			color 120ms ease-out;
-	}
-	.queue-icon-btn:hover,
-	.queue-icon-btn[aria-expanded='true'] {
-		background: var(--exec-btn-ghost-bg-hover);
-		color: var(--exec-ink);
-	}
-	.queue-icon-btn[data-active] {
-		color: var(--tone-accent-ink);
-	}
-	.queue-icon-btn[data-active]::after {
-		content: '';
-		position: absolute;
-		inset: 5px 5px auto auto;
-		width: 5px;
-		height: 5px;
-		border-radius: 50%;
-		background: currentColor;
-	}
 	.triage-split {
 		display: grid;
 		grid-template-columns: clamp(19rem, 34%, 31rem) minmax(0, 1fr);
 		grid-template-rows: minmax(0, 1fr);
 		min-height: 0;
 	}
-	.triage-skeleton-col {
-		border-inline-end: 1px solid var(--exec-border);
-	}
-	.triage-skel-row {
-		border-radius: var(--exec-inset-radius);
-		background: var(--exec-well);
-		box-shadow: inset 0 0 0 1px var(--exec-border);
-	}
-
-	@container queue-header (max-width: 38rem) {
-		.queue-tab {
-			gap: 4px;
-			padding-inline: 8px;
-		}
-	}
-
 	@media (max-width: 959px) {
 		.triage-split {
 			display: block;
-		}
-		.triage-skeleton-col {
-			border-inline-end: 0;
 		}
 		.triage-page:not(.triage-has-detail) :global(.triage-reading) {
 			display: none;
@@ -1573,32 +680,8 @@
 		.triage-has-detail :global(.triage-queue) {
 			display: none;
 		}
-		.triage-has-detail .queue-headline {
+		.triage-has-detail :global(.queue-headline) {
 			padding-block-end: 12px;
-		}
-	}
-
-	.queue-tab:focus-visible,
-	.queue-icon-btn:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: -2px;
-	}
-
-	@media (forced-colors: active) {
-		.queue-tab,
-		.queue-icon-btn {
-			border: 1px solid ButtonText;
-		}
-		.queue-tab:is([aria-pressed='true'], [data-current-kind]),
-		.queue-icon-btn[data-active] {
-			border: 2px solid Highlight;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.queue-tab,
-		.queue-icon-btn {
-			transition: none;
 		}
 	}
 </style>

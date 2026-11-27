@@ -1,5 +1,5 @@
 //! The projection's schema: the data contract's `schema.sql`, then the adapter's own
-//! tables. Its digest is stored in the projection, so a projection made from other DDL is
+//! tables, then its search index (`search/shared.rs`). Its digest is stored in the projection, so a projection made from other DDL is
 //! recognized and replaced (there is no migration code: a projection is rebuilt).
 
 use org_store::{EngineError, Sha256};
@@ -65,7 +65,7 @@ impl Schema {
     /// The schema of this build.
     pub(super) fn current() -> Self {
         Self {
-            parts: vec![CONTRACT, ADAPTER],
+            parts: vec![CONTRACT, ADAPTER, super::search::SHARED_SEARCH_DDL.as_str()],
             format: ADAPTER_FORMAT,
         }
     }

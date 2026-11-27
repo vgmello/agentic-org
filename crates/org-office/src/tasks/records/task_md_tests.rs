@@ -3,7 +3,8 @@ use org_store::Id;
 
 use super::*;
 use crate::tasks::records::{
-    TaskDetailsRecord, TaskLinkRecord, TaskMeta, TaskRecord, TaskRepositoryRecord,
+    DoneAnywayRecord, FinalSummaryRecord, TaskDetailsRecord, TaskLinkRecord, TaskMeta, TaskRecord,
+    TaskRepositoryRecord,
 };
 
 fn id(n: u64) -> Id {
@@ -41,11 +42,20 @@ pub(super) fn sample_task() -> TaskRecord {
             integrated_commit: Some("abc123".into()),
         }],
         details: Some(TaskDetailsRecord {
-            definition_of_done: Some("Done when green".into()),
+            what_happened: Some("Done when green".into()),
             reopen_count: 2,
             severity_confirmed: true,
             duplicate_of_task_id: Some(id(5)),
+            done_anyway: Some(DoneAnywayRecord {
+                reason: "Waived: \"docs\" — later".into(),
+                steps: vec![id(7), id(8)],
+            }),
             ..Default::default()
+        }),
+        final_summary: Some(FinalSummaryRecord {
+            text: "Fixed the \"quoted\" title — Zoë\nSecond line".into(),
+            at: "2026-11-26T02:00:00.000Z".into(),
+            by_id: id(4),
         }),
         meta: TaskMeta {
             revision: 6,
@@ -178,4 +188,111 @@ fn a_file_that_is_not_a_task_is_refused() {
     // A body over the source-document bound is refused on read.
     let huge = format!("{good}{}", "x".repeat(org_docs::MAX_SOURCE_BODY_BYTES + 1));
     assert!(decode_task_md(huge.as_bytes()).is_err());
+}
+
+/// The file `sample_task` would have been before `TASK-88`: no `final_summary*` keys, and its
+/// details with the retired `definition_of_done` key (always null) and no `done_anyway`.
+fn pre_task_88(text: &str) -> String {
+    // Split on `\n` only: the body keeps its `\r\n`.
+    let lines: Vec<String> = text
+        .split('\n')
+        .filter(|line| !line.starts_with("final_summary"))
+        .map(|line| match line.strip_prefix("details: ") {
+            Some(details) => format!(
+                "details: {}",
+                details.replace("\"done_anyway\":null,", "").replacen(
+                    '{',
+                    "{\"definition_of_done\":null,",
+                    1
+                )
+            ),
+            None => line.to_owned(),
+        })
+        .collect();
+    lines.join("\n")
+}
+
+#[test]
+fn a_task_written_before_task_88_still_reads_without_a_summary_or_a_done_anyway() {
+    let mut task = sample_task();
+    task.final_summary = None;
+    if let Some(details) = task.details.as_mut() {
+        details.done_anyway = None;
+    }
+    let text = String::from_utf8(encode_task_md(&task, &[]).unwrap()).unwrap();
+    assert!(text.contains("final_summary: null"), "{text}");
+    let old = pre_task_88(&text);
+    assert!(!old.contains("final_summary"), "{old}");
+    assert!(old.contains("\"definition_of_done\":null"), "{old}");
+    assert_eq!(decode_task_md(old.as_bytes()).unwrap().task, task);
+    // A retired definition of done that holds text is not dropped silently.
+    let filled = old.replace(
+        "\"definition_of_done\":null",
+        "\"definition_of_done\":\"Ship it\"",
+    );
+    let refused = decode_task_md(filled.as_bytes()).unwrap_err();
+    assert!(
+        refused.to_string().contains("definition_of_done"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_final_summary_is_all_four_fields_or_none() {
+    let task = sample_task();
+    let text = String::from_utf8(encode_task_md(&task, &[]).unwrap()).unwrap();
+    for (from, to) in [
+        (
+            "final_summary_by_kind: \"employee\"",
+            "final_summary_by_kind: \"system\"",
+        ),
+        (
+            "final_summary_by_kind: \"employee\"",
+            "final_summary_by_kind: null",
+        ),
+        (
+            "final_summary_at: \"2026-11-26T02:00:00.000Z\"",
+            "final_summary_at: null",
+        ),
+    ] {
+        assert!(text.contains(from), "{from} in {text}");
+        let broken = text.replace(from, to);
+        assert!(decode_task_md(broken.as_bytes()).is_err(), "{to}");
+    }
+    let blank = text.replace(
+        "final_summary: \"Fixed the \\\"quoted\\\" title — Zoë\\nSecond line\"",
+        "final_summary: \"   \"",
+    );
+    assert_ne!(blank, text);
+    assert!(decode_task_md(blank.as_bytes()).is_err());
+    // A "done anyway" record names its reason and step IDs.
+    let empty_reason = text.replace("\"reason\":\"Waived:", "\"reason\":\"   \",\"x\":\"");
+    assert!(decode_task_md(empty_reason.as_bytes()).is_err());
+
+    // Control characters (including NUL, which truncates SQLite length()) and overlong values
+    // are refused on decode so Memory and SQLite never diverge on rebuild.
+    let nul_summary = text.replace(
+        "final_summary: \"Fixed the \\\"quoted\\\" title — Zoë\\nSecond line\"",
+        "final_summary: \"\\u0000hello\"",
+    );
+    assert!(decode_task_md(nul_summary.as_bytes()).is_err());
+    let esc_summary = text.replace(
+        "final_summary: \"Fixed the \\\"quoted\\\" title — Zoë\\nSecond line\"",
+        "final_summary: \"bad\\u001b[31m\"",
+    );
+    assert!(decode_task_md(esc_summary.as_bytes()).is_err());
+    let huge_summary = text.replace(
+        "final_summary: \"Fixed the \\\"quoted\\\" title — Zoë\\nSecond line\"",
+        &format!("final_summary: \"{}\"", "é".repeat(8001)),
+    );
+    assert!(decode_task_md(huge_summary.as_bytes()).is_err());
+    let ctrl_reason = text.replace("\"reason\":\"Waived:", "\"reason\":\"Waived\\n");
+    assert_ne!(ctrl_reason, text);
+    assert!(decode_task_md(ctrl_reason.as_bytes()).is_err());
+    let huge_reason = text.replace(
+        "\"reason\":\"Waived: \\\"docs\\\" — later\"",
+        &format!("\"reason\":\"{}\"", "r".repeat(1001)),
+    );
+    assert_ne!(huge_reason, text);
+    assert!(decode_task_md(huge_reason.as_bytes()).is_err());
 }

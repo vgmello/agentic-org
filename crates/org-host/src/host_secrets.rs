@@ -127,7 +127,8 @@ impl fmt::Debug for Value {
 }
 
 pub trait HostSecrets: Send + Sync {
-    /// TLS items are add-only; a duplicate preserves the first stored value.
+    /// Add-only items per [`Name::is_add_only`] (`tls.*` and `writer-device`) preserve
+    /// the first stored value on duplicate puts; all other items replace any existing value.
     /// In development custody, an error may follow publication without durability;
     /// reload before deciding recovery, since an error does not imply rollback.
     fn put(&self, name: &Name, value: &Value) -> Result<(), Error>;
