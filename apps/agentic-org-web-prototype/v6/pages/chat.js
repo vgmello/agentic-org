@@ -576,7 +576,7 @@ function backToAgent(ch) {
 function memberStack(ch) {
   const who = channelMembers(ch);
   if (!who.length) return "";
-  return `<button class="btn ghost sm chat-members-btn chat-member-stack" type="button" data-act="chat-members" aria-expanded="${local.members}" aria-controls="chat-members" aria-label="${esc(plural(who.length, "member", "members"))}" title="Members">
+  return `<button class="btn ghost sm chat-head-btn chat-members-btn chat-member-stack" type="button" data-act="chat-members" aria-expanded="${local.members}" aria-controls="chat-members" aria-label="${esc(plural(who.length, "member", "members"))}" title="Members">
     ${ic("user-group", "ic16")}<span>${esc(plural(who.length, "member", "members"))}</span></button>`;
 }
 /* A DM's kind and request status sit with the header actions too (owner), so the title is one line everywhere */
@@ -588,7 +588,7 @@ function dmMeta(ch, id) {
 function channelMeta(ch, id) {
   if (ch.kind === "dm") return dmMeta(ch, id);
   if (ch.kind !== "channel") return "";
-  const proj = ch.proj ? `<span class="chat-proj-chip">${ic("folder", "ic14")}${plink(ch.proj)}</span>` : "";
+  const proj = ch.proj ? `<a class="btn ghost sm chat-head-btn" href="#/projects/${esc(ch.proj)}" title="Open project">${ic("folder", "ic16")}<span>${esc(P[ch.proj].name)}</span></a>` : "";
   return `<div class="chat-head-meta">${proj}${memberStack(ch)}</div>`;
 }
 function chatHeaderHtml(id, ch, title) {

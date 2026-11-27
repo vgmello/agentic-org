@@ -142,6 +142,20 @@
 #main .chat .chat-find .field { padding-inline-end: 40px; }
 #main .chat .chat-find > .chat-new { position: absolute; z-index: 1; inset-inline-end: 4px; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; justify-content: center; color: var(--gray-300); border-radius: calc(var(--radius-md) - 2px); }
 #main .chat .chat-find > .chat-new:hover { color: var(--white); background: var(--hover); }
+/* Header side info (owner): a channel's project and members, a DM's kind and request status, beside Files and Search.
+   Project and members are identical ghost buttons: icon + text, background on hover only. */
+#main .chat .chat-head-meta { display: flex; align-items: center; gap: 4px; margin-inline-end: 4px; }
+#main .chat .chhead .chat-head-btn { display: inline-flex; align-items: center; gap: 6px; min-height: var(--control-height); padding-inline: 8px 10px; border: 0; border-radius: var(--radius-md); background: transparent; box-shadow: none; color: var(--gray-300); font-size: var(--fs-sm); font-weight: 500; text-decoration: none; white-space: nowrap; }
+#main .chat .chhead .chat-head-btn:hover, #main .chat .chhead .chat-head-btn[aria-expanded="true"] { background: var(--hover); color: var(--white); }
+#main .chat .chhead a.chat-head-btn > span { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
+#main .chat .chat-kind-chip { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; background: var(--hover); color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
+#main .chat .chat-head-dm .chat-status { display: inline-flex; align-items: center; gap: 6px; color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
+@media (max-width: 1000px) {
+  #main .chat .chat-head-meta { display: none; }
+  /* The project, members and request status are then in Details */
+  #main .chat > .chhead .chat-details-btn { display: inline-flex; }
+}
+#main .chat .chat-titleline > .chat-desc { overflow-wrap: break-word; word-break: normal; }
 .chat-find-empty { padding: 12px 8px 0; font-size: var(--fs-sm); color: var(--gray-400); }
 .chat .chlist .chat-person { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 6px 8px; border-radius: var(--radius-md); text-align: start; font-weight: 500; color: var(--gray-300); }
 .chat .chlist .chat-person:hover { background: var(--hover); color: var(--white); }
