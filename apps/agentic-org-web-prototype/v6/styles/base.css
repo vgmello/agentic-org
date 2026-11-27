@@ -1413,6 +1413,9 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 /* Settings */
 .settings { display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100dvh; }
 .settings > .ph { grid-column: 1 / -1; }
+/* Organization pages that reuse the settings layout without its section nav */
+.settings.org-standalone { grid-template-columns: minmax(0, 1fr); }
+.settings.org-standalone > .settings-body { grid-column: 1 / -1; }
 .settings-picker { display: none; }
 @media (max-width: 639px) {
   .settings-rows > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 10px; row-gap: 6px; }

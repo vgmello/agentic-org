@@ -130,7 +130,7 @@ function devProcessLine(pl) {
   const pid = pl.type === "project" ? pl.id : pl.type === "agent" ? agentWork(pl.id)?.project : null;
   const dp = pid && projectDevProcess(pid);
   if (!dp) return "";
-  return `<p class="proc-devline">${ic("files", "ic16")}<span>This project follows <a class="alink" href="#/settings/dev-processes?open=${esc(dp.id)}">${esc(dp.name)}</a>. Its skills are shown there.</span></p>`;
+  return `<p class="proc-devline">${ic("files", "ic16")}<span>This project follows <a class="alink" href="#/dev-processes?open=${esc(dp.id)}">${esc(dp.name)}</a>. Its skills are shown there.</span></p>`;
 }
 
 function stateBody(pl, kind) {
@@ -165,7 +165,7 @@ function procToolbar(pl, kind, tabsHtml) {
 }
 
 /* Settings › Processes ------------------------------------------------------------------------------ */
-const settingsHref = (kind, pl) => `#/settings/processes${kind === "standard" ? "/standards" : ""}${pl.type === "org" ? "" : `?show=${placeKey(pl)}`}`;
+const settingsHref = (kind, pl) => `#/processes${kind === "standard" ? "/standards" : ""}${pl.type === "org" ? "" : `?show=${placeKey(pl)}`}`;
 function showSelect(pl) {
   const opts = places().map((p) => `<option value="${esc(placeKey(p))}"${placeKey(p) === placeKey(pl) ? " selected" : ""}>${esc(placeLabel(p))}</option>`).join("");
   return `<div class="proc-show"><label for="proc-show">Show</label><select class="field" id="proc-show">${opts}</select></div>`;
@@ -173,7 +173,7 @@ function showSelect(pl) {
 function settingsProcesses(sub) {
   const kind = sub === "standards" ? "standard" : "process", pl = parsePlace(qs().get("show"));
   const header = hdr("Processes", placeLabel(pl), showSelect(pl));
-  const note = `<p class="desc proc-note">Organization processes and standards say how agents work, written down and inherited. A project's development process is separate: see <a class="alink" href="#/settings/dev-processes">Development processes</a>.</p>`;
+  const note = `<p class="desc proc-note">Organization processes and standards say how agents work, written down and inherited. A project's development process is separate: see <a class="alink" href="#/dev-processes">Development processes</a>.</p>`;
   S.procKindBadges = false;
   const body = note + procToolbar(pl, kind, kindTabs((k) => settingsHref(k, pl), pl, kind)) + contextHtml(pl, kind) + stateBody(pl, kind);
   return { header, body };

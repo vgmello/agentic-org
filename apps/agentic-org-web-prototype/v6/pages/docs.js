@@ -71,7 +71,7 @@ function docsTabs(pid, cur) {
 
 function devLine(pid) {
   const dp = projectDevProcess(pid);
-  const text = dp ? `Sections from <a class="alink" href="#/settings/dev-processes?open=${esc(dp.id)}">${esc(dp.name)}</a>, the development process this project follows. People and agents add sections as the work needs them.`
+  const text = dp ? `Sections from <a class="alink" href="#/dev-processes?open=${esc(dp.id)}">${esc(dp.name)}</a>, the development process this project follows. People and agents add sections as the work needs them.`
     : "This project follows no development process, so it starts with Decisions, Designs and Reports. Saving into a new folder adds a section.";
   return `<p class="proc-devline">${ic("files", "ic16")}<span>${text}</span></p>`;
 }

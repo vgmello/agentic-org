@@ -34,7 +34,7 @@ function pageDevProcesses() {
   const rows = ordered().filter((d) => d.status === view);
   const tabs = VIEWS.map(([v, l]) => `<button class="queue-tab" type="button" data-act="set" data-k="devView" data-v="${v}" aria-pressed="${v === view}" aria-controls="dev-results">${l}<span>${DEV_PROCESSES.filter((d) => d.status === v).length}</span></button>`).join("");
   const header = hdr("Development processes", "How a project builds software");
-  const body = `<p class="desc proc-note">A project follows at most one development process: which roles start it, what each role does, which documents it produces and which tabs the project has. It is content the product shows to people and agents; nothing runs it. Any person may create, copy, import or edit one; an agent's write is refused. Built-in ones are read-only and can be copied. Organization processes and standards are separate: see <a class="alink" href="#/settings/processes">Processes</a>.</p>
+  const body = `<p class="desc proc-note">A project follows at most one development process: which roles start it, what each role does, which documents it produces and which tabs the project has. It is content the product shows to people and agents; nothing runs it. Any person may create, copy, import or edit one; an agent's write is refused. Built-in ones are read-only and can be copied. Organization processes and standards are separate: see <a class="alink" href="#/processes">Processes</a>.</p>
     <div class="work-subbar-header proc-subbar"><div class="work-toolbar queue-toolbar proc-toolbar">
       <div class="primary-tab-row"><div class="queue-tabs" role="group" aria-label="Lifecycle">${tabs}</div></div>
       <div class="proc-toolbar-end"><button class="btn outline" type="button" data-dev-act="import">${ic("download", "ic16")}Import process</button><button class="btn primary" type="button" data-dev-act="copy-pick">${ic("copy", "ic16")}Copy one</button></div>
@@ -122,10 +122,10 @@ document.addEventListener("submit", (e) => {
 document.addEventListener("input", (e) => { if (e.target.form?.matches?.("form[data-dev-form]")) e.target.setCustomValidity(""); });
 document.addEventListener("change", (e) => { if (e.target.form?.matches?.("form[data-dev-form]")) e.target.setCustomValidity(""); });
 
-/* #/settings/dev-processes?open=<id> opens that process (links from a project's processes) */
+/* #/dev-processes?open=<id> opens that process (links from a project's processes) */
 function mountDevProcesses() {
   const id = qs().get("open");
-  if (id && location.hash.startsWith("#/settings/dev-processes")) requestAnimationFrame(() => openDev(id, document.querySelector(`[data-dev-act="open"][data-id="${CSS.escape(id)}"]`)));
+  if (id && location.hash.startsWith("#/dev-processes")) requestAnimationFrame(() => openDev(id, document.querySelector(`[data-dev-act="open"][data-id="${CSS.escape(id)}"]`)));
 }
 addEventListener("hashchange", () => setTimeout(mountDevProcesses, 0));
 

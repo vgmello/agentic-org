@@ -63,6 +63,16 @@ function navTeamsGroupHtml(r0) {
         </li>`;
 }
 
+/* Organization: Processes, Standards and Development processes sit folded under "More" (owner) */
+function navOrgMoreHtml(r0, r1, item) {
+  const proc = r0 === "processes" && r1 !== "standards", std = r0 === "processes" && r1 === "standards", dev = r0 === "dev-processes";
+  const open = S.v4Open["nav-org-more"] ?? (proc || std || dev);
+  const btn = `<li><button class="nav-item nav-more-btn" type="button" data-act="v4-acc" data-id="nav-org-more" aria-expanded="${!!open}" aria-controls="nav-org-more-list" title="More">${ic("ellipsis")}<span class="lbl">More</span>${ic("chev-down", "ic14 nav-more-chev")}</button></li>`;
+  const list = open ? `<li><ul class="nav-list nav-more-list" id="nav-org-more-list" role="list" aria-label="More organization pages">
+    ${item("#/processes", "Processes", "refresh", proc)}${item("#/processes/standards", "Standards", "scale", std)}${item("#/dev-processes", "Development processes", "files", dev)}</ul></li>` : "";
+  return btn + list;
+}
+
 /* Workspace group is organizable: pinned items show in the list (registry order), the rest sit under
    "More". Hover an item to pin or unpin it; the choice is saved per browser (S.navPinned). */
 const WORKSPACE_ITEMS = [
@@ -187,6 +197,7 @@ function renderNav(route) {
       <ul class="nav-list" role="list">
         ${navTeamsGroupHtml(r0)}
         ${item("#/settings", "Settings", "cog", r0 === "settings" || r0 === "preferences")}
+        ${navOrgMoreHtml(r0, r1, item)}
       </ul>
     </li>
   </ul>`;

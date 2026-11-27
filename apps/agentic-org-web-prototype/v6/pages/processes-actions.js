@@ -175,7 +175,7 @@ document.addEventListener("input", (e) => {
 document.addEventListener("change", (e) => {
   const t = e.target;
   /* Choosing a place is a history entry; the URL carries it (PROC-31) */
-  if (t.id === "proc-show") { location.hash = `#/settings/processes${location.hash.includes("/standards") ? "/standards" : ""}${t.value === "org" ? "" : `?show=${t.value}`}`; return; }
+  if (t.id === "proc-show") { location.hash = `#/processes${location.hash.includes("/standards") ? "/standards" : ""}${t.value === "org" ? "" : `?show=${t.value}`}`; return; }
   if (t.id === "proc-agent") { openPreview(`project.${t.dataset.pid}`, null, t.value); document.getElementById("proc-agent")?.focus(); return; }
   const form = t.form?.closest?.("form[data-proc-form]");
   if (form && t.name === "template") applyTemplate(form, t.value);

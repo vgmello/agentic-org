@@ -6,7 +6,7 @@ import { settingsProcesses } from "./processes.js";
 import { pageDevProcesses } from "./dev-processes.js";
 import { SEP, av, avStack, crumbs, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
-const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["dev-processes", "Development processes", "files"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
+const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
 const health = (a) => (M[a].offboarded ? "Offboarded" : M[a].setup.needs ? "Needs setup: " + M[a].setup.needs : M[a].paused ? "Paused" : "Ready");
 const healthMark = (a) => { const h = health(a); const [icon, tone] = h === "Ready" ? ["check-circle", "green"] : (h === "Paused" || h === "Offboarded") ? ["pause", "gray"] : ["wrench", "amber"]; return pill(h, tone, icon); };
 function settingsFrame(active, header, content) {
@@ -23,9 +23,13 @@ function settingsFrame(active, header, content) {
     <div class="settings-body">${content}</div>
   </div>`;
 }
+/* Processes, Standards and Development processes are Organization pages in the sidebar (owner), not Settings */
+function pageOrgProcesses(sec, sub) {
+  const { header, body } = sec === "processes" ? settingsProcesses(sub) : pageDevProcesses();
+  return `<div class="settings org-standalone">${header}<div class="settings-body">${body}</div></div>`;
+}
 function pageSettings(sec = "general", sub) {
   if (sec === "appearance") return pagePreferences();
-  if (sec === "processes" || sec === "dev-processes") { const { header, body } = sec === "processes" ? settingsProcesses(sub) : pageDevProcesses(); return settingsFrame(sec, header, body); }
   const label = SET.find(([key]) => key === sec)[1];
   let header = hdr(label, "Organization settings"), body;
   const agents = Object.keys(M).filter((k) => M[k].kind === "agent");
@@ -96,6 +100,7 @@ function pageSearch(q) {
 function notFound() { return hdr("Not found", "") + empty("question", "This page doesn't exist", "The link may be from an older version of the prototype."); }
 
 export {
+  pageOrgProcesses,
   SET,
   healthMark,
   notFound,
