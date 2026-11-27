@@ -1,7 +1,8 @@
 import type { createEventStreamClient, EventStreamHandlers, Subscription } from '../http/events';
 import { createEventStreamManager } from './event-stream-manager';
 import type { createAuthlessJsonHttp, createJsonHttp } from '../http/json-http';
-import { readSafeInteger, SESSION_PROOF_HEADER, versionCompatible } from '../http/wire';
+import { readSafeInteger, versionCompatible } from '../http/wire';
+import { createSessionBinaryOps } from './session-binary';
 import {
 	SessionRequestError,
 	type AccessView,
@@ -19,6 +20,7 @@ import {
 	readSessionErrorReason,
 	sameAccount,
 	type ControllerGateway,
+	type SessionSendRequest,
 	type SessionState
 } from './session-http-helpers';
 import { readSessionRecord, type SessionRecord, type SessionStore } from './session-record';
@@ -31,6 +33,7 @@ type Options = {
 	http: ReturnType<typeof createJsonHttp>;
 	authlessHttp?: ReturnType<typeof createAuthlessJsonHttp>;
 	eventStream?: ReturnType<typeof createEventStreamClient>;
+	fetch?: typeof fetch;
 	locks: Pick<LockManager, 'request'>;
 	channel: Pick<BroadcastChannel, 'postMessage' | 'addEventListener' | 'removeEventListener'>;
 	now: () => number;
@@ -45,6 +48,7 @@ export function createSessionController({
 	http,
 	authlessHttp,
 	eventStream,
+	fetch: binaryFetch,
 	locks,
 	channel,
 	now,
@@ -317,11 +321,7 @@ export function createSessionController({
 			await publishEstablished(session, next, { kind: 'signed-in', account_id: next.account_id });
 		});
 	}
-	async function sendAuthless(
-		request: { path: string; signal?: AbortSignal } & (
-			{ method: 'GET' } | { method: 'POST'; body: unknown }
-		)
-	) {
+	async function sendAuthless(request: SessionSendRequest) {
 		if (accessState.auth_enabled || state.kind !== 'signed-in' || !authlessHttp) {
 			throw new Error('Sign in required');
 		}
@@ -349,11 +349,7 @@ export function createSessionController({
 		ended('ended');
 		return response;
 	}
-	async function send(
-		request: { path: string; signal?: AbortSignal } & (
-			{ method: 'GET' } | { method: 'POST'; body: unknown }
-		)
-	) {
+	async function send(request: SessionSendRequest) {
 		ensureOpen();
 		const expected = record;
 		if (!expected) return sendAuthless(request);
@@ -440,6 +436,21 @@ export function createSessionController({
 		}
 		ended('ended');
 	}
+	const binary = createSessionBinaryOps({
+		store,
+		fetch: binaryFetch,
+		ensureOpen,
+		authEnabled: () => accessState.auth_enabled,
+		currentRecord: () => record,
+		setRecord: (next) => {
+			record = next;
+		},
+		generation: () => generation,
+		active,
+		ended,
+		reauth,
+		withCallerAuth
+	});
 	return Object.freeze({
 		boot,
 		access: () => accessState,
@@ -606,47 +617,18 @@ export function createSessionController({
 		 */
 		submit: (path: string, body: unknown, signal?: AbortSignal) =>
 			send({ method: 'POST', path, body, signal }),
+		/** One PATCH with the current caller auth (pair or local-authless). */
+		patch: (path: string, body: unknown, signal?: AbortSignal) =>
+			send({ method: 'PATCH', path, body, signal }),
 		/** Opens a same-origin SSE event stream using the active session proof without exposing it. */
 		subscribeEvents: (subscriptions: readonly Subscription[], handlers: EventStreamHandlers) =>
 			streams.subscribe(subscriptions, handlers),
 		/** Opens a same-origin GET SSE stream with active proof + 401 rotation without exposing proof. */
-		openSseStream: (path: string, signal?: AbortSignal) => {
-			if (!path.startsWith('/api/v1/') || path.includes('..') || path.includes('\\')) {
-				return Promise.reject(new Error('Invalid API stream path'));
-			}
-			const token = generation;
-			return withCallerAuth(async (proof) => {
-				const headers = new Headers({ Accept: 'text/event-stream' });
-				if (proof) headers.set(SESSION_PROOF_HEADER, proof);
-				const res = await globalThis.fetch(path, {
-					method: 'GET',
-					headers,
-					mode: 'same-origin',
-					credentials: 'same-origin',
-					redirect: 'error',
-					cache: 'no-store',
-					signal
-				});
-				if (!active(token)) {
-					await res.body?.cancel().catch(() => {});
-					throw new Error('Session changed');
-				}
-				if (res.status === 401) {
-					let sessionReason: 'session_ended' | 'unknown' | undefined;
-					try {
-						sessionReason = readSessionErrorReason(await res.json());
-					} catch {
-						/* Untrusted error payload. */
-					}
-					throw new SessionRequestError(401, {
-						code: 'unauthenticated',
-						message: '',
-						session_reason: sessionReason
-					});
-				}
-				return res;
-			});
-		},
+		openSseStream: binary.openSseStream,
+		/** Pair-only binary attachment upload (fails closed without ending session in authless mode). */
+		uploadAttachment: binary.uploadAttachment,
+		/** Pair-only binary attachment download (supports If-None-Match / 304, fails closed in authless mode). */
+		downloadAttachment: binary.downloadAttachment,
 		dispose() {
 			disposed = true;
 			streams.closeAll();

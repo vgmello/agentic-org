@@ -1,6 +1,9 @@
+import type { AttachmentMeta } from '$lib/modules/messaging/types';
+
 export type {
 	AskOption,
 	AskQuestion,
+	AttachmentMeta,
 	ChatAccepted,
 	ChatCall,
 	ChatCallStatus,
@@ -27,6 +30,8 @@ export interface PendingMessage {
 	also_in_channel?: boolean;
 	body: string;
 	attachments: string[];
+	attachment_ids?: readonly string[];
+	attachment_meta?: readonly AttachmentMeta[];
 	status: PendingDeliveryStatus;
 	error?: string;
 }

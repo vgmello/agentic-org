@@ -2,6 +2,7 @@
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import type { MicroIconName } from '$lib/components/heroicons';
 	import Logo from '$lib/components/Logo.svelte';
+	import AttachmentGallery from '$lib/components/attachments/AttachmentGallery.svelte';
 	import MessageSquareReply from '@lucide/svelte/icons/message-square-reply';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ModalTooltip } from '$lib/components/ui/tooltip';
@@ -76,7 +77,12 @@
 		onpin?: (m: ChatMessage) => void;
 		onanswer?: (
 			m: ChatMessage,
-			answer: { option_id?: string; text?: string; answers?: QuestionAnswer[] }
+			answer: {
+				option_id?: string;
+				text?: string;
+				answers?: QuestionAnswer[];
+				attachment_ids?: readonly string[];
+			}
 		) => Promise<void> | void;
 		onaccept?: (m: ChatMessage) => Promise<void> | void;
 		onhandback?: (m: ChatMessage, reason: string) => Promise<void> | void;
@@ -135,7 +141,7 @@
 				? ids.map((id) => (id === ctx.actor ? 'you' : nameOf(ctx, id).split(' ')[0])).join(', ')
 				: String(ids.length);
 	const details = $derived(
-		message.attachments?.length ||
+		(!card && (message.attachment_meta?.length || message.attachments?.length)) ||
 			hasReactions ||
 			(replies.length && onthread) ||
 			onopen ||
@@ -227,7 +233,9 @@
 					{/if}
 				</div>
 			{/if}{#if details}
-				{#if message.attachments?.length}
+				{#if !card && message.attachment_meta?.length}
+					<AttachmentGallery attachments={message.attachment_meta} />
+				{:else if !card && message.attachments?.length}
 					<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
 						{#each message.attachments as a (a)}<li
 								class="inline-flex max-w-full items-start gap-x-1 rounded bg-surface-overlay px-2 py-0.5 text-xs/5 text-fg-body"

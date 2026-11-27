@@ -22,6 +22,8 @@
 		'member:@name',
 		'has:ask',
 		'has:thread',
+		'has:image',
+		'has:file',
 		'has:attachment',
 		'kind:announcement',
 		'kind:handoff',

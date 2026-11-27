@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import AttachmentGallery from '$lib/components/attachments/AttachmentGallery.svelte';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import Rich from '$lib/modules/messaging/components/Rich.svelte';
@@ -94,6 +95,9 @@
 				onclick={() => (expanded = !expanded)}
 				>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button
 			>{/if}
+		{#if message.attachment_meta?.length}
+			<AttachmentGallery attachments={message.attachment_meta} />
+		{/if}
 	</div>
 	{#if message.linked_ref}
 		<p class="mt-2 text-xs/5 text-fg-muted" data-testid="linked-ref">

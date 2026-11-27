@@ -4,7 +4,7 @@ import { shot } from '../e2e/shot';
 import { signInAsAdmin } from '../e2e/web-session';
 
 const policy =
-	"default-src 'none'; script-src 'report-sample' 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; report-uri /__csp-report";
+	"default-src 'none'; script-src 'report-sample' 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; report-uri /__csp-report";
 const routes = [
 	'/',
 	'/welcome',

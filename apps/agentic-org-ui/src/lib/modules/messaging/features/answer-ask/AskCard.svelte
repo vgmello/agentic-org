@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
 	import { resolve } from '$app/paths';
+	import AttachmentComposer from '$lib/components/attachments/AttachmentComposer.svelte';
+	import AttachmentGallery from '$lib/components/attachments/AttachmentGallery.svelte';
+	import type { StagedAttachment } from '$lib/components/attachments/model';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
@@ -56,6 +59,7 @@
 			option_id?: string;
 			text?: string;
 			answers?: QuestionAnswer[];
+			attachment_ids?: readonly string[];
 		}) => Promise<void> | void;
 		onaccept: () => Promise<void> | void;
 		onhandback?: (reason: string) => Promise<void> | void;
@@ -68,8 +72,18 @@
 	let text = $state(untrack(() => draft?.read() ?? ''));
 	let withdrawReason = $state('');
 	let replyBox = $state<HTMLTextAreaElement>();
+	let answerStaged = $state<StagedAttachment[]>([]);
+	let answerAttachBtn = $state<HTMLButtonElement>();
+	let answerAttachments = $state<ReturnType<typeof AttachmentComposer> | undefined>();
 	let busy = $state(false);
 	let error = $state<string | undefined>();
+	const answerReadyIds = $derived(
+		answerStaged
+			.filter((item) => item.status === 'ready' && item.uploadId)
+			.map((item) => item.uploadId!)
+	);
+	const answerUploading = $derived(answerStaged.some((item) => item.status === 'uploading'));
+	const answerUploadFailed = $derived(answerStaged.some((item) => item.status === 'error'));
 
 	const long = $derived(collapse(message.body));
 	const questions = $derived(questionsOf(message));
@@ -125,6 +139,8 @@
 				mode = undefined;
 				text = '';
 				withdrawReason = '';
+				answerAttachments?.clear(true);
+				answerStaged = [];
 			}
 		} catch (e) {
 			error = (e as { message?: string }).message ?? 'That did not go through.';
@@ -157,7 +173,15 @@
 	function submitText(event: SubmitEvent) {
 		event.preventDefault();
 		if (mode === 'withdraw') return void go(() => onwithdraw?.(withdrawReason));
-		return void go(() => onanswer(mode === 'reject' ? { option_id: 'reject', text } : { text }));
+		if (answerUploading || answerUploadFailed) return;
+		const ids = answerReadyIds.length ? answerReadyIds : undefined;
+		return void go(() =>
+			onanswer(
+				mode === 'reject'
+					? { option_id: 'reject', text, ...(ids ? { attachment_ids: ids } : {}) }
+					: { text, ...(ids ? { attachment_ids: ids } : {}) }
+			)
+		);
 	}
 </script>
 
@@ -196,6 +220,9 @@
 					onclick={() => (expanded = !expanded)}
 					>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button
 				>{/if}
+			{#if message.attachment_meta?.length}
+				<AttachmentGallery attachments={message.attachment_meta} />
+			{/if}
 		</div>
 
 		{#if !closed}
@@ -253,6 +280,9 @@
 					{/each}
 				</dl>
 			{/if}
+			{#if message.answer?.attachment_meta?.length}
+				<AttachmentGallery attachments={message.answer.attachment_meta} />
+			{/if}
 		{:else if blockedHere}
 			<p
 				class="mt-3 rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-secondary"
@@ -268,9 +298,32 @@
 				<QuestionForm
 					askId={message.id}
 					{questions}
-					disabled={busy || !officeRunning}
-					onsubmit={(answers) => go(() => onanswer({ answers }))}
+					disabled={busy || !officeRunning || answerUploading || answerUploadFailed}
+					onsubmit={(answers) =>
+						go(() =>
+							onanswer({
+								answers,
+								...(answerReadyIds.length ? { attachment_ids: answerReadyIds } : {})
+							})
+						)}
 				/>
+				<div class="mt-2">
+					<AttachmentComposer
+						bind:this={answerAttachments}
+						bind:items={answerStaged}
+						disabled={busy || !officeRunning}
+						resetKey="ask-form:{message.id}"
+						attachButton={answerAttachBtn}
+					/>
+					<button
+						type="button"
+						bind:this={answerAttachBtn}
+						class="mt-1.5 inline-flex items-center gap-x-1 text-xs/5 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
+						disabled={busy || !officeRunning}
+						onclick={() => answerAttachments?.openPicker()}
+						><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach files</button
+					>
+				</div>
 			{:else}
 				<div class="mt-3 flex flex-wrap items-start gap-2">
 					{#each buttons as o (o.id)}
@@ -339,34 +392,62 @@
 			</div>
 		{/if}
 		{#if mode && !closed}
-			<form class="mt-2 flex flex-wrap items-start gap-2" onsubmit={submitText}>
-				<label class="sr-only" for="ask-text-{message.id}">{textLabel}</label>
-				<textarea
-					id="ask-text-{message.id}"
-					bind:this={replyBox}
-					value={activeText}
-					oninput={(event) => {
-						const next = event.currentTarget.value;
-						if (mode === 'withdraw') {
-							withdrawReason = next;
-						} else {
-							text = next;
-							draft?.write(next);
-						}
-					}}
-					rows="2"
-					maxlength={20000}
-					disabled={busy}
-					placeholder={textLabel}
-					class="min-w-0 flex-1 rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus max-[639px]:text-base"
-				></textarea>
-				<Button
-					type="submit"
-					size="sm"
-					class="h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-					disabled={busy || !officeRunning || (mode !== 'withdraw' && text.trim() === '')}
-					>{submitLabel}</Button
-				>
+			<form class="mt-2 space-y-2" onsubmit={submitText}>
+				<div class="flex flex-wrap items-start gap-2">
+					<label class="sr-only" for="ask-text-{message.id}">{textLabel}</label>
+					<textarea
+						id="ask-text-{message.id}"
+						bind:this={replyBox}
+						value={activeText}
+						onpaste={(event) => {
+							if (mode !== 'withdraw') void answerAttachments?.handlePaste(event);
+						}}
+						oninput={(event) => {
+							const next = event.currentTarget.value;
+							if (mode === 'withdraw') {
+								withdrawReason = next;
+							} else {
+								text = next;
+								draft?.write(next);
+							}
+						}}
+						rows="2"
+						maxlength={20000}
+						disabled={busy}
+						placeholder={textLabel}
+						class="min-w-0 flex-1 rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus max-[639px]:text-base"
+					></textarea>
+					<Button
+						type="submit"
+						size="sm"
+						class="h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+						disabled={busy ||
+							!officeRunning ||
+							(mode !== 'withdraw' &&
+								(answerUploading ||
+									answerUploadFailed ||
+									(text.trim() === '' && answerReadyIds.length === 0)))}>{submitLabel}</Button
+					>
+				</div>
+				{#if mode !== 'withdraw'}
+					<div>
+						<AttachmentComposer
+							bind:this={answerAttachments}
+							bind:items={answerStaged}
+							disabled={busy || !officeRunning}
+							resetKey="ask-reply:{message.id}"
+							attachButton={answerAttachBtn}
+						/>
+						<button
+							type="button"
+							bind:this={answerAttachBtn}
+							class="mt-1 inline-flex items-center gap-x-1 text-xs/5 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
+							disabled={busy || !officeRunning}
+							onclick={() => answerAttachments?.openPicker()}
+							><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach files</button
+						>
+					</div>
+				{/if}
 			</form>
 		{/if}
 		{#if error}<p class="mt-2 text-sm/6 text-danger" role="alert">{error}</p>{/if}

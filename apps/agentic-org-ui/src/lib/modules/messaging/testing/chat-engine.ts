@@ -148,6 +148,24 @@ function dispatchChatCall(
 			return togglePin(s, call, ctx);
 		case 'dm.open':
 			return openDm(s, call.members, ctx);
+		case 'msg.reply': {
+			const target = s.messages.find((m) => m.id === call.to_id);
+			if (!target) return refuse('not_found', 'There is no message to reply to.');
+			return send(
+				s,
+				{
+					method: 'msg.send',
+					change_id: call.change_id,
+					conversation_id: target.conversation_id,
+					reply_to: target.id,
+					kind: 'reply',
+					body: call.body,
+					attachment_ids: call.attachment_ids
+				},
+				ctx,
+				actor
+			);
+		}
 		default:
 			return channelCall(s, call, ctx);
 	}
@@ -273,6 +291,18 @@ function ownerOnly(ctx: ChatContext) {
 		refuse('not_authorized', 'This is done in the app, by the owner.');
 }
 
+function hasSendContent(body: string, call: Extract<ChatCall, { method: 'msg.send' }>): boolean {
+	return body !== '' || Boolean(call.attachments?.length || call.attachment_ids?.length);
+}
+
+function hasAnswerContent(
+	option: unknown,
+	text: string | undefined,
+	attachmentIds?: readonly string[]
+): boolean {
+	return Boolean(option || text || attachmentIds?.length);
+}
+
 function send(
 	s: ChatState,
 	call: Extract<ChatCall, { method: 'msg.send' }>,
@@ -327,7 +357,7 @@ function send(
 	// A custom tag is for DMs; a person in a channel or group DM sends the chat kinds too.
 	if (!known && c.kind !== 'dm') return refuse('invalid_request', 'Unknown message kind.');
 	const body = call.body.trim();
-	if (body === '') return refuse('invalid_request', 'Write something first.');
+	if (!hasSendContent(body, call)) return refuse('invalid_request', 'Write something first.');
 	if (bytes(body) > CHAT_LIMITS.bodyMax)
 		return refuse('invalid_request', 'That message is too long.');
 
@@ -649,7 +679,8 @@ function answer(
 		call.option_id === undefined ? undefined : ask.options?.find((o) => o.id === call.option_id);
 	if (call.option_id !== undefined && !option)
 		return refuse('invalid_request', 'That is not one of the options.');
-	if (!option && !text) return refuse('invalid_request', 'Choose an option or write a reply.');
+	if (!hasAnswerContent(option, text, call.attachment_ids))
+		return refuse('invalid_request', 'Choose an option or write a reply.');
 	if (ask.approval && option?.id === 'reject' && !text)
 		return refuse('invalid_request', 'Say why you reject it.');
 	ask.answer = {

@@ -62,7 +62,8 @@ export function pendingToMessage(p: PendingMessage, ownerId: string, now: string
 		kind: 'msg',
 		body: p.body,
 		created_at: now,
-		attachments: p.attachments
+		attachments: p.attachments,
+		...(p.attachment_meta?.length ? { attachment_meta: p.attachment_meta } : {})
 	};
 }
 

@@ -6,6 +6,7 @@ export type GatewayReply = { status: number; body: unknown };
 export interface GatewayHttpTransport {
 	read(path: string, signal?: AbortSignal): Promise<GatewayReply>;
 	submit(path: string, body: unknown, signal?: AbortSignal): Promise<GatewayReply>;
+	patch?(path: string, body: unknown, signal?: AbortSignal): Promise<GatewayReply>;
 }
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(API_ERROR_CODES);
@@ -19,6 +20,10 @@ export function gatewayStatusCode(status: number): ApiErrorCode {
 	if (status === 404) return 'not_found';
 	if (status === 409) return 'conflict';
 	if (status === 410) return 'expired';
+	if (status === 411) return 'invalid_request';
+	if (status === 413) return 'too_large';
+	if (status === 415) return 'unsupported';
+	if (status === 429) return 'rate_limited';
 	if (status === 400 || status === 422) return 'invalid_request';
 	return 'unavailable';
 }
@@ -44,7 +49,7 @@ export function unwrapGatewayResult(
 	reply: GatewayReply,
 	fallbackMessage: string
 ): Record<string, unknown> {
-	if (reply.status !== 200) {
+	if (reply.status !== 200 && reply.status !== 201) {
 		throw readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallbackMessage);
 	}
 	let envelope: ReturnType<typeof readResponse<Record<string, unknown>>>;

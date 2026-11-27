@@ -239,7 +239,7 @@ for (const width of [320, 640, 960, 1280])
 				);
 				await expect(
 					attached.getByRole('button', { name: 'Remove plan.txt', exact: true })
-				).toHaveAttribute('title', 'Remove plan.txt');
+				).toHaveAttribute('aria-label', 'Remove plan.txt');
 				await shot(page, `no-emoji-attached-${width}-${scale}`, { context: attached });
 				await page.getByTestId('composer').fill('Attachment ready');
 				await page.getByTestId('composer').press('Control+Enter');
@@ -247,7 +247,10 @@ for (const width of [320, 640, 960, 1280])
 				await expect(sent.getByRole('list', { name: 'Attachments' })).toContainText('plan.txt');
 				await noEmoji(sent);
 				await iconIs(
-					sent.getByRole('list', { name: 'Attachments' }).locator('svg'),
+					sent
+						.getByRole('list', { name: 'Attachments' })
+						.getByRole('listitem')
+						.locator(':scope > svg'),
 					'micro:paper-clip'
 				);
 				await noEmoji(page.locator('body'));

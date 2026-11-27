@@ -1221,11 +1221,14 @@ describe('selector', () => {
 		const pw = ['bun', 'x', 'playwright', 'test'];
 		const webkitProjects = ['--project=chromium', '--project=production', '--project=webkit'];
 		const chat = specs
-			.filter((spec) => spec === 'chat.spec.ts' || spec.startsWith('chat-'))
+			.filter(
+				(spec) =>
+					spec === 'attachments.spec.ts' || spec === 'chat.spec.ts' || spec.startsWith('chat-')
+			)
 			.map((spec) => `e2e/${spec.replace(/\./g, '\\.')}$`);
-		expect(chat).toHaveLength(14);
+		expect(chat).toHaveLength(15);
 		const cspChat = chat.filter((file) => !file.includes('chat-followups-default-font'));
-		expect(cspChat).toHaveLength(13);
+		expect(cspChat).toHaveLength(14);
 		const csp = [...pw, '--config', 'playwright.csp.config.ts'];
 		expect(list).toEqual([
 			{
