@@ -6,9 +6,9 @@
 //! `runtime/<office-id>/protected/messaging.db` database (`messaging-schema.sql`), never into
 //! shared `office.db`.
 
-mod access;
+pub mod access;
 pub mod ask_card;
-pub mod asks;
+pub(crate) mod auto_channels;
 pub mod features;
 pub mod files;
 pub mod mentions;
@@ -21,3 +21,5 @@ pub mod testkit;
 
 /// The conversations a member may read, by the one rule every read of messages applies.
 pub use access::readable_conversations;
+/// Structured asks feature slice (re-exported here to preserve external crate paths).
+pub use features::asks;

@@ -4,6 +4,7 @@
 //! Engine-independent: runs identically on `MemoryEngine` and `SqliteEngine` (`ENG-1`).
 
 pub mod features;
+pub(crate) mod ops;
 pub mod ports;
 pub mod projector;
 pub mod query;

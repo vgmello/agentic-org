@@ -13,11 +13,14 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
 use serde_json::json;
 
+use crate::tasks::ops::{
+    child_bytes, require_local_task_write_authority, task_location, too_deep, TaskWriteAuthority,
+    Writer,
+};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{self, ChecklistStepRecord, TaskRecord};
 use crate::time::format_rfc3339_ms;
 
-use super::write::{child_bytes, task_location, too_deep, Writer};
 use super::{parse_uuid_v7, refuse, require_active_employee, require_task, storage_refusal};
 
 /// `checklist.yaml` with `steps`, and the next history event: never `task.md`.
@@ -68,6 +71,8 @@ fn reindex_steps(steps: &mut [ChecklistStepRecord]) {
 pub struct ChecklistAdd {
     pub actor_member_id: String,
     pub params: TasksChecklistAddParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl ChecklistAdd {
@@ -79,6 +84,7 @@ impl ChecklistAdd {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let step_id = parse_uuid_v7(&self.params.step_id, "step_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let text = validate_step_text(&self.params.text)?;
         let section = self.params.section.unwrap_or_default();
         let required = self
@@ -137,6 +143,8 @@ impl ChecklistAdd {
 pub struct ChecklistCheck {
     pub actor_member_id: String,
     pub params: TasksChecklistCheckParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl ChecklistCheck {
@@ -148,6 +156,7 @@ impl ChecklistCheck {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let step_id = parse_uuid_v7(&self.params.step_id, "step_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut steps = uow
             .view()
             .checklist_steps(&task.id)
@@ -183,6 +192,8 @@ impl ChecklistCheck {
 pub struct ChecklistEdit {
     pub actor_member_id: String,
     pub params: TasksChecklistEditParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl ChecklistEdit {
@@ -194,6 +205,7 @@ impl ChecklistEdit {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let step_id = parse_uuid_v7(&self.params.step_id, "step_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut steps = uow
             .view()
             .checklist_steps(&task.id)
@@ -233,6 +245,8 @@ impl ChecklistEdit {
 pub struct ChecklistRemove {
     pub actor_member_id: String,
     pub params: TasksChecklistRemoveParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl ChecklistRemove {
@@ -244,6 +258,7 @@ impl ChecklistRemove {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let step_id = parse_uuid_v7(&self.params.step_id, "step_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut steps = uow
             .view()
             .checklist_steps(&task.id)
@@ -273,6 +288,8 @@ impl ChecklistRemove {
 pub struct ChecklistMove {
     pub actor_member_id: String,
     pub params: TasksChecklistMoveParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl ChecklistMove {
@@ -284,6 +301,7 @@ impl ChecklistMove {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let step_id = parse_uuid_v7(&self.params.step_id, "step_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut steps = uow
             .view()
             .checklist_steps(&task.id)

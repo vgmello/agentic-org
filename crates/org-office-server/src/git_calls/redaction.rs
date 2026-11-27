@@ -1,14 +1,22 @@
-//! The single Git error mapping and log-redaction choke point: every Git error that reaches a log
-//! or a caller passes through here. Log text is scrubbed of PEM private keys, URL userinfo and
-//! secret-bearing `key=value`/header spans (quote-aware, line-scoped, UTF-8 safe) and truncated;
-//! callers get fixed reasons only.
+//! The single Git error mapping and log-redaction choke point (`TASK-168`, `TASK-218`): every Git
+//! error that reaches a log or a caller passes through here.
+//!
+//! Secret/token/PEM/URL-userinfo/header/env-assignment redaction delegates to the workspace
+//! canonical choke-point [`org_office_sessions::redact::redact_text`], followed by Git-specific
+//! `GIT_SSH_COMMAND=` / `GIT_ASKPASS=` line scrubbing, control-character normalization, and
+//! UTF-8-safe truncation. Callers receive fixed reasons only.
 
 use org_git::GitError;
+use org_office_sessions::redact::{redact_text, REDACTED};
 use org_proto::{ApiError, ErrorCode};
 
+const MAX_GIT_LOG_BYTES: usize = 512;
+const TRUNCATED_SUFFIX: &str = "...[truncated]";
+
 pub(super) fn map_office_error(err: org_office::OfficeError) -> ApiError {
-    eprintln!("agentic-org-office: office error in git service: {err}");
-    ApiError::new(ErrorCode::StorageError, err.to_string())
+    let scrubbed = scrub_git_log_text(&err.to_string());
+    eprintln!("agentic-org-office: office error in git service: {scrubbed}");
+    ApiError::new(ErrorCode::StorageError, "the office could not answer")
 }
 
 pub(super) fn sanitized_git_reason(err: &GitError) -> String {
@@ -23,161 +31,63 @@ pub(super) fn sanitized_git_reason(err: &GitError) -> String {
     }
 }
 
-fn starts_with_ascii_ci(haystack: &str, needle: &str) -> bool {
-    haystack
-        .get(..needle.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle))
-}
-
-fn match_pem_block_len(rest: &str) -> Option<usize> {
-    if !starts_with_ascii_ci(rest, "-----begin ") {
-        return None;
-    }
-    let header_end = rest.find("-----").and_then(|_| rest[11..].find("-----"))?;
-    let label = &rest[11..11 + header_end];
-    if !label.to_ascii_lowercase().contains("private key") {
-        return None;
-    }
-    let lower = rest.to_ascii_lowercase();
-    if let Some(end_idx) = lower.find("-----end ") {
-        if let Some(close) = rest[end_idx + 9..].find("-----") {
-            return Some(end_idx + 9 + close + 5);
+/// Scrubs Git-specific environment variable dumps (`GIT_SSH_COMMAND=...`, `GIT_ASKPASS=...`)
+/// that are not classified as generic secret keys by `org_office_sessions::redact`.
+fn scrub_git_env_lines(input: &str) -> String {
+    const KEYS: &[&str] = &["git_ssh_command=", "git_askpass="];
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut pos = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let escaped_space =
+            i >= 2 && bytes[i - 2] == b'\\' && matches!(bytes[i - 1], b'n' | b'r' | b't');
+        let word_start = i == 0 || !bytes[i - 1].is_ascii_alphanumeric() || escaped_space;
+        let matched = word_start
+            .then(|| {
+                KEYS.iter().find(|k| {
+                    bytes
+                        .get(i..i + k.len())
+                        .is_some_and(|slice| slice.eq_ignore_ascii_case(k.as_bytes()))
+                })
+            })
+            .flatten();
+        if let Some(key) = matched {
+            let val_start = i + key.len();
+            let val_end = input[val_start..]
+                .find(['\n', '\r'])
+                .map_or(input.len(), |off| val_start + off);
+            out.push_str(&input[pos..val_start]);
+            out.push_str(REDACTED);
+            pos = val_end;
+            i = val_end;
+        } else {
+            i += 1;
         }
     }
-    Some(rest.len())
-}
-
-fn match_url_userinfo_prefix(rest: &str) -> Option<(usize, usize)> {
-    let scheme_len = ["https://", "http://", "ssh://"]
-        .iter()
-        .find(|s| starts_with_ascii_ci(rest, s))
-        .map(|s| s.len())?;
-    let after_scheme = &rest[scheme_len..];
-    let token_end = after_scheme
-        .find(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | ')' | '>'))
-        .unwrap_or(after_scheme.len());
-    let authority = after_scheme[..token_end].split('/').next().unwrap_or("");
-    let at_pos = authority.rfind('@')?;
-    Some((scheme_len, scheme_len + at_pos + 1))
-}
-
-fn match_secret_span_len(rest: &str, prev_is_alnum: bool) -> Option<usize> {
-    const CI_PREFIXES: &[&str] = &[
-        "authorization:",
-        "proxy-authorization:",
-        "bearer ",
-        "basic ",
-        "x-access-token:",
-        "github_token=",
-        "gh_token=",
-        "git_ssh_command=",
-        "access_token=",
-        "refresh_token=",
-        "private_key=",
-        "api_key=",
-        "apikey=",
-        "password=",
-        "passwd=",
-        "token=",
-        "secret=",
-        "ghp_",
-        "gho_",
-        "ghu_",
-        "ghs_",
-        "ghr_",
-        "github_pat_",
-        "glpat-",
-        "sk-ant-",
-        "sk-proj-",
-    ];
-    let prefix_len = CI_PREFIXES
-        .iter()
-        .find(|p| starts_with_ascii_ci(rest, p))
-        .map(|p| p.len())
-        .or_else(|| (!prev_is_alnum && starts_with_ascii_ci(rest, "sk-")).then_some(3))?;
-    let tail = &rest[prefix_len..];
-    let is_line_scoped = starts_with_ascii_ci(rest, "authorization:")
-        || starts_with_ascii_ci(rest, "proxy-authorization:")
-        || starts_with_ascii_ci(rest, "x-access-token:")
-        || starts_with_ascii_ci(rest, "git_ssh_command=");
-    let end = if is_line_scoped {
-        tail.find(['\n', '\r'])
-            .map_or(rest.len(), |i| prefix_len + i)
-    } else {
-        prefix_len + scan_secret_value_len(tail)
-    };
-    Some(end)
-}
-
-fn scan_secret_value_len(tail: &str) -> usize {
-    let ws_skip = tail
-        .find(|c: char| !matches!(c, ' ' | '\t'))
-        .unwrap_or(tail.len());
-    let val = &tail[ws_skip..];
-    if let Some(quote) = val.chars().next().filter(|c| matches!(c, '\'' | '"')) {
-        let after_open = &val[quote.len_utf8()..];
-        let stop = after_open
-            .find([quote, '\n', '\r'])
-            .map_or(after_open.len(), |i| {
-                if after_open[i..].starts_with(quote) {
-                    i + quote.len_utf8()
-                } else {
-                    i
-                }
-            });
-        ws_skip + quote.len_utf8() + stop
-    } else {
-        val.find(|c: char| {
-            c.is_whitespace() || matches!(c, '\'' | '"' | '&' | ';' | ',' | '\n' | '\r' | ')')
-        })
-        .map_or(tail.len(), |i| ws_skip + i)
-    }
+    out.push_str(&input[pos..]);
+    out
 }
 
 pub(super) fn scrub_git_log_text(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len().min(512));
-    let mut rest = raw;
-    let mut prev_is_alnum = false;
-    while !rest.is_empty() && out.len() < 512 {
-        if let Some(pem_len) = match_pem_block_len(rest) {
-            out.push_str("<redacted-private-key>");
-            rest = &rest[pem_len..];
-            prev_is_alnum = false;
-            continue;
-        }
-        if let Some((scheme_len, after_at)) = match_url_userinfo_prefix(rest) {
-            // Scrub `userinfo@` only, leaving the host/path/query to continue through the loop
-            // so query secrets like `?token=SECRET` are scrubbed too.
-            out.push_str(&rest[..scheme_len]);
-            out.push_str("<redacted>@");
-            rest = &rest[after_at..];
-            prev_is_alnum = false;
-            continue;
-        }
-        if let Some(span_len) = match_secret_span_len(rest, prev_is_alnum) {
-            out.push_str("<redacted>");
-            rest = &rest[span_len..];
-            prev_is_alnum = false;
-            continue;
-        }
-        let ch = rest.chars().next().unwrap_or(' ');
-        out.push(if ch.is_control() && ch != '\n' {
-            ' '
-        } else {
-            ch
-        });
-        prev_is_alnum = ch.is_ascii_alphanumeric();
-        rest = &rest[ch.len_utf8()..];
+    let redacted = redact_text(raw, &[]);
+    let git_scrubbed = scrub_git_env_lines(&redacted);
+    let mut cleaned: String = git_scrubbed
+        .chars()
+        .map(|ch| {
+            if ch.is_control() && ch != '\n' {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect();
+    if cleaned.len() > MAX_GIT_LOG_BYTES {
+        let cut = cleaned.floor_char_boundary(MAX_GIT_LOG_BYTES - TRUNCATED_SUFFIX.len());
+        cleaned.truncate(cut);
+        cleaned.push_str(TRUNCATED_SUFFIX);
     }
-    if out.len() > 512 || !rest.is_empty() {
-        let mut cut = out.len().min(512);
-        while cut > 0 && !out.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        out.truncate(cut);
-        out.push_str("...[truncated]");
-    }
-    out
+    cleaned
 }
 
 pub(super) fn redact_git_error_for_log(err: &GitError) -> String {

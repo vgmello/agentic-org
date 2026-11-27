@@ -2,6 +2,39 @@ use std::error::Error;
 use std::fmt;
 
 pub use org_proto::NameError;
+use org_proto::{ApiError, ErrorCode};
+use org_store::{Id, Refusal};
+
+/// Encodes an [`ApiError`] as a recorded store [`Refusal::Rejected`].
+pub(crate) fn api_refusal(code: ErrorCode, message: impl Into<String>) -> Refusal {
+    let payload = ApiError::new(code, message);
+    Refusal::rejected(serde_json::to_vec(&payload).expect("ApiError serializes"))
+}
+
+/// Decodes a store [`Refusal`] carrying a serialized [`ApiError`], falling back to `fallback`.
+pub(crate) fn decode_api_refusal(refusal: &Refusal, fallback: &str) -> ApiError {
+    match refusal {
+        Refusal::Rejected(bytes) => serde_json::from_slice::<ApiError>(bytes)
+            .unwrap_or_else(|_| ApiError::new(ErrorCode::InvalidRequest, fallback)),
+        Refusal::Invalid(err) => ApiError::new(ErrorCode::InvalidRequest, err.to_string()),
+    }
+}
+
+/// Encodes a storage-layer error as a recorded [`ErrorCode::StorageError`] refusal.
+pub(crate) fn storage_api_refusal(context: &str, err: impl fmt::Display) -> Refusal {
+    api_refusal(ErrorCode::StorageError, format!("{context}: {err}"))
+}
+
+/// Validates that `raw` is a canonical lowercase UUIDv7 and parses it into an [`Id`].
+pub(crate) fn parse_uuid_v7_refusal(raw: &str, field: &str) -> Result<Id, Refusal> {
+    if !org_proto::is_uuid_v7(raw) {
+        return Err(api_refusal(
+            ErrorCode::InvalidRequest,
+            format!("{field} must be a canonical lowercase UUIDv7"),
+        ));
+    }
+    Id::parse(raw).map_err(|_| api_refusal(ErrorCode::InvalidRequest, format!("invalid {field}")))
+}
 
 #[derive(Debug)]
 pub enum OfficeError {

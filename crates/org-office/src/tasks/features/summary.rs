@@ -13,7 +13,10 @@ use crate::tasks::records::FinalSummaryRecord;
 use crate::time::format_rfc3339_ms;
 
 use super::attachments::stale_revision_refusal;
-use super::{parse_uuid_v7, refuse, require_active_employee, require_task, rewrite_task};
+use super::{
+    parse_uuid_v7, refuse, require_active_employee, require_local_task_write_authority,
+    require_task, rewrite_task, TaskWriteAuthority,
+};
 
 /// The summary trimmed: refused when empty, over [`TASK_FINAL_SUMMARY_MAX_CHARS`], or
 /// containing control characters other than newline/carriage-return/tab (including NUL, which
@@ -48,6 +51,8 @@ pub(crate) fn validate_final_summary(raw: &str) -> Result<String, Refusal> {
 pub struct SetFinalSummary {
     pub actor_member_id: String,
     pub params: TasksFinalSummaryParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl SetFinalSummary {
@@ -58,6 +63,7 @@ impl SetFinalSummary {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         if !task.status.is_closed() {
             return Err(refuse(
                 ErrorCode::InvalidRequest,

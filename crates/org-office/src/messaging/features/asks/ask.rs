@@ -10,7 +10,7 @@ use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::features::{
     append_send_recipient_states, build_mention_candidates, check_hr_access,
-    effective_auto_members, is_active_employee, refusal, resolve_send_target,
+    effective_auto_members, is_addressable_employee, refusal, resolve_send_target,
 };
 use crate::messaging::files::{Binding, MessageFiles, MESSAGE_SCOPE};
 use crate::messaging::mentions::extract_mentions;
@@ -192,7 +192,7 @@ where
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read employees"))?;
     let sender = employees
         .iter()
-        .find(|e| e.id == *caller && is_active_employee(e))
+        .find(|e| e.id == *caller && is_addressable_employee(e))
         .ok_or_else(|| refusal(ErrorCode::NotBound, "sender is not an active employee"))?;
 
     let (mut conv, conv_persisted) = resolve_send_target(

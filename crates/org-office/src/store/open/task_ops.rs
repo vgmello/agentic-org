@@ -30,6 +30,7 @@ use crate::tasks::features::{
     TaskNumbering, TaskWriteOutcome, TransitionTask, UnwatchTask, UpdateTask,
     UpdateTaskAttachmentMeta, WatchTask,
 };
+use crate::tasks::ops::TaskWriteAuthority;
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{OfficeTaskCounterRecord, TaskCommentRecord};
 
@@ -232,6 +233,8 @@ pub struct TaskUpdateOp {
     pub params: TasksUpdateParams,
     /// Validated, blob-promoted files for `params.add_attachments` (`TASK-98.4`).
     pub prepared_files: PreparedTaskFiles,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl StoreOp for TaskUpdateOp {
@@ -247,6 +250,7 @@ impl StoreOp for TaskUpdateOp {
             actor_member_id: self.actor,
             params: self.params,
             prepared_files: self.prepared_files,
+            authority: self.authority,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let (change, id) = cmd.decide(uow)?;
@@ -268,6 +272,8 @@ impl StoreOp for TaskUpdateOp {
 pub struct TaskTransitionOp {
     pub actor: String,
     pub params: TasksTransitionParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl StoreOp for TaskTransitionOp {
@@ -282,6 +288,7 @@ impl StoreOp for TaskTransitionOp {
         let cmd = TransitionTask {
             actor_member_id: self.actor,
             params: self.params,
+            authority: self.authority,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let (change, id) = cmd.decide(uow)?;
@@ -303,6 +310,8 @@ impl StoreOp for TaskTransitionOp {
 pub struct TaskAssignOp {
     pub actor: String,
     pub params: TasksAssignParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl StoreOp for TaskAssignOp {
@@ -317,6 +326,7 @@ impl StoreOp for TaskAssignOp {
         let cmd = AssignTask {
             actor_member_id: self.actor,
             params: self.params,
+            authority: self.authority,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let (change, id, agent) = cmd.decide(uow)?;
@@ -340,6 +350,8 @@ pub struct TaskCommentOp {
     pub params: TasksCommentParams,
     /// Validated, blob-promoted files bound to this comment (`TASK-98.4`).
     pub prepared_files: PreparedTaskFiles,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl StoreOp for TaskCommentOp {
@@ -355,6 +367,7 @@ impl StoreOp for TaskCommentOp {
             actor_member_id: self.actor,
             params: self.params,
             prepared_files: self.prepared_files,
+            authority: self.authority,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let (change, id, comment, attachments) = cmd.decide(uow)?;
@@ -409,6 +422,8 @@ pub struct TaskAttachOp {
     pub actor: String,
     pub command_id: String,
     pub record: AttachmentRecord,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl StoreOp for TaskAttachOp {
@@ -418,6 +433,7 @@ impl StoreOp for TaskAttachOp {
             actor_member_id: self.actor,
             command_id: self.command_id,
             record: self.record,
+            authority: self.authority,
         };
         let (reply, _) = match submit_task(store, Some(self.operation), move |uow| {
             let (change, view) = cmd.decide(uow)?;
@@ -442,6 +458,8 @@ pub struct TaskUpdateAttachmentMetaOp {
     pub command_id: String,
     pub attachment_id: Id,
     pub patch: MetaPatch,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl StoreOp for TaskUpdateAttachmentMetaOp {
@@ -452,6 +470,7 @@ impl StoreOp for TaskUpdateAttachmentMetaOp {
             command_id: self.command_id,
             attachment_id: self.attachment_id,
             patch: self.patch,
+            authority: self.authority,
         };
         let (reply, _) = match submit_task(store, Some(self.operation), move |uow| {
             let (change, view) = cmd.decide(uow)?;
@@ -474,6 +493,7 @@ macro_rules! simple_task_write_op {
         pub struct $op_name {
             pub actor: String,
             pub params: $params_ty,
+            pub authority: TaskWriteAuthority,
         }
 
         impl StoreOp for $op_name {
@@ -483,6 +503,7 @@ macro_rules! simple_task_write_op {
                 let cmd = $cmd_ty {
                     actor_member_id: self.actor,
                     params: self.params,
+                    authority: self.authority,
                 };
                 let (reply, replayed) = match submit_task(store, op, move |uow| {
                     let (change, id) = cmd.decide(uow)?;
@@ -534,6 +555,7 @@ macro_rules! checklist_write_op {
         pub struct $op_name {
             pub actor: String,
             pub params: $params_ty,
+            pub authority: TaskWriteAuthority,
         }
 
         impl StoreOp for $op_name {
@@ -543,6 +565,7 @@ macro_rules! checklist_write_op {
                 let cmd = $cmd_ty {
                     actor_member_id: self.actor,
                     params: self.params,
+                    authority: self.authority,
                 };
                 let (reply, replayed) = match submit_task(store, op, move |uow| {
                     let (change, id) = cmd.decide(uow)?;

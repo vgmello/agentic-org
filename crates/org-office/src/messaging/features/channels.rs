@@ -10,16 +10,14 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, CoreRead, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::{
+    auto_channels::{all_conversations_including_auto, slugify_channel, MAX_CHANNEL_NAME_LEN},
     ports::{MessagingRead, MessagingWrite},
     records::{self, ConversationMembership, ConversationRecord, SCHEMA_VERSION},
 };
 use crate::organization::ports::OrganizationRead;
 
-use super::auto_channels::{slugify_channel, MAX_CHANNEL_NAME_LEN};
-use super::conversations::{
-    all_conversations_including_auto, find_channel, summarize_conversation,
-};
-use super::{is_active_employee, refusal, resolve_employee};
+use super::conversations::{find_channel, summarize_conversation};
+use super::{is_addressable_employee, refusal, resolve_employee};
 
 pub fn decide_channel_create<E>(
     uow: &UnitOfWork<'_, E>,
@@ -85,7 +83,7 @@ where
     for target in &params.members {
         let emp =
             resolve_employee(&employees, owner, target).map_err(|e| refusal(e.code, e.message))?;
-        if is_active_employee(emp) {
+        if is_addressable_employee(emp) {
             member_ids.insert(emp.id.clone());
         }
     }

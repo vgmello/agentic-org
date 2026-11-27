@@ -12,11 +12,14 @@ use org_store::Id;
 
 use crate::time;
 
-use super::ask_card::AskOutcomeEnvelope;
-pub use super::ask_card::{decode_ask_answer_file, is_open_ask_card, parse_ask_card, AskCard};
-use super::features::{require_conversation_access, to_wire_header};
-use super::ports::MessagingRead;
-use super::records::{MessageRecord, RecipientStateRecord};
+use crate::messaging::ask_card::AskOutcomeEnvelope;
+pub use crate::messaging::ask_card::{
+    decode_ask_answer_file, is_open_ask_card, parse_ask_card, AskCard,
+};
+use crate::messaging::ports::MessagingRead;
+use crate::messaging::records::{MessageRecord, RecipientStateRecord};
+
+use super::{decode_refusal, require_conversation_access, to_wire_header};
 
 mod answer;
 mod ask;
@@ -87,7 +90,7 @@ pub fn inspect_ask_status(
         .filter(|m| m.kind == KIND_REQUEST)
         .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "ask not found"))?;
     require_conversation_access(read, owner, caller, &ask.conversation_id, &now_utc)
-        .map_err(|r| super::features::decode_refusal(&r))?;
+        .map_err(|r| decode_refusal(&r))?;
     let card = parse_ask_card(&ask).ok_or_else(|| {
         ApiError::new(ErrorCode::InvalidRequest, "message is not a structured ask")
     })?;

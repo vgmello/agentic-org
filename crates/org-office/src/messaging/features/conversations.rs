@@ -7,9 +7,12 @@ use org_proto::chat::{
 use org_proto::msg::MessageLifecycleState;
 use org_store::Id;
 
-use crate::messaging::{ports::MessagingRead, records::ConversationRecord};
+use crate::messaging::{
+    auto_channels::{active_member, all_conversations_including_auto, effective_auto_members},
+    ports::MessagingRead,
+    records::ConversationRecord,
+};
 
-use super::auto_channels::{active_member, effective_auto_members, virtual_auto_channels};
 use super::catchup::{new_messages, watermark_boundary};
 
 pub(super) fn summarize_conversation(
@@ -86,20 +89,6 @@ pub(super) fn summarize_conversation(
         last_message_at,
         is_member,
     })
-}
-
-pub(crate) fn all_conversations_including_auto(
-    read: &impl MessagingRead,
-    now_utc: &str,
-) -> Result<Vec<ConversationRecord>, org_store::EngineError> {
-    let mut all = read.conversations()?;
-    all.extend(virtual_auto_channels(read, now_utc)?);
-    all.sort_by(|a, b| {
-        a.created_at
-            .cmp(&b.created_at)
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    Ok(all)
 }
 
 pub fn list_channels(

@@ -1,20 +1,57 @@
-//! Automatic channels: the virtual `#general`, team and project channels synthesized from the
-//! organization snapshot, their effective members, and channel-name slugs.
+//! Automatic channels and addressable-employee resolution: the virtual `#general`, team and
+//! project channels synthesized from the organization snapshot, their effective members,
+//! channel-name slugs, and employee addressability.
+//!
+//! Lives outside `messaging::features` so `messaging::access` and sibling facades never form a
+//! module cycle with `messaging::features`.
 
 use std::collections::BTreeSet;
 
 use org_proto::chat::{AutoScope, ConversationKind};
+use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
 use crate::messaging::{
     ports::MessagingRead,
     records::{self, ConversationRecord, SCHEMA_VERSION},
 };
-use crate::organization::records::{Employee, TeamStatus};
+use crate::organization::records::{Employee, EmployeeStatus, TeamStatus};
 
-use super::is_active_employee;
+pub(crate) const MAX_CHANNEL_NAME_LEN: usize = 64;
 
-pub(super) const MAX_CHANNEL_NAME_LEN: usize = 64;
+/// Whether `emp` can participate in or be addressed by messaging (`Active` or `Paused`).
+pub(crate) fn is_addressable_employee(emp: &Employee) -> bool {
+    matches!(emp.status, EmployeeStatus::Active | EmployeeStatus::Paused)
+}
+
+/// Resolves a messaging recipient reference (`"owner"`, employee UUIDv7, handle, or display name).
+pub(crate) fn resolve_employee<'a>(
+    employees: &'a [Employee],
+    owner: &Id,
+    reference: &str,
+) -> Result<&'a Employee, ApiError> {
+    let trimmed = reference.trim();
+    if trimmed.eq_ignore_ascii_case("office") {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "the office cannot be addressed here",
+        ));
+    }
+    if trimmed.eq_ignore_ascii_case("owner") {
+        return employees
+            .iter()
+            .find(|e| e.id == *owner && is_addressable_employee(e))
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "owner not found"));
+    }
+    if let Some(by_id) = employees.iter().find(|e| e.id.as_str() == trimmed) {
+        return Ok(by_id);
+    }
+    let key = trimmed.to_lowercase();
+    employees
+        .iter()
+        .find(|e| e.handle.to_lowercase() == key || e.name.trim().to_lowercase() == key)
+        .ok_or_else(|| ApiError::new(ErrorCode::UnknownRecipient, "unknown recipient"))
+}
 
 /// Synthesizes missing automatic channels (`#general`, team channels, project channels)
 /// deterministically from the current organization snapshot. Membership is resolved dynamically
@@ -146,7 +183,7 @@ pub(crate) fn slugify_channel(name: &str) -> String {
     }
 }
 
-pub(super) fn active_member(conv: &ConversationRecord, employee_id: &Id) -> bool {
+pub(crate) fn active_member(conv: &ConversationRecord, employee_id: &Id) -> bool {
     conv.memberships
         .iter()
         .any(|m| m.employee_id == *employee_id && m.left_at.is_none())
@@ -159,7 +196,10 @@ pub(crate) fn effective_auto_members(
 ) -> Result<Vec<Id>, org_store::EngineError> {
     let owner = crate::organization::owner::effective_owner_id(read, owner)?;
     let employees = read.employees()?;
-    let active: Vec<&Employee> = employees.iter().filter(|e| is_active_employee(e)).collect();
+    let active: Vec<&Employee> = employees
+        .iter()
+        .filter(|e| is_addressable_employee(e))
+        .collect();
     match conv.auto_scope {
         Some(AutoScope::Organization) => Ok(active.into_iter().map(|e| e.id.clone()).collect()),
         Some(AutoScope::Team) => {
@@ -197,4 +237,18 @@ pub(crate) fn effective_auto_members(
                 .collect())
         }
     }
+}
+
+pub(crate) fn all_conversations_including_auto(
+    read: &impl MessagingRead,
+    now_utc: &str,
+) -> Result<Vec<ConversationRecord>, org_store::EngineError> {
+    let mut all = read.conversations()?;
+    all.extend(virtual_auto_channels(read, now_utc)?);
+    all.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(all)
 }

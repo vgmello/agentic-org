@@ -16,8 +16,9 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::features::{
-    append_send_recipient_states, effective_auto_members, is_active_employee, put_or_create_file,
-    refusal, require_conversation_access, to_wire_header, upsert_participant_snapshot,
+    append_send_recipient_states, effective_auto_members, is_addressable_employee,
+    put_or_create_file, refusal, require_conversation_access, to_wire_header,
+    upsert_participant_snapshot,
 };
 use crate::messaging::files::{self, Binding, MessageFiles, ANSWER_SCOPE, MESSAGE_SCOPE};
 use crate::messaging::ports::{MessagingRead, MessagingWrite};
@@ -266,7 +267,7 @@ where
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read employees"))?;
     let responder = employees
         .iter()
-        .find(|e| e.id == *caller && is_active_employee(e))
+        .find(|e| e.id == *caller && is_addressable_employee(e))
         .ok_or_else(|| refusal(ErrorCode::NotBound, "caller is not an active employee"))?;
     if card.approval && responder.kind != EmployeeKind::Person {
         return Err(refusal(

@@ -7,7 +7,7 @@ use org_proto::msg::{json_string_len, KIND_REQUEST, MAX_NOTE_BYTES};
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
-use crate::messaging::features::{is_active_employee, put_or_create_file, refusal};
+use crate::messaging::features::{is_addressable_employee, put_or_create_file, refusal};
 use crate::messaging::ports::{MessagingRead, MessagingWrite};
 use crate::messaging::records::{self, MessageRecord, ParticipantAnswerFile, SCHEMA_VERSION};
 use crate::organization::ports::OrganizationRead;
@@ -70,7 +70,7 @@ where
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read employees"))?;
     if !employees
         .iter()
-        .any(|e| e.id == *caller && is_active_employee(e))
+        .any(|e| e.id == *caller && is_addressable_employee(e))
     {
         return Err(refusal(
             ErrorCode::NotBound,

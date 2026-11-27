@@ -2,26 +2,39 @@
 //! dependencies, searchable labels, reference/modified files, and ordering (`TASK-77` B4b).
 //! Runs identically on BOTH `EngineChoice::Sqlite` and `EngineChoice::Memory` plus cache-loss rebuild.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use org_proto::attachments::{ArtifactStatus, AttachmentTargetKind};
 use org_proto::tasks::{
     LabelMatchMode, PatchField, TaskDetailsWire, TaskPriority, TaskSortMode, TaskStatus,
     TasksAddDependencyParams, TasksAssignParams, TasksChecklistAddParams,
     TasksChecklistCheckParams, TasksChecklistEditParams, TasksChecklistMoveParams,
-    TasksChecklistRemoveParams, TasksCommentParams, TasksCreateParams, TasksLabelsParams,
-    TasksListParams, TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams,
-    TasksUpdateParams, TasksWatchParams, WorkType,
+    TasksChecklistRemoveParams, TasksCommentParams, TasksCreateParams, TasksFinalSummaryParams,
+    TasksLabelsParams, TasksListParams, TasksRemoveDependencyParams, TasksTransitionParams,
+    TasksUnwatchParams, TasksUpdateParams, TasksWatchParams, WorkType,
 };
 use org_proto::ErrorCode;
-use org_store::Id;
+use org_store::{Id, Operation, Sha256};
 
+use crate::attachments::blobs::ContentHash;
+use crate::attachments::records::{AttachmentRecord, MetaPatch};
+use crate::organization::features::offices::RegisterSatelliteOffice;
 use crate::organization::features::{AddPerson, CreateTeam, DeactivatePerson};
+use crate::organization::records::OfficeRole;
+use crate::replication::state_files::ApplyReplicatedFiles;
 use crate::store::open::task_ops::{
-    TaskAddDependencyOp, TaskAssignOp, TaskChecklistAddOp, TaskChecklistCheckOp,
+    TaskAddDependencyOp, TaskAssignOp, TaskAttachOp, TaskChecklistAddOp, TaskChecklistCheckOp,
     TaskChecklistEditOp, TaskChecklistMoveOp, TaskChecklistRemoveOp, TaskCommentOp,
-    TaskCommentsRead, TaskCreateOp, TaskDependenciesRead, TaskHistoryRead, TaskInspectRead,
-    TaskLabelsRead, TaskListRead, TaskRemoveDependencyOp, TaskTransitionOp, TaskUnwatchOp,
-    TaskUpdateOp, TaskWatchOp,
+    TaskCommentsRead, TaskCreateOp, TaskDependenciesRead, TaskFinalSummaryOp, TaskHistoryRead,
+    TaskInspectRead, TaskLabelsRead, TaskListRead, TaskRemoveDependencyOp, TaskTransitionOp,
+    TaskUnwatchOp, TaskUpdateAttachmentMetaOp, TaskUpdateOp, TaskWatchOp,
 };
-use crate::store::open::{AddPersonOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp};
+use crate::store::open::{
+    AddPersonOp, ApplyReplicatedFilesOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
+    RecordTaskRepoBranchOp, RegisterSatelliteOfficeOp,
+};
+use crate::tasks::ops::TaskWriteAuthority;
+use crate::tasks::records::{self as task_records, EventInput, Location, TaskMeta, TaskRecord};
 
 use super::*;
 
@@ -223,6 +236,7 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 done_anyway_reason: None,
                 final_summary: None,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap_err();
@@ -240,6 +254,7 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 assigned_team_id: PatchField::Set(Some(s.team_b.as_str().to_owned())),
                 assignee_id: PatchField::Set(Some(s.peer_person.as_str().to_owned())),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -271,6 +286,7 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 done_anyway_reason: None,
                 final_summary: None,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap_err();
@@ -292,6 +308,7 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 done_anyway_reason: None,
                 final_summary: None,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap_err();
@@ -312,6 +329,7 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 done_anyway_reason: None,
                 final_summary: None,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -337,6 +355,7 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                     required: Some(required),
                     section: None,
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .unwrap();
@@ -351,6 +370,7 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 position: 0,
                 section: None,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap();
@@ -364,6 +384,7 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 text: Some("Run full security audit".into()),
                 required: Some(true),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap();
@@ -377,6 +398,7 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 step_id: step2.clone(),
                 done: true,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap();
@@ -396,6 +418,7 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 task: task_key.to_owned(),
                 step_id: step1,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap();
@@ -415,6 +438,7 @@ fn assert_comments_watchers_and_history(s: &Seed, task_key: &str) {
                 attachment_ids: vec![],
             },
             prepared_files: Default::default(),
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap();
@@ -436,6 +460,7 @@ fn assert_comments_watchers_and_history(s: &Seed, task_key: &str) {
                 command_id: next_uuid(),
                 task: task_key.to_owned(),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -449,6 +474,7 @@ fn assert_comments_watchers_and_history(s: &Seed, task_key: &str) {
                 command_id: next_uuid(),
                 task: task_key.to_owned(),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -589,6 +615,7 @@ fn assert_dependencies_dag(
                     task: task.clone(),
                     depends_on_task: depends_on_task.clone(),
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .unwrap();
@@ -603,6 +630,7 @@ fn assert_dependencies_dag(
                 task: a.key.clone(),
                 depends_on_task: a.key.clone(),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap_err();
@@ -617,6 +645,7 @@ fn assert_dependencies_dag(
                 task: a.key.clone(),
                 depends_on_task: c.key.clone(),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap_err();
@@ -734,6 +763,7 @@ fn assert_files_and_dependency_removal(
                 remove_attachments: vec![],
             },
             prepared_files: Default::default(),
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap_err();
@@ -769,6 +799,7 @@ fn assert_files_and_dependency_removal(
                 remove_attachments: vec![],
             },
             prepared_files: Default::default(),
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -795,6 +826,7 @@ fn assert_files_and_dependency_removal(
                 task: b.key.clone(),
                 depends_on_task: a.key.clone(),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap();
@@ -940,6 +972,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
                 command_id: next_uuid(),
                 task: first.task.key.clone(),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -952,6 +985,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
                 command_id: next_uuid(),
                 task: first.task.key.clone(),
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -1100,6 +1134,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                 remove_attachments: vec![],
             },
             prepared_files: Default::default(),
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .unwrap()
@@ -1124,4 +1159,520 @@ fn engine_independent_idempotency_replay_reuse_and_validation_bounds() {
         assert_idempotency_and_noop_guards(&s);
         assert_validation_bounds_and_cap_swap(&s);
     }
+}
+
+fn attach_op(owner: &Id, task_id: &Id, authority: TaskWriteAuthority) -> (Id, TaskAttachOp) {
+    let cmd = next_uuid();
+    let attachment_id = Id::parse(&next_uuid()).unwrap();
+    let op = Operation {
+        id: Id::parse(&cmd).unwrap(),
+        kind: "attachment.attach",
+        actor: Actor::Employee(owner.clone()),
+        fingerprint: Sha256::of(cmd.as_bytes()),
+    };
+    let record = AttachmentRecord {
+        id: attachment_id.clone(),
+        target_kind: AttachmentTargetKind::Task,
+        target_id: Some(task_id.clone()),
+        content_sha256: ContentHash::of(b"spec"),
+        mime_type: "text/plain".into(),
+        byte_count: 4,
+        filename: "spec.txt".into(),
+        title: "Spec".into(),
+        description: None,
+        artifact_status: ArtifactStatus::default(),
+        width: None,
+        height: None,
+        page_count: None,
+        uploaded_by_employee_id: owner.clone(),
+        created_at: "2026-01-01T00:00:00.000Z".into(),
+        updated_at: "2026-01-01T00:00:00.000Z".into(),
+    };
+    (
+        attachment_id,
+        TaskAttachOp {
+            operation: op,
+            actor: owner.as_str().to_owned(),
+            command_id: cmd,
+            record,
+            authority,
+        },
+    )
+}
+
+fn update_title(
+    s: &Seed,
+    task_key: &str,
+    expected_revision: u64,
+    title: &str,
+    authority: TaskWriteAuthority,
+) -> Result<org_proto::tasks::TaskView, ErrorCode> {
+    let params: TasksUpdateParams = serde_json::from_value(serde_json::json!({
+        "command_id": next_uuid(),
+        "task": task_key,
+        "expected_revision": expected_revision,
+        "title": title,
+    }))
+    .unwrap();
+    s.store
+        .run(TaskUpdateOp {
+            actor: s.owner.as_str().to_owned(),
+            params,
+            prepared_files: Default::default(),
+            authority,
+        })
+        .unwrap()
+        .map(|o| o.task)
+        .map_err(|e| e.code)
+}
+
+fn register_satellite(s: &Seed, op_num: u64, office_id: &Id, name: &str) {
+    let reply = s
+        .store
+        .run(RegisterSatelliteOfficeOp {
+            operation_id: id(op_num),
+            here: s.here.clone(),
+            owner: s.owner.clone(),
+            by: Actor::Employee(s.owner.clone()),
+            command: RegisterSatelliteOffice {
+                office_id: office_id.clone(),
+                office_name: name.into(),
+            },
+        })
+        .unwrap();
+    assert_eq!(reply.outcome, Outcome::Completed);
+}
+
+#[test]
+fn atomic_task_write_authority_enforced_inside_unit_of_work() {
+    for engine in ENGINES {
+        let s = seed_store(engine);
+        let hq_task = create_basic(
+            &s.store,
+            &s.here,
+            BasicTaskSpec {
+                actor: &s.owner,
+                team: &s.team_a,
+                title: "HQ owned task",
+                task_type: "task",
+                rank_order: None,
+                labels: vec![],
+                ref_files: vec![],
+                mod_files: vec![],
+            },
+        );
+        let hq_task_id = Id::parse(&hq_task.id).unwrap();
+
+        // Construct HQ's local authority BEFORE any satellite exists (single-office state).
+        // A TOCTOU pre-check would have authorized writes once and missed later enrollments;
+        // UnitOfWork evaluates against the live transaction view.
+        let hq_auth = TaskWriteAuthority::Local {
+            office_id: s.here.office_id.clone(),
+            role: OfficeRole::Hq,
+            removed_offices: BTreeSet::new(),
+        };
+
+        // HQ attaches a file to its own task so we can also test TaskUpdateAttachmentMetaOp.
+        let (hq_att_id, hq_attach) = attach_op(&s.owner, &hq_task_id, hq_auth.clone());
+        s.store
+            .run(hq_attach)
+            .unwrap()
+            .expect("hq attaches own task");
+        let rev_after_attach = s
+            .store
+            .read(TaskInspectRead {
+                task: hq_task.key.clone(),
+            })
+            .unwrap()
+            .0
+            .unwrap()
+            .task
+            .revision;
+
+        // Enroll satellite office B and replicate a satellite-owned task T-B1 into HQ's store.
+        let sat_office = id(901);
+        register_satellite(&s, 90, &sat_office, "Munich Satellite");
+        let sat_task_id = Id::parse(&next_uuid()).unwrap();
+        let sat_record = TaskRecord {
+            id: sat_task_id.clone(),
+            office_code: "B".into(),
+            number: 1,
+            team_id: s.team_a.clone(),
+            assigned_team_id: None,
+            project_id: None,
+            task_type: "task".into(),
+            work_type: None,
+            title: "Satellite owned task".into(),
+            status: TaskStatus::Todo,
+            assignee_id: None,
+            body_markdown: String::new(),
+            feature_id: None,
+            milestone_id: None,
+            priority: TaskPriority::High,
+            effort: None,
+            severity: None,
+            resolution: None,
+            blocked_reason: None,
+            rank_order: None,
+            labels: Vec::new(),
+            reference_files: Vec::new(),
+            modified_files: Vec::new(),
+            repositories: Vec::new(),
+            details: None,
+            final_summary: None,
+            meta: TaskMeta::created(&s.owner, "2026-01-01T00:00:00.000Z"),
+        };
+        let sat_loc = Location::Team(vec![s.team_a.clone()]);
+        let sat_md_path = task_records::task_md_path(&sat_loc, &sat_task_id).unwrap();
+        let sat_md_bytes = task_records::encode_task_md(&sat_record, &[], &[]).unwrap();
+        let sat_event_path = task_records::event_path(&sat_task_id, 1);
+        let (_, sat_event_bytes) = task_records::encode_event(EventInput {
+            organization_id: &s.here.organization_id,
+            task_id: &sat_task_id,
+            revision: 1,
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            actor_id: &s.owner,
+            operation_id: &next_uuid(),
+            change: task_records::created_change(serde_json::Map::new(), ""),
+        })
+        .unwrap();
+        let replicated = s
+            .store
+            .run(ApplyReplicatedFilesOp {
+                operation_id: id(91),
+                actor: Actor::System,
+                command: ApplyReplicatedFiles {
+                    files: vec![
+                        (sat_md_path.as_str().to_owned(), Some(sat_md_bytes)),
+                        (sat_event_path.as_str().to_owned(), Some(sat_event_bytes)),
+                    ],
+                    rehome_tasks: false,
+                    task_revisions: BTreeMap::from([(sat_task_id.clone(), 1)]),
+                },
+            })
+            .unwrap();
+        assert_eq!(replicated.outcome, Outcome::Completed);
+        let sat_task = s
+            .store
+            .read(TaskInspectRead {
+                task: sat_task_id.as_str().to_owned(),
+            })
+            .unwrap()
+            .0
+            .expect("satellite task replicated")
+            .task;
+        assert_eq!(sat_task.office_code, "B");
+        assert_eq!(sat_task.key, "T-B1");
+
+        let sat_auth = TaskWriteAuthority::Local {
+            office_id: sat_office.clone(),
+            role: OfficeRole::Satellite,
+            removed_offices: BTreeSet::new(),
+        };
+
+        // Satellite is refused on HQ's task across update, transition, comment, attach, meta, git.
+        assert_eq!(
+            update_title(
+                &s,
+                &hq_task.key,
+                rev_after_attach,
+                "Hijack",
+                sat_auth.clone()
+            ),
+            Err(ErrorCode::NotAuthorized)
+        );
+        let sat_trans = s
+            .store
+            .run(TaskTransitionOp {
+                actor: s.owner.as_str().to_owned(),
+                params: TasksTransitionParams {
+                    command_id: next_uuid(),
+                    task: hq_task.key.clone(),
+                    expected_revision: rev_after_attach,
+                    status: TaskStatus::InProgress,
+                    blocked_reason: None,
+                    resolution: None,
+                    note: None,
+                    done_anyway_reason: None,
+                    final_summary: None,
+                },
+                authority: sat_auth.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(sat_trans.code, ErrorCode::NotAuthorized);
+
+        let sat_comment = s
+            .store
+            .run(TaskCommentOp {
+                actor: s.owner.as_str().to_owned(),
+                params: TasksCommentParams {
+                    command_id: next_uuid(),
+                    task: hq_task.key.clone(),
+                    comment_id: next_uuid(),
+                    body_markdown: "denied".into(),
+                    attachment_ids: vec![],
+                },
+                prepared_files: Default::default(),
+                authority: sat_auth.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(sat_comment.code, ErrorCode::NotAuthorized);
+
+        let (_, sat_attach) = attach_op(&s.owner, &hq_task_id, sat_auth.clone());
+        assert_eq!(
+            s.store.run(sat_attach).unwrap().unwrap_err().code,
+            ErrorCode::NotAuthorized
+        );
+
+        let meta_cmd = next_uuid();
+        let sat_meta = s
+            .store
+            .run(TaskUpdateAttachmentMetaOp {
+                operation: Operation {
+                    id: Id::parse(&meta_cmd).unwrap(),
+                    kind: "attachment.update_meta",
+                    actor: Actor::Employee(s.owner.clone()),
+                    fingerprint: Sha256::of(meta_cmd.as_bytes()),
+                },
+                actor: s.owner.as_str().to_owned(),
+                command_id: meta_cmd,
+                attachment_id: hq_att_id.clone(),
+                patch: MetaPatch {
+                    title: Some("Hijacked".into()),
+                    description: None,
+                    artifact_status: None,
+                    updated_at: "2026-01-01T00:01:00.000Z".into(),
+                },
+                authority: sat_auth.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(sat_meta.code, ErrorCode::NotAuthorized);
+
+        let sat_git = s
+            .store
+            .run(RecordTaskRepoBranchOp {
+                actor: s.owner.as_str().to_owned(),
+                command_id: next_uuid(),
+                task_id: hq_task_id.clone(),
+                repository_id: id(801),
+                branch: "task/T-A1".into(),
+                integrated_commit: None,
+                authority: sat_auth.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(sat_git.code, ErrorCode::NotAuthorized);
+
+        assert_remaining_task_ops_refused(&s, &hq_task.key, rev_after_attach, &sat_auth);
+
+        // HQ using `hq_auth` captured BEFORE satellite enrollment is STILL refused on T-B1
+        // because UnitOfWork checks the live `offices` + `office_codes` tables atomically.
+        assert_eq!(
+            update_title(
+                &s,
+                &sat_task.key,
+                sat_task.revision,
+                "HQ hijack",
+                hq_auth.clone()
+            ),
+            Err(ErrorCode::NotAuthorized)
+        );
+        let (_, hq_attach_sat) = attach_op(&s.owner, &sat_task_id, hq_auth.clone());
+        assert_eq!(
+            s.store.run(hq_attach_sat).unwrap().unwrap_err().code,
+            ErrorCode::NotAuthorized
+        );
+        let hq_git_sat = s
+            .store
+            .run(RecordTaskRepoBranchOp {
+                actor: s.owner.as_str().to_owned(),
+                command_id: next_uuid(),
+                task_id: sat_task_id.clone(),
+                repository_id: id(801),
+                branch: "task/T-B1".into(),
+                integrated_commit: None,
+                authority: hq_auth.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(hq_git_sat.code, ErrorCode::NotAuthorized);
+
+        // Satellite CAN mutate its own task T-B1; HQ CAN mutate T-B1 once satellite is revoked.
+        let sat_updated =
+            update_title(&s, &sat_task.key, sat_task.revision, "Sat ok", sat_auth).expect("sat ok");
+        assert_eq!(sat_updated.revision, sat_task.revision + 1);
+
+        let hq_recovery_auth = TaskWriteAuthority::Local {
+            office_id: s.here.office_id.clone(),
+            role: OfficeRole::Hq,
+            removed_offices: BTreeSet::from([sat_office.as_str().to_owned()]),
+        };
+        let recovered = update_title(
+            &s,
+            &sat_task.key,
+            sat_updated.revision,
+            "HQ recovered",
+            hq_recovery_auth,
+        )
+        .expect("hq recovery ok");
+        assert_eq!(recovered.title, "HQ recovered");
+
+        // HQ task revision remained untouched across all refused satellite attempts.
+        let hq_after = s
+            .store
+            .read(TaskInspectRead {
+                task: hq_task.key.clone(),
+            })
+            .unwrap()
+            .0
+            .unwrap()
+            .task;
+        assert_eq!(hq_after.revision, rev_after_attach);
+    }
+}
+
+fn assert_remaining_task_ops_refused(
+    s: &Seed,
+    task_key: &str,
+    expected_revision: u64,
+    authority: &TaskWriteAuthority,
+) {
+    let actor = s.owner.as_str().to_owned();
+    let assign = s.store.run(TaskAssignOp {
+        actor: actor.clone(),
+        params: TasksAssignParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            expected_revision,
+            assigned_team_id: PatchField::Unchanged,
+            assignee_id: PatchField::Set(Some(actor.clone())),
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(assign.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let summary = s.store.run(TaskFinalSummaryOp {
+        actor: actor.clone(),
+        params: TasksFinalSummaryParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            expected_revision,
+            final_summary: "denied".into(),
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(summary.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let watch = s.store.run(TaskWatchOp {
+        actor: actor.clone(),
+        params: TasksWatchParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(watch.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let unwatch = s.store.run(TaskUnwatchOp {
+        actor: actor.clone(),
+        params: TasksUnwatchParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(unwatch.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let dep_add = s.store.run(TaskAddDependencyOp {
+        actor: actor.clone(),
+        params: TasksAddDependencyParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            depends_on_task: task_key.into(),
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(dep_add.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let dep_rm = s.store.run(TaskRemoveDependencyOp {
+        actor,
+        params: TasksRemoveDependencyParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            depends_on_task: task_key.into(),
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(dep_rm.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    assert_checklist_ops_refused(s, task_key, authority);
+}
+
+fn assert_checklist_ops_refused(s: &Seed, task_key: &str, authority: &TaskWriteAuthority) {
+    let actor = s.owner.as_str().to_owned();
+    let add = s.store.run(TaskChecklistAddOp {
+        actor: actor.clone(),
+        params: TasksChecklistAddParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            step_id: next_uuid(),
+            text: "denied".into(),
+            required: None,
+            section: None,
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(add.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let check = s.store.run(TaskChecklistCheckOp {
+        actor: actor.clone(),
+        params: TasksChecklistCheckParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            step_id: next_uuid(),
+            done: true,
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(check.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let edit = s.store.run(TaskChecklistEditOp {
+        actor: actor.clone(),
+        params: TasksChecklistEditParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            step_id: next_uuid(),
+            text: Some("denied".into()),
+            required: None,
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(edit.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let remove = s.store.run(TaskChecklistRemoveOp {
+        actor: actor.clone(),
+        params: TasksChecklistRemoveParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            step_id: next_uuid(),
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(remove.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
+
+    let mv = s.store.run(TaskChecklistMoveOp {
+        actor,
+        params: TasksChecklistMoveParams {
+            command_id: next_uuid(),
+            task: task_key.into(),
+            step_id: next_uuid(),
+            position: 0,
+            section: None,
+        },
+        authority: authority.clone(),
+    });
+    assert_eq!(mv.unwrap().unwrap_err().code, ErrorCode::NotAuthorized);
 }

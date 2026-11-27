@@ -8,14 +8,13 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::{
+    auto_channels::{all_conversations_including_auto, effective_auto_members},
     ports::{MessagingRead, MessagingWrite},
     records::{self, ParticipantReceivedSnapshot, RecipientStateRecord, SCHEMA_VERSION},
 };
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
 
-use super::auto_channels::effective_auto_members;
-use super::conversations::all_conversations_including_auto;
 use super::refusal;
 
 /// One validated `answer_candidate` inbox delivery produced by a channel watcher pass

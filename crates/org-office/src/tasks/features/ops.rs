@@ -15,13 +15,16 @@ use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
 use serde_json::json;
 
 use crate::attachments::records::AttachmentRecord;
+use crate::tasks::ops::{
+    child_bytes, current_attachments, derive_link_id, require_local_task_write_authority,
+    task_location, too_deep, TaskWriteAuthority, Writer,
+};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{self, TaskCommentRecord, TaskRecord, TaskWatcherRecord};
 use crate::time::format_rfc3339_ms;
 
 use super::attachments::PreparedTaskFiles;
-use super::core::{add_dependency_edge, derive_link_id};
-use super::write::{child_bytes, current_attachments, task_location, too_deep, Writer};
+use super::core::add_dependency_edge;
 use super::{parse_uuid_v7, refuse, require_active_employee, require_task, storage_refusal};
 
 pub struct CommentTask {
@@ -29,6 +32,8 @@ pub struct CommentTask {
     pub params: TasksCommentParams,
     /// Validated, blob-promoted files bound to this comment (`TASK-98.4`, max 10).
     pub prepared_files: PreparedTaskFiles,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl CommentTask {
@@ -46,6 +51,7 @@ impl CommentTask {
             return Err(refuse(err.code, err.message));
         }
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let body = self.params.body_markdown.trim();
         if body.is_empty() && self.params.attachment_ids.is_empty() {
             return Err(refuse(
@@ -110,6 +116,8 @@ impl CommentTask {
 pub struct WatchTask {
     pub actor_member_id: String,
     pub params: TasksWatchParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl WatchTask {
@@ -120,6 +128,7 @@ impl WatchTask {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut watchers = uow
             .view()
             .task_watchers(&task.id)
@@ -153,6 +162,8 @@ impl WatchTask {
 pub struct UnwatchTask {
     pub actor_member_id: String,
     pub params: TasksUnwatchParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl UnwatchTask {
@@ -163,6 +174,7 @@ impl UnwatchTask {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut watchers = uow
             .view()
             .task_watchers(&task.id)
@@ -192,6 +204,8 @@ impl UnwatchTask {
 pub struct AddDependency {
     pub actor_member_id: String,
     pub params: TasksAddDependencyParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl AddDependency {
@@ -202,6 +216,7 @@ impl AddDependency {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let target = require_task(uow.view(), &self.params.depends_on_task)?;
         let (links, added) = add_dependency_edge(uow.view(), &task.id, &target.id)?;
         if !added {
@@ -227,6 +242,8 @@ impl AddDependency {
 pub struct RemoveDependency {
     pub actor_member_id: String,
     pub params: TasksRemoveDependencyParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl RemoveDependency {
@@ -237,6 +254,7 @@ impl RemoveDependency {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let target = require_task(uow.view(), &self.params.depends_on_task)?;
         let mut links = uow
             .view()

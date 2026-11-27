@@ -2,6 +2,7 @@
 //! operations (one home team per employee, data contract documents 01, 04 and 06), and the
 //! directory read from it. The protocol's `org.snapshot` and structure commands, which span
 //! this family and the projects built on it, are `crate::structure`.
+pub mod authority;
 pub mod chief_of_staff;
 pub mod directory;
 pub mod features;

@@ -108,29 +108,8 @@ const KNOWN_CYCLES: &[(&str, &[&str])] = &[
 ];
 
 /// Every `org-office` file that names another domain's `features` today: `(file, domain)`.
-/// Shrink only.
-const OFFICE_REACH_INS: &[(&str, &str)] = &[
-    (
-        "crates/org-office/src/messaging/features/mod.rs",
-        "organization",
-    ),
-    (
-        "crates/org-office/src/projects/features/contributing_teams.rs",
-        "organization",
-    ),
-    (
-        "crates/org-office/src/projects/features/create_project.rs",
-        "organization",
-    ),
-    (
-        "crates/org-office/src/projects/features/repositories.rs",
-        "organization",
-    ),
-    ("crates/org-office/src/store/open/git_ops.rs", "projects"),
-    ("crates/org-office/src/store/open/git_ops.rs", "tasks"),
-    // TASK-218 moves the shared helpers out of `tasks::features`.
-    ("crates/org-office/src/store/open/process_ops.rs", "tasks"),
-];
+/// Emptied in `TASK-218`: zero cross-domain `features/` reach-ins remain.
+const OFFICE_REACH_INS: &[(&str, &str)] = &[];
 
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

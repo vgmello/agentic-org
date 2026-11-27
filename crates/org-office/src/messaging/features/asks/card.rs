@@ -12,7 +12,7 @@ use org_proto::msg::{
 use org_proto::ErrorCode;
 use org_store::{Id, Refusal};
 
-use crate::messaging::features::{is_active_employee, refusal, resolve_employee};
+use crate::messaging::features::{is_addressable_employee, refusal, resolve_employee};
 use crate::messaging::records::{MessageRecord, ParticipantAnswerFile};
 use crate::organization::records::Employee;
 use crate::time;
@@ -129,7 +129,7 @@ pub(super) fn resolve_addressed_to(
                 "addressed_to cannot be the sender",
             ));
         }
-        if !is_active_employee(emp) || !active_members.contains(&emp.id) {
+        if !is_addressable_employee(emp) || !active_members.contains(&emp.id) {
             return Err(refusal(
                 ErrorCode::UnknownRecipient,
                 "addressed_to is not an active member of this conversation",

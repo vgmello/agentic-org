@@ -21,7 +21,6 @@ use crate::attachments::user_space::{operation_reused, request_fingerprint, sate
 use crate::authz::{PrincipalContext, ResourceRef};
 use crate::error::OfficeError;
 use crate::office::storage;
-use crate::office::tasks::ensure_local_task_write_authority;
 use crate::store::open::attachment_ops::{
     attachment_operation, AttachmentWrite, AttachmentWriteOp,
 };
@@ -353,15 +352,12 @@ impl Office {
         Ok((!self.is_satellite()).then(|| Arc::clone(&self.attachments.shared)))
     }
 
-    fn check_task_bind_authority(&self, target: &Target) -> Answer<()> {
+    fn check_task_bind_authority(&self) -> Answer<()> {
         if self.is_satellite() {
             return Ok(Err(ApiError::new(
                 ErrorCode::Unavailable,
                 "attaching files to tasks is handled at HQ; retry against the HQ office",
             )));
-        }
-        if let Some(tid) = target.id.as_ref() {
-            return ensure_local_task_write_authority(self, tid.as_str());
         }
         Ok(Ok(()))
     }
@@ -395,6 +391,7 @@ impl Office {
             )));
         };
         if is_task {
+            let authority = self.task_write_authority()?;
             return self
                 .store
                 .run(TaskAttachOp {
@@ -402,6 +399,7 @@ impl Office {
                     actor: caller.employee_id.clone(),
                     command_id: params.command_id.clone(),
                     record,
+                    authority,
                 })
                 .map_err(storage);
         }
@@ -425,7 +423,7 @@ impl Office {
         let private = target.kind == AttachmentTargetKind::UserPrivate;
         let is_task = target.kind == AttachmentTargetKind::Task;
         if is_task {
-            if let Err(err) = self.check_task_bind_authority(&target)? {
+            if let Err(err) = self.check_task_bind_authority()? {
                 return Ok(Err(err));
             }
         }
@@ -524,13 +522,6 @@ impl Office {
         ) {
             return Ok(Err(unsupported_target(kind)));
         }
-        if kind == AttachmentTargetKind::Task {
-            if let Some(tid) = record.target_id.as_ref() {
-                if let Err(err) = ensure_local_task_write_authority(self, tid.as_str())? {
-                    return Ok(Err(err));
-                }
-            }
-        }
         Ok(Ok(record))
     }
 
@@ -595,6 +586,7 @@ impl Office {
             )));
         };
         let written = if kind == AttachmentTargetKind::Task {
+            let authority = self.task_write_authority()?;
             self.store
                 .run(TaskUpdateAttachmentMetaOp {
                     operation,
@@ -602,6 +594,7 @@ impl Office {
                     command_id: params.command_id.clone(),
                     attachment_id: record.id,
                     patch,
+                    authority,
                 })
                 .map_err(storage)?
         } else {

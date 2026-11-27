@@ -134,15 +134,6 @@ pub(super) const MSG_SELECT: &str = "m.organization_id, m.id, m.conversation_id,
     m.origin_incarnation, m.origin_sequence, m.org_epoch, m.org_sequence, m.content_sha256, \
     lm.mailbox_content_hash";
 
-pub(super) fn attach_attachments(
-    db: &Connection,
-    scope: &str,
-    mut msg: MessageRecord,
-) -> Result<MessageRecord, EngineError> {
-    msg.attachments = super::files::message_files(db, scope, &msg)?;
-    Ok(msg)
-}
-
 pub(super) fn recipient_state_row(row: &Row<'_>) -> rusqlite::Result<RecipientStateRecord> {
     let state_raw: String = row.get(5)?;
     let state = parse_lifecycle(&state_raw).map_err(|_| foreign_col(5, "state"))?;

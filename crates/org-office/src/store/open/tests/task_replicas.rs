@@ -24,6 +24,7 @@ use super::*;
 use crate::replication::state_files::ApplyReplicatedFiles;
 use crate::store::open::task_ops::TaskChecklistAddOp;
 use crate::store::open::ApplyReplicatedFilesOp;
+use crate::tasks::ops::TaskWriteAuthority;
 use crate::tasks::records::{self, ChecklistStepRecord, Location};
 
 type Batch = Vec<(String, Option<Vec<u8>>)>;
@@ -51,6 +52,7 @@ fn add_step(b: &mut Bench, task: &str, text: &str) -> Id {
             "command_id": command.as_str(), "task": task,
             "step_id": step.as_str(), "text": text, "required": false,
         })),
+        authority: TaskWriteAuthority::Unrestricted,
     });
     out.expect("stored").expect("added");
     step

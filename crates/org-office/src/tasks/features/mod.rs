@@ -9,7 +9,6 @@ pub mod ops;
 pub mod queries;
 pub mod summary;
 pub mod transition;
-mod write;
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -22,7 +21,13 @@ use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Refusal};
 use serde_json::json;
 
+use crate::error::{api_refusal, decode_api_refusal, parse_uuid_v7_refusal};
+use crate::organization::authority;
 use crate::organization::records::{Employee, EmployeeStatus, TeamStatus};
+pub(crate) use crate::tasks::ops::{
+    require_local_task_write_authority, require_task, rewrite_task, storage_refusal,
+    validate_i64_u64, TaskWriteAuthority,
+};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::query::TaskRollup;
 use crate::tasks::records::{
@@ -36,7 +41,6 @@ pub use self::attachments::{
 pub use self::checklist::{
     ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
 };
-pub(crate) use self::core::rewrite_task;
 pub use self::core::{AssignTask, UpdateTask};
 pub use self::create::{CreateTask, CreatedTask, TaskNumbering, TASK_NUMBER_BLOCK};
 pub use self::list::list_tasks;
@@ -57,44 +61,16 @@ pub struct TaskWriteOutcome {
     pub replayed: bool,
 }
 
-pub(crate) fn validate_i64_u64(value: u64, field: &str) -> Result<u64, Refusal> {
-    if value > i64::MAX as u64 {
-        return Err(refuse(
-            ErrorCode::InvalidRequest,
-            format!("`{field}` exceeds maximum supported integer value"),
-        ));
-    }
-    Ok(value)
-}
-
 pub(crate) fn refuse(code: ErrorCode, message: impl Into<String>) -> Refusal {
-    let payload = ApiError::new(code, message);
-    Refusal::rejected(serde_json::to_vec(&payload).expect("ApiError serializes"))
+    api_refusal(code, message)
 }
 
 pub fn decode_refusal(refusal: &Refusal) -> ApiError {
-    match refusal {
-        Refusal::Rejected(bytes) => serde_json::from_slice::<ApiError>(bytes)
-            .unwrap_or_else(|_| ApiError::new(ErrorCode::InvalidRequest, "task operation refused")),
-        Refusal::Invalid(err) => ApiError::new(ErrorCode::InvalidRequest, err.to_string()),
-    }
-}
-
-pub(crate) fn storage_refusal(err: impl std::fmt::Display) -> Refusal {
-    refuse(
-        ErrorCode::StorageError,
-        format!("task storage error: {err}"),
-    )
+    decode_api_refusal(refusal, "task operation refused")
 }
 
 pub(crate) fn parse_uuid_v7(raw: &str, field: &str) -> Result<Id, Refusal> {
-    if !org_proto::is_uuid_v7(raw) {
-        return Err(refuse(
-            ErrorCode::InvalidRequest,
-            format!("{field} must be a canonical lowercase UUIDv7"),
-        ));
-    }
-    Id::parse(raw).map_err(|_| refuse(ErrorCode::InvalidRequest, format!("invalid {field}")))
+    parse_uuid_v7_refusal(raw, field)
 }
 
 /// Enforces `ADR-0031` (`TASKAUTH-1..3`): any active employee (person or agent) may mutate tasks;
@@ -103,23 +79,11 @@ pub(crate) fn require_active_employee<R: TasksRead>(
     view: &R,
     member_id: &str,
 ) -> Result<Employee, Refusal> {
-    let Ok(id) = Id::parse(member_id) else {
-        return Err(refuse(
-            ErrorCode::NotAuthorized,
-            "caller is not a valid organization employee",
-        ));
-    };
-    let emp = view
-        .employee(&id)
-        .map_err(storage_refusal)?
-        .ok_or_else(|| refuse(ErrorCode::NotAuthorized, "caller is not an employee"))?;
-    if emp.status != EmployeeStatus::Active {
-        return Err(refuse(
-            ErrorCode::NotAuthorized,
-            "only active employees may change tasks (ADR-0031)",
-        ));
-    }
-    Ok(emp)
+    authority::require_active_employee(
+        view,
+        member_id,
+        "only active employees may change tasks (ADR-0031)",
+    )
 }
 
 /// Resolves the active `office_code` for `office_id` so final `T-<CODE><N>` keys mint locally
@@ -138,12 +102,6 @@ pub(crate) fn require_office_code<R: TasksRead>(
             )
         })?;
     Ok(code.code)
-}
-
-pub(crate) fn require_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskRecord, Refusal> {
-    view.resolve_task(reference)
-        .map_err(storage_refusal)?
-        .ok_or_else(|| refuse(ErrorCode::NotFound, format!("task `{reference}` not found")))
 }
 
 pub(crate) fn validate_active_team<R: TasksRead>(
