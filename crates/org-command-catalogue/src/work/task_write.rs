@@ -226,7 +226,7 @@ pub const TASK_WRITE_COMMANDS: &[Command] = &[
         summary: "Create a task, bug, or request",
         call: "tasks.create",
         kind: Kind::Write {
-            ack: Ack::Durable,
+            ack: Ack::Committed,
             if_match: IfMatch::No,
         },
         input: TASK_CREATE_INPUT,
@@ -298,7 +298,7 @@ pub const TASK_WRITE_COMMANDS: &[Command] = &[
         summary: "Add a public task comment",
         call: "tasks.comment",
         kind: Kind::Write {
-            ack: Ack::Durable,
+            ack: Ack::Committed,
             if_match: IfMatch::No,
         },
         input: TASK_COMMENT_INPUT,
@@ -316,7 +316,7 @@ pub const TASK_WRITE_COMMANDS: &[Command] = &[
         summary: "Watch a task",
         call: "tasks.watch",
         kind: Kind::Write {
-            ack: Ack::Durable,
+            ack: Ack::Committed,
             if_match: IfMatch::No,
         },
         input: TASK_REF_INPUT,
@@ -334,7 +334,7 @@ pub const TASK_WRITE_COMMANDS: &[Command] = &[
         summary: "Stop watching a task",
         call: "tasks.unwatch",
         kind: Kind::Write {
-            ack: Ack::Durable,
+            ack: Ack::Committed,
             if_match: IfMatch::No,
         },
         input: TASK_REF_INPUT,

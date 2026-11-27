@@ -245,7 +245,7 @@ pub const CHECKLIST_COMMANDS: &[Command] = &[
         summary: "Check or uncheck step(s)",
         call: "tasks.checklist.check",
         kind: Kind::Write {
-            ack: Ack::Durable,
+            ack: Ack::Committed,
             if_match: IfMatch::Optional,
         },
         input: CHECKLIST_CHECK_INPUT,

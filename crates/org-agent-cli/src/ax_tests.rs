@@ -88,14 +88,20 @@ fn every_write_declares_its_ack_class_and_durable_is_refused_where_it_cannot_hol
         .filter(|row| row.ack() == Some(Ack::Committed))
         .map(|row| row.name())
         .collect();
-    // Only what the office does not journal before it answers (with the external lease verbs
-    // of `TASK-137`, which declare their own commit acknowledgement).
+    // Matches ADR-0014 decision 3 and live office durability tiers (`org-office/src/tasks/features/`
+    // commits `task create|comment|watch|unwatch` and `checklist check` at `Ack::Committed`, alongside
+    // messaging/status/git/external-lease/suggestion commands).
     for name in &committed {
         assert!(
             ["msg ", "channel ", "status ", "suggestion "]
                 .iter()
                 .any(|p| name.starts_with(p))
                 || [
+                    "task create",
+                    "task comment",
+                    "task watch",
+                    "task unwatch",
+                    "checklist check",
                     "repo fetch",
                     "repo push",
                     "worktree prepare",
@@ -106,8 +112,30 @@ fn every_write_declares_its_ack_class_and_durable_is_refused_where_it_cannot_hol
             "`{name}` is acknowledged at commit"
         );
     }
-    for durable in [
+    for committed_work in [
         "task create",
+        "task comment",
+        "task watch",
+        "task unwatch",
+        "checklist check",
+    ] {
+        let (resource, verb) = committed_work.split_once(' ').unwrap();
+        assert_eq!(
+            table.find(resource, verb).unwrap().ack(),
+            Some(Ack::Committed),
+            "{committed_work}"
+        );
+    }
+    for durable in [
+        "task update",
+        "task transition",
+        "task assign",
+        "task dep-add",
+        "task dep-remove",
+        "checklist add",
+        "checklist edit",
+        "checklist remove",
+        "checklist move",
         "team create",
         "process create",
         "repo register",
@@ -136,7 +164,7 @@ fn every_write_declares_its_ack_class_and_durable_is_refused_where_it_cannot_hol
     );
     assert_eq!(code, 0, "{envelope}");
     assert_eq!(envelope["meta"]["ack"], "committed");
-    // An always-durable write reports `durable`, with or without the flag.
+    // A committed work write (`task create`) reports `committed` and refuses `--durable` fail-closed.
     let task = json!({"task": {
         "id": "0193a5c0-0000-7000-8000-000000000100", "office_code": "A", "number": 1, "key": "T-A1",
         "revision": 1, "team_id": "0193a5c0-0000-7000-8000-000000000010", "type": "task",
@@ -144,9 +172,31 @@ fn every_write_declares_its_ack_class_and_durable_is_refused_where_it_cannot_hol
         "created_by_kind": "person", "updated_by_kind": "person", "checklist_total": 0,
         "checklist_done": 0, "comment_count": 0, "watcher_count": 0
     }});
+    let mut create_office = Office::with(&[("tasks.create", task.clone())]);
+    let (code, envelope) = run(&mut create_office, &["task", "create", "--title", "T"]);
+    assert_eq!(code, 0, "{envelope}");
+    assert_eq!(envelope["meta"]["ack"], "committed");
+    let mut create_durable_office = Office::with(&[("tasks.create", task.clone())]);
+    let (code, envelope) = run(
+        &mut create_durable_office,
+        &["task", "create", "--title", "T", "--durable"],
+    );
+    assert_eq!(code, 1);
+    assert_eq!(envelope["error"]["code"], "unsupported");
+    assert!(create_durable_office.0.calls.is_empty());
+    // An always-durable write (`task update`) reports `durable`, with or without the flag.
     for extra in [&[][..], &["--durable"]] {
-        let mut office = Office::with(&[("tasks.create", task.clone())]);
-        let mut line = vec!["task", "create", "--title", "T"];
+        let mut office = Office::with(&[("tasks.update", task.clone())]);
+        let mut line = vec![
+            "task",
+            "update",
+            "--task",
+            "T-A1",
+            "--title",
+            "T2",
+            "--if-match",
+            "1",
+        ];
         line.extend_from_slice(extra);
         let (code, envelope) = run(&mut office, &line);
         assert_eq!(code, 0, "{envelope}");
