@@ -6,7 +6,7 @@ use super::auth::Binding;
 use super::org::{notify_agent_stop_on_lifecycle, project_read, revoke_bound_member};
 use super::rpc::{
     attachments_rpc, costs_rpc, docs_rpc, federation_rpc, git_rpc, processes_rpc, providers_rpc,
-    search_rpc, tasks_rpc,
+    search_rpc, tasks_rpc, tess_rpc,
 };
 use super::shared::Shared;
 
@@ -101,22 +101,29 @@ pub(super) fn project_or_hiring(
     request: &Request,
     shared: &Shared,
     binding: &Binding,
+    delegation: Option<&super::delegation::Delegation>,
 ) -> Option<Response> {
     project_read(request, shared, binding)
-        .or_else(|| hiring_rpc(request, shared, binding))
-        .or_else(|| sessions_rpc(request, shared, binding))
+        .or_else(|| hiring_rpc(request, shared, binding, delegation))
+        .or_else(|| sessions_rpc(request, shared, binding, delegation))
         .or_else(|| tasks_rpc(request, shared, binding))
         .or_else(|| attachments_rpc(request, shared, binding))
         .or_else(|| git_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
         .or_else(|| docs_rpc(request, shared, binding))
         .or_else(|| search_rpc(request, shared, binding))
-        .or_else(|| costs_rpc(request, shared, binding))
-        .or_else(|| providers_rpc(request, shared, binding))
+        .or_else(|| costs_rpc(request, shared, binding, delegation))
+        .or_else(|| providers_rpc(request, shared, binding, delegation))
         .or_else(|| federation_rpc(request, shared, binding))
+        .or_else(|| tess_rpc(request, shared, binding))
 }
 
-fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+fn sessions_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+    delegation: Option<&super::delegation::Delegation>,
+) -> Option<Response> {
     if !is_session_method(request) {
         return None;
     }
@@ -126,8 +133,10 @@ fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    let actor =
+        super::delegation::delegated_owner_read_actor(request, delegation).unwrap_or(member);
     if let Some(sessions) = &shared.ports.sessions {
-        if let Some(response) = sessions(Some(member), request) {
+        if let Some(response) = sessions(Some(actor), request) {
             if matches!(response.outcome, org_proto::Outcome::Result(_))
                 && request.is::<org_proto::sessions::MemberSessionStop>()
             {
@@ -147,7 +156,12 @@ fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option
     ))
 }
 
-fn hiring_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+fn hiring_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+    delegation: Option<&super::delegation::Delegation>,
+) -> Option<Response> {
     if !is_hiring_method(request) {
         return None;
     }
@@ -157,8 +171,10 @@ fn hiring_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<R
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    let actor =
+        super::delegation::delegated_owner_read_actor(request, delegation).unwrap_or(member);
     if let Some(hiring) = &shared.ports.hiring {
-        if let Some(response) = hiring(Some(member), request) {
+        if let Some(response) = hiring(Some(actor), request) {
             if matches!(response.outcome, org_proto::Outcome::Result(_)) {
                 notify_agent_stop_on_lifecycle(request, shared);
             }

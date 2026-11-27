@@ -569,6 +569,153 @@ fn a_draft_keeps_the_member_it_was_first_made_for() {
 }
 
 #[test]
+fn real_office_mutation_policy_restricts_replies_to_caller_direct_dm_and_blocks_dm_open() {
+    use org_proto::chat::ChatChannelCreateParams;
+
+    let w = world();
+    let alice = add_person(&w.office, "Alice", "alice");
+    let for_bob = w.acting_for(&w.bob);
+
+    // Real channel containing Bob and Tess, with a message inside.
+    let chan = w
+        .office
+        .create_channel(
+            &w.owner,
+            ChatChannelCreateParams {
+                id: None,
+                name: "shared-ops".into(),
+                members: vec![w.owner.clone(), w.bob.clone(), w.tess.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .channel
+        .id;
+    let chan_msg = w
+        .office
+        .chat_send(
+            &w.bob,
+            ChatSendParams {
+                id: next_id(),
+                to: chan.clone(),
+                kind: "msg".into(),
+                priority: None,
+                subject: None,
+                body: "Channel update".into(),
+                attachment_ids: Vec::new(),
+                meta: Default::default(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .message
+        .id;
+
+    // Real 3-person group DM with Bob, Alice, and Tess, with a message inside.
+    let group_dm = w
+        .office
+        .dm_open(
+            &w.bob,
+            DmOpenParams {
+                participants: vec![alice, w.tess.clone()],
+                name: Some("Trio".into()),
+                conversation_id: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .conversation
+        .id;
+    let group_msg = w
+        .office
+        .chat_send(
+            &w.bob,
+            ChatSendParams {
+                id: next_id(),
+                to: group_dm,
+                kind: "msg".into(),
+                priority: None,
+                subject: None,
+                body: "Group update".into(),
+                attachment_ids: Vec::new(),
+                meta: Default::default(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .message
+        .id;
+
+    let check = |method: &str, params: Value| {
+        let req = Request {
+            id: 42,
+            method: method.into(),
+            principal: None,
+            params,
+        };
+        scope::admit(&req, &w.gate, &w.tess, &for_bob)?;
+        super::enforce_mutation_policy(&req, &w.gate, &w.tess, &w.bob)
+    };
+
+    // `dm.open` is blocked with PolicyViolation when Tess acts for Bob.
+    let dm_err = check(
+        DmOpen::METHOD,
+        json!({"participants": [w.bob.clone(), w.owner.clone()]}),
+    )
+    .unwrap_err();
+    assert_eq!(error_code(&dm_err), Some(ErrorCode::PolicyViolation));
+
+    // 1:1 DM with Bob passes enforce_mutation_policy for msg.reply / chat.answer / chat.react.
+    for (method, params) in [
+        (
+            "msg.reply",
+            json!({"id": next_id(), "to_id": w.bob_message, "body": "ok"}),
+        ),
+        (
+            "chat.answer",
+            json!({"ask_id": w.bob_message, "answers": []}),
+        ),
+        (
+            "chat.react",
+            json!({"message_id": w.bob_message, "reaction": "seen"}),
+        ),
+    ] {
+        assert!(
+            check(method, params).is_ok(),
+            "{method} in Tess's 1:1 DM with Bob must succeed"
+        );
+    }
+
+    // Channel and group DM messages fail closed with PolicyViolation!
+    for target in [&chan_msg, &group_msg] {
+        for (method, params) in [
+            (
+                "msg.reply",
+                json!({"id": next_id(), "to_id": target, "body": "nope"}),
+            ),
+            ("chat.answer", json!({"ask_id": target, "answers": []})),
+            (
+                "chat.react",
+                json!({"message_id": target, "reaction": "seen"}),
+            ),
+        ] {
+            let err = check(method, params).unwrap_err();
+            assert_eq!(
+                error_code(&err),
+                Some(ErrorCode::PolicyViolation),
+                "{method} on {target} must fail closed with PolicyViolation"
+            );
+        }
+    }
+}
+
+#[test]
 fn search_query_is_never_admitted_for_chief_of_staff_even_for_the_owner() {
     use super::{access, allowed, Access};
     let w = world();

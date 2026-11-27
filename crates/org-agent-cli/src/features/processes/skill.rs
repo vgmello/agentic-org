@@ -2,21 +2,31 @@
 
 use org_command::{Answer, Command, Example, Field, Kind, Refusal, Request, Type};
 use org_proto::processes::{
-    SkillList, SkillListParams, SkillListResult, SkillRead, SkillReadParams, SkillReadResult,
+    SkillCategoryWire, SkillList, SkillListFilterParams, SkillListResult, SkillRead,
+    SkillReadParams, SkillReadResult,
 };
-use org_proto::Call;
+use org_proto::{Call, ErrorCode};
 use serde_json::Value;
 
 use super::{unreadable, READ_ERRORS};
 use crate::runtime::domain::CommandCue;
-use crate::runtime::input::{encode, require_str};
+use crate::runtime::input::{encode, opt_str, require_str};
 use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport};
+
+const SKILL_CATEGORY_TYPE: Type = Type::Enum(&["workflow", "product_guide", "chief_of_staff"]);
+
+const SKILL_LIST_INPUT: &[Field] = &[Field::optional(
+    "category",
+    SKILL_CATEGORY_TYPE,
+    "Filter by skill category (workflow, product_guide, or chief_of_staff)",
+)];
 
 const SKILL_SUMMARY_FIELDS: &[Field] = &[
     Field::required("key", Type::String, "Skill key"),
     Field::required("title", Type::String, "Skill title"),
     Field::required("description", Type::String, "One-line description"),
     Field::required("source", Type::String, "Origin (built_in)"),
+    Field::optional("category", SKILL_CATEGORY_TYPE, "Skill category"),
 ];
 
 const SKILL_READ_INPUT: &[Field] = &[Field::required(
@@ -30,6 +40,7 @@ const SKILL_READ_OUTPUT: &[Field] = &[
     Field::required("title", Type::String, "Skill title"),
     Field::required("description", Type::String, "One-line description"),
     Field::required("source", Type::String, "Origin (built_in)"),
+    Field::optional("category", SKILL_CATEGORY_TYPE, "Skill category"),
     Field::required("body_markdown", Type::String, "Full Markdown guidance"),
 ];
 
@@ -41,13 +52,13 @@ pub(super) const COMMANDS: &[Command] = &[
         summary: "List built-in skills",
         call: "skill.list",
         kind: Kind::List,
-        input: &[],
+        input: SKILL_LIST_INPUT,
         content_field: None,
         output: SKILL_SUMMARY_FIELDS,
         errors: READ_ERRORS,
         example: Example {
             input: "{}",
-            output: r#"[{"key":"agent-os-basics","title":"Using agent-os","description":"Grammar, envelopes, and session attach.","source":"built_in"}]"#,
+            output: r#"[{"key":"agent-os-basics","title":"Using agent-os","description":"Grammar, envelopes, and session attach.","source":"built_in","category":"workflow"}]"#,
         },
     },
     Command {
@@ -62,7 +73,7 @@ pub(super) const COMMANDS: &[Command] = &[
         errors: READ_ERRORS,
         example: Example {
             input: r#"{"name":"agent-os-basics"}"#,
-            output: r##"{"key":"agent-os-basics","title":"Using agent-os","description":"Grammar, envelopes, and session attach.","source":"built_in","body_markdown":"# Using agent-os"}"##,
+            output: r##"{"key":"agent-os-basics","title":"Using agent-os","description":"Grammar, envelopes, and session attach.","source":"built_in","category":"workflow","body_markdown":"# Using agent-os"}"##,
         },
     },
 ];
@@ -98,9 +109,22 @@ fn read_skill_list<T: OfficeTransport + ?Sized>(
     request: &Request,
 ) -> Result<Answer, Refusal> {
     parse_cursor(request.cursor.as_deref())?;
+    let category = match opt_str(request, "category") {
+        None => None,
+        Some(raw) => match SkillCategoryWire::parse(raw) {
+            Some(parsed) => Some(parsed),
+            None => {
+                return Err(Refusal::new(
+                    ErrorCode::InvalidRequest,
+                    format!("unknown skill category `{raw}`"),
+                    "Pass --category workflow, product_guide, or chief_of_staff.",
+                ));
+            }
+        },
+    };
     let raw = transport.call_method(
         SkillList::METHOD,
-        encode(&SkillListParams {}, SkillList::METHOD)?,
+        encode(&SkillListFilterParams { category }, SkillList::METHOD)?,
     )?;
     let res: SkillListResult =
         serde_json::from_value(raw).map_err(|_| unreadable("skill.list", "skill list"))?;

@@ -222,6 +222,9 @@ pub fn hint_for(code: ErrorCode) -> &'static str {
             "This idempotency key was already used with different input; use a new key."
         }
         ErrorCode::Unsupported => "This office build does not serve that command yet.",
+        ErrorCode::PolicyViolation => {
+            "This change requires caller confirmation: propose it with `agent-os suggestion create` instead."
+        }
         ErrorCode::Unavailable | ErrorCode::NotReady => "Wait briefly and retry the command.",
         ErrorCode::RateLimited => {
             "Wait for the cooldown in error.retry_after_ms (or the message) to pass, then retry the command."

@@ -28,6 +28,45 @@ impl OfficeTransport for DryRunAuditTransport {
                 "advanced": true
             }));
         }
+        if method == "suggestion.create" {
+            return Ok(json!({
+                "suggestion": {
+                    "id": "0193a5c0-0000-7000-8000-000000000901",
+                    "status": "pending",
+                    "command": "task create",
+                    "call": "tasks.create",
+                    "input": {"title": "Review release"},
+                    "summary": "Create release review task",
+                    "created_by_member_id": "0193a5c0-0000-7000-8000-000000000010",
+                    "for_caller_id": "0193a5c0-0000-7000-8000-000000000002",
+                    "preflight_ok": true,
+                    "created_at": "2026-11-27T00:00:00.000Z",
+                    "expires_at": "2026-11-27T00:15:00.000Z"
+                },
+                "ui_block": {
+                    "title": "Create release review task",
+                    "suggestion_id": "0193a5c0-0000-7000-8000-000000000901"
+                },
+                "dry_run": true
+            }));
+        }
+        if method == "suggestion.withdraw" {
+            return Ok(json!({
+                "suggestion": {
+                    "id": "0193a5c0-0000-7000-8000-000000000901",
+                    "status": "withdrawn",
+                    "command": "task create",
+                    "call": "tasks.create",
+                    "input": {"title": "Review release"},
+                    "summary": "Create release review task",
+                    "created_by_member_id": "0193a5c0-0000-7000-8000-000000000010",
+                    "for_caller_id": "0193a5c0-0000-7000-8000-000000000002",
+                    "preflight_ok": true,
+                    "created_at": "2026-11-27T00:00:00.000Z",
+                    "expires_at": "2026-11-27T00:15:00.000Z"
+                }
+            }));
+        }
         Ok(json!({ "status": "checked" }))
     }
 }
@@ -424,8 +463,8 @@ fn the_table_has_every_row_of_every_slice_once_and_dispatch_owns_each() {
     );
     assert_eq!(
         live.rows().len(),
-        98,
-        "the agent-os catalogue has 98 commands"
+        119,
+        "the agent-os catalogue has 119 commands"
     );
     // Every row reaches its slice's dispatch, which sends the office its call: none falls
     // through to `not wired`.
@@ -492,4 +531,105 @@ fn a_hint_from_a_call_outside_the_command_is_never_reported_with_it() {
         "the command's own call's hint"
     );
     assert_eq!(office.0 .0, None);
+}
+
+#[test]
+fn mutation_policy_classifies_every_command_and_every_override_targets_a_live_row() {
+    let live = table();
+    for override_entry in POLICY_OVERRIDES {
+        assert!(
+            live.find(override_entry.resource, override_entry.verb)
+                .is_some(),
+            "policy override `{} {}` names no live command",
+            override_entry.resource,
+            override_entry.verb
+        );
+    }
+    for (resource, verb) in [
+        ("suggestion", "create"),
+        ("suggestion", "withdraw"),
+        ("ui", "present"),
+        ("status", "set"),
+        ("status", "clear"),
+        ("task-note", "add"),
+        ("task-note", "update"),
+        ("task-note", "remove"),
+        ("msg", "reply"),
+    ] {
+        assert_eq!(
+            live.mutation_policy_by_name(resource, verb),
+            Some(MutationPolicy::AutoSafe),
+            "`{resource} {verb}` must be AutoSafe"
+        );
+    }
+    for (resource, verb) in [
+        ("repo", "push"),
+        ("agent", "execution-set"),
+        ("agent", "approve"),
+        ("agent", "revoke"),
+        ("agent", "sessions"),
+        ("member", "set-hiring"),
+    ] {
+        assert_eq!(
+            live.mutation_policy_by_name(resource, verb),
+            Some(MutationPolicy::ForbiddenForAgent),
+            "`{resource} {verb}` must be ForbiddenForAgent"
+        );
+    }
+    for (resource, verb) in [
+        ("task", "create"),
+        ("task", "update"),
+        ("team", "create"),
+        ("project", "add-team"),
+        ("project", "remove-team"),
+        ("channel", "create"),
+        ("process", "create"),
+        ("hr", "hire"),
+    ] {
+        assert_eq!(
+            live.mutation_policy_by_name(resource, verb),
+            Some(MutationPolicy::ConfirmRequired),
+            "`{resource} {verb}` must be ConfirmRequired"
+        );
+    }
+    for (resource, verb) in [
+        ("cost", "query"),
+        ("cost", "prices"),
+        ("cost", "subscription-usage"),
+        ("budget", "list"),
+        ("budget", "inspect"),
+        ("provider", "list"),
+        ("provider", "quota"),
+        ("model-profile", "list"),
+        ("office", "list"),
+        ("office", "sync-status"),
+        ("inbox", "list"),
+        ("session", "list"),
+        ("agent", "readiness"),
+        ("agent", "execution-get"),
+        ("suggestion", "list"),
+        ("suggestion", "inspect"),
+    ] {
+        assert_eq!(
+            live.mutation_policy_by_name(resource, verb),
+            Some(MutationPolicy::ReadOnly),
+            "`{resource} {verb}` must be ReadOnly"
+        );
+    }
+    assert_eq!(
+        live.mutation_policy_for_call("tasks.create"),
+        Some(MutationPolicy::ConfirmRequired)
+    );
+    assert_eq!(
+        live.mutation_policy_for_call("suggestion.create"),
+        Some(MutationPolicy::AutoSafe)
+    );
+    assert_eq!(
+        live.mutation_policy_for_call("ui.present"),
+        Some(MutationPolicy::AutoSafe)
+    );
+    assert_eq!(
+        live.mutation_policy_for_call("git.push"),
+        Some(MutationPolicy::ForbiddenForAgent)
+    );
 }

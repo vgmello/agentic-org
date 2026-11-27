@@ -1444,6 +1444,7 @@ dependencies = [
  "org-store",
  "org-sync",
  "org-sync-proto",
+ "org-tess",
  "proc-macro2",
  "rustls",
  "serde",
@@ -1597,6 +1598,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "org-tess"
+version = "0.0.0"
+dependencies = [
+ "org-agent-cli",
+ "org-office",
+ "org-proto",
+ "serde_json",
 ]
 
 [[package]]

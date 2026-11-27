@@ -1,7 +1,9 @@
 //! `channel` commands: listing, membership, read markers and summaries.
 
 use org_command::{Ack, Answer, Command, Example, Field, IfMatch, Kind, Refusal, Request, Type};
-use org_proto::chat::{ChatChannelsResult, ChatMarkReadResult};
+use org_proto::chat::{
+    ChatChannelCreateResult, ChatChannelsResult, ChatMarkReadResult, ConversationSummary,
+};
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
@@ -9,7 +11,8 @@ use super::schema::{READ_ERRORS, STRING_TYPE, WRITE_ERRORS};
 use super::with_ack;
 use crate::runtime::domain::CommandCue;
 use crate::runtime::input::{
-    decode_err, insert_opt, opt_bool, opt_str, opt_u64, reject_dry_run, require_str,
+    decode_err, entity_id, insert_opt, opt_bool, opt_str, opt_str_list, opt_u64, reject_dry_run,
+    require_str,
 };
 use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport};
 
@@ -180,8 +183,36 @@ const CHANNEL_SUMMARIZE_OUTPUT: &[Field] = &[
     ),
 ];
 
+const CHANNEL_CREATE_INPUT: &[Field] = &[
+    Field::required("name", Type::String, "Manual channel name"),
+    Field::optional(
+        "members",
+        Type::List(&STRING_TYPE),
+        "Initial member IDs or handles",
+    ),
+    Field::optional("channel_id", Type::String, "Caller-supplied channel UUIDv7"),
+];
+
 /// The `channel` rows.
 pub(super) const COMMANDS: &[Command] = &[
+    Command {
+        resource: "channel",
+        verb: "create",
+        summary: "Create a manual channel",
+        call: "chat.channel_create",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: CHANNEL_CREATE_INPUT,
+        content_field: None,
+        output: CHANNEL_SUMMARY_FIELDS,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"name":"release-ops"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000110","kind":"channel","name":"release-ops","archived":false,"member_count":1,"is_member":true,"new_message_count":0,"unread_count":0}"#,
+        },
+    },
     Command {
         resource: "channel",
         verb: "list",
@@ -270,6 +301,7 @@ pub(super) const COMMANDS: &[Command] = &[
 
 /// `Use when:` guidance of each `channel` command.
 pub(super) const CUES: &[CommandCue] = &[
+    ("channel", "create", "creating a new manual `#channel` with optional initial members."),
     ("channel", "join", "subscribing to a manual `#channel` so you can read and post in it."),
     ("channel", "leave", "leaving a manual `#channel` you no longer need to follow."),
     ("channel", "list", "discovering available `#channels`, whether you are a member, and how many messages are new since your read marker (`--unread-only`)."),
@@ -282,6 +314,7 @@ pub(super) fn try_channel<T: OfficeTransport + ?Sized>(
     request: &Request,
 ) -> Option<Result<Answer, Refusal>> {
     match request.command.verb {
+        "create" => Some(write_channel_create(transport, request)),
         "list" => Some(read_channel_list(transport, request)),
         "join" => Some(write_channel_membership(transport, request, true)),
         "leave" => Some(write_channel_membership(transport, request, false)),
@@ -289,6 +322,58 @@ pub(super) fn try_channel<T: OfficeTransport + ?Sized>(
         "summarize" => Some(read_channel_summarize(transport, request)),
         _ => None,
     }
+}
+
+fn channel_summary_value(c: ConversationSummary) -> Value {
+    let mut o = Map::new();
+    o.insert("id".into(), Value::String(c.id));
+    o.insert(
+        "kind".into(),
+        serde_json::to_value(c.kind).unwrap_or(Value::String("channel".into())),
+    );
+    insert_opt(&mut o, "name", c.name.as_deref());
+    if let Some(scope) = c.auto_scope {
+        o.insert(
+            "auto_scope".into(),
+            serde_json::to_value(scope).unwrap_or(Value::Null),
+        );
+    }
+    o.insert("archived".into(), Value::Bool(c.archived));
+    let active_count = c.members.iter().filter(|m| m.left_at.is_none()).count();
+    o.insert("member_count".into(), Value::from(active_count));
+    o.insert("is_member".into(), Value::Bool(c.is_member));
+    o.insert("new_message_count".into(), Value::from(c.new_message_count));
+    o.insert("unread_count".into(), Value::from(c.unread_count));
+    insert_opt(
+        &mut o,
+        "last_read_message_id",
+        c.last_read_message_id.as_deref(),
+    );
+    insert_opt(&mut o, "last_read_at", c.last_read_at.as_deref());
+    insert_opt(&mut o, "last_message_id", c.last_message_id.as_deref());
+    insert_opt(&mut o, "last_message_at", c.last_message_at.as_deref());
+    Value::Object(o)
+}
+
+pub(super) fn write_channel_create<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
+    let name = require_str(request, "name")?;
+    let id = entity_id(request, Some("channel_id"), "chat.channel_create")?;
+    let mut params = Map::new();
+    params.insert("id".into(), Value::String(id));
+    params.insert("name".into(), Value::String(name.to_owned()));
+    if let Some(members) = opt_str_list(request, "members") {
+        params.insert("members".into(), json!(members));
+    }
+    let raw = transport.call_method("chat.channel_create", Value::Object(params))?;
+    let res: ChatChannelCreateResult =
+        serde_json::from_value(raw).map_err(|_| decode_err("chat.channel_create"))?;
+    let mut answer = Answer::completed(channel_summary_value(res.channel));
+    answer.operation_id = request.idempotency_key.clone();
+    Ok(with_ack(answer, request))
 }
 
 pub(super) fn read_channel_list<T: OfficeTransport + ?Sized>(
@@ -307,36 +392,7 @@ pub(super) fn read_channel_list<T: OfficeTransport + ?Sized>(
     let items: Vec<Value> = res
         .channels
         .into_iter()
-        .map(|c| {
-            let mut o = Map::new();
-            o.insert("id".into(), Value::String(c.id));
-            o.insert(
-                "kind".into(),
-                serde_json::to_value(c.kind).unwrap_or(Value::String("channel".into())),
-            );
-            insert_opt(&mut o, "name", c.name.as_deref());
-            if let Some(scope) = c.auto_scope {
-                o.insert(
-                    "auto_scope".into(),
-                    serde_json::to_value(scope).unwrap_or(Value::Null),
-                );
-            }
-            o.insert("archived".into(), Value::Bool(c.archived));
-            let active_count = c.members.iter().filter(|m| m.left_at.is_none()).count();
-            o.insert("member_count".into(), Value::from(active_count));
-            o.insert("is_member".into(), Value::Bool(c.is_member));
-            o.insert("new_message_count".into(), Value::from(c.new_message_count));
-            o.insert("unread_count".into(), Value::from(c.unread_count));
-            insert_opt(
-                &mut o,
-                "last_read_message_id",
-                c.last_read_message_id.as_deref(),
-            );
-            insert_opt(&mut o, "last_read_at", c.last_read_at.as_deref());
-            insert_opt(&mut o, "last_message_id", c.last_message_id.as_deref());
-            insert_opt(&mut o, "last_message_at", c.last_message_at.as_deref());
-            Value::Object(o)
-        })
+        .map(channel_summary_value)
         .collect();
     paginate(request, items)
 }

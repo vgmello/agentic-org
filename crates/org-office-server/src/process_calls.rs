@@ -3,7 +3,8 @@
 
 use org_office::Office;
 use org_proto::processes::{
-    ProcessEffective, ProcessShow, ProcessView, ProcessWhy, ProcessWrite, SkillList, SkillRead,
+    ProcessEffective, ProcessShow, ProcessView, ProcessWhy, ProcessWrite, SkillList,
+    SkillListFilterParams, SkillRead,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
@@ -74,7 +75,7 @@ pub(crate) fn dispatch_process_rpc(
         }));
     }
     if request.is::<SkillList>() {
-        return Some(run_call::<SkillList>(request, |_| Ok(office.skill_list())));
+        return Some(dispatch_skill_list(office, request));
     }
     if request.is::<SkillRead>() {
         return Some(run_call::<SkillRead>(request, |p| {
@@ -82,6 +83,42 @@ pub(crate) fn dispatch_process_rpc(
         }));
     }
     None
+}
+
+fn dispatch_skill_list(office: &Office, request: &Request) -> Response {
+    let filter: SkillListFilterParams = match &request.params {
+        serde_json::Value::Null => SkillListFilterParams::default(),
+        v @ serde_json::Value::Object(_) => match serde_json::from_value(v.clone()) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                return Response::error(
+                    request.id,
+                    ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "invalid parameters for `skill.list`",
+                    ),
+                );
+            }
+        },
+        _ => {
+            return Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "invalid parameters for `skill.list`",
+                ),
+            );
+        }
+    };
+    match office.skill_list_filtered(filter.category) {
+        Ok(result) => Response::ok::<SkillList>(request.id, &result).unwrap_or_else(|_| {
+            Response::error(
+                request.id,
+                ApiError::new(ErrorCode::StorageError, "failed encoding response"),
+            )
+        }),
+        Err(err) => Response::error(request.id, err),
+    }
 }
 
 fn run_call<C: Call>(
