@@ -27,7 +27,15 @@ pub(crate) mod memory;
 pub(crate) const SESSION_LIMIT: usize = 4096;
 /// A session ends after 30 days without activity.
 pub(crate) const IDLE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no production caller applies this digest")
+)]
 const COOKIE_DOMAIN: &[u8] = b"agentic-org/session-cookie/v1";
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no production caller applies this digest")
+)]
 const PROOF_DOMAIN: &[u8] = b"agentic-org/session-proof/v1";
 
 /// The only form in which a cookie value or proof reaches the host.
@@ -36,10 +44,18 @@ pub(crate) struct SessionDigest(pub(crate) [u8; 32]);
 impl SessionDigest {
     /// `SHA-256("agentic-org/session-cookie/v1" ‖ value)`. The domain is a
     /// fixed-length constant, so the concatenation is unambiguous.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no production caller applies this digest")
+    )]
     pub(crate) fn cookie(value: &[u8]) -> Self {
         Self(digest(COOKIE_DOMAIN, value))
     }
     /// `SHA-256("agentic-org/session-proof/v1" ‖ value)`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no production caller applies this digest")
+    )]
     pub(crate) fn proof(value: &[u8]) -> Self {
         Self(digest(PROOF_DOMAIN, value))
     }
@@ -58,6 +74,10 @@ impl std::fmt::Debug for SessionDigest {
         f.write_str("SessionDigest(..)")
     }
 }
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no production caller applies this digest")
+)]
 fn digest(domain: &[u8], value: &[u8]) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(domain);
@@ -213,5 +233,9 @@ pub(crate) trait BrowserSessions {
     fn end_account(&self, account_id: &str, except: Option<&str>)
         -> Result<Vec<Ended>, StoreError>;
     /// Deletes every expired session, sorted by ID.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no caller reaps through the store yet")
+    )]
     fn reap(&self, now_ms: i64) -> Result<Vec<Ended>, StoreError>;
 }

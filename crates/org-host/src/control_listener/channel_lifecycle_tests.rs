@@ -148,7 +148,7 @@ fn missing_native_ownership_ack_times_out_and_late_exact_ack_cannot_grant() {
 }
 
 struct LiveHandler {
-    auth: Arc<super::super::authentication::Authentication>,
+    auth: Arc<crate::authentication::Authentication>,
     endpoint: Arc<crate::supervisor::channels::Endpoint>,
 }
 impl Handler for LiveHandler {
@@ -160,14 +160,14 @@ impl Handler for LiveHandler {
     }
     fn handle(&self, request: Request, connection: &Arc<Connection>, _: Received) {
         if request.is::<ops::FdsReceived>() {
-            super::super::sessions::acknowledge_descriptors(&request, connection);
+            crate::service::acknowledge_descriptors(&request, connection);
         } else if request.is::<ops::OfficeOpenChannel>() {
             let p = request.params::<ops::OfficeOpenChannel>().unwrap();
             match self
                 .auth
                 .open_channel(connection, &p.session, Arc::clone(&self.endpoint), "org")
             {
-                Ok((id, socket, witness)) => super::super::browser::deliver_channel(
+                Ok((id, socket, witness)) => crate::service::deliver_channel(
                     connection, request.id, id, socket, "office", witness,
                 ),
                 Err(error) => connection.send_response(Response::error(request.id, error)),
@@ -178,7 +178,7 @@ impl Handler for LiveHandler {
                 .auth
                 .grant(connection, &p.session, &p.office_id, &p.channel_id)
             {
-                Ok(result) => super::super::reply::secret_response(connection, request.id, &result),
+                Ok(result) => crate::service::secret_response(connection, request.id, &result),
                 Err(error) => connection.send_response(Response::error(request.id, error)),
             }
         } else {
@@ -274,7 +274,7 @@ struct Control {
 impl Control {
     fn new(gateway: bool) -> Self {
         let worker = worker_fixture("office");
-        let (_root, auth, _) = super::super::authentication::tests::fixture();
+        let (_root, auth, _) = crate::authentication::tests::fixture();
         let auth = Arc::new(auth);
         let (host, peer) = UnixStream::pair().unwrap();
         let (mut connection, queue) =
@@ -299,7 +299,7 @@ impl Control {
                 &Password::new("synthetic test password".into()).unwrap(),
             )
             .unwrap();
-        super::super::authentication::tests::link_owner(&auth, &connection, &signed_in.session);
+        crate::authentication::tests::link_owner(&auth, &connection, &signed_in.session);
         let serving = Arc::clone(&connection);
         let handler = Arc::new(LiveHandler {
             auth: Arc::clone(&auth),

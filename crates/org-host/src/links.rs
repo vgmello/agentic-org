@@ -138,6 +138,10 @@ fn digest(instance_id: &str, kind: &str, token: &[u8; TOKEN_BYTES]) -> [u8; 32] 
 /// A newly issued link. `token` is the secret; show it once.
 #[derive(Debug)]
 pub(crate) struct Issued {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     pub(crate) link_id: String,
     pub(crate) token: Token,
     pub(crate) expires_at_ms: i64,
@@ -145,6 +149,10 @@ pub(crate) struct Issued {
 
 /// A link that can still be redeemed.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "only issue_first has a production caller")
+)]
 pub(crate) struct Pending {
     pub(crate) link_id: String,
     pub(crate) issued_at_ms: i64,
@@ -237,8 +245,16 @@ pub(crate) trait OneTimeLinks {
     fn instance_id(&self) -> &str;
     /// Cancel the pending link of the same kind and subject (ended at
     /// `issued_at_ms`) and insert `link`, in one transaction.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn replace_pending(&self, link: NewLink<'_>) -> Result<(), Error>;
     /// Mark the pending, unexpired link with this digest used at `now_ms`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn redeem(
         &self,
         kind: LinkKind,
@@ -248,6 +264,10 @@ pub(crate) trait OneTimeLinks {
     /// Whether `redeem` would accept the link with this digest at `now_ms`,
     /// without changing it. A caller uses it to refuse a dead link before
     /// costly work; the later `redeem` still decides.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn would_redeem(
         &self,
         kind: LinkKind,
@@ -259,8 +279,16 @@ pub(crate) trait OneTimeLinks {
     /// whether it was inserted.
     fn insert_first(&self, link: NewLink<'_>) -> Result<bool, Error>;
     /// The pending link of this kind and subject, expired or not.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error>;
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn issue(&self, kind: LinkKind, subject: &Subject, now_ms: i64) -> Result<Issued, Error> {
         issue_with(self.instance_id(), kind, subject, now_ms, |link| {
             self.replace_pending(link).map(|()| true)
@@ -280,6 +308,10 @@ pub(crate) trait OneTimeLinks {
         })
     }
     /// Redeems a token once. A malformed token is `Unknown`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn consume(
         &self,
         kind: LinkKind,
@@ -296,6 +328,10 @@ pub(crate) trait OneTimeLinks {
         )
     }
     /// Whether `token` would redeem now, without redeeming it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn redeemable(
         &self,
         kind: LinkKind,
@@ -309,6 +345,10 @@ pub(crate) trait OneTimeLinks {
         )
     }
     /// The redeemable link of this kind and subject, if any.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only issue_first has a production caller")
+    )]
     fn pending(
         &self,
         kind: LinkKind,

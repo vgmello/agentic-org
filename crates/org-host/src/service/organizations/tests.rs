@@ -158,7 +158,7 @@ fn subscribe(provisioning: &Provisioning) -> Arc<Events> {
 }
 fn host(worker: Worker) -> Host {
     let instance = crate::ids::uuid_v7().unwrap();
-    let (root, authentication, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let (root, authentication, _) = crate::authentication::tests::fixture_for(&instance);
     let (db, custody) = authentication.provisioning_storage();
     let state = tempfile::tempdir().unwrap();
     std::fs::set_permissions(
@@ -236,8 +236,7 @@ impl Host {
     fn seed(&self, login: &str, admin: bool) -> String {
         let id = crate::ids::generate().unwrap();
         let verifier =
-            crate::service::authentication::hash_password(&Password::new(PASSWORD.into()).unwrap())
-                .unwrap();
+            crate::authentication::hash_password(&Password::new(PASSWORD.into()).unwrap()).unwrap();
         self.db
             .seed_account(&id, login, &verifier, admin, now())
             .unwrap();
@@ -1267,7 +1266,7 @@ fn a_registry_that_cannot_be_read_fails_the_list_instead_of_hiding_organizations
     // refused too, and never answers with an empty name.
     assert_eq!(
         code(host.authentication.verify(
-            &crate::service::listener::Connection::for_test(),
+            &crate::control_listener::Connection::for_test(),
             "Owner",
             &Password::new(PASSWORD.into()).unwrap(),
         )),
@@ -1377,7 +1376,7 @@ fn send<C: Call>(
 /// is written there, before the completed answer, and nowhere else.
 #[test]
 fn the_service_serves_these_calls_only_on_the_web_connection_and_pushes_account_changed_there() {
-    use crate::service::listener::{LocalConnection, WebConnection};
+    use crate::control_listener::{LocalConnection, WebConnection};
     use org_host_control::ops::{AccountVerify, AccountVerifyParams};
     use std::os::unix::net::{UnixDatagram, UnixStream};
     let host = host(Worker::Creates);

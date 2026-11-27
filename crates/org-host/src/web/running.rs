@@ -27,9 +27,9 @@ use org_platform_host::admission::{Child, ChildEnv, ImageRefusal, SpawnRefused};
 
 use crate::{
     cloexec::SPAWN_LOCK,
+    control_listener::{Handler, WebConnection},
     home,
     server_check::NoAdmission,
-    service::listener::{Handler, WebConnection},
     sync::lock,
 };
 

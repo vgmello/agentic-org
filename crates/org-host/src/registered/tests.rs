@@ -370,11 +370,11 @@ fn this_machine_cannot_hold_one(refused: &str) -> bool {
 }
 
 /// Runs `f` with this thread's host starts walking to their credential directory from
-/// `base` (`release_store::WALK_FROM`): every check below `base` is the host's.
+/// `base` (`credential_store_root::WALK_FROM`): every check below `base` is the host's.
 fn walking_from<R>(base: &std::path::Path, f: impl FnOnce() -> R) -> R {
-    crate::release_store::WALK_FROM.with(|from| *from.borrow_mut() = Some(base.to_owned()));
+    crate::credential_store_root::WALK_FROM.with(|from| *from.borrow_mut() = Some(base.to_owned()));
     let result = f();
-    crate::release_store::WALK_FROM.with(|from| *from.borrow_mut() = None);
+    crate::credential_store_root::WALK_FROM.with(|from| *from.borrow_mut() = None);
     result
 }
 

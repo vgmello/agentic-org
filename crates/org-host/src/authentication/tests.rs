@@ -1,6 +1,6 @@
-use super::super::listener::Connection;
 use super::*;
 use crate::accounts::identity::{AccountId, LoginKey};
+use crate::control_listener::Connection;
 use crate::host_secrets::HostSecrets;
 use crate::host_secrets::{Name, Value};
 use crate::hostdb::lockout::{Outcome, Socket};
@@ -432,7 +432,7 @@ fn session_absolute_and_idle_expiry_remain_independent_of_wall_clock() {
 
 #[test]
 fn real_host_listener_negotiates_signin_renewal_and_logout() {
-    use crate::service::listener::{self, Listener, ListenerConfig};
+    use crate::control_listener::{self, Listener, ListenerConfig};
     use org_host_control::ops::{
         AccountVerify, AccountVerifyParams, SessionEnd, SessionParams, SessionRenew,
     };
@@ -444,18 +444,16 @@ fn real_host_listener_negotiates_signin_renewal_and_logout() {
         .tempdir_in("/tmp")
         .unwrap();
     let socket = sockets.path().join("h.sock");
-    let mut service = super::super::tests::service(_root.path());
-    service.instance_id = Some(crate::ids::uuid_v7().unwrap());
-    service.authentication = Some(Arc::new(auth));
-    let offices = service.offices.clone();
+    let (service, offices) =
+        crate::service::tests::registered_handler(_root.path(), Arc::new(auth));
     let mut listener = Listener::start(
-        listener::bind(&socket).unwrap(),
+        control_listener::bind(&socket).unwrap(),
         ListenerConfig {
             max_connections: 3,
             max_in_flight: 2,
             expected_uid: org_platform::posix::effective_uid(),
         },
-        Arc::new(service),
+        service,
     )
     .unwrap();
     let stream = UnixStream::connect(socket).unwrap();
@@ -509,14 +507,10 @@ fn actual_host_connection_pair_signs_in_and_eof_invalidates_registry_session() {
     use std::{io::BufReader, os::unix::net::UnixStream};
     let (root, auth, _) = fixture();
     let auth = Arc::new(auth);
-    let mut service = super::super::tests::service(root.path());
-    service.instance_id = Some(crate::ids::uuid_v7().unwrap());
-    service.authentication = Some(auth.clone());
-    let offices = service.offices.clone();
+    let (service, offices) = crate::service::tests::registered_handler(root.path(), auth.clone());
     let (host, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(SIGN_IN_WATCHDOG)).unwrap();
-    let thread =
-        std::thread::spawn(move || super::super::listener::serve_pair(host, Arc::new(service)));
+    let thread = std::thread::spawn(move || crate::control_listener::serve_pair(host, service));
     let mut peer = BufReader::new(peer);
     frame::write_message(
         peer.get_mut(),

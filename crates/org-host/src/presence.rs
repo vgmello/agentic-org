@@ -2,10 +2,14 @@
 //! Only `confirm` invokes OS authentication; context queries and tests never treat the
 //! adapter's availability as successful presence. A system without an adapter is never
 //! a local context and confirms nothing.
+use std::os::unix::net::UnixStream;
+
 use org_platform_host::presence::{self, ConfirmReason, Confirmation};
 
-pub(crate) fn local(connection: &crate::service::listener::Connection) -> bool {
-    presence::local(connection.socket()).unwrap_or(false)
+/// Whether the process at the other end of `peer` (a connection's socket) runs in the local
+/// context a release requires. A failed query is not local.
+pub(crate) fn local(peer: &UnixStream) -> bool {
+    presence::local(peer).unwrap_or(false)
 }
 pub(crate) fn current() -> bool {
     presence::current().unwrap_or(false)

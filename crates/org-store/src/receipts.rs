@@ -5,9 +5,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    change::{Ack, Actor, Bytes, DurablePath, Id, Outcome, Receipt, Sha256, Timestamp},
+    change::{Ack, Actor, Bytes, Id, Outcome, Receipt, Sha256, Timestamp},
     engine::{CorePort, Engine, Projector},
     error::ProjectionError,
+    path::DurablePath,
 };
 
 /// The directory that holds every receipt.

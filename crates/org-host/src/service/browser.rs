@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
-use super::authentication::Authentication;
 use super::browser_sessions::{browser_now_ms, finish_ended_browser_sessions};
-use super::listener::Connection;
 use super::reply::{not_authorized, ok, secret_response};
 use super::Service;
-use super::{listener, local_access, multi_person, office_ops};
+use super::{local_access, multi_person, office_ops};
+use crate::authentication::Authentication;
+use crate::control_listener::{self, Connection};
 
 impl Service {
     /// Browser-session ops (A3 B4, B2 Q8), only on the admitted web process's control
@@ -213,7 +213,7 @@ fn browser_session_op(
 
 /// Deliver an already authorized channel. A definite local reservation refusal
 /// answers this request; uncertain transport still terminates the connection.
-pub(super) fn deliver_channel(
+pub(crate) fn deliver_channel(
     connection: &Connection,
     request_id: u64,
     id: String,
@@ -229,11 +229,13 @@ pub(super) fn deliver_channel(
     );
     match connection.send_descriptor(response, id, socket.into(), office, witness) {
         Ok(()) => {}
-        Err(listener::DescriptorError::Capacity) => connection.send_response(Response::error(
-            request_id,
-            ApiError::new(ErrorCode::Unavailable, "office channel unavailable"),
-        )),
-        Err(listener::DescriptorError::Transport) => connection.close(),
+        Err(control_listener::DescriptorError::Capacity) => {
+            connection.send_response(Response::error(
+                request_id,
+                ApiError::new(ErrorCode::Unavailable, "office channel unavailable"),
+            ))
+        }
+        Err(control_listener::DescriptorError::Transport) => connection.close(),
     }
 }
 
@@ -241,7 +243,7 @@ pub(super) fn deliver_channel(
 /// hello and a successful `tls.fetch`. Anything else from it is a protocol error that closes
 /// the control connection, so supervision fails the start rather than publishing `running`.
 pub(super) fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
-    use crate::service::listener::ServingReport;
+    use crate::control_listener::ServingReport;
     use org_host_control::ops::WebServing;
     let refused = |code, message| Response::error(request.id, ApiError::new(code, message));
     if connection.web_listen().is_none() {

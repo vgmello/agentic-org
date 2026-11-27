@@ -3,7 +3,7 @@
 
 use std::{fmt, io, path::Path};
 
-use crate::change::DurablePath;
+use crate::path::{DurablePath, InvalidPath};
 
 /// A failure of the projection's database.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +162,12 @@ impl fmt::Display for StoreError {
 }
 
 impl std::error::Error for StoreError {}
+
+impl From<InvalidPath> for StoreError {
+    fn from(error: InvalidPath) -> Self {
+        Self::invalid(error.reason())
+    }
+}
 
 impl From<EngineError> for StoreError {
     fn from(error: EngineError) -> Self {
