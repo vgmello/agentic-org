@@ -98,6 +98,8 @@
 	);
 
 	function resetDialog() {
+		submitAbort?.abort();
+		submitAbort = undefined;
 		code = '';
 		ttlSeconds = DEFAULT_LEASE_TTL_SECONDS;
 		takeoverConfirmed = false;
@@ -178,6 +180,20 @@
 		}
 	}
 
+	function isCurrentSubmission(
+		abort: AbortController,
+		targetOrg: string,
+		targetReqId: string | undefined
+	): boolean {
+		return (
+			submitAbort === abort &&
+			!destroyed &&
+			!abort.signal.aborted &&
+			organizationId === targetOrg &&
+			pending?.request_id === targetReqId
+		);
+	}
+
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy) return;
@@ -189,28 +205,36 @@
 		submitAbort = abort;
 		busy = true;
 		errorMessage = undefined;
+		const targetOrg = organizationId;
+		const targetReqId = pending?.request_id;
 		const requestTakeover = needsTakeover && takeoverConfirmed;
-		const isAlive = () => !destroyed && !abort.signal.aborted;
 
 		let session: ExternalSessionView;
 		try {
 			session = await api.approve(
-				organizationId,
+				targetOrg,
 				{ code: normalizedCode, ttl_seconds: ttlSeconds, takeover: requestTakeover },
 				abort.signal
 			);
 		} catch (err) {
-			if (submitAbort === abort) submitAbort = undefined;
+			if (!isCurrentSubmission(abort, targetOrg, targetReqId)) {
+				if (submitAbort === abort) submitAbort = undefined;
+				return;
+			}
+			submitAbort = undefined;
 			busy = false;
-			if (isAlive()) applySubmitError(err);
+			applySubmitError(err);
 			return;
 		}
 
+		if (!isCurrentSubmission(abort, targetOrg, targetReqId)) {
+			if (submitAbort === abort) submitAbort = undefined;
+			return;
+		}
 		// Immediately wipe the one-time approval code and close before running post-approval refresh.
 		code = '';
-		if (submitAbort === abort) submitAbort = undefined;
+		submitAbort = undefined;
 		busy = false;
-		if (!isAlive()) return;
 		open = false;
 		await notifyApproved(session);
 	}
@@ -393,7 +417,7 @@
 						variant="outline"
 						class={mobileButton}
 						disabled={busy}
-						onclick={() => (open = false)}>Cancel</Button
+						onclick={dismissIfIdle}>Cancel</Button
 					>
 					<Button type="submit" class={mobileButton} disabled={!canSubmit} aria-busy={busy}>
 						<ShieldCheck class="size-4" aria-hidden="true" />

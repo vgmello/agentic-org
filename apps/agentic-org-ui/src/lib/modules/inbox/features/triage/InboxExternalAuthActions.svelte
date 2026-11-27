@@ -136,7 +136,11 @@
 		});
 		await tick();
 		try {
-			await shellData.refresh();
+			const refreshed = await shellData.refresh();
+			if (!refreshed.inboxUpdated) {
+				toast.warning('Sign-in approved, but Inbox could not refresh automatically.');
+				return;
+			}
 		} catch {
 			toast.warning('Sign-in approved, but Inbox could not refresh automatically.');
 			return;

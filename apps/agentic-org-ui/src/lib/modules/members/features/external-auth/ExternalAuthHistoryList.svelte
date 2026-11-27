@@ -4,9 +4,9 @@
 -->
 <script lang="ts">
 	import StatusPill from '$lib/components/StatusPill.svelte';
+	import { formatExternalAuthTime } from '$lib/platform/workspace/external-auth';
 	import { historyEventLabel, historyEventTone } from '../../external-auth-present';
 	import type { ExternalHistoryEntry } from '../../external-auth-types';
-	import { whenText } from '../../present';
 
 	let { history }: { history: readonly ExternalHistoryEntry[] } = $props();
 </script>
@@ -47,7 +47,7 @@
 						{/if}
 					</div>
 					<time class="shrink-0 font-mono text-fg-muted" datetime={entry.at}>
-						{whenText(entry.at)}
+						{formatExternalAuthTime(entry.at)}
 					</time>
 				</li>
 			{/each}

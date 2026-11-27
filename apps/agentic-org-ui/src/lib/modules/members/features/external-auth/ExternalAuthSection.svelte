@@ -24,6 +24,7 @@
 	import { tone } from '$lib/components/pills';
 	import { Button } from '$lib/components/ui/button';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import { formatExternalAuthTime } from '$lib/platform/workspace/external-auth';
 	import { ExternalAuthController } from '../../external-auth-controller.svelte';
 	import {
 		RENEW_7D_TTL_SECONDS,
@@ -34,7 +35,6 @@
 		isExpiringSoon
 	} from '../../external-auth-present';
 	import type { ExternalSessionView, PendingExternalAuthView } from '../../external-auth-types';
-	import { whenText } from '../../present';
 	import type { MemberProfile } from '../../types';
 	import ExternalAuthHistoryList from './ExternalAuthHistoryList.svelte';
 	import ExternalAuthPendingList from './ExternalAuthPendingList.svelte';
@@ -169,7 +169,7 @@
 	async function handleApproved(session: ExternalSessionView) {
 		nowMs = Date.now();
 		toast.success(`Approved external sign-in for ${profile.name}.`, {
-			description: `${session.workspace_label} · expires ${whenText(session.expires_at)}`
+			description: `${session.workspace_label} · expires ${formatExternalAuthTime(session.expires_at)}`
 		});
 		await refreshAfterMutation();
 	}
@@ -183,7 +183,7 @@
 			});
 			nowMs = Date.now();
 			toast.success(`Renewed external lease for ${profile.name} (+7d).`, {
-				description: `Expires ${whenText(renewed.expires_at)}`
+				description: `Expires ${formatExternalAuthTime(renewed.expires_at)}`
 			});
 		} catch (err) {
 			toast.error(`Couldn't renew external lease for ${profile.name}.`, {
@@ -387,7 +387,7 @@
 									<div class="min-w-0">
 										<dt class="font-medium text-fg-secondary">Expires</dt>
 										<dd class="text-fg-muted [overflow-wrap:anywhere]">
-											{whenText(activeLease.expires_at)} · {formatTimeRemaining(
+											{formatExternalAuthTime(activeLease.expires_at)} · {formatTimeRemaining(
 												activeLease.expires_at,
 												nowMs
 											)}
@@ -396,7 +396,7 @@
 									<div class="min-w-0">
 										<dt class="font-medium text-fg-secondary">Approved</dt>
 										<dd class="text-fg-muted [overflow-wrap:anywhere]">
-											{activeLease.approved_by} · {whenText(activeLease.approved_at)}
+											{activeLease.approved_by} · {formatExternalAuthTime(activeLease.approved_at)}
 										</dd>
 									</div>
 									<div class="min-w-0">
