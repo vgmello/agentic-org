@@ -8,7 +8,7 @@ use crate::{
     host_secrets::HostSecrets,
     hostdb::{
         recovery::{Ledger, State},
-        HostDb,
+        HostStore,
     },
     offices::Offices,
     peer::Received,
@@ -26,7 +26,7 @@ use std::sync::{
 
 pub(crate) struct Recovery {
     auth: Arc<Authentication>,
-    db: Arc<HostDb>,
+    db: Arc<dyn HostStore>,
     custody: Arc<dyn HostSecrets>,
     offices: Arc<Offices>,
     broadcast: Arc<Broadcast>,

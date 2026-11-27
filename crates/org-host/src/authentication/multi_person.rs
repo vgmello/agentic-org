@@ -21,7 +21,7 @@ use crate::accounts::rules::{check_new_password, PasswordRule};
 use crate::accounts::store::{
     AccountStore, Attempt, ClientAddress, NewAccount, Registration, ThrottleKey,
 };
-use crate::hostdb::sqlite::accounts::multi_person::{
+use crate::hostdb::multi_person::{
     parse_account_subject, parse_invite_subject, InviteAttach, InviteRegistration,
     SetPasswordOutcome,
 };
@@ -135,7 +135,7 @@ impl Authentication {
                         member_id: member_id.to_owned(),
                     })
                 } else {
-                    if self.db.administrator_exists().map_err(store_error)? {
+                    if self.db.has_administrator().map_err(store_error)? {
                         return Err(not_found());
                     }
                     Ok(LinkInspectResult::AdministratorRegistration)
@@ -192,9 +192,7 @@ impl Authentication {
                 Some(key) => accounts.credentials(key).map_err(store_error)?,
                 None => None,
             }
-            .filter(|c| {
-                c.verifier.expose() != crate::hostdb::sqlite::local_auth::LOCAL_AUTHLESS_VERIFIER
-            });
+            .filter(|c| c.verifier.expose() != crate::hostdb::LOCAL_AUTHLESS_VERIFIER);
             let verifier = credentials.as_ref().map_or(&self.dummy, |c| &c.verifier);
             let parsed = PasswordHash::new(verifier.expose()).map_err(|_| unavailable())?;
             let matches = argon()?

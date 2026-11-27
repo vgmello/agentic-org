@@ -249,7 +249,7 @@ pub(crate) fn acquire_warm_permit_for_office(
         return WarmPermitOutcome::StaleWarm;
     }
     let now_ms = office.current_time_ms();
-    let (binding_rev, resolved_model) =
+    let (binding_rev, resolved_model, _supports_vision) =
         match check_local_readiness(office, &conn, &cfg.model_id, now_ms) {
             Ok(Ok(v)) => v,
             Ok(Err(_)) | Err(_) => return WarmPermitOutcome::StaleWarm,

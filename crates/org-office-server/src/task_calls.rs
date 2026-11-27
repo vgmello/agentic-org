@@ -396,13 +396,35 @@ impl TaskService {
             .flatten()
             .map(|e| (e.name, e.kind == EmployeeKind::Person))
             .unwrap_or_else(|| (actor.to_owned(), false));
-        let _ = sessions.on_task_assigned(
+        let attachment_ids = self
+            .office
+            .attachment_list(
+                agent_id.as_str(),
+                org_proto::attachments::AttachmentListParams {
+                    target_kind: Some(org_proto::attachments::AttachmentTargetKind::Task),
+                    target_id: Some(outcome.task.id.clone()),
+                    scope: None,
+                    limit: Some(org_proto::attachments::ATTACHMENT_LIST_MAX_LIMIT),
+                    cursor: None,
+                },
+            )
+            .ok()
+            .and_then(Result::ok)
+            .map(|res| {
+                res.attachments
+                    .into_iter()
+                    .map(|att| att.id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let _ = sessions.on_task_assigned_with_attachments(
             agent_id.as_str(),
             actor,
             &actor_name,
             actor_is_person,
             &outcome.task.key,
             &outcome.task.title,
+            attachment_ids,
         );
     }
 }

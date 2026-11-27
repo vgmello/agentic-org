@@ -26,9 +26,7 @@ org-office-sessions 30000
 [coupling.rusqlite]
 
 [coupling.unix_socket]
-apps/agentic-org-web/src/host.rs 6
-apps/agentic-org-web/src/office/channel.rs 3
-apps/agentic-org-web/src/process.rs 5
+apps/agentic-org-web/src/transport/local_unix.rs 4
 crates/org-host/examples/fake_web.rs 4
 crates/org-host/src/app_auth.rs 2
 crates/org-host/src/authentication/browser.rs 1
@@ -70,4 +68,3 @@ crates/org-office-server/src/transfer/writer.rs 4
 [coupling.sandbox]
 
 [coupling.dead_code_trait]
-crates/org-host/src/hostdb.rs 1

@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use org_host_control::listen::ListenConfig;
 
 use super::*;
+use crate::hostdb::HostStore;
 use crate::instance::setup::{Input, Record};
-use crate::links::{LinkKind, OneTimeLinks, Subject};
+use crate::links::{LinkKind, Subject};
 use crate::release::ReleasePin;
 
 fn listen(port: u16) -> ListenConfig {
@@ -128,7 +129,7 @@ fn walk(dir: &std::path::Path) -> Vec<(std::ffi::OsString, Vec<u8>)> {
     out
 }
 
-fn registry(host: &Host) -> std::sync::Arc<HostDb> {
+fn registry(host: &Host) -> std::sync::Arc<dyn HostStore> {
     host.service
         .authentication
         .as_ref()
@@ -157,7 +158,7 @@ fn the_first_start_creates_the_registry_once_and_installs_admin() {
         .unwrap()
         .provisioning_storage()
         .0;
-    assert!(!db.administrator_exists().unwrap());
+    assert!(!db.has_administrator().unwrap());
     // The installed admin is bound to the frozen setup operation and the setup origin.
     let admin = host.service.admin().unwrap();
     assert!(admin.issues_for(&record.setup_operation, "http://127.0.0.1:7420"));

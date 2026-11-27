@@ -3,7 +3,8 @@
 use serde_json::{json, Value};
 
 use org_agent_runtime::{
-    encode_line, Activity, ApprovalId, ControlError, Decision, Output, SessionEvent,
+    encode_line, Activity, ApprovalId, ControlError, Decision, Output, SessionEvent, TurnImage,
+    TurnImageSource,
 };
 
 use crate::protocol::encode_approval_result;
@@ -11,7 +12,29 @@ use crate::protocol::encode_approval_result;
 use super::handshake::granular_approval_policy_json;
 use super::{CodexSession, Phase};
 
-pub(super) fn handle_send(s: &mut CodexSession, text: String) -> Result<Vec<Output>, ControlError> {
+fn build_codex_turn_input(
+    text: String,
+    images: Vec<TurnImage>,
+) -> Result<Vec<Value>, ControlError> {
+    let mut items = Vec::with_capacity(images.len() + 1);
+    items.push(json!({ "type": "text", "text": text }));
+    for img in images {
+        let TurnImageSource::LocalPath { path } = img.source else {
+            return Err(ControlError::Unsupported);
+        };
+        items.push(json!({
+            "type": "localImage",
+            "path": path.as_str(),
+        }));
+    }
+    Ok(items)
+}
+
+pub(super) fn handle_send(
+    s: &mut CodexSession,
+    text: String,
+    images: Vec<TurnImage>,
+) -> Result<Vec<Output>, ControlError> {
     match s.phase {
         Phase::OpeningInit | Phase::OpeningThread => Err(ControlError::NotReady),
         Phase::Busy => Err(ControlError::Busy),
@@ -22,12 +45,13 @@ pub(super) fn handle_send(s: &mut CodexSession, text: String) -> Result<Vec<Outp
                 .ok_or(ControlError::NotReady)?
                 .as_str()
                 .to_owned();
-            let req_id = s.alloc_id();
+            let input = build_codex_turn_input(text, images)?;
+            let req_id = s.next_id;
             let mut params = json!({
                 "threadId": tid,
                 "approvalPolicy": granular_approval_policy_json(),
                 "approvalsReviewer": "user",
-                "input": [{ "type": "text", "text": text }]
+                "input": input
             });
             if s.cfg.uses_office_profile {
                 params["permissions"] = Value::String("office".to_owned());
@@ -38,7 +62,8 @@ pub(super) fn handle_send(s: &mut CodexSession, text: String) -> Result<Vec<Outp
                 "method": "turn/start",
                 "params": params
             }))
-            .expect("turn/start encodes");
+            .map_err(|_| ControlError::Unsupported)?;
+            s.alloc_id();
             s.phase = Phase::Busy;
             s.turn_open = true;
             s.turn_start_req_id = Some(req_id);
@@ -60,6 +85,7 @@ pub(super) fn handle_deliver_mid_turn(
     s: &mut CodexSession,
     delivery_id: String,
     text: String,
+    images: Vec<TurnImage>,
 ) -> Result<Vec<Output>, ControlError> {
     match s.phase {
         Phase::OpeningInit | Phase::OpeningThread => Err(ControlError::NotReady),
@@ -76,7 +102,8 @@ pub(super) fn handle_deliver_mid_turn(
                 .as_ref()
                 .ok_or(ControlError::NotReady)?
                 .clone();
-            let req_id = s.alloc_id();
+            let input = build_codex_turn_input(text, images)?;
+            let req_id = s.next_id;
             let line = encode_line(&json!({
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -84,10 +111,11 @@ pub(super) fn handle_deliver_mid_turn(
                 "params": {
                     "threadId": tid,
                     "expectedTurnId": turn_id,
-                    "input": [{ "type": "text", "text": text }]
+                    "input": input
                 }
             }))
-            .expect("turn/steer encodes");
+            .map_err(|_| ControlError::Unsupported)?;
+            s.alloc_id();
             s.in_flight_deliveries.insert(req_id, delivery_id);
             Ok(vec![Output::Write(line)])
         }

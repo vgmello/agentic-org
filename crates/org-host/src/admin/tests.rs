@@ -4,7 +4,7 @@
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use crate::hostdb::HostDbInit;
+use crate::hostdb::{HostDb, HostDbInit};
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
 pub(crate) const OPERATION: &str = "01890a5d-ac96-774b-bcce-b302099a8057";
@@ -46,6 +46,11 @@ impl Presence for Refusing {
 /// An administrator service over a fresh temp registry, bound to [`OPERATION`]; its presence
 /// check refuses.
 pub(crate) fn admin() -> (tempfile::TempDir, Admin) {
+    let (home, _db, admin) = admin_with_db();
+    (home, admin)
+}
+
+fn admin_with_db() -> (tempfile::TempDir, Arc<HostDb>, Admin) {
     let home = tempfile::tempdir().unwrap();
     std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let init = HostDbInit {
@@ -55,26 +60,25 @@ pub(crate) fn admin() -> (tempfile::TempDir, Admin) {
     let db = Arc::new(HostDb::create(home.path(), &NoSecrets, &init).unwrap());
     let policy = AppPolicy::new(crate::HOST_SIGNING_ID, None).unwrap();
     let origin = ListenOrigin::parse("http://127.0.0.1:7420").unwrap();
-    let admin = Admin::new(db, OPERATION, origin, policy, Arc::new(Refusing));
-    (home, admin)
+    let store: Arc<dyn HostStore> = db.clone();
+    let admin = Admin::new(store, OPERATION, origin, policy, Arc::new(Refusing));
+    (home, db, admin)
 }
 
 /// The registry behind `admin`, for tests outside this module.
-pub(crate) fn registry(admin: &Admin) -> &Arc<HostDb> {
+pub(crate) fn registry(admin: &Admin) -> &Arc<dyn HostStore> {
     &admin.db
 }
 
-pub(crate) fn seed_administrator(admin: &Admin) {
-    admin
-        .db
-        .seed_account(
-            "01J00000000000000000000003",
-            "Sage",
-            &crate::hostdb::journal::Verifier::new(PHC.into()).unwrap(),
-            true,
-            123,
-        )
-        .unwrap();
+fn seed_administrator(db: &HostDb) {
+    db.seed_account(
+        "01J00000000000000000000003",
+        "Sage",
+        &crate::hostdb::journal::Verifier::new(PHC.into()).unwrap(),
+        true,
+        123,
+    )
+    .unwrap();
 }
 
 /// The token after `#`, checked against the configured origin.
@@ -134,8 +138,8 @@ fn the_initial_link_is_bound_to_the_setup_operation() {
 #[test]
 fn reset_issues_password_link_while_initial_refuses_when_administrator_exists() {
     use org_platform_host::presence::ConfirmReason;
-    let (_home, admin) = admin();
-    seed_administrator(&admin);
+    let (_home, db, admin) = admin_with_db();
+    seed_administrator(&db);
     assert!(matches!(
         admin.initial_link(OPERATION, 1).unwrap(),
         AdminLinkResult::AdministratorPresent
@@ -218,10 +222,10 @@ fn reset_replaces_the_previous_link_and_only_the_newest_redeems() {
 
 #[test]
 fn a_dialog_that_sees_a_new_administrator_issues_nothing() {
-    let (_home, admin) = admin();
+    let (_home, db, admin) = admin_with_db();
     let answer = admin
         .reset_with(true, |_| {
-            seed_administrator(&admin);
+            seed_administrator(&db);
             Ok(())
         })
         .unwrap();
@@ -237,7 +241,7 @@ fn a_dialog_that_sees_a_new_administrator_issues_nothing() {
 
 #[test]
 fn a_reset_refused_for_an_administrator_keeps_the_pending_link() {
-    let (_home, admin) = admin();
+    let (_home, db, admin) = admin_with_db();
     let (_, _) = token(admin.reset_with(true, |_| Ok(())).unwrap());
     let before = admin
         .db
@@ -246,7 +250,7 @@ fn a_reset_refused_for_an_administrator_keeps_the_pending_link() {
         .expect("pending link");
     let answer = admin
         .reset_with(true, |_| {
-            seed_administrator(&admin);
+            seed_administrator(&db);
             Ok(())
         })
         .unwrap();
@@ -263,7 +267,7 @@ fn a_reset_refused_for_an_administrator_keeps_the_pending_link() {
 
 #[test]
 fn issue_unless_administrator_checks_and_writes_together() {
-    let (_home, admin) = admin();
+    let (_home, db, admin) = admin_with_db();
     let first = admin
         .db
         .issue_unless_administrator(LinkKind::Registration, &subject(), 10)
@@ -275,7 +279,7 @@ fn issue_unless_administrator_checks_and_writes_together() {
         .unwrap()
         .expect("replaces the pending link");
     assert_ne!(first.link_id, second.link_id);
-    seed_administrator(&admin);
+    seed_administrator(&db);
     assert!(admin
         .db
         .issue_unless_administrator(LinkKind::Registration, &subject(), 30)
@@ -340,7 +344,7 @@ fn where_a_peer_is_named_by_its_user_alone_only_root_resets_the_administrator() 
     let by_user_alone = crate::peer::identity(&host).is_ok_and(|identity| identity.uid.is_some());
 
     // Root, admitted by the listener: no presence is asked (this adapter refuses).
-    let (_home, refusing) = admin();
+    let (_home, refusing_db, refusing) = admin_with_db();
     let root = Connection::accepted_for_tests(&host);
     root.mark_root_authority();
     let issued = refusing.reset(&root, received).unwrap();
@@ -348,7 +352,7 @@ fn where_a_peer_is_named_by_its_user_alone_only_root_resets_the_administrator() 
     // A second reset replaces the link; an administrator ends it.
     let (second, _) = token(refusing.reset(&root, received).unwrap());
     assert_ne!(first, second);
-    seed_administrator(&refusing);
+    seed_administrator(&refusing_db);
     assert!(matches!(
         refusing.reset(&root, received).unwrap(),
         AdminLinkResult::ResetPassword { ref login, .. } if login == "Sage"

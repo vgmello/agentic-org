@@ -160,6 +160,7 @@ fn failover_request(
         failed_run_id: "run-a".into(),
         failed_connection_id: format!("conn-{reason}"),
         objective: format!("keep-{reason}-turn"),
+        attachment_ids: Vec::new(),
         workspace: None,
         task_ref: None,
         tried_connections: vec![format!("conn-{reason}")],

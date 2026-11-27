@@ -7,8 +7,6 @@ use crate::hostdb::sqlite::tests::fixture;
 use crate::links::Refused;
 use crate::sessions::{BrowserSessions, NewSession, Origin, Scheme, SessionDigest};
 
-use super::invites::{InviteAttach, InviteIssueError, InviteRegistration};
-use super::passwords::SetPasswordOutcome;
 use super::*;
 
 const PHC_A: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";

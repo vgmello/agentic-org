@@ -2,20 +2,20 @@
 use super::login::normalize_login;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct InvalidIdentity;
+pub struct InvalidIdentity;
 
 /// NFC/full-default-fold/NFC login, bounded by normalized UTF-8 bytes.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct LoginKey(String);
+pub struct LoginKey(String);
 impl LoginKey {
-    pub(crate) fn new(display: &str) -> Result<Self, InvalidIdentity> {
+    pub fn new(display: &str) -> Result<Self, InvalidIdentity> {
         let key = normalize_login(display);
         if key.is_empty() || key.len() > 256 {
             return Err(InvalidIdentity);
         }
         Ok(Self(key))
     }
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -23,16 +23,16 @@ impl LoginKey {
 /// A canonical account ID: UUIDv7 for new accounts (`TASK-38` / A6), with backward
 /// compatibility for legacy 26-character Crockford ULIDs.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AccountId(String);
+pub struct AccountId(String);
 impl AccountId {
-    pub(crate) fn parse(value: &str) -> Result<Self, InvalidIdentity> {
+    pub fn parse(value: &str) -> Result<Self, InvalidIdentity> {
         if org_proto::is_uuid_v7(value) || org_proto::ulid_time_ms(value).is_some() {
             Ok(Self(value.to_owned()))
         } else {
             Err(InvalidIdentity)
         }
     }
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }

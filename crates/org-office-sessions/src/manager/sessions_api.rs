@@ -75,8 +75,13 @@ impl SessionManager {
         );
         let resume = turn.and_then(|turn| turn.resume_runtime_session_id.as_deref());
         let opts = LaunchRouteOpts::fresh(resume, None, reservation.start_stop_epoch, partition);
-        let prepared =
-            self.prepare_and_spawn_raw(&employee, params, objective.unwrap_or_default(), opts)?;
+        let prepared = self.prepare_and_spawn_raw(
+            &employee,
+            params,
+            objective.unwrap_or_default(),
+            Vec::new(),
+            opts,
+        )?;
         self.install_live_session(prepared, slot)
     }
 
@@ -92,10 +97,36 @@ impl SessionManager {
     /// never the one `resume_runtime_session_id` names (the last run's or a suspended run's,
     /// which may be another caller's), and never reuse a process serving another partition.
     /// Anyone else ignores `wake_partition`.
+    #[cfg(test)]
     pub(crate) fn spawn_or_send_autonomous(
         &self,
         employee: &Employee,
         objective: String,
+        resume_runtime_session_id: Option<&str>,
+        task_ref: Option<&str>,
+        trigger_entry: serde_json::Value,
+        wake_partition: Option<PartitionKey>,
+    ) -> Result<SessionView, ApiError> {
+        self.spawn_or_send_autonomous_with_attachments(
+            employee,
+            objective,
+            Vec::new(),
+            resume_runtime_session_id,
+            task_ref,
+            trigger_entry,
+            wake_partition,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "autonomous session launch threads employee, objective, lightweight attachment ids, resume id, task ref, trigger, and partition"
+    )]
+    pub(crate) fn spawn_or_send_autonomous_with_attachments(
+        &self,
+        employee: &Employee,
+        objective: String,
+        attachment_ids: Vec<String>,
         resume_runtime_session_id: Option<&str>,
         task_ref: Option<&str>,
         trigger_entry: serde_json::Value,
@@ -111,9 +142,10 @@ impl SessionManager {
             instruction: Some(objective.clone()),
             workspace: None,
         };
-        let reservation = self.reserve_start_or_send(
+        let reservation = self.reserve_start_or_send_with_attachments(
             employee,
             Some(objective.clone()),
+            attachment_ids.clone(),
             task_ref,
             None,
             partition.as_ref(),
@@ -137,7 +169,8 @@ impl SessionManager {
         );
         let opts =
             LaunchRouteOpts::fresh(resume, task_ref, reservation.start_stop_epoch, partition);
-        let prepared = self.prepare_and_spawn_raw(employee, &params, objective, opts)?;
+        let prepared =
+            self.prepare_and_spawn_raw(employee, &params, objective, attachment_ids, opts)?;
         self.install_live_session(prepared, slot)
     }
 

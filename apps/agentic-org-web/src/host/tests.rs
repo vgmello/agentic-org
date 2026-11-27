@@ -1,6 +1,12 @@
 //! Control actor framing, scope and EOF on a real socket pair.
 use super::*;
-use std::{io::BufReader, os::unix::net::UnixDatagram, thread::JoinHandle};
+use std::{
+    io::BufReader,
+    net::Shutdown,
+    os::unix::net::{UnixDatagram, UnixStream},
+    sync::Mutex,
+    thread::JoinHandle,
+};
 
 const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 

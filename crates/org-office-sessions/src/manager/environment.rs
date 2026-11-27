@@ -61,7 +61,8 @@ impl SessionManager {
             office_id,
             employee_id,
         );
-        for dir in [&runtime_dir, &tmpdir] {
+        let attachments_dir = crate::turn_attachments::attachments_root(&runtime_dir);
+        for dir in [&runtime_dir, &attachments_dir, &tmpdir] {
             ensure_owner_only_dir(dir)?;
         }
         Ok((runtime_dir, tmpdir))

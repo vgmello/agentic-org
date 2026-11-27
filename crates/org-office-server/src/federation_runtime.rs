@@ -154,7 +154,7 @@ pub(crate) fn build_federation_wake_handler(
                 .upgrade()
                 .is_some_and(|svc| svc.has_active_ask_waiter(&ans.asker_id, &ans.ask_id));
             return sessions
-                .on_ask_answered_durable(
+                .on_ask_answered_durable_with_attachments(
                     &ans.asker_id,
                     &ans.ask_id,
                     &ans.question_summary,
@@ -162,6 +162,7 @@ pub(crate) fn build_federation_wake_handler(
                     (&wake.sender_id, &wake.sender_name, wake.sender_is_person),
                     false,
                     satisfied_active_waiter,
+                    &ans.attachment_ids,
                 )
                 .map(|_| ());
         }
@@ -184,6 +185,7 @@ pub(crate) fn build_federation_wake_handler(
             conversation_id: wake.conversation_id,
             source_id: wake.source_id,
             summary: wake.summary,
+            attachment_ids: wake.attachment_ids,
             enqueued_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)

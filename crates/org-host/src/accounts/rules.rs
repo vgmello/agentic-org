@@ -6,15 +6,15 @@ use unicode_normalization::UnicodeNormalization;
 use super::identity::LoginKey;
 
 /// A username is 1..=64 Unicode scalar values after NFC.
-pub(crate) const USERNAME_MAX_SCALARS: usize = 64;
+pub const USERNAME_MAX_SCALARS: usize = 64;
 /// A password is at least 12 Unicode scalar values after NFC.
-pub(crate) const PASSWORD_MIN_SCALARS: usize = 12;
+pub const PASSWORD_MIN_SCALARS: usize = 12;
 /// A password is at most 1024 UTF-8 bytes as received.
-pub(crate) const PASSWORD_MAX_BYTES: usize = 1024;
+pub const PASSWORD_MAX_BYTES: usize = 1024;
 
 /// Which username rule failed; the reply names it as `{field, rule}`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum UsernameRule {
+pub enum UsernameRule {
     Length,
     EdgeWhitespace,
     Control,
@@ -22,12 +22,12 @@ pub(crate) enum UsernameRule {
 
 /// A checked username: its NFC display form and its lookup key.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Username {
+pub struct Username {
     display: String,
     key: LoginKey,
 }
 impl Username {
-    pub(crate) fn new(input: &str) -> Result<Self, UsernameRule> {
+    pub fn new(input: &str) -> Result<Self, UsernameRule> {
         let display: String = input.nfc().collect();
         let scalars = display.chars().count();
         if scalars == 0 || scalars > USERNAME_MAX_SCALARS {
@@ -44,10 +44,10 @@ impl Username {
         let key = LoginKey::new(&display).map_err(|_| UsernameRule::Length)?;
         Ok(Self { display, key })
     }
-    pub(crate) fn display(&self) -> &str {
+    pub fn display(&self) -> &str {
         &self.display
     }
-    pub(crate) fn key(&self) -> &LoginKey {
+    pub fn key(&self) -> &LoginKey {
         &self.key
     }
 }
@@ -92,14 +92,14 @@ fn is_invisible_or_control(c: char) -> bool {
 
 /// Which password rule failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PasswordRule {
+pub enum PasswordRule {
     TooShort,
     TooLong,
 }
 
 /// Checks a new password before it is hashed. The byte bound is checked first,
 /// so an oversized input is never normalized.
-pub(crate) fn check_new_password(password: &str) -> Result<(), PasswordRule> {
+pub fn check_new_password(password: &str) -> Result<(), PasswordRule> {
     if password.len() > PASSWORD_MAX_BYTES {
         return Err(PasswordRule::TooLong);
     }

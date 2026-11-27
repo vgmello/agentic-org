@@ -11,7 +11,7 @@
 
 use org_proto::web::{Feed, ResyncReason};
 use serde_json::Value;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 /// Bounded broadcast capacity shared by all active SSE listeners.
 const HUB_CAPACITY: usize = 256;
@@ -63,14 +63,66 @@ pub enum HubEvent {
     },
 }
 
-/// Publishes live events and subscribes streams to them (`doc-104` P0). Delivery is a bounded
-/// broadcast: a subscriber that falls behind is told it lagged
-/// ([`broadcast::error::RecvError::Lagged`]) and resyncs; nothing is replayed.
+/// Error returned when receiving from an [`EventSubscription`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventRecvError {
+    /// The subscriber fell behind by `skipped` events and must resync.
+    Lagged(u64),
+    /// The event bus closed; no further events will arrive.
+    Closed,
+}
+
+enum SubscriptionKind {
+    Broadcast(broadcast::Receiver<HubEvent>),
+    Channel(mpsc::Receiver<Result<HubEvent, EventRecvError>>),
+}
+
+/// One subscriber's live event stream returned by [`EventBus::subscribe`].
+///
+/// Wraps the in-process broadcast receiver (or a custom channel receiver) so SSE
+/// handlers depend only on [`EventBus`] and never on `tokio::sync::broadcast` internals.
+pub struct EventSubscription {
+    inner: SubscriptionKind,
+}
+
+impl EventSubscription {
+    /// Wraps a bounded Tokio broadcast receiver with zero extra allocation or tasks.
+    pub fn from_broadcast(receiver: broadcast::Receiver<HubEvent>) -> Self {
+        Self {
+            inner: SubscriptionKind::Broadcast(receiver),
+        }
+    }
+
+    /// Wraps an explicit `mpsc` receiver (e.g., for custom in-memory or bridged buses).
+    pub fn from_channel(receiver: mpsc::Receiver<Result<HubEvent, EventRecvError>>) -> Self {
+        Self {
+            inner: SubscriptionKind::Channel(receiver),
+        }
+    }
+
+    /// Receives the next live event, lag signal, or bus close.
+    pub async fn recv(&mut self) -> Result<HubEvent, EventRecvError> {
+        match &mut self.inner {
+            SubscriptionKind::Broadcast(rx) => match rx.recv().await {
+                Ok(event) => Ok(event),
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    Err(EventRecvError::Lagged(skipped))
+                }
+                Err(broadcast::error::RecvError::Closed) => Err(EventRecvError::Closed),
+            },
+            SubscriptionKind::Channel(rx) => rx.recv().await.unwrap_or(Err(EventRecvError::Closed)),
+        }
+    }
+}
+
+/// Publishes live events and subscribes streams to them (`doc-104` P0, `TASK-232`). Delivery is a
+/// bounded fan-out: a subscriber that falls behind is told it lagged ([`EventRecvError::Lagged`])
+/// and resyncs; nothing is replayed.
 pub trait EventBus: Send + Sync {
     /// Hands `event` to every current subscriber; never blocks.
     fn publish(&self, event: HubEvent);
     /// Every event published from now on.
-    fn subscribe(&self) -> broadcast::Receiver<HubEvent>;
+    fn subscribe(&self) -> EventSubscription;
 }
 
 /// The in-process [`EventBus`]: this web process's [`EventHub`].
@@ -90,8 +142,8 @@ impl EventBus for InMemoryEventBus {
         self.hub.publish(event);
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<HubEvent> {
-        self.hub.subscribe()
+    fn subscribe(&self) -> EventSubscription {
+        EventSubscription::from_broadcast(self.hub.subscribe())
     }
 }
 
@@ -120,26 +172,40 @@ impl EventHub {
     /// Translates a host-control event pushed on the admitted web connection into a
     /// hub broadcast when relevant to live SSE subscribers.
     pub fn observe_host_event(&self, name: &str, data: &Value) {
-        use org_host_control::{
-            browser::{SessionEnded, SESSION_ENDED},
-            event,
-        };
-        if name == SESSION_ENDED {
-            if let Ok(ended) = serde_json::from_value::<SessionEnded>(data.clone()) {
-                self.publish(HubEvent::SessionEnded {
-                    session_id: ended.session_id,
-                });
-            }
-        } else if matches!(
-            name,
-            event::ORGANIZATION_CREATED
-                | event::ORGANIZATION_CHANGED
-                | event::OFFICE_STATUS_CHANGED
-        ) {
-            self.publish(HubEvent::InstanceStatus {
-                event: name.to_owned(),
-                data: data.clone(),
-            });
+        if let Some(event) = translate_host_event(name, data) {
+            self.publish(event);
         }
+    }
+}
+
+/// Translates a host-control event pushed on the admitted web connection and publishes it
+/// through any [`EventBus`] when relevant to live SSE subscribers.
+pub fn observe_host_event_on_bus(bus: &dyn EventBus, name: &str, data: &Value) {
+    if let Some(event) = translate_host_event(name, data) {
+        bus.publish(event);
+    }
+}
+
+fn translate_host_event(name: &str, data: &Value) -> Option<HubEvent> {
+    use org_host_control::{
+        browser::{SessionEnded, SESSION_ENDED},
+        event,
+    };
+    if name == SESSION_ENDED {
+        serde_json::from_value::<SessionEnded>(data.clone())
+            .ok()
+            .map(|ended| HubEvent::SessionEnded {
+                session_id: ended.session_id,
+            })
+    } else if matches!(
+        name,
+        event::ORGANIZATION_CREATED | event::ORGANIZATION_CHANGED | event::OFFICE_STATUS_CHANGED
+    ) {
+        Some(HubEvent::InstanceStatus {
+            event: name.to_owned(),
+            data: data.clone(),
+        })
+    } else {
+        None
     }
 }

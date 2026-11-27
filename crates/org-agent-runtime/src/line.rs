@@ -10,6 +10,11 @@ use serde::Serialize;
 /// reported as [`Frame::Truncated`].
 pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 
+/// The longest outgoing JSON line, including its trailing `\n`, that [`encode_line`] will produce
+/// (8 MiB, sized so up to 4 × 1 MiB base64 image derivatives plus text framing serialize cleanly
+/// while keeping stdin writes bounded).
+pub const MAX_OUTGOING_LINE_BYTES: usize = 8 * 1024 * 1024;
+
 /// One frame out of [`LineFramer`].
 ///
 /// **Exhaustive on purpose**, like [`crate::Output`]: the pump must handle every frame, so a
@@ -159,6 +164,11 @@ impl Line {
 /// (only a pre-formatted `serde_json::value::RawValue` can).
 pub fn encode_line<T: Serialize + ?Sized>(value: &T) -> Result<Line, serde_json::Error> {
     let json = serde_json::to_vec(value)?;
+    if json.len() + 1 > MAX_OUTGOING_LINE_BYTES {
+        return Err(serde_json::Error::custom(
+            "encoded JSON line exceeds MAX_OUTGOING_LINE_BYTES",
+        ));
+    }
     let mut line = Vec::with_capacity(json.len() + 1);
     let mut i = 0;
     while i < json.len() {
@@ -182,6 +192,11 @@ pub fn encode_line<T: Serialize + ?Sized>(value: &T) -> Result<Line, serde_json:
                 i += 1;
             }
             [] => unreachable!("i < json.len()"),
+        }
+        if line.len() + 1 > MAX_OUTGOING_LINE_BYTES {
+            return Err(serde_json::Error::custom(
+                "encoded JSON line exceeds MAX_OUTGOING_LINE_BYTES",
+            ));
         }
     }
     line.push(b'\n');
@@ -432,5 +447,31 @@ mod tests {
         let mut m = BTreeMap::new();
         m.insert(vec![1u8], 1);
         assert!(encode_line(&m).is_err());
+    }
+
+    #[test]
+    fn encode_line_allows_four_one_mib_base64_images_and_rejects_over_8_mib() {
+        assert_eq!(MAX_OUTGOING_LINE_BYTES, 8 * 1024 * 1024);
+        // 4 × 1 MiB decoded bytes => 4 × 1,398,104 base64 chars (~5.33 MiB), well under 8 MiB.
+        let one_mib_b64 = "A".repeat((1024 * 1024usize).div_ceil(3) * 4);
+        let four_images = json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": one_mib_b64}},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": one_mib_b64}},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": one_mib_b64}},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": one_mib_b64}},
+                    {"type": "text", "text": "Inspect these four screenshots."}
+                ]
+            }
+        });
+        let encoded = encode_line(&four_images).expect("4 x 1 MiB base64 payload encodes");
+        assert!(encoded.as_bytes().len() < MAX_OUTGOING_LINE_BYTES);
+
+        // Over 8 MiB fails cleanly instead of producing an unbounded line.
+        let oversized = json!({ "blob": "A".repeat(MAX_OUTGOING_LINE_BYTES) });
+        assert!(encode_line(&oversized).is_err());
     }
 }

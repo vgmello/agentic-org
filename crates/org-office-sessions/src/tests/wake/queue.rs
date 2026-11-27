@@ -38,6 +38,7 @@ fn c8_busy_agent_coalesces_three_arriving_wakes_into_one_follow_up_turn() {
                 conversation_id: Some("c1".into()),
                 source_id: format!("msg-{i}"),
                 summary: format!("Queued item {i}"),
+                attachment_ids: Vec::new(),
                 enqueued_at_ms: now_ms(),
             },
         );
@@ -75,6 +76,7 @@ fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
         conversation_id: None,
         source_id: id.into(),
         summary: format!("Peer ask {id}"),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
     };
 
@@ -126,6 +128,7 @@ fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
                 conversation_id: Some("c-gen".into()),
                 source_id: "msg-restart".into(),
                 summary: "Survives restart".into(),
+                attachment_ids: Vec::new(),
                 enqueued_at_ms: now_ms(),
             }],
             hold_reason: Some(WakeHoldReason::HourlyLimit),
@@ -186,6 +189,7 @@ fn c8_mutual_suspension_deadlock_breaker_resumes_peer_without_human_intervention
             conversation_id: Some("dm-ob".into()),
             source_id: "msg-ob".into(),
             summary: "Just checking in".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         },
     );
@@ -210,6 +214,7 @@ fn c8_mutual_suspension_deadlock_breaker_resumes_peer_without_human_intervention
             conversation_id: Some("dm-ab".into()),
             source_id: "ask-a-to-b".into(),
             summary: "Which auth header format?".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         },
     );
@@ -265,6 +270,7 @@ fn pass1_idle_live_session_accepts_subsequent_wake_and_person_run_clears_stall_l
             conversation_id: Some("dm-oa".into()),
             source_id: "msg-idle-1".into(),
             summary: "Follow up while live idle".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         },
     );
@@ -293,6 +299,7 @@ fn pass1_idle_live_session_accepts_subsequent_wake_and_person_run_clears_stall_l
             conversation_id: None,
             source_id: "ask-s1".into(),
             summary: "Should stay held".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         },
     );
@@ -365,6 +372,7 @@ fn pass1_concurrent_live8_deadlock_process_due_wakes_and_redaction() {
                 conversation_id: Some("dm-ab".into()),
                 source_id: "ask-a-live8".into(),
                 summary: "Concurrent peer ask".into(),
+                attachment_ids: Vec::new(),
                 enqueued_at_ms: now_ms(),
             }],
             hold_reason: Some(WakeHoldReason::Busy),

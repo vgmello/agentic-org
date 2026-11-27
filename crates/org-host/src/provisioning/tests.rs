@@ -67,7 +67,7 @@ fn creates(controller: &Arc<Provisioning>, actor: &Account, p: &Params) -> bool 
         .unwrap()
         .is_some_and(|r| r.linked)
 }
-fn account(db: &HostDb) -> Account {
+fn account(db: &dyn HostStore) -> Account {
     let c = db
         .account_credentials(&LoginKey::new("Owner").unwrap())
         .unwrap()
@@ -160,7 +160,7 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
     ));
     controller.start(offices.clone());
     let p = params();
-    let actor = account(&db);
+    let actor = account(&*db);
     assert!(!creates(&controller, &actor, &p));
     let fp = fp(&p);
     let wall = std::time::SystemTime::now()
@@ -236,7 +236,7 @@ fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_comple
     let short_path = short.path().canonicalize().unwrap();
     let pid_file = short_path.join("pid");
     let p = params();
-    let actor = account(&db);
+    let actor = account(&*db);
     let fp = fp(&p);
     let wall = org_proto::uuid_v7_time_ms(&p.operation_id).unwrap() as i64;
 
@@ -458,9 +458,10 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
         let db =
             Arc::new(HostDb::create(&root, &*custody, &pending_registry_init(&instance)).unwrap());
         seed_owner(&db);
-        let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+        let store: Arc<dyn HostStore> = db.clone();
+        let writers = Writers::open(custody.clone(), store.clone(), &instance, &root).unwrap();
         let controller = Provisioning::new(
-            db.clone(),
+            store,
             custody.clone(),
             Arc::new(crate::keys::memory::MemoryKeys::default()),
             writers,
@@ -468,7 +469,7 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
             &root,
         );
         let p = params();
-        let actor = account(&db);
+        let actor = account(&*db);
         let handle = Name::parse(&format!("recovery.{}", p.operation_id)).unwrap();
         // Stop at the actual production phase after custody/SQL reservation,
         // before reserve_writer can allocate any writer or device identity.
@@ -577,7 +578,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
         ));
         controller.start(offices.clone());
         let p = params();
-        let actor = account(&db);
+        let actor = account(&*db);
         assert!(!creates(&controller, &actor, &p));
         let fp = fp(&p);
         let wall = org_proto::uuid_v7_time_ms(&p.operation_id).unwrap() as i64;
@@ -649,7 +650,7 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
     let instance = crate::ids::uuid_v7().unwrap();
     let (_root, auth, _) = crate::authentication::tests::fixture_for(&instance);
     let (db, _) = auth.provisioning_storage();
-    let actor = account(&db);
+    let actor = account(&*db);
     let p = params();
     let fp = fp(&p);
     let owner_member = crate::ids::uuid_v7().unwrap();
@@ -712,11 +713,12 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
         .provisioning_offices()
         .unwrap()
         .contains(&r.prepared.office_id));
-    db.change_authority_fixture(
-        &crate::accounts::identity::AccountId::parse(actor.account_id()).unwrap(),
-        true,
-    )
-    .unwrap();
+    auth.sqlite_for_test()
+        .change_authority_fixture(
+            &crate::accounts::identity::AccountId::parse(actor.account_id()).unwrap(),
+            true,
+        )
+        .unwrap();
     assert!(matches!(
         db.reserve_provisioning(&actor, &r),
         Err(crate::hostdb::Error::NotAdministrator)
@@ -765,7 +767,7 @@ fn actual_selected_hq_creation_and_exact_retry() {
         }
     }
     let _cleanup = Cleanup(offices.clone());
-    let actor = account(&db);
+    let actor = account(&*db);
     assert!(actor.links().is_empty());
     let p = params();
     let deadline = Instant::now() + Duration::from_secs(25);
@@ -789,7 +791,7 @@ fn actual_selected_hq_creation_and_exact_retry() {
         .create(&actor, &p.operation_id, &p.plan, fp(&p))
         .unwrap();
     assert!(matches!(replay, HostOpResult::Completed { result: r } if r == result));
-    let linked = account(&db);
+    let linked = account(&*db);
     assert_eq!(linked.links().len(), 1);
     assert_eq!(linked.links()[0].member_id(), result.employee_id);
     // Exact public bytes and identities, no optional owner employee or credentials.

@@ -5,12 +5,12 @@ use argon2::password_hash::PasswordHash;
 
 /// The PHC string is not the pinned Argon2id profile.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct InvalidVerifier;
+pub struct InvalidVerifier;
 
 /// A pinned Argon2id PHC. Deliberately neither Debug nor Clone.
-pub(crate) struct Verifier(String);
+pub struct Verifier(String);
 impl Verifier {
-    pub(crate) fn new(phc: String) -> Result<Self, InvalidVerifier> {
+    pub fn new(phc: String) -> Result<Self, InvalidVerifier> {
         // Own the input before any fallible parsing so rejection also zeroizes it.
         let verifier = Self(phc);
         let hash = PasswordHash::new(verifier.expose()).map_err(|_| InvalidVerifier)?;
@@ -37,7 +37,7 @@ impl Verifier {
         }
         Ok(verifier)
     }
-    pub(crate) fn expose(&self) -> &str {
+    pub fn expose(&self) -> &str {
         &self.0
     }
 }

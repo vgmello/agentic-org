@@ -140,7 +140,7 @@ impl Authentication {
             hash_password(&params.password)?
         };
         let new = NewAccount::new(username, verifier).map_err(store_error)?;
-        if crate::hostdb::sqlite::accounts::multi_person::parse_invite_subject(&subject).is_some() {
+        if crate::hostdb::multi_person::parse_invite_subject(&subject).is_some() {
             return self.complete_invite_registration(&token, &new, params, origin, now_ms, ended);
         }
         self.complete_admin_registration(&token, &new, params, origin, now_ms, ended)
@@ -174,9 +174,7 @@ impl Authentication {
             Some(key) => accounts.credentials(key).map_err(store_error)?,
             None => None,
         }
-        .filter(|c| {
-            c.verifier.expose() != crate::hostdb::sqlite::local_auth::LOCAL_AUTHLESS_VERIFIER
-        });
+        .filter(|c| c.verifier.expose() != crate::hostdb::LOCAL_AUTHLESS_VERIFIER);
         let verifier = credentials.as_ref().map_or(&self.dummy, |c| &c.verifier);
         let parsed = PasswordHash::new(verifier.expose()).map_err(|_| unavailable())?;
         let matches = argon()?
@@ -239,7 +237,7 @@ impl Authentication {
                         .map_err(store_error)?;
                     self.touch_batcher.forget(&[record.id.as_str()]);
                 } else {
-                    self.touch_batcher.record(&self.db, &record.id, now_ms);
+                    self.touch_batcher.record(&*self.db, &record.id, now_ms);
                 }
                 Ok(view)
             }
@@ -551,7 +549,7 @@ impl Authentication {
     ) -> Result<BrowserSession, ApiError> {
         // Flush pending touches before `create` reaps expired sessions so an active session
         // with a buffered touch cannot be reaped on stale `last_activity_ms`.
-        self.touch_batcher.flush(&self.db, now_ms, true);
+        self.touch_batcher.flush(&*self.db, now_ms, true);
         let new = NewSession::new(account.as_str(), cookie, proof, origin).map_err(store_error)?;
         let sessions: &dyn BrowserSessions = &*self.db;
         match sessions.create(&new, now_ms).map_err(store_error)? {

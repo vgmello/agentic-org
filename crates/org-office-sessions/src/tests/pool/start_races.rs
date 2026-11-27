@@ -281,6 +281,7 @@ fn offboard_during_a_failover_relaunch_leaves_no_live_session_and_no_recovery_wa
                     failed_run_id: "run-failed".into(),
                     failed_connection_id: "conn-failed".into(),
                     objective: "keep-this-turn".into(),
+                    attachment_ids: Vec::new(),
                     workspace: None,
                     task_ref: None,
                     tried_connections: vec!["conn-failed".into()],
@@ -384,6 +385,7 @@ fn pause_during_a_warm_wake_send_keeps_the_durable_wakes_and_charges_no_quota() 
                     conversation_id: Some("c-pause".into()),
                     source_id: "msg-pause-1".into(),
                     summary: "Peer handoff during pause".into(),
+                    attachment_ids: Vec::new(),
                     enqueued_at_ms: now_ms(),
                 },
             )
@@ -504,6 +506,7 @@ fn a_drain_during_a_warm_wake_send_sends_no_turn_and_keeps_the_durable_wake() {
                     conversation_id: Some("c-drain".into()),
                     source_id: "msg-drain-1".into(),
                     summary: "Peer handoff during a drain".into(),
+                    attachment_ids: Vec::new(),
                     enqueued_at_ms: now_ms(),
                 },
             )
