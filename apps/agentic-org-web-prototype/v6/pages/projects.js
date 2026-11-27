@@ -57,6 +57,16 @@ function planCrumbs(id, tab, sub) {
   return [[`${base}/${tab}`, label], [null, ref]];
 }
 const inDocs = (t) => t.view === "documents" || t.view === "features";
+/* Work views a process declares (Requests, Bugs, Board) live inside the Work tab */
+const inWork = (t) => t.view === "work";
+/* An old link to a process work view (…/bugs, …/board) opens Work on that view */
+function openWorkView(id, tab) {
+  const t = processTabs(id).find((x) => x.key === tab && inWork(x));
+  if (!t) return;
+  location.replace(`#/projects/${id}/work`);
+  S.scopedWorkView = tab;
+  if (t.layout === "board") S.scopedWorkLayout = "board";
+}
 /* The release strip is for the working tabs; Activity, Releases and everything under Docs leave it out */
 const NO_STRIP = new Set(["activity", "releases", "docs"]);
 const stripShown = (tab, docsKeys) => !NO_STRIP.has(tab) && !docsKeys.includes(tab);
@@ -69,7 +79,7 @@ function pageProject(id, tab, sub) {
     ["activity", "Activity"],
     ["work", "Work", `${ws.filter(OPEN).length} open`],
     /* Between Work and Docs: the tabs the project's development process declares (doc-32 §4) */
-    ...processTabs(id).filter((t) => !inDocs(t)).map((t) => [t.key, t.title, planTabCount(id, t)]),
+    ...processTabs(id).filter((t) => !inDocs(t) && !inWork(t)).map((t) => [t.key, t.title, planTabCount(id, t)]),
     ["docs", "Docs", docsCount(id) || null],
     ["calendar", "Calendar"],
     ["insights", "Insights"],
@@ -78,6 +88,7 @@ function pageProject(id, tab, sub) {
   ];
   /* Product, Technical and Features are sections of Docs, not tabs of their own (owner) */
   const docsKeys = processTabs(id).filter(inDocs).map((t) => t.key);
+  openWorkView(id, tab);
   setDocsExtra(processTabs(id).filter(inDocs).map((t) => `<a class="queue-tab" href="#/projects/${esc(id)}/${esc(t.key)}"${tab === t.key ? ' aria-current="page"' : ""}>${esc(t.title)}<span>${planTabCount(id, t) ?? ""}</span></a>`).join(""));
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit") + `<button role="menuitem" type="button" data-dev-act="choose" data-id="${esc(id)}">${ic("files", "ic20")}Development process…</button>`, "ghost");
   const trail = tab === "docs" ? docCrumbs(id, sub) : planCrumbs(id, tab, sub);

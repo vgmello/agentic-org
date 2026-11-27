@@ -1,4 +1,5 @@
 import { ALL_STATUSES, IN, KIND, M, OPEN, P, STATUSES, TEAMS, W, WORK_DISCUSSIONS, executionHold, needsMe, ownerAsks } from "../data.js";
+import { projectDevProcess } from "../devproc-data.js";
 import { detailCommentDrafts, detailEvent, inboxActivityTime, localDetailRecords, workCommentsHtml } from "./inbox.js";
 import { closeMenus } from "../shell/actions.js";
 import { bindBoardTips } from "./board-tip.js";
@@ -91,10 +92,13 @@ const SCOPED_WORK_GROUPS = {
   team: [["status", "Status"], ["project", "Project"], ["assignee", "Assignee"]],
 };
 
+/* A project's development process can declare work views (Requests, Bugs…); they are Work's own views, not
+   separate project tabs (owner). A board view is Work's List/Board switch, so it adds no view here. */
+const processWorkViews = (type, id) => (type === "project" ? (projectDevProcess(id)?.tabs || []).filter((t) => t.view === "work" && t.layout !== "board") : []);
 function scopedWorkPresets(type, id) {
   if (type === "person" && id === "you") return [["all", "All"], ["needs-me", "Needs you"]];
   const mineLabel = isRequestedMineScope(type, id) ? "Requested by me" : "Mine";
-  return [["all", "All"], ["needs-me", "Needs you"], ["mine", mineLabel]];
+  return [["all", "All"], ["needs-me", "Needs you"], ["mine", mineLabel], ...processWorkViews(type, id).map((t) => [t.key, t.title])];
 }
 
 /* A non-default history is said in the toolbar, with one click back to the default */
@@ -133,6 +137,8 @@ function scopedWorkBaseItems(type, items, query = "", archivedOnly = false) {
 }
 
 function scopedWorkPresetItems(items, view, type, id) {
+  const pv = processWorkViews(type, id).find((t) => t.key === view);
+  if (pv) return items.filter((w) => (pv.types || []).includes(w.kind || "task"));
   if (view === "needs-me") return items.filter(needsMe);
   if (view === "mine") {
     return isRequestedMineScope(type, id)
