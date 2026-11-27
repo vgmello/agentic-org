@@ -320,7 +320,7 @@ for arg in "$@"; do
   if [ "$prev" = "--settings" ]; then settings="$arg"; fi
   prev="$arg"
 done
-cp "$settings" "{cap}"
+cp "$settings" "{cap}.tmp" && mv "{cap}.tmp" "{cap}"
 read init_line
 echo '{{"type":"control_response","response":{{"subtype":"success","request_id":"host-1","response":{{"agents":["self-preprep"],"current_permission_mode":"default","pid":1234,"version":"2.1.311"}}}}}}'
 read user_line
@@ -450,8 +450,8 @@ if [ "$n" -eq 1 ]; then
   echo '{{"type":"result","subtype":"success","is_error":false,"result":"turn1-done"}}'
   while IFS= read -r _extra; do :; done
 else
-  printf '%s\n' "$@" > "{t2a}"
-  cp "$settings" "{t2s}"
+  printf '%s\n' "$@" > "{t2a}.tmp" && mv "{t2a}.tmp" "{t2a}"
+  cp "$settings" "{t2s}.tmp" && mv "{t2s}.tmp" "{t2s}"
   echo '{{"type":"result","subtype":"success","is_error":false,"result":"turn2-resumed"}}'
   touch "{t2d}"
   while IFS= read -r _extra; do :; done
@@ -522,6 +522,8 @@ fi
     let notice = PreparedWorktreeNotice {
         employee_id: &self_emp,
         triggered_by_self: true,
+        recycle_idle_target: true,
+        task_id: "t-160",
         task_key: "T-160",
         repository_id: REPO_1_ID,
         admin_dir_name: "self-admin-160",
@@ -549,6 +551,10 @@ fi
             "launch-time SandboxPlan must remain stale until process recycles"
         );
         let st = handle.state.lock().unwrap();
+        assert!(
+            !st.allow_host_auth,
+            "API-key launch must keep allow_host_auth=false on live state"
+        );
         assert!(
             st.writable_roots
                 .iter()
@@ -690,6 +696,8 @@ fn task160_mid_turn_settings_rewrite_defeats_symlink_escape() {
     let outcome = mgr.on_worktree_prepared(&PreparedWorktreeNotice {
         employee_id: &self_emp,
         triggered_by_self: false,
+        recycle_idle_target: true,
+        task_id: "t-sym",
         task_key: "T-SYM",
         repository_id: REPO_1_ID,
         admin_dir_name: "self-admin-sym",
@@ -821,6 +829,8 @@ fn task160_sandbox_plan_worktree_digest_detects_staleness_on_host_native_and_lin
     let _ = mgr.on_worktree_prepared(&PreparedWorktreeNotice {
         employee_id: &self_emp,
         triggered_by_self: false,
+        recycle_idle_target: true,
+        task_id: "t-self-linux_bwrap",
         task_key: "T-SELF",
         repository_id: REPO_1_ID,
         admin_dir_name: "self-admin-linux_bwrap",
@@ -833,5 +843,392 @@ fn task160_sandbox_plan_worktree_digest_detects_staleness_on_host_native_and_lin
                 && !mgr.registry.lock().unwrap().live.contains_key(&peer_emp)
         }),
         "idle stale sibling handle must be recycled when another agent prepares a worktree"
+    );
+}
+
+#[test]
+fn task160_corrupt_git_state_fails_closed_for_worktree_digest() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let (self_emp, _) =
+        hire_sandboxed_claude_agent(&office, &owner_id, &root_team_id, "self-corrupt");
+    let sock_dir = tempfile::tempdir().unwrap();
+    let sock = sock_dir.path().join("office.sock");
+    let runner = LocalOsSandbox;
+    let claude = org_agent_runtime_claude::ClaudeRuntime::new();
+    let codex = org_agent_runtime_codex::CodexRuntime::new();
+
+    let mut plans = Vec::new();
+    for profile in [codex.host_profile(), claude.host_profile()] {
+        let plan = runner
+            .prepare_launch(&SandboxPrepareContext {
+                office: &office,
+                office_socket: &sock,
+                agent_os_state_roots: &[],
+                employee_id: &self_emp,
+                sandbox_enabled: true,
+                host_profile: profile,
+            })
+            .expect("healthy git state prepares cleanly");
+        plans.push((profile, plan));
+    }
+
+    // Corrupt `git-state.json` on disk -> BOTH `prepare_launch` and `is_plan_stale` MUST fail closed.
+    let state_path = office
+        .runtime_root()
+        .join(&office.info().office_id)
+        .join("git-state.json");
+    fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+    fs::write(&state_path, b"{not-valid-json").unwrap();
+
+    for (profile, plan) in plans {
+        let err = runner
+            .prepare_launch(&SandboxPrepareContext {
+                office: &office,
+                office_socket: &sock,
+                agent_os_state_roots: &[],
+                employee_id: &self_emp,
+                sandbox_enabled: true,
+                host_profile: profile,
+            })
+            .expect_err("corrupt git-state.json must fail closed with StorageError");
+        assert_eq!(err.code, org_proto::ErrorCode::StorageError);
+        assert!(
+            runner.is_plan_stale(&office, &self_emp, &plan),
+            "corrupt git-state.json must mark warm plan stale"
+        );
+    }
+
+    // Even if `git-state.json` is healthy again, a synthetic `"err"` digest plan stays stale.
+    fs::remove_file(&state_path).unwrap();
+    let err_plan = SandboxPlan::host_native().with_worktree_sandbox_digest(Some("err".into()));
+    assert!(runner.is_plan_stale(&office, &self_emp, &err_plan));
+}
+
+#[test]
+fn task160_mid_turn_settings_rewrite_respects_allow_host_auth_false_and_refreshes_busy_sibling() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let (self_emp, _) =
+        hire_sandboxed_claude_agent(&office, &owner_id, &root_team_id, "self-auth-sib");
+    let (peer_emp, _) =
+        hire_sandboxed_claude_agent(&office, &owner_id, &root_team_id, "peer-auth-sib");
+    let sock_dir = tempfile::tempdir().unwrap();
+    let mgr = shared_mgr(
+        Arc::clone(&office),
+        SessionManagerConfig::production(sock_dir.path().join("office.sock")),
+    );
+    let _ = office.ensure_private_home(&self_emp).unwrap();
+    let _ = office.ensure_private_home(&peer_emp).unwrap();
+
+    // Seed `peer_emp` with an existing worktree on `REPO_1_ID`, then install busy handles for both.
+    let _ = seed_worktree_record(
+        &office,
+        &root_team_id,
+        &peer_emp,
+        "t-peer-sib",
+        "T-PSIB",
+        REPO_1_ID,
+        "peer-admin-sib",
+    );
+    let (mut self_handle, _) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        &self_emp,
+        SessionState::Running,
+        BTreeSet::new(),
+    );
+    self_handle.state.lock().unwrap().allow_host_auth = false;
+    self_handle.sandbox_plan =
+        SandboxPlan::host_native().with_worktree_sandbox_digest(Some("old-self".into()));
+    let (mut peer_handle, _) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        &peer_emp,
+        SessionState::Running,
+        BTreeSet::new(),
+    );
+    peer_handle.state.lock().unwrap().allow_host_auth = false;
+    peer_handle.sandbox_plan =
+        SandboxPlan::host_native().with_worktree_sandbox_digest(Some("old-peer".into()));
+    {
+        let mut reg = mgr.registry.lock().unwrap();
+        reg.live.insert(self_emp.clone(), self_handle);
+        reg.live.insert(peer_emp.clone(), peer_handle);
+    }
+
+    // Prepare `self_emp`'s worktree on the same `REPO_1_ID` bare cache.
+    let self_wt = seed_worktree_record(
+        &office,
+        &root_team_id,
+        &self_emp,
+        "t-self-sib",
+        "T-SSIB",
+        REPO_1_ID,
+        "self-admin-sib",
+    );
+    let outcome = mgr.on_worktree_prepared(&PreparedWorktreeNotice {
+        employee_id: &self_emp,
+        triggered_by_self: false,
+        recycle_idle_target: true,
+        task_id: "t-self-sib",
+        task_key: "T-SSIB",
+        repository_id: REPO_1_ID,
+        admin_dir_name: "self-admin-sib",
+        branch: "task/T-SSIB",
+        worktree_path: self_wt.to_str().unwrap(),
+    });
+    assert!(outcome.settings_file_refreshed);
+
+    // 1. With `allow_host_auth = false`, rewritten `claude-settings.json` must NOT allow host `.claude`.
+    let settings_path = office
+        .durable_root()
+        .join("local")
+        .join("offices")
+        .join(&office.info().office_id)
+        .join("agents")
+        .join(&self_emp)
+        .join("runtime")
+        .join("claude-settings.json");
+    let settings_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+    let allow_write = json_str_list(&settings_json, "/sandbox/filesystem/allowWrite");
+    let allow_read = json_str_list(&settings_json, "/sandbox/filesystem/allowRead");
+    assert!(
+        !allow_write
+            .iter()
+            .any(|p| p.contains(".credentials.json") || p.ends_with("/.claude")),
+        "allow_host_auth=false must never allowWrite host Claude credentials: {allow_write:?}"
+    );
+    assert!(
+        !allow_read
+            .iter()
+            .any(|p| p.contains(".credentials.json") || p.ends_with("/.claude")),
+        "allow_host_auth=false must never allowRead host Claude credentials: {allow_read:?}"
+    );
+
+    // 2. Busy sibling `peer_emp`'s live approval `policy.deny` must immediately deny `self-admin-sib`
+    //    while keeping `peer_emp`'s launch-time `sandbox_plan` stale for turn-end recycle.
+    {
+        let reg = mgr.registry.lock().unwrap();
+        let peer = reg.live.get(&peer_emp).expect("busy peer still live");
+        assert!(
+            mgr.sandbox_runner
+                .is_plan_stale(&office, &peer_emp, &peer.sandbox_plan),
+            "busy sibling launch-time SandboxPlan must stay stale until turn end"
+        );
+        let peer_st = peer.state.lock().unwrap();
+        assert!(
+            peer_st
+                .policy
+                .deny
+                .iter()
+                .any(|rule| format!("{rule:?}").contains("self-admin-sib")),
+            "busy sibling live policy.deny must immediately deny newly prepared peer worktree: {:?}",
+            peer_st.policy.deny
+        );
+    }
+    let _ = mgr.stop_session(&self_emp, "done");
+    let _ = mgr.stop_session(&peer_emp, "done");
+}
+
+fn seed_exhausted_task_budget(
+    office: &Office,
+    owner_id: &str,
+    root_team_id: &str,
+    emp_id: &str,
+) -> String {
+    let task_id = new_uuid_v7();
+    office
+        .task_create(
+            owner_id,
+            org_proto::tasks::TasksCreateParams {
+                command_id: new_uuid_v7(),
+                task_id: task_id.clone(),
+                team_id: Some(root_team_id.to_owned()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: Some(emp_id.to_owned()),
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Guarded task".into(),
+                body_markdown: "Guard SandboxRefresh".into(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: Some(1),
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                details: None,
+                dod: None,
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .budget_set(
+            owner_id,
+            org_proto::budgets::BudgetSetParams {
+                operation_id: new_uuid_v7(),
+                scope_kind: org_proto::budgets::BudgetScopeKind::Task,
+                task_id: Some(task_id.clone()),
+                agent_id: None,
+                release_id: None,
+                period_kind: org_proto::budgets::BudgetPeriodKind::Lifetime,
+                unit: org_proto::budgets::BudgetUnit::Tokens,
+                limit_amount: 1_000,
+                time_zone: Some("UTC".into()),
+                time_zone_source: Some(org_proto::budgets::BudgetTimeZoneSource::OwnerPerson),
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let occurred_at =
+        org_office::format_rfc3339_ms(org_office::organization_family::testkit::CREATION_AT.0);
+    office
+        .record_office_usage(org_proto::costs::CostUsageRecordParams {
+            id: None,
+            producer_id: "test-session".into(),
+            source_event_id: "ev-task-budget-hit".into(),
+            run_id: None,
+            actor_kind: org_proto::costs::UsageActorKind::Agent,
+            employee_id: Some(emp_id.to_owned()),
+            runtime: "claude".into(),
+            provider: None,
+            model: None,
+            occurred_at,
+            source_metadata_json: None,
+            input_tokens: Some(600),
+            output_tokens: Some(400),
+            cache_read_tokens: Some(0),
+            cache_write_tokens: Some(0),
+            reasoning_tokens: Some(0),
+            token_issue: None,
+            runtime_cost_micro_usd: None,
+            is_subscription: false,
+            scope_kind: org_proto::costs::UsageScopeKind::Task,
+            task_id: Some(task_id.clone()),
+            project_id: None,
+            team_id: None,
+            feature_id: None,
+            milestone_id: None,
+            release_id: None,
+            task_type_snapshot: None,
+            work_type: None,
+            attribution_basis: org_proto::costs::AttributionBasis::ExplicitContext,
+        })
+        .unwrap()
+        .unwrap();
+    task_id
+}
+
+#[test]
+fn task160_sandbox_refresh_wake_respects_task_budget_hold_pause_offboard_and_shutdown() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let (emp_id, _) =
+        hire_sandboxed_claude_agent(&office, &owner_id, &root_team_id, "self-wake-guards");
+    let task_id = seed_exhausted_task_budget(&office, &owner_id, &root_team_id, &emp_id);
+
+    let sock_dir = tempfile::tempdir().unwrap();
+    let mgr = shared_mgr(
+        Arc::clone(&office),
+        SessionManagerConfig::production(sock_dir.path().join("office.sock")),
+    );
+    let make_refresh_wake = |suffix: &str| crate::wake::PendingWakeItem {
+        item_id: format!("sandbox-refresh:{suffix}"),
+        kind: WakeKind::SandboxRefresh,
+        sender_id: owner_id.clone(),
+        sender_name: "Office Supervisor".into(),
+        sender_handle: None,
+        sender_relation: Some("office_supervisor".into()),
+        sender_is_person: true,
+        conversation_id: None,
+        source_id: task_id.clone(),
+        summary: "Sandbox grants refreshed.".into(),
+        attachment_ids: Vec::new(),
+        enqueued_at_ms: crate::credentials::now_ms(),
+    };
+    // 1. Task-scoped lifetime budget exhaustion holds SandboxRefresh on BudgetHold.
+    assert_eq!(
+        mgr.enqueue_wake(&emp_id, make_refresh_wake("task-budget")),
+        crate::WakeOutcome::Queued {
+            reason: crate::WakeHoldReason::BudgetHold,
+        }
+    );
+
+    // 2. Agent-level pause prevents SandboxRefresh from starting.
+    let v1 = office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .iter()
+        .find(|m| m.id == emp_id)
+        .unwrap()
+        .version;
+    let pause_req = Request::new::<org_proto::hiring::AgentSetStatus>(
+        1,
+        &org_proto::hiring::AgentSetStatusParams {
+            command_id: new_uuid_v7(),
+            member_id: emp_id.clone(),
+            expected_version: v1,
+            paused: true,
+        },
+    )
+    .unwrap();
+    let pause_resp = office
+        .dispatch_hiring_rpc(Some(&owner_id), &pause_req)
+        .unwrap();
+    assert!(
+        matches!(pause_resp.outcome, org_proto::Outcome::Result(_)),
+        "{pause_resp:?}"
+    );
+    assert_ne!(
+        mgr.enqueue_wake(&emp_id, make_refresh_wake("paused")),
+        crate::WakeOutcome::Started
+    );
+    assert!(mgr.registry.lock().unwrap().live.is_empty());
+
+    // 3. Offboarding rejects/ignores SandboxRefresh.
+    let v2 = office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .iter()
+        .find(|m| m.id == emp_id)
+        .unwrap()
+        .version;
+    mgr.on_agent_offboarded(&emp_id);
+    let offboard_req = Request::new::<org_proto::hiring::AgentOffboard>(
+        2,
+        &org_proto::hiring::AgentOffboardParams {
+            command_id: new_uuid_v7(),
+            member_id: emp_id.clone(),
+            expected_version: v2,
+        },
+    )
+    .unwrap();
+    let offboard_resp = office
+        .dispatch_hiring_rpc(Some(&owner_id), &offboard_req)
+        .unwrap();
+    assert!(
+        matches!(offboard_resp.outcome, org_proto::Outcome::Result(_)),
+        "{offboard_resp:?}"
+    );
+    assert_eq!(
+        mgr.enqueue_wake(&emp_id, make_refresh_wake("offboarded")),
+        crate::WakeOutcome::Ignored
+    );
+
+    // 4. Manager shutdown refuses/ignores SandboxRefresh.
+    mgr.stop_all("shutdown");
+    assert_eq!(
+        mgr.enqueue_wake(&emp_id, make_refresh_wake("shutdown")),
+        crate::WakeOutcome::Ignored
     );
 }

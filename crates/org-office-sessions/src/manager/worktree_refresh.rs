@@ -59,6 +59,12 @@ pub struct PreparedWorktreeNotice<'a> {
     pub employee_id: &'a str,
     /// `true` when the workspace owner itself invoked `worktree.prepare` (typically mid-turn).
     pub triggered_by_self: bool,
+    /// `true` when an idle stale target session should be recycled asynchronously (explicit
+    /// `worktree.prepare` RPC). `false` during Turn-1 auto-pre-prepare right before the caller's
+    /// synchronous start/drain path reaps and cold-starts the stale target itself.
+    pub recycle_idle_target: bool,
+    /// Canonical task ID (used for task-scoped budget holds and Turn-2 route/process context).
+    pub task_id: &'a str,
     pub task_key: &'a str,
     pub repository_id: &'a str,
     pub admin_dir_name: &'a str,
@@ -85,6 +91,7 @@ struct LiveRefreshSnapshot {
     workspace: Option<String>,
     preset: PermissionPreset,
     sandbox_enabled: bool,
+    allow_host_auth: bool,
     session_state: SessionState,
     recovery_required: bool,
     permit_free: bool,
@@ -108,6 +115,7 @@ struct SettingsRewriteInput<'a> {
     tmpdir: &'a Path,
     attachments_root: &'a Path,
     session_id: &'a str,
+    allow_host_auth: bool,
     preset_cfg: &'a PresetConfig,
     fresh_plan: &'a SandboxPlan,
 }
@@ -146,13 +154,15 @@ impl SessionManager {
     }
 
     /// Refreshes sandbox state after `worktree.prepare` persists an active worktree (`TASK-160`).
-    /// Recycles stale idle warm handles (siblings + target); for a busy target session, refreshes
-    /// live approval policy + runtime settings atomically and queues deferred `SandboxRefresh`.
+    /// Recycles stale idle siblings, refreshes busy siblings' live approval policies, and handles
+    /// the target session (recycling if idle and requested, or refreshing live policy + settings
+    /// and queueing deferred `SandboxRefresh` if busy).
     pub fn on_worktree_prepared(
         &self,
         notice: &PreparedWorktreeNotice<'_>,
     ) -> WorktreeSandboxRefreshOutcome {
         self.recycle_stale_idle_siblings(notice.employee_id);
+        self.refresh_stale_busy_siblings(notice.employee_id);
         let Some(snap) = self.snapshot_live_for_refresh(notice.employee_id) else {
             return WorktreeSandboxRefreshOutcome::default();
         };
@@ -163,6 +173,9 @@ impl SessionManager {
             self.sandbox_runner
                 .is_plan_stale(&self.office, notice.employee_id, &snap.sandbox_plan);
         if snap.session_state == SessionState::Idle && snap.permit_free {
+            if !notice.recycle_idle_target {
+                return WorktreeSandboxRefreshOutcome::default();
+            }
             return self.handle_idle_worktree_refresh(notice.employee_id, &snap, plan_stale);
         }
         self.handle_busy_worktree_refresh(notice, &snap, plan_stale)
@@ -171,26 +184,44 @@ impl SessionManager {
     fn snapshot_live_for_refresh(&self, employee_id: &str) -> Option<LiveRefreshSnapshot> {
         let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         let handle = reg.live.get(employee_id)?;
-        let permit_free = handle
-            .active_permit
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .is_none();
-        let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-        Some(LiveRefreshSnapshot {
-            state: Arc::clone(&handle.state),
-            run_id: st.run_id.clone().unwrap_or_default(),
-            session_id: st.session_id.clone().unwrap_or_default(),
-            runtime_id: st.runtime_id.clone(),
-            workspace: handle.workspace.clone(),
-            preset: st.preset,
-            sandbox_enabled: st.sandbox_enabled,
-            session_state: st.state,
-            recovery_required: st.recovery_required,
-            permit_free,
-            sandbox_plan: handle.sandbox_plan.clone(),
-            partitioned: handle.partition.is_some(),
-        })
+        Some(snapshot_handle_for_refresh(handle))
+    }
+
+    fn refresh_stale_busy_siblings(&self, exclude_employee_id: &str) {
+        let busy_siblings = self.collect_busy_sibling_snapshots(exclude_employee_id);
+        for (emp_id, snap) in busy_siblings {
+            if self
+                .sandbox_runner
+                .is_plan_stale(&self.office, &emp_id, &snap.sandbox_plan)
+            {
+                let _ = self.refresh_live_grants_and_settings(&emp_id, &snap);
+            }
+        }
+    }
+
+    fn collect_busy_sibling_snapshots(
+        &self,
+        exclude_employee_id: &str,
+    ) -> Vec<(String, LiveRefreshSnapshot)> {
+        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down {
+            return Vec::new();
+        }
+        reg.live
+            .iter()
+            .filter(|(emp_id, _)| emp_id.as_str() != exclude_employee_id)
+            .filter_map(|(emp_id, handle)| {
+                let snap = snapshot_handle_for_refresh(handle);
+                let is_idle_free = snap.session_state == SessionState::Idle && snap.permit_free;
+                if snap.recovery_required
+                    || is_terminal_session_state(snap.session_state)
+                    || is_idle_free
+                {
+                    return None;
+                }
+                Some((emp_id.clone(), snap))
+            })
+            .collect()
     }
 
     fn recycle_stale_idle_siblings(&self, exclude_employee_id: &str) {
@@ -325,6 +356,7 @@ impl SessionManager {
                     tmpdir: &tmpdir,
                     attachments_root: &attachments_root,
                     session_id: &snap.session_id,
+                    allow_host_auth: snap.allow_host_auth,
                     preset_cfg: &preset_cfg,
                     fresh_plan: plan,
                 })
@@ -393,7 +425,7 @@ impl SessionManager {
             input.session_id,
             None,
             host_profile.host_config_subdir,
-            true,
+            input.allow_host_auth,
         ) else {
             return false;
         };
@@ -430,7 +462,7 @@ impl SessionManager {
             sender_relation: Some("office_supervisor".into()),
             sender_is_person: true,
             conversation_id: None,
-            source_id: notice.task_key.to_owned(),
+            source_id: notice.task_id.to_owned(),
             summary: format!(
                 "Sandbox grants refreshed for task {} worktree `{}` (branch `{}`). Continue your work; git status, git diff, and git commit are now permitted.",
                 notice.task_key, notice.worktree_path, notice.branch
@@ -439,6 +471,30 @@ impl SessionManager {
             enqueued_at_ms: now_ms(),
         };
         self.enqueue_wake_durable(notice.employee_id, item).is_ok()
+    }
+}
+
+fn snapshot_handle_for_refresh(handle: &super::LiveSessionHandle) -> LiveRefreshSnapshot {
+    let permit_free = handle
+        .active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_none();
+    let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+    LiveRefreshSnapshot {
+        state: Arc::clone(&handle.state),
+        run_id: st.run_id.clone().unwrap_or_default(),
+        session_id: st.session_id.clone().unwrap_or_default(),
+        runtime_id: st.runtime_id.clone(),
+        workspace: handle.workspace.clone(),
+        preset: st.preset,
+        sandbox_enabled: st.sandbox_enabled,
+        allow_host_auth: st.allow_host_auth,
+        session_state: st.state,
+        recovery_required: st.recovery_required,
+        permit_free,
+        sandbox_plan: handle.sandbox_plan.clone(),
+        partitioned: handle.partition.is_some(),
     }
 }
 

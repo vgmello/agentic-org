@@ -240,6 +240,12 @@ impl SandboxRunner for LocalOsSandbox {
                 )
             })?;
         let wt_digest = crate::router::compute_worktree_sandbox_digest(ctx.office, ctx.employee_id);
+        if wt_digest == "err" {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                "could not compute worktree sandbox topology",
+            ));
+        }
         Ok(plan
             .with_office_masks_digest(Some(digest))
             .with_worktree_sandbox_digest(Some(wt_digest)))
@@ -313,7 +319,11 @@ fn is_worktree_sandbox_digest_stale(
     let Some(expected) = plan.worktree_sandbox_digest() else {
         return false;
     };
-    crate::router::compute_worktree_sandbox_digest(office, employee_id) != expected
+    if expected == "err" {
+        return true;
+    }
+    let current = crate::router::compute_worktree_sandbox_digest(office, employee_id);
+    current == "err" || current != expected
 }
 
 fn is_office_masks_digest_stale(office: &Office, plan: &SandboxPlan) -> bool {

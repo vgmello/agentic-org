@@ -49,7 +49,8 @@ impl GitService {
             Ok(Err(_)) => return report,
             Err(err) => {
                 eprintln!(
-                    "agentic-org-office: worktree pre-prepare context read failed for `{task_ref}`: {}",
+                    "agentic-org-office: worktree pre-prepare context read failed for `{}`: {}",
+                    scrub_git_log_text(task_ref),
                     scrub_git_log_text(&err.to_string())
                 );
                 report.failed += 1;
@@ -130,11 +131,16 @@ impl GitService {
         if emp.kind != EmployeeKind::Agent || emp.status != EmployeeStatus::Active {
             return false;
         }
-        if self.office.is_multi_office().unwrap_or(false)
-            && org_office::resolve_employee_office(&self.office, employee_id)
-                .is_ok_and(|oid| oid != self.office.info().office_id)
-        {
+        let Ok(multi_office) = self.office.is_multi_office() else {
             return false;
+        };
+        if multi_office {
+            let Ok(oid) = org_office::resolve_employee_office(&self.office, employee_id) else {
+                return false;
+            };
+            if oid != self.office.info().office_id {
+                return false;
+            }
         }
         true
     }
@@ -199,6 +205,8 @@ impl GitService {
         let _ = sessions.on_worktree_prepared(&org_office_sessions::PreparedWorktreeNotice {
             employee_id: &wt.employee_id,
             triggered_by_self: false,
+            recycle_idle_target: false,
+            task_id: &wt.task_id,
             task_key: &wt.task_key,
             repository_id: &wt.repository_id,
             admin_dir_name: &outcome.admin_dir_name,

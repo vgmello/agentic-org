@@ -91,6 +91,8 @@ impl GitService {
         let notice = org_office_sessions::PreparedWorktreeNotice {
             employee_id: &wt.employee_id,
             triggered_by_self: member == wt.employee_id,
+            recycle_idle_target: true,
+            task_id: &wt.task_id,
             task_key: &wt.task_key,
             repository_id: &wt.repository_id,
             admin_dir_name: &outcome.admin_dir_name,
