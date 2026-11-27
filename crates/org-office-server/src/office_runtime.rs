@@ -451,8 +451,9 @@ impl org_office_sessions::TurnAttachmentResolver for SatelliteAttachmentResolver
     fn resolve_for_turn(
         &self,
         employee_id: &str,
+        delivery_scope: &org_office::attachments::DeliveryScope,
         attachment_id: &str,
-        remaining_doc_budget: u64,
+        remaining_staging_budget: u64,
     ) -> Result<
         Result<org_office::attachments::DeliveryAttachmentPayload, org_proto::ApiError>,
         org_office::OfficeError,
@@ -465,7 +466,8 @@ impl org_office_sessions::TurnAttachmentResolver for SatelliteAttachmentResolver
         self.office.attachment_read_for_delivery_with(
             employee_id,
             attachment_id,
-            remaining_doc_budget,
+            delivery_scope,
+            remaining_staging_budget,
             Some(pull),
         )
     }

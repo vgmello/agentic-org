@@ -9,15 +9,12 @@ use base64::Engine as _;
 use org_agent_runtime::{ImageInputMode, SpecPath, TurnImage};
 use org_office::attachments::media::ModelDerivative;
 use org_office::attachments::records::AttachmentRecord;
-use org_office::attachments::DeliveryAttachmentPayload;
+use org_office::attachments::{DeliveryAttachmentPayload, DeliveryScope};
 
 use crate::wake::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
-use super::staging::{extension_for_mime, stage_turn_file};
-use super::{
-    TurnAttachmentResolver, MAX_DOC_STAGING_BYTES_PER_TURN, MAX_IMAGE_DERIVATIVE_BYTES,
-    MAX_INLINE_IMAGES_PER_TURN,
-};
+use super::staging::{extension_for_mime, stage_turn_file, tighten_turn_dir};
+use super::{TurnAttachmentResolver, MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN};
 
 /// Opening boundary tag for the untrusted attachments manifest.
 pub const UNTRUSTED_ATTACHMENTS_OPEN: &str = "<<<UNTRUSTED_ATTACHMENTS>>>";
@@ -31,6 +28,7 @@ const MAX_ATTACHMENT_DESCRIPTION_BYTES: usize = 256;
 /// Input parameters for resolving and staging attachments for one turn or mid-turn delivery.
 pub struct PrepareTurnAttachmentsRequest<'a> {
     pub employee_id: &'a str,
+    pub delivery_scope: &'a DeliveryScope,
     pub turn_id: &'a str,
     pub base_text: String,
     pub attachment_ids: &'a [String],
@@ -41,6 +39,11 @@ pub struct PrepareTurnAttachmentsRequest<'a> {
     pub model_supports_vision: bool,
     /// Set to `true` on pre-side-effect provider image-rejection fail-soft retry.
     pub force_text_only: bool,
+    /// Remaining shared per-turn staging byte budget across ALL staged files (documents,
+    /// images, and mid-turn deliveries within the same active turn).
+    pub remaining_staging_budget: u64,
+    /// Remaining resolved-attachment slots for the active turn (`<= MAX_ATTACHMENTS_PER_TURN`).
+    pub remaining_attachment_slots: usize,
     pub attachments_root: &'a Path,
     pub resolver: &'a dyn TurnAttachmentResolver,
 }
@@ -53,10 +56,15 @@ pub struct PreparedTurnInput {
     pub staged_turn_id: Option<String>,
     /// Whether any protocol-level [`TurnImage`] was attached (for pre-side-effect rejection retry).
     pub had_protocol_images: bool,
+    /// Remaining shared per-turn staging budget after staging files for this call.
+    pub remaining_staging_budget: u64,
+    /// Remaining per-turn resolved-attachment slots after this call.
+    pub remaining_attachment_slots: usize,
 }
 
-/// Resolves lightweight `attachment_ids` into turn-scoped `0400` staged files, bounded protocol
-/// [`TurnImage`] items (never persisted to disk), and an untrusted-data framed manifest.
+/// Resolves lightweight `attachment_ids` into turn-scoped `0400` staged files (inside a `0500`
+/// tightened turn directory), bounded protocol [`TurnImage`] items (never persisted to disk),
+/// and an untrusted-data framed manifest.
 pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> PreparedTurnInput {
     if req.attachment_ids.is_empty() {
         return PreparedTurnInput {
@@ -64,13 +72,16 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
             images: Vec::new(),
             staged_turn_id: None,
             had_protocol_images: false,
+            remaining_staging_budget: req.remaining_staging_budget,
+            remaining_attachment_slots: req.remaining_attachment_slots,
         };
     }
 
     let mut seen = HashSet::new();
     let mut protocol_images = Vec::new();
     let mut manifest_lines = Vec::new();
-    let mut remaining_doc_budget = MAX_DOC_STAGING_BYTES_PER_TURN;
+    let mut remaining_staging_budget = req.remaining_staging_budget;
+    let mut remaining_attachment_slots = req.remaining_attachment_slots;
     let mut staged_any = false;
 
     for raw_id in req.attachment_ids {
@@ -78,15 +89,26 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
         if att_id.is_empty() || !seen.insert(att_id.to_owned()) {
             continue;
         }
-        match req
-            .resolver
-            .resolve_for_turn(req.employee_id, att_id, remaining_doc_budget)
-        {
+        if remaining_attachment_slots == 0 {
+            manifest_lines.push(format_unavailable_entry(
+                att_id,
+                "per-turn attachment cap (32) exceeded; fetch on demand",
+            ));
+            continue;
+        }
+        remaining_attachment_slots -= 1;
+        match req.resolver.resolve_for_turn(
+            req.employee_id,
+            req.delivery_scope,
+            att_id,
+            remaining_staging_budget,
+        ) {
             Ok(Ok(DeliveryAttachmentPayload::Image { record, derivative })) => {
                 handle_image_attachment(
                     &req,
                     &record,
                     &derivative,
+                    &mut remaining_staging_budget,
                     &mut protocol_images,
                     &mut manifest_lines,
                     &mut staged_any,
@@ -97,7 +119,7 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
                     &req,
                     &record,
                     bytes.as_deref(),
-                    &mut remaining_doc_budget,
+                    &mut remaining_staging_budget,
                     &mut manifest_lines,
                     &mut staged_any,
                 );
@@ -112,6 +134,10 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
                 ));
             }
         }
+    }
+
+    if staged_any {
+        let _ = tighten_turn_dir(req.attachments_root, req.turn_id);
     }
 
     let text = if manifest_lines.is_empty() {
@@ -130,6 +156,8 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
         images: protocol_images,
         staged_turn_id: staged_any.then(|| req.turn_id.to_owned()),
         had_protocol_images,
+        remaining_staging_budget,
+        remaining_attachment_slots,
     }
 }
 
@@ -137,26 +165,51 @@ fn handle_image_attachment(
     req: &PrepareTurnAttachmentsRequest<'_>,
     record: &AttachmentRecord,
     derivative: &ModelDerivative,
+    remaining_staging_budget: &mut u64,
     protocol_images: &mut Vec<TurnImage>,
     manifest_lines: &mut Vec<String>,
     staged_any: &mut bool,
 ) {
-    let att_id = record.id.as_str();
-    let ext = extension_for_mime(derivative.media.mime());
-    let staged_path = stage_turn_file(
-        req.attachments_root,
-        req.turn_id,
-        att_id,
-        ext,
-        &derivative.bytes,
-    )
-    .ok();
-    if staged_path.is_some() {
-        *staged_any = true;
+    if derivative.bytes.len() > MAX_IMAGE_DERIVATIVE_BYTES {
+        manifest_lines.push(format_image_entry(
+            record,
+            derivative,
+            None,
+            "staged_only",
+            Some("image derivative exceeded 1 MiB limit; fetch on demand with agent-os file fetch"),
+        ));
+        return;
     }
 
-    let (delivery, notice) =
-        resolve_image_delivery(req, derivative, staged_path.as_deref(), protocol_images);
+    let att_id = record.id.as_str();
+    let ext = extension_for_mime(derivative.media.mime());
+    let img_len = derivative.bytes.len() as u64;
+    let (staged_path, budget_exhausted) = if img_len <= *remaining_staging_budget {
+        match stage_turn_file(
+            req.attachments_root,
+            req.turn_id,
+            att_id,
+            ext,
+            &derivative.bytes,
+        ) {
+            Ok(path) => {
+                *staged_any = true;
+                *remaining_staging_budget = remaining_staging_budget.saturating_sub(img_len);
+                (Some(path), false)
+            }
+            Err(_) => (None, false),
+        }
+    } else {
+        (None, true)
+    };
+
+    let (delivery, notice) = resolve_image_delivery(
+        req,
+        derivative,
+        staged_path.as_deref(),
+        budget_exhausted,
+        protocol_images,
+    );
     manifest_lines.push(format_image_entry(
         record,
         derivative,
@@ -170,47 +223,63 @@ fn resolve_image_delivery(
     req: &PrepareTurnAttachmentsRequest<'_>,
     derivative: &ModelDerivative,
     staged_path: Option<&Path>,
+    budget_exhausted: bool,
     protocol_images: &mut Vec<TurnImage>,
 ) -> (&'static str, Option<&'static str>) {
+    const BUDGET_EXCEEDED_NOTE: &str =
+        "per-turn 50 MiB eager staging cap exceeded; fetch on demand with agent-os file fetch";
     if req.force_text_only {
         return (
             "staged_only",
-            Some("text-only fallback after provider image rejection; inspect staged_path or use agent-os file fetch"),
+            Some(if budget_exhausted {
+                BUDGET_EXCEEDED_NOTE
+            } else {
+                "text-only fallback after provider image rejection; inspect staged_path or use agent-os file fetch"
+            }),
         );
     }
     if !req.model_supports_vision {
         return (
             "staged_only",
-            Some("model does not support vision; image staged read-only at staged_path"),
+            Some(if budget_exhausted {
+                BUDGET_EXCEEDED_NOTE
+            } else {
+                "model does not support vision; image staged read-only at staged_path"
+            }),
         );
     }
     if !req.allow_protocol_images {
         return (
             "staged_only",
-            Some("mid-turn text channel; image staged read-only at staged_path"),
+            Some(if budget_exhausted {
+                BUDGET_EXCEEDED_NOTE
+            } else {
+                "mid-turn text channel; image staged read-only at staged_path"
+            }),
         );
     }
     if protocol_images.len() >= MAX_INLINE_IMAGES_PER_TURN {
         return (
             "staged_only",
-            Some("per-turn inline image cap (4) exceeded; inspect staged_path"),
+            Some(if budget_exhausted {
+                BUDGET_EXCEEDED_NOTE
+            } else {
+                "per-turn inline image cap (4) exceeded; inspect staged_path"
+            }),
         );
     }
     match req.image_input_mode {
         ImageInputMode::InlineBase64 => {
-            if derivative.bytes.len() > MAX_IMAGE_DERIVATIVE_BYTES {
-                return (
-                    "staged_only",
-                    Some("image derivative exceeded 1 MiB inline cap; inspect staged_path"),
-                );
-            }
             let b64 = STANDARD.encode(&derivative.bytes);
             protocol_images.push(TurnImage::inline_base64(
                 derivative.media.mime().to_owned(),
                 b64,
                 derivative.bytes.len(),
             ));
-            ("inline_base64", None)
+            (
+                "inline_base64",
+                budget_exhausted.then_some(BUDGET_EXCEEDED_NOTE),
+            )
         }
         ImageInputMode::LocalPath => {
             let spec_path = staged_path
@@ -222,6 +291,8 @@ fn resolve_image_delivery(
                     path,
                 ));
                 ("local_image", None)
+            } else if budget_exhausted {
+                ("staged_only", Some(BUDGET_EXCEEDED_NOTE))
             } else {
                 (
                     "staged_only",
@@ -231,11 +302,19 @@ fn resolve_image_delivery(
         }
         ImageInputMode::StagedFileOnly => (
             "staged_only",
-            Some("runtime uses staged-file delivery; read staged_path directly"),
+            Some(if budget_exhausted {
+                BUDGET_EXCEEDED_NOTE
+            } else {
+                "runtime uses staged-file delivery; read staged_path directly"
+            }),
         ),
         ImageInputMode::None => (
             "staged_only",
-            Some("runtime does not accept image blocks; image staged read-only at staged_path"),
+            Some(if budget_exhausted {
+                BUDGET_EXCEEDED_NOTE
+            } else {
+                "runtime does not accept image blocks; image staged read-only at staged_path"
+            }),
         ),
     }
 }
@@ -244,12 +323,12 @@ fn handle_document_attachment(
     req: &PrepareTurnAttachmentsRequest<'_>,
     record: &AttachmentRecord,
     bytes: Option<&[u8]>,
-    remaining_doc_budget: &mut u64,
+    remaining_staging_budget: &mut u64,
     manifest_lines: &mut Vec<String>,
     staged_any: &mut bool,
 ) {
     let att_id = record.id.as_str();
-    let Some(doc_bytes) = bytes else {
+    let Some(doc_bytes) = bytes.filter(|b| (b.len() as u64) <= *remaining_staging_budget) else {
         manifest_lines.push(format_document_entry(
             record,
             None,
@@ -261,7 +340,8 @@ fn handle_document_attachment(
     match stage_turn_file(req.attachments_root, req.turn_id, att_id, ext, doc_bytes) {
         Ok(staged_path) => {
             *staged_any = true;
-            *remaining_doc_budget = remaining_doc_budget.saturating_sub(doc_bytes.len() as u64);
+            *remaining_staging_budget =
+                remaining_staging_budget.saturating_sub(doc_bytes.len() as u64);
             manifest_lines.push(format_document_entry(record, Some(&staged_path), None));
         }
         Err(_) => {

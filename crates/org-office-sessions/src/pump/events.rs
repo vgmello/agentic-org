@@ -340,6 +340,10 @@ pub(super) fn handle_turn_ended(
         && maybe_retry_image_rejection_text_only(state, loop_state, ctx, outcome, errors);
     loop_state.current_turn_had_protocol_images = false;
     loop_state.current_turn_image_fallback_retried = false;
+    loop_state.current_turn_remaining_staging_budget =
+        crate::turn_attachments::MAX_DOC_STAGING_BYTES_PER_TURN;
+    loop_state.current_turn_remaining_attachment_slots =
+        crate::turn_attachments::MAX_ATTACHMENTS_PER_TURN;
     let failover_blocked_recovery = !interrupted
         && !retried_text_only
         && evaluate_turn_failover(state, loop_state, ctx, outcome, errors);

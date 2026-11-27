@@ -460,4 +460,81 @@ mod owner_only_dir {
             "a real directory is never removed"
         );
     }
+
+    #[test]
+    fn atomic_read_only_file_at_and_read_only_dir_tighten_and_cleanup_temps() {
+        let uid = effective_uid().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let att_root = root.path().join("attachments");
+        super::super::create_owner_only_dir_all(&att_root).unwrap();
+        let root_dir = OwnerOnlyDir::open(&att_root, uid).unwrap();
+        let turn_dir = root_dir
+            .open_or_create_child(OsStr::new("turn-1"), uid)
+            .unwrap();
+
+        super::super::write_owner_read_only_file_at(
+            &turn_dir,
+            OsStr::new("att-1.png"),
+            b"png-bytes",
+        )
+        .unwrap();
+        let staged = att_root.join("turn-1").join("att-1.png");
+        assert_eq!(
+            fs::symlink_metadata(&staged).unwrap().permissions().mode() & 0o7777,
+            0o400
+        );
+        assert_eq!(fs::read(&staged).unwrap(), b"png-bytes");
+
+        // Existing file or symlink is refused without leaking any `.ro-tmp-*` files.
+        assert_eq!(
+            turn_dir
+                .write_read_only_file(OsStr::new("att-1.png"), b"overwrite")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        std::os::unix::fs::symlink(&staged, att_root.join("turn-1").join("sym.png")).unwrap();
+        assert_eq!(
+            turn_dir
+                .write_read_only_file(OsStr::new("sym.png"), b"via-link")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        let leftovers: Vec<String> = fs::read_dir(att_root.join("turn-1"))
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.starts_with(".ro-tmp-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "failed atomic writes must unlink temp files: {leftovers:?}"
+        );
+
+        // Tighten turn dir to `0500`, verify `open_child` sees it and writes are refused,
+        // then restore `0700` via `set_owner_only_dir`.
+        let reopened = root_dir.open_child(OsStr::new("turn-1"), uid).unwrap();
+        reopened.set_read_only().unwrap();
+        assert_eq!(
+            fs::symlink_metadata(att_root.join("turn-1"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o500
+        );
+        assert!(reopened
+            .write_read_only_file(OsStr::new("blocked.txt"), b"x")
+            .is_err());
+        super::super::set_owner_only_dir(&att_root.join("turn-1")).unwrap();
+        assert_eq!(
+            fs::symlink_metadata(att_root.join("turn-1"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o700
+        );
+    }
 }

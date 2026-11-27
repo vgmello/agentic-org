@@ -36,6 +36,25 @@ pub mod user_space;
 use std::fmt;
 use std::sync::Arc;
 
+/// Chief of Staff turn partition scope for [`crate::Office::attachment_read_for_delivery_with`]
+/// (`TASK-80.1`, `TASK-240`, `TASK-98.3`).
+///
+/// Ordinary agents ignore this field (standard `AuthorizationPolicy::can_read` applies). For the
+/// built-in Chief of Staff (fail-closed check):
+/// - [`Self::None`] (`tess:wake`): channels only; refuses any DM/GroupDm message or answer file.
+/// - [`Self::ActingForPerson`] (`tess:ask:<caller_id>`): requires an active `Person`, enforces
+///   `can_read`, and requires actual conversation membership (or channel) for message/answer files
+///   so even the owner never crosses into another member's DM with Tess.
+/// - [`Self::DirectSender`] (`tess:dm:<sender_id>`): requires an active employee who can read the
+///   file and is an actual participant (or channel reader) for message/answer files.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum DeliveryScope {
+    #[default]
+    None,
+    ActingForPerson(String),
+    DirectSender(String),
+}
+
 /// Policy-authorized, hash-verified attachment payload ready for model turn delivery (`TASK-98.3`).
 ///
 /// `Debug` never prints raw image or document bytes.

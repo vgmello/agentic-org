@@ -197,6 +197,13 @@ pub fn set_owner_only_dir(path: &Path) -> io::Result<()> {
     native::set_owner_only_dir(path)
 }
 
+/// Restrict an existing directory at `path` so only its owner can read or traverse it, with no
+/// write permission (mode `0500` on macOS and GNU/Linux), via an `O_DIRECTORY | O_NOFOLLOW`
+/// descriptor owned by the effective user. Every unsupported target fails closed.
+pub fn set_owner_read_only_dir(path: &Path) -> io::Result<()> {
+    native::set_owner_read_only_dir(path)
+}
+
 /// Atomically create a new directory at `path` accessible only to its owner (mode `0700` on
 /// macOS and GNU/Linux, with no `0755` window). Every unsupported target fails closed.
 pub fn create_owner_only_dir(path: &Path) -> io::Result<()> {
@@ -223,6 +230,17 @@ pub fn write_owner_only_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// fails closed.
 pub fn write_owner_read_only_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     native::write_owner_read_only_file(path, bytes)
+}
+
+/// Atomically creates a new `0400` regular file `name` inside the verified [`OwnerOnlyDir`] `dir`
+/// (`O_CREAT | O_EXCL | O_NOFOLLOW` temp file -> `write_all` -> `fchmod(0400)` -> `rename_noreplace_at`,
+/// with automatic temp-file unlink on any error). Every unsupported target fails closed.
+pub fn write_owner_read_only_file_at(
+    dir: &OwnerOnlyDir,
+    name: &std::ffi::OsStr,
+    bytes: &[u8],
+) -> io::Result<()> {
+    dir.write_read_only_file(name, bytes)
 }
 
 /// Open an existing regular file read-only without following symlinks or blocking on FIFOs
@@ -295,6 +313,12 @@ impl OwnerOnlyDir {
         native::open_owner_only_dir(path, expected_uid).map(|dir| Self { dir })
     }
 
+    /// Opens the existing child directory `name` (one plain component) without following a
+    /// symbolic link and verifies it is an owner-only directory owned by `expected_uid`.
+    pub fn open_child(&self, name: &std::ffi::OsStr, expected_uid: u32) -> io::Result<Self> {
+        native::open_owner_only_child(&self.dir, name, expected_uid).map(|dir| Self { dir })
+    }
+
     /// Opens the child directory `name` (one plain component), creating it with mode `0700`
     /// when missing, without following a symbolic link, and verifies it the same way. An
     /// existing child owned by `expected_uid` with a wider mode is tightened to `0700` through
@@ -306,6 +330,20 @@ impl OwnerOnlyDir {
     ) -> io::Result<Self> {
         native::open_or_create_owner_only_child(&self.dir, name, expected_uid)
             .map(|dir| Self { dir })
+    }
+
+    /// Atomically creates a new `0400` regular file `name` inside this directory: writes `bytes`
+    /// to an exclusive `0600` temporary file inside `self`, tightens its inode to `0400` via
+    /// `fchmod`, closes it, and publishes it via `rename_noreplace_at`. Never overwrites an
+    /// existing file or symlink and always unlinks the temporary file on error.
+    pub fn write_read_only_file(&self, name: &std::ffi::OsStr, bytes: &[u8]) -> io::Result<()> {
+        native::write_owner_read_only_file_at(&self.dir, name, bytes)
+    }
+
+    /// Tightens this verified directory's inode to mode `0500` (owner read + search, no write)
+    /// via `fchmod`.
+    pub fn set_read_only(&self) -> io::Result<()> {
+        native::set_owner_read_only_dir_handle(&self.dir)
     }
 
     /// Makes the entry `name` a symbolic link to `target`: a link to exactly `target` is kept, a

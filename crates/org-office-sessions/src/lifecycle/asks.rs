@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use org_office::organization_family::records::{Employee, EmployeeStatus};
+use org_office::organization_family::records::{BuiltinKey, Employee, EmployeeStatus};
+use org_proto::chat::ConversationKind;
 use org_proto::sessions::SessionState;
 
 use crate::binding::RunBindingRegistry;
@@ -358,8 +359,27 @@ impl SessionManager {
             "waited_ms": waited_ms,
             "at": rfc3339_now(),
         });
-        let attachment_ids =
-            crate::wake::collect_answer_attachment_ids(&susp.pending_resume_answers);
+        // Never stage DM/GroupDm (or unknown-conversation) answer attachments into the Chief of
+        // Staff's shared `tess:wake` partition (`TASK-80.1`, `TASK-98.3`): keep only attachments
+        // whose ask belongs to a public channel (fail closed).
+        let eligible_answers: Vec<PendingAskAnswer> =
+            if employee.builtin_key == Some(BuiltinKey::ChiefOfStaff) {
+                susp.pending_resume_answers
+                    .iter()
+                    .filter(|ans| {
+                        self.office
+                            .message_conversation_id(&ans.ask_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|cid| self.office.conversation_kind(&cid).ok().flatten())
+                            == Some(ConversationKind::Channel)
+                    })
+                    .cloned()
+                    .collect()
+            } else {
+                susp.pending_resume_answers.clone()
+            };
+        let attachment_ids = crate::wake::collect_answer_attachment_ids(&eligible_answers);
         match self.spawn_or_send_autonomous_with_attachments(
             employee,
             objective,

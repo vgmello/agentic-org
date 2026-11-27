@@ -379,6 +379,8 @@ struct PumpLoopState {
     current_turn_staged_id: Option<String>,
     current_turn_had_protocol_images: bool,
     current_turn_image_fallback_retried: bool,
+    current_turn_remaining_staging_budget: u64,
+    current_turn_remaining_attachment_slots: usize,
     turn_reply: Option<String>,
     turns_dispatched: u64,
     oauth_refresh_attempted: bool,
@@ -427,6 +429,10 @@ impl PumpLoopState {
             current_turn_staged_id: None,
             current_turn_had_protocol_images: false,
             current_turn_image_fallback_retried: false,
+            current_turn_remaining_staging_budget:
+                crate::turn_attachments::MAX_DOC_STAGING_BYTES_PER_TURN,
+            current_turn_remaining_attachment_slots:
+                crate::turn_attachments::MAX_ATTACHMENTS_PER_TURN,
             turn_reply: None,
             turns_dispatched: 0,
             oauth_refresh_attempted,

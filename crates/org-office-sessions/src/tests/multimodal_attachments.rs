@@ -29,7 +29,7 @@ use org_agent_runtime::{
 };
 use org_office::attachments::media::{MediaType, ModelDerivative};
 use org_office::attachments::records::AttachmentRecord;
-use org_office::attachments::DeliveryAttachmentPayload;
+use org_office::attachments::{DeliveryAttachmentPayload, DeliveryScope};
 use org_office::{Office, OfficeError, TestOffice};
 use org_proto::attachments::{
     AttachmentUploadBeginParams, AttachmentUploadChunkParams, AttachmentUploadRef,
@@ -50,8 +50,11 @@ use crate::credentials::now_ms;
 use crate::manager::{SessionManager, SessionManagerConfig};
 use crate::runtime_registry::RuntimeRegistry;
 use crate::turn_attachments::{
-    attachments_root, prepare_turn_attachments, stage_turn_file, PrepareTurnAttachmentsRequest,
-    TurnAttachmentResolver, UNTRUSTED_ATTACHMENTS_CLOSE, UNTRUSTED_ATTACHMENTS_OPEN,
+    attachments_root, prepare_turn_attachments, purge_all_stale_turn_dirs,
+    purge_office_stale_attachments, purge_turn_dir, stage_turn_file, tighten_turn_dir,
+    PrepareTurnAttachmentsRequest, TurnAttachmentResolver, MAX_ATTACHMENTS_PER_TURN,
+    MAX_DOC_STAGING_BYTES_PER_TURN, MAX_IMAGE_DERIVATIVE_BYTES, UNTRUSTED_ATTACHMENTS_CLOSE,
+    UNTRUSTED_ATTACHMENTS_OPEN,
 };
 use crate::wake::{MidTurnLimits, PendingWakeItem, WakeKind, WakeOutcome};
 
@@ -365,6 +368,31 @@ impl AgentRuntime for MultimodalScriptedRuntime {
             .map(|s| s.as_str().to_owned())
             .unwrap_or_else(next_id);
         let attachments_dir = attachments_root(Path::new(ctx.runtime_dir.as_str()));
+        if self.runtime_name == "agy" {
+            let att_glob = format!(
+                "{}/**",
+                attachments_dir
+                    .canonicalize()
+                    .unwrap_or(attachments_dir.clone())
+                    .display()
+            );
+            assert!(
+                spec.sandbox
+                    .deny_write
+                    .iter()
+                    .any(|p| p.as_str() == att_glob),
+                "Agy sandbox.deny_write must contain <attachments_root>/** (P1-4): {:?}",
+                spec.sandbox.deny_write
+            );
+            assert!(
+                spec.policy.deny.iter().any(|r| {
+                    r.tool.as_str() == "cap:edit"
+                        && matches!(&r.scope, org_agent_runtime::RuleScope::Path(p) if p.as_str() == att_glob)
+                }),
+                "Agy policy.deny must contain cap:edit on <attachments_root>/** (P1-4): {:?}",
+                spec.policy.deny
+            );
+        }
         let plan = LaunchPlan {
             program: ctx.runtime_path.clone(),
             args: Vec::new(),
@@ -1169,13 +1197,14 @@ impl TurnAttachmentResolver for SyntheticDocResolver {
     fn resolve_for_turn(
         &self,
         _employee_id: &str,
+        _delivery_scope: &DeliveryScope,
         attachment_id: &str,
-        remaining_doc_budget: u64,
+        remaining_staging_budget: u64,
     ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
         let Some((rec, size)) = self.docs.get(attachment_id) else {
             return Ok(Err(ApiError::new(ErrorCode::NotFound, "missing")));
         };
-        let bytes = if (*size as u64) <= remaining_doc_budget {
+        let bytes = if (*size as u64) <= remaining_staging_budget {
             Some(vec![b'A'; *size])
         } else {
             None
@@ -1199,7 +1228,7 @@ fn real_bound_record(
     let (_, att_ids) = bind_dm_attachments(office, sender, recipient, "seed", vec![uid]);
     let att_id = att_ids[0].clone();
     match office
-        .attachment_read_for_delivery_with(recipient, &att_id, u64::MAX, None)
+        .attachment_read_for_delivery_with(recipient, &att_id, &DeliveryScope::None, u64::MAX, None)
         .unwrap()
         .unwrap()
     {
@@ -1581,8 +1610,9 @@ impl TurnAttachmentResolver for AdversarialResolver {
     fn resolve_for_turn(
         &self,
         _employee_id: &str,
+        _delivery_scope: &DeliveryScope,
         _attachment_id: &str,
-        _remaining_doc_budget: u64,
+        _remaining_staging_budget: u64,
     ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
         Ok(Ok(DeliveryAttachmentPayload::Image {
             record: self.rec.clone(),
@@ -1620,6 +1650,7 @@ fn untrusted_data_prompt_injection_fencing_neutralizes_adversarial_metadata() {
     let resolver = AdversarialResolver { rec };
     let prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
         employee_id: "emp-1",
+        delivery_scope: &DeliveryScope::None,
         turn_id: "turn-sec-1",
         base_text: "Handle incoming message".into(),
         attachment_ids: std::slice::from_ref(&att_id),
@@ -1627,6 +1658,8 @@ fn untrusted_data_prompt_injection_fencing_neutralizes_adversarial_metadata() {
         allow_protocol_images: true,
         model_supports_vision: true,
         force_text_only: false,
+        remaining_staging_budget: MAX_DOC_STAGING_BYTES_PER_TURN,
+        remaining_attachment_slots: MAX_ATTACHMENTS_PER_TURN,
         attachments_root: tmp.path(),
         resolver: &resolver,
     });
@@ -1658,4 +1691,741 @@ fn untrusted_data_prompt_injection_fencing_neutralizes_adversarial_metadata() {
         !prepared.text.contains('\u{200B}'),
         "invisible chars must be stripped"
     );
+}
+
+#[test]
+fn staging_symlink_traversal_trailing_slash_and_0500_dir_purge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let victim = tmp.path().join("victim");
+    fs::create_dir_all(victim.join("attachments").join("turn-v")).unwrap();
+    let victim_sentinel = victim.join("attachments").join("turn-v").join("keep.txt");
+    fs::write(&victim_sentinel, b"do-not-delete").unwrap();
+
+    // 1. Symlinked `attachments/` (both plain and with trailing `/` / `/.`) refused on stage & purge!
+    let sym_att = tmp.path().join("sym-attachments");
+    std::os::unix::fs::symlink(victim.join("attachments"), &sym_att).unwrap();
+    let sym_att_slash = PathBuf::from(format!("{}/", sym_att.display()));
+    let sym_att_dot = PathBuf::from(format!("{}/.", sym_att.display()));
+    for evasive in [&sym_att, &sym_att_slash, &sym_att_dot] {
+        assert!(
+            stage_turn_file(evasive, "t-evil", "att-1", "png", TINY_PNG).is_err(),
+            "stage_turn_file must refuse symlinked attachments_root: {evasive:?}"
+        );
+        purge_turn_dir(evasive, "turn-v");
+        purge_all_stale_turn_dirs(evasive);
+        assert!(
+            victim_sentinel.exists(),
+            "purge must NEVER traverse symlinked attachments_root: {evasive:?}"
+        );
+    }
+
+    // 2. Symlinked `<agent>/runtime` skipped in `purge_office_stale_attachments`, while real sibling
+    //    agent's `0500` turn dir with `0400` staged file IS purged cleanly!
+    let durable = tmp.path().join("durable");
+    let agents_dir = durable
+        .join("local")
+        .join("offices")
+        .join("off-1")
+        .join("agents");
+    let evil_agent = agents_dir.join("agent-evil");
+    fs::create_dir_all(&evil_agent).unwrap();
+    std::os::unix::fs::symlink(&victim, evil_agent.join("runtime")).unwrap();
+
+    let good_att_root = agents_dir
+        .join("agent-good")
+        .join("runtime")
+        .join("attachments");
+    let staged = stage_turn_file(&good_att_root, "turn-500", "att-ro", "png", TINY_PNG).unwrap();
+    tighten_turn_dir(&good_att_root, "turn-500").unwrap();
+    let turn_dir = good_att_root.join("turn-500");
+    assert_eq!(
+        fs::symlink_metadata(&turn_dir)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o500,
+        "tighten_turn_dir must set mode 0500"
+    );
+    assert_eq!(
+        fs::symlink_metadata(&staged).unwrap().permissions().mode() & 0o7777,
+        0o400,
+        "staged file must be 0400"
+    );
+    assert!(
+        stage_turn_file(&good_att_root, "turn-500", "att-second", "txt", b"no").is_err(),
+        "writing into tightened 0500 turn dir must fail closed"
+    );
+
+    purge_office_stale_attachments(&durable, "off-1");
+    assert!(
+        victim_sentinel.exists(),
+        "purge_office_stale_attachments must NEVER follow symlinked runtime/"
+    );
+    assert!(
+        !staged.exists() && !turn_dir.exists(),
+        "0400 file inside tightened 0500 turn dir must purge cleanly"
+    );
+    assert!(good_att_root.is_dir(), "attachments root must survive");
+
+    // 3. `purge_turn_dir` also restores 0700 on a tightened `0500` attachments_root & turn_dir.
+    let staged2 = stage_turn_file(&good_att_root, "turn-500b", "att-ro2", "txt", b"hi").unwrap();
+    tighten_turn_dir(&good_att_root, "turn-500b").unwrap();
+    org_platform::fs::set_owner_read_only_dir(&good_att_root).unwrap();
+    purge_turn_dir(&good_att_root, "turn-500b");
+    assert!(!staged2.exists() && !good_att_root.join("turn-500b").exists());
+    assert_eq!(
+        fs::symlink_metadata(&good_att_root)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o700
+    );
+}
+
+#[test]
+fn control_send_unsupported_retries_text_only_and_logs_persistent_dispatch_error() {
+    struct UnsupportedImageRuntime {
+        reject_all: bool,
+        recorded: Arc<MultimodalRecorded>,
+    }
+
+    struct UnsupportedImageSession {
+        reject_all: bool,
+        attachments_dir: PathBuf,
+        recorded: Arc<MultimodalRecorded>,
+        rsid: String,
+    }
+
+    impl Session for UnsupportedImageSession {
+        fn start(&mut self, _now: Instant) -> Vec<Output> {
+            Vec::new()
+        }
+        fn on_line(&mut self, line: &[u8], _now: Instant) -> Vec<Output> {
+            let Ok(v) = serde_json::from_slice::<serde_json::Value>(line) else {
+                return Vec::new();
+            };
+            match v.get("kind").and_then(|k| k.as_str()) {
+                Some("ready") => vec![
+                    Output::Event(SessionEvent::SessionStarted {
+                        runtime_session_id: SessionId::try_from(self.rsid.as_str()).unwrap(),
+                    }),
+                    Output::Event(SessionEvent::Ready {
+                        runtime_version: Some("1.0.0".into()),
+                        pid: None,
+                        agents: vec!["ada".into()],
+                        permission_mode: Some("default".into()),
+                    }),
+                ],
+                Some("reply") => vec![
+                    Output::Event(SessionEvent::AssistantText {
+                        message_id: Some("m1".into()),
+                        text: "ok-fallback".into(),
+                    }),
+                    Output::Event(SessionEvent::TurnEnded {
+                        outcome: TurnOutcome::Completed,
+                        errors: Vec::new(),
+                    }),
+                ],
+                _ => Vec::new(),
+            }
+        }
+        fn on_truncated(&mut self, _: usize, _: Instant) -> Vec<Output> {
+            Vec::new()
+        }
+        fn on_stderr_line(&mut self, _: &[u8], _: Instant) -> Vec<Output> {
+            Vec::new()
+        }
+        fn on_stdout_closed(&mut self, _: Instant) -> Vec<Output> {
+            Vec::new()
+        }
+        fn on_exit(&mut self, _: ExitInfo, _: Instant) -> Vec<Output> {
+            Vec::new()
+        }
+        fn on_tick(&mut self, _: Instant) -> Vec<Output> {
+            Vec::new()
+        }
+        fn next_deadline(&self) -> Option<Instant> {
+            None
+        }
+        fn control(&mut self, cmd: Control, _now: Instant) -> Result<Vec<Output>, ControlError> {
+            match cmd {
+                Control::Send { text, images } => {
+                    let staged = collect_staged_files(&self.attachments_dir);
+                    let had_images = !images.is_empty();
+                    self.recorded.calls.lock().unwrap().push(ObservedCall {
+                        runtime: "claude".into(),
+                        kind: "send",
+                        text,
+                        images,
+                        staged_files_during_call: staged,
+                    });
+                    if self.reject_all || had_images {
+                        return Err(ControlError::Unsupported);
+                    }
+                    let line = encode_line(&serde_json::json!({"op": "send"})).unwrap();
+                    Ok(vec![
+                        Output::Event(SessionEvent::TurnStarted {
+                            turn_id: Some("t1".into()),
+                            solicited: true,
+                        }),
+                        Output::Write(line),
+                    ])
+                }
+                Control::Close => Ok(vec![Output::CloseStdin]),
+                _ => Ok(Vec::new()),
+            }
+        }
+    }
+
+    impl AgentRuntime for UnsupportedImageRuntime {
+        fn id(&self) -> RuntimeId {
+            RuntimeId::try_from("claude").unwrap()
+        }
+        fn binary_name(&self) -> &'static str {
+            "claude"
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                mid_turn_delivery: MidTurnDelivery::None,
+                image_input: ImageInputMode::InlineBase64,
+                interrupt_in_band: false,
+                idle_interrupt_ends_turn: false,
+                approval_bridge: false,
+                deny_message_reaches_model: false,
+                runtime_cancels_approvals: false,
+                unsolicited_turns: false,
+                session_id_known_up_front: false,
+                resume_ignores_cwd: false,
+                resume_applies_instructions: false,
+                reads_workspace_instruction_files: false,
+                tools_detach_from_group: false,
+                take_over: false,
+                enforces_writable_roots: false,
+                enforces_deny_write: false,
+                enforces_deny_read: false,
+                enforces_unix_socket_allowlist: false,
+                enforces_tool_allowlist: false,
+                enforces_deny_rules: false,
+                usage_scope: UsageScope::TurnDelta,
+                cost: CostBasis::ListPriceEstimate,
+                tested_versions: VersionRange {
+                    min: "1.0.0".into(),
+                    max: "1.0.0".into(),
+                },
+            }
+        }
+        fn plan_session(
+            &self,
+            spec: &SessionSpec,
+            ctx: &LaunchContext,
+        ) -> Result<(LaunchPlan, Box<dyn Session>), PlanError> {
+            // Also verify defense-in-depth write denies (P1-4) on `<attachments_root>`!
+            // On Linux Claude bwrap, concrete existing `<dir>/**` normalizes to `<dir>`; on macOS
+            // and other runtimes (Agy/Codex), `<dir>/**` stays verbatim.
+            let att_dir = attachments_root(Path::new(ctx.runtime_dir.as_str()));
+            let att_exact = att_dir
+                .canonicalize()
+                .unwrap_or(att_dir.clone())
+                .display()
+                .to_string();
+            let att_glob = format!("{att_exact}/**");
+            assert!(
+                spec.sandbox
+                    .deny_write
+                    .iter()
+                    .any(|p| p.as_str() == att_glob || p.as_str() == att_exact),
+                "sandbox.deny_write must cover <attachments_root>: {:?}",
+                spec.sandbox.deny_write
+            );
+            assert!(
+                spec.policy.deny.iter().any(|r| {
+                    r.tool.as_str() == "cap:edit"
+                        && matches!(
+                            &r.scope,
+                            org_agent_runtime::RuleScope::Path(p)
+                                if p.as_str() == att_glob || p.as_str() == att_exact
+                        )
+                }),
+                "policy.deny must contain cap:edit deny on <attachments_root>: {:?}",
+                spec.policy.deny
+            );
+            let rsid = ctx
+                .new_session_id
+                .as_ref()
+                .map(|s| s.as_str().to_owned())
+                .unwrap_or_else(next_id);
+            let plan = LaunchPlan {
+                program: ctx.runtime_path.clone(),
+                args: Vec::new(),
+                cwd: spec.workspace.clone(),
+                stdio: Stdio::Piped,
+                files: Vec::new(),
+                dirs: Vec::new(),
+                env_add: Vec::new(),
+                auth_env_names: vec![EnvName::try_from("ANTHROPIC_API_KEY").unwrap()],
+                secret_env_names: vec![EnvName::try_from("ANTHROPIC_API_KEY").unwrap()],
+                stop: StopPlan {
+                    steps: vec![StopStep::CloseStdin { grace_ms: 200 }],
+                },
+                cleanup_after_exit: Vec::new(),
+                runtime_session_id: SessionId::try_from(rsid.as_str()).ok(),
+            };
+            Ok((
+                plan,
+                Box::new(UnsupportedImageSession {
+                    reject_all: self.reject_all,
+                    attachments_dir: att_dir,
+                    recorded: Arc::clone(&self.recorded),
+                    rsid,
+                }),
+            ))
+        }
+        fn plan_take_over(
+            &self,
+            _: &SessionSpec,
+            _: &LaunchContext,
+            _: u16,
+            _: u16,
+        ) -> Result<LaunchPlan, PlanError> {
+            Err(PlanError::Unsupported("no takeover"))
+        }
+        fn plan_probe(&self, _: Probe, _: &ProbeContext) -> Option<ProbeRun> {
+            None
+        }
+        fn parse_probe(&self, _: Probe, _: &ProbeOutput) -> ProbeResult {
+            ProbeResult::Unavailable {
+                reason: Unavailable::NotInstalled,
+            }
+        }
+    }
+
+    // Part A: `ControlError::Unsupported` on >8 MiB / image frame retries ONCE as text-only!
+    let tmp = tempfile::tempdir().unwrap();
+    let script = write_script(tmp.path(), "claude-unsup.sh", ECHO_READY_SCRIPT);
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let recorded = Arc::new(MultimodalRecorded::default());
+    let mut runtimes = RuntimeRegistry::production();
+    runtimes.register(
+        Arc::new(UnsupportedImageRuntime {
+            reject_all: false,
+            recorded: Arc::clone(&recorded),
+        }),
+        Some(script.clone()),
+    );
+    let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
+    cfg.runtimes = runtimes;
+    cfg.helper_dir = Some(tmp.path().to_path_buf());
+    let mgr = Arc::new(SessionManager::new(Arc::clone(&office), cfg));
+    SessionManager::attach_self(&mgr);
+
+    let conn = create_driver_connection(
+        &office,
+        &owner,
+        "unsup-conn",
+        "anthropic",
+        "claude",
+        "claude-sonnet-4",
+        "{}",
+    );
+    let prof = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof.clone(),
+                key: "prof-unsup".into(),
+                name: "Unsup".into(),
+                description: "Unsup".into(),
+                connection_ids: vec![conn],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent = hire_agent_on_profile(&office, &owner, "mm-unsup", &prof, "claude-sonnet-4");
+    let u = upload_file(&office, &owner, "big.png", "image/png", TINY_PNG);
+    let (conv, atts) = bind_dm_attachments(&office, &owner, &agent, "Inspect frame", vec![u]);
+    assert_eq!(
+        mgr.enqueue_wake(
+            &agent,
+            make_wake("w-unsup-1", &owner, &conv, "Inspect frame", atts)
+        ),
+        WakeOutcome::Started
+    );
+    assert!(wait_until(Duration::from_secs(5), || {
+        recorded.calls.lock().unwrap().len() == 2
+            && mgr
+                .inspect_session(&owner, Some(&agent))
+                .ok()
+                .is_some_and(|r| r.session.state == SessionState::Idle)
+    }));
+    let calls = recorded.calls.lock().unwrap().clone();
+    assert_eq!(calls[0].images.len(), 1, "first try had protocol image");
+    assert!(calls[1].images.is_empty(), "immediate retry is text-only");
+    assert_eq!(calls[1].staged_files_during_call.len(), 1);
+    assert!(calls[1]
+        .text
+        .contains("text-only fallback after provider image rejection"));
+    let hist = fs::read_to_string(mgr.store().history_path(&agent).unwrap()).unwrap();
+    assert!(hist.contains("\"control_send_unsupported\""), "{hist}");
+    assert!(collect_staged_files(&agent_attachments_dir(&office, &agent)).is_empty());
+    mgr.shutdown("part_a_done");
+
+    // Part B: Persistent `ControlError::Unsupported` records `last_error` + `turn_dispatch_error`.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let script2 = write_script(tmp2.path(), "claude-fail-all.sh", ECHO_READY_SCRIPT);
+    let office2 = Arc::new(Office::for_test(TestOffice::default()));
+    let owner2 = office2.owner_member_id().to_owned();
+    let recorded2 = Arc::new(MultimodalRecorded::default());
+    let mut runtimes2 = RuntimeRegistry::production();
+    runtimes2.register(
+        Arc::new(UnsupportedImageRuntime {
+            reject_all: true,
+            recorded: Arc::clone(&recorded2),
+        }),
+        Some(script2),
+    );
+    let mut cfg2 = SessionManagerConfig::production(tmp2.path().join("office2.sock"));
+    cfg2.runtimes = runtimes2;
+    cfg2.helper_dir = Some(tmp2.path().to_path_buf());
+    let mgr2 = Arc::new(SessionManager::new(Arc::clone(&office2), cfg2));
+    SessionManager::attach_self(&mgr2);
+
+    let conn2 = create_driver_connection(
+        &office2,
+        &owner2,
+        "unsup-conn2",
+        "anthropic",
+        "claude",
+        "claude-sonnet-4",
+        "{}",
+    );
+    let prof2 = next_id();
+    office2
+        .model_profile_create(
+            &owner2,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof2.clone(),
+                key: "prof-unsup2".into(),
+                name: "Unsup2".into(),
+                description: "Unsup2".into(),
+                connection_ids: vec![conn2],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent2 = hire_agent_on_profile(&office2, &owner2, "mm-unsup2", &prof2, "claude-sonnet-4");
+    let u2 = upload_file(&office2, &owner2, "big2.png", "image/png", TINY_PNG);
+    let (conv2, atts2) = bind_dm_attachments(&office2, &owner2, &agent2, "Will fail", vec![u2]);
+    assert_eq!(
+        mgr2.enqueue_wake(
+            &agent2,
+            make_wake("w-unsup-2", &owner2, &conv2, "Will fail", atts2)
+        ),
+        WakeOutcome::Started
+    );
+    assert!(wait_until(Duration::from_secs(5), || {
+        recorded2.calls.lock().unwrap().len() == 2
+            && mgr2
+                .inspect_session(&owner2, Some(&agent2))
+                .ok()
+                .is_some_and(|r| {
+                    r.session.state == SessionState::Idle && r.session.last_error.is_some()
+                })
+    }));
+    let view2 = mgr2.inspect_session(&owner2, Some(&agent2)).unwrap();
+    assert!(
+        view2
+            .session
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("turn dispatch failed")),
+        "expected last_error: {:?}",
+        view2.session.last_error
+    );
+    let hist2 = fs::read_to_string(mgr2.store().history_path(&agent2).unwrap()).unwrap();
+    assert!(hist2.contains("\"turn_dispatch_error\""), "{hist2}");
+    assert!(collect_staged_files(&agent_attachments_dir(&office2, &agent2)).is_empty());
+    mgr2.shutdown("part_b_done");
+}
+
+#[test]
+fn attachment_cap_32_oversized_derivative_and_shared_50_mib_mid_turn_budget() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingOversizeResolver {
+        rec: AttachmentRecord,
+        calls: AtomicUsize,
+        oversize: bool,
+    }
+
+    impl TurnAttachmentResolver for CountingOversizeResolver {
+        fn resolve_for_turn(
+            &self,
+            _employee_id: &str,
+            _delivery_scope: &DeliveryScope,
+            attachment_id: &str,
+            _remaining_staging_budget: u64,
+        ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let mut rec = self.rec.clone();
+            rec.filename = format!("{attachment_id}.png");
+            let bytes = if self.oversize {
+                vec![0u8; MAX_IMAGE_DERIVATIVE_BYTES + 1]
+            } else {
+                TINY_PNG.to_vec()
+            };
+            Ok(Ok(DeliveryAttachmentPayload::Image {
+                record: rec,
+                derivative: ModelDerivative {
+                    media: MediaType::Png,
+                    bytes,
+                    width: 2,
+                    height: 2,
+                },
+            }))
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let office = Office::for_test(TestOffice::default());
+    let owner = office.owner_member_id().to_owned();
+    let hr_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.builtin_key == Some(org_office::organization_family::records::BuiltinKey::Hr))
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    let seed_rec = real_bound_record(&office, &owner, &hr_id, "s.png", "image/png", TINY_PNG);
+
+    // Part A: `MAX_ATTACHMENTS_PER_TURN = 32` hard cap — overflow entries never invoke resolver!
+    let ids: Vec<String> = (0..36).map(|i| format!("att-cap-{i:02}")).collect();
+    let cap_resolver = CountingOversizeResolver {
+        rec: seed_rec.clone(),
+        calls: AtomicUsize::new(0),
+        oversize: false,
+    };
+    let cap_prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
+        employee_id: "emp-cap",
+        delivery_scope: &DeliveryScope::None,
+        turn_id: "turn-cap-32",
+        base_text: "36 attachments".into(),
+        attachment_ids: &ids,
+        image_input_mode: ImageInputMode::StagedFileOnly,
+        allow_protocol_images: true,
+        model_supports_vision: true,
+        force_text_only: false,
+        remaining_staging_budget: MAX_DOC_STAGING_BYTES_PER_TURN,
+        remaining_attachment_slots: MAX_ATTACHMENTS_PER_TURN,
+        attachments_root: tmp.path(),
+        resolver: &cap_resolver,
+    });
+    assert_eq!(
+        cap_resolver.calls.load(Ordering::Relaxed),
+        MAX_ATTACHMENTS_PER_TURN,
+        "resolver MUST NOT be called beyond MAX_ATTACHMENTS_PER_TURN (32)"
+    );
+    assert_eq!(cap_prepared.remaining_attachment_slots, 0);
+    for overflow_id in &ids[32..] {
+        assert!(
+            cap_prepared
+                .text
+                .contains(&format!("agent-os file fetch --id {overflow_id}")),
+            "overflow entry {overflow_id} must emit compact fetch fallback"
+        );
+    }
+
+    // Part B: Derivative > 1 MiB refused BEFORE staging or emitting InlineBase64 OR LocalPath!
+    let ov_resolver = CountingOversizeResolver {
+        rec: seed_rec,
+        calls: AtomicUsize::new(0),
+        oversize: true,
+    };
+    for (mode, tid) in [
+        (ImageInputMode::InlineBase64, "turn-ov-b64"),
+        (ImageInputMode::LocalPath, "turn-ov-path"),
+    ] {
+        let ov = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
+            employee_id: "emp-ov",
+            delivery_scope: &DeliveryScope::None,
+            turn_id: tid,
+            base_text: "oversized".into(),
+            attachment_ids: &["att-ov".into()],
+            image_input_mode: mode,
+            allow_protocol_images: true,
+            model_supports_vision: true,
+            force_text_only: false,
+            remaining_staging_budget: MAX_DOC_STAGING_BYTES_PER_TURN,
+            remaining_attachment_slots: MAX_ATTACHMENTS_PER_TURN,
+            attachments_root: tmp.path(),
+            resolver: &ov_resolver,
+        });
+        assert!(
+            ov.images.is_empty(),
+            "{mode:?} must emit zero protocol images"
+        );
+        assert!(
+            ov.staged_turn_id.is_none(),
+            "{mode:?} must not stage >1 MiB derivative"
+        );
+        assert!(ov.text.contains("exceeded 1 MiB limit"), "{}", ov.text);
+    }
+
+    // Part C: Shared 50 MiB staging budget enforced across initial turn + mid-turn delivery!
+    let tmp_mt = tempfile::tempdir().unwrap();
+    let gate = tmp_mt.path().join("mt-budget-gate");
+    let codex_script = write_script(
+        tmp_mt.path(),
+        "codex-budget.sh",
+        &format!(
+            "#!/bin/sh\necho '{{\"kind\":\"ready\"}}'\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"op\":\"send\"'*)\n      while [ ! -f '{}' ]; do sleep 0.02; done\n      echo '{{\"kind\":\"reply\",\"text\":\"budget-ok\"}}'\n      ;;\n  esac\ndone\n",
+            gate.display()
+        ),
+    );
+    let office_mt = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_mt = office_mt.owner_member_id().to_owned();
+    let recorded_mt = Arc::new(MultimodalRecorded::default());
+    let conn_mt = create_driver_connection(
+        &office_mt,
+        &owner_mt,
+        "mt-budget-conn",
+        "openai",
+        "codex",
+        "gpt-5-codex",
+        "{}",
+    );
+    let prof_mt = next_id();
+    office_mt
+        .model_profile_create(
+            &owner_mt,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof_mt.clone(),
+                key: "prof-mt-budget".into(),
+                name: "MT Budget".into(),
+                description: "MT Budget".into(),
+                connection_ids: vec![conn_mt],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent_mt = hire_agent_on_profile(
+        &office_mt,
+        &owner_mt,
+        "mm-mt-budget",
+        &prof_mt,
+        "gpt-5-codex",
+    );
+
+    let make_sized_doc = |name: &str, bytes: usize| -> (String, AttachmentRecord) {
+        let mut rec = real_bound_record(
+            &office_mt,
+            &owner_mt,
+            &agent_mt,
+            "seed.txt",
+            "text/plain",
+            b"s",
+        );
+        rec.filename = name.into();
+        rec.title = name.into();
+        rec.mime_type = "application/pdf".into();
+        rec.byte_count = bytes as u64;
+        (rec.id.as_str().to_owned(), rec)
+    };
+    let (d1, r1) = make_sized_doc("init-1.pdf", 20 * 1024 * 1024);
+    let (d2, r2) = make_sized_doc("init-2.pdf", 20 * 1024 * 1024);
+    let (d3, r3) = make_sized_doc("mid-too-big.pdf", 15 * 1024 * 1024);
+    let (d4, r4) = make_sized_doc("mid-fits.pdf", 5 * 1024 * 1024);
+    let mut docs = HashMap::new();
+    docs.insert(d1.clone(), (r1, 20 * 1024 * 1024));
+    docs.insert(d2.clone(), (r2, 20 * 1024 * 1024));
+    docs.insert(d3.clone(), (r3, 15 * 1024 * 1024));
+    docs.insert(d4.clone(), (r4, 5 * 1024 * 1024));
+
+    let mut runtimes_mt = RuntimeRegistry::production();
+    runtimes_mt.register(
+        Arc::new(MultimodalScriptedRuntime {
+            runtime_name: "codex",
+            image_input: ImageInputMode::LocalPath,
+            mid_turn_delivery: MidTurnDelivery::NativeSteer,
+            recorded: Arc::clone(&recorded_mt),
+        }),
+        Some(codex_script),
+    );
+    let mut cfg_mt = SessionManagerConfig::production(tmp_mt.path().join("office-mt.sock"));
+    cfg_mt.runtimes = runtimes_mt;
+    cfg_mt.helper_dir = Some(tmp_mt.path().to_path_buf());
+    cfg_mt.attachment_resolver = Some(Arc::new(SyntheticDocResolver { docs }));
+    cfg_mt.mid_turn_limits = MidTurnLimits {
+        coalesce_agent_ms: 15,
+        coalesce_person_ms: 15,
+        ..MidTurnLimits::default()
+    };
+    let mgr_mt = Arc::new(SessionManager::new(Arc::clone(&office_mt), cfg_mt));
+    SessionManager::attach_self(&mgr_mt);
+
+    assert_eq!(
+        mgr_mt.enqueue_wake(
+            &agent_mt,
+            make_wake(
+                "w-mtb-1",
+                &owner_mt,
+                "dm-mtb",
+                "Initial 40 MiB",
+                vec![d1, d2]
+            ),
+        ),
+        WakeOutcome::Started
+    );
+    assert!(wait_until(Duration::from_secs(10), || {
+        recorded_mt.calls.lock().unwrap().len() == 1
+    }));
+    // Enqueue mid-turn with 15 MiB (exceeds remaining 10 MiB!) + 5 MiB (fits in remaining 10 MiB!).
+    let _ = mgr_mt.enqueue_wake(
+        &agent_mt,
+        make_wake(
+            "w-mtb-2",
+            &owner_mt,
+            "dm-mtb",
+            "Mid-turn 15+5 MiB",
+            vec![d3.clone(), d4.clone()],
+        ),
+    );
+    assert!(wait_until(Duration::from_secs(10), || {
+        recorded_mt.calls.lock().unwrap().len() == 2
+    }));
+
+    let mt_calls = recorded_mt.calls.lock().unwrap().clone();
+    assert_eq!(mt_calls[0].staged_files_during_call.len(), 2);
+    // Total staged files during mid-turn call: 2 initial (40 MiB) + 1 mid-turn (5 MiB) = 3!
+    // The 15 MiB mid-turn file MUST NOT be staged because only 10 MiB remained in the 50 MiB turn budget!
+    assert_eq!(
+        mt_calls[1].staged_files_during_call.len(),
+        3,
+        "shared 50 MiB budget across initial + mid-turn must skip 15 MiB doc and stage 5 MiB doc: {:?}",
+        mt_calls[1].staged_files_during_call
+    );
+    assert!(mt_calls[1]
+        .text
+        .contains(&format!("fallback=\"agent-os file fetch --id {d3}\"")));
+    assert!(!mt_calls[1]
+        .text
+        .contains(&format!("fallback=\"agent-os file fetch --id {d4}\"")));
+
+    fs::write(&gate, "done").unwrap();
+    assert!(wait_until(Duration::from_secs(5), || {
+        mgr_mt
+            .inspect_session(&owner_mt, Some(&agent_mt))
+            .ok()
+            .is_some_and(|r| r.session.state == SessionState::Idle)
+    }));
+    assert!(collect_staged_files(&agent_attachments_dir(&office_mt, &agent_mt)).is_empty());
+    mgr_mt.shutdown("mt_budget_done");
 }

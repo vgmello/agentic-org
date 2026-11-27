@@ -23,8 +23,9 @@ impl crate::turn_attachments::TurnAttachmentResolver for NoopAttachmentResolver 
     fn resolve_for_turn(
         &self,
         _employee_id: &str,
+        _delivery_scope: &org_office::attachments::DeliveryScope,
         _attachment_id: &str,
-        _remaining_doc_budget: u64,
+        _remaining_staging_budget: u64,
     ) -> Result<
         Result<org_office::attachments::DeliveryAttachmentPayload, org_proto::ApiError>,
         org_office::OfficeError,

@@ -359,7 +359,7 @@ impl SessionManager {
             None
         };
 
-        let preset_cfg = self.build_employee_preset_cfg(
+        let mut preset_cfg = self.build_employee_preset_cfg(
             &emp_id,
             PermissionPreset::effective_for(employee.builtin_key, admitted.preset),
             admitted.sandbox_enabled,
@@ -367,13 +367,14 @@ impl SessionManager {
             true,
         )?;
         let (runtime_dir, tmpdir) = self.prepare_run_dirs(&emp_id)?;
+        let attachments_root = crate::turn_attachments::attachments_root(&runtime_dir);
+        Self::append_attachments_write_denies(&mut preset_cfg, &attachments_root);
         let subagent_def =
             build_general_subagent_definition(preset_cfg.allowed_tools.as_deref(), None);
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
         let instructions =
             self.build_instructions(employee, &home, &workspace_real, &preset_cfg)?;
-        let attachments_root = crate::turn_attachments::attachments_root(&runtime_dir);
         let mut read_only_dirs = self.collect_session_read_only_dirs(
             admitted.adapter.id(),
             &home,

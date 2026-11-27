@@ -2394,13 +2394,50 @@ fn claude_emits_capped_inline_base64_image_blocks_and_read_only_dir_denies() {
     let deny_list = settings["permissions"]["deny"]
         .as_array()
         .expect("permissions.deny array");
+    let expected_exact_write = format!("Write(/{})", att_dir.as_str());
     assert!(
         deny_list
             .iter()
             .filter_map(|v| v.as_str())
-            .any(|r| r.contains(att_dir.as_str()) && r.starts_with("Write(")),
-        "read_only_dirs must be write-denied in permissions.deny: {deny_list:?}"
+            .any(|r| r == expected_exact_write),
+        "read_only_dirs must include exact Write deny in permissions.deny (`include_exact = true`): {deny_list:?}"
     );
+    let deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
+        .as_array()
+        .expect("sandbox.filesystem.denyWrite array");
+    if org_platform::confinement::unix_socket_path_filter_supported() {
+        assert!(
+            deny_write
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|p| p == att_dir.as_str()),
+            "macOS Seatbelt sandbox.filesystem.denyWrite must contain att_dir: {deny_write:?}"
+        );
+    } else {
+        // Also verify an `att_dir` overlapping `workspace` appears in `sandbox.filesystem.denyWrite`
+        // even under Linux `bwrap` filtering.
+        let mut overlap_spec = sample_spec();
+        let nested_att = SpecPath::try_from("/work/t-1/attachments").unwrap();
+        overlap_spec.read_only_dirs.push(nested_att.clone());
+        let (overlap_plan, _) = runtime.plan_session(&overlap_spec, &sample_ctx()).unwrap();
+        let overlap_settings_file = overlap_plan
+            .files
+            .iter()
+            .find(|f| f.rel_path.as_str().ends_with("settings.json"))
+            .unwrap();
+        let overlap_settings: serde_json::Value =
+            serde_json::from_slice(&overlap_settings_file.contents).unwrap();
+        let overlap_dw = overlap_settings["sandbox"]["filesystem"]["denyWrite"]
+            .as_array()
+            .expect("overlap denyWrite");
+        assert!(
+            overlap_dw
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|p| p == nested_att.as_str()),
+            "overlapping read_only_dirs must appear in sandbox.filesystem.denyWrite: {overlap_dw:?}"
+        );
+    }
 
     let now = Instant::now();
     let _ = session.start(now);

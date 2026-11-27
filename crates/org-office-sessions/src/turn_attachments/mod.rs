@@ -8,7 +8,7 @@ mod staging;
 
 use std::sync::Arc;
 
-use org_office::attachments::DeliveryAttachmentPayload;
+use org_office::attachments::{DeliveryAttachmentPayload, DeliveryScope};
 use org_office::{Office, OfficeError};
 use org_proto::ApiError;
 use serde::{Deserialize, Serialize};
@@ -19,14 +19,17 @@ pub use prepare::{
 };
 pub use staging::{
     attachments_root, ensure_attachments_root, purge_all_stale_turn_dirs,
-    purge_office_stale_attachments, purge_turn_dir, stage_turn_file, ATTACHMENTS_DIR_NAME,
+    purge_office_stale_attachments, purge_turn_dir, stage_turn_file, tighten_turn_dir,
+    ATTACHMENTS_DIR_NAME,
 };
 
 /// Maximum inline/protocol images delivered in one turn (`TASK-98.3` AC #2 & AC #4).
 pub const MAX_INLINE_IMAGES_PER_TURN: usize = 4;
+/// Maximum total attachments resolved/decoded/staged in one turn (`TASK-98.3` DoS guardrail).
+pub const MAX_ATTACHMENTS_PER_TURN: usize = 32;
 /// Maximum byte length of one model image derivative (1 MiB, `TASK-98.3` AC #2).
 pub const MAX_IMAGE_DERIVATIVE_BYTES: usize = 1024 * 1024;
-/// Maximum total eager staging budget for allowlisted documents in one turn (50 MiB, AC #6).
+/// Maximum total eager staging budget across all files in one turn (50 MiB, AC #6).
 pub const MAX_DOC_STAGING_BYTES_PER_TURN: u64 = 50 * 1024 * 1024;
 
 /// Lightweight reference to one bound attachment threaded through wakes, turns, and failovers
@@ -54,8 +57,9 @@ pub trait TurnAttachmentResolver: Send + Sync {
     fn resolve_for_turn(
         &self,
         employee_id: &str,
+        delivery_scope: &DeliveryScope,
         attachment_id: &str,
-        remaining_doc_budget: u64,
+        remaining_staging_budget: u64,
     ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError>;
 }
 
@@ -74,13 +78,15 @@ impl TurnAttachmentResolver for LocalOfficeAttachmentResolver {
     fn resolve_for_turn(
         &self,
         employee_id: &str,
+        delivery_scope: &DeliveryScope,
         attachment_id: &str,
-        remaining_doc_budget: u64,
+        remaining_staging_budget: u64,
     ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
         self.office.attachment_read_for_delivery_with(
             employee_id,
             attachment_id,
-            remaining_doc_budget,
+            delivery_scope,
+            remaining_staging_budget,
             None,
         )
     }

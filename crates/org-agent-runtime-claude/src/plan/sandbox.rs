@@ -388,4 +388,50 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn seatbelts_keep_attachments_dir_in_deny_write_while_linux_bwrap_filters_non_overlapping() {
+        let att_dir = "/office/agents/ada/runtime/attachments";
+        let writable = vec!["/work/t-1".to_owned(), "/tmp/t-1".to_owned()];
+
+        // macOS Seatbelt (`is_linux_bwrap = false`): `denyWrite` retains `att_dir` and `att_dir/**`.
+        let mut mac_read = Vec::new();
+        let mut mac_write = vec![att_dir.to_owned(), format!("{att_dir}/**")];
+        super::apply_linux_bwrap_sandbox_rules(
+            &mut mac_read,
+            &mut mac_write,
+            &writable,
+            false,
+            false,
+        );
+        assert!(
+            mac_write.iter().any(|p| p == att_dir),
+            "macOS Seatbelt denyWrite must contain exact attachments dir: {mac_write:?}"
+        );
+        assert!(
+            mac_write.iter().any(|p| p == &format!("{att_dir}/**")),
+            "macOS Seatbelt denyWrite must contain attachments dir glob: {mac_write:?}"
+        );
+
+        // Linux bwrap (`is_linux_bwrap = true`): non-overlapping `att_dir` is cleanly dropped so
+        // bwrap never creates host 0-byte stubs, while an overlapping path stays normalized.
+        let mut lnx_read = Vec::new();
+        let mut lnx_write = vec![
+            att_dir.to_owned(),
+            format!("{att_dir}/**"),
+            "/work/t-1/attachments/**".to_owned(),
+        ];
+        super::apply_linux_bwrap_sandbox_rules(
+            &mut lnx_read,
+            &mut lnx_write,
+            &writable,
+            true,
+            false,
+        );
+        assert!(
+            !lnx_write.iter().any(|p| p.contains(att_dir)),
+            "Linux bwrap must drop non-overlapping attachments dir from denyWrite: {lnx_write:?}"
+        );
+        assert_eq!(lnx_write, vec!["/work/t-1/attachments"]);
+    }
 }
