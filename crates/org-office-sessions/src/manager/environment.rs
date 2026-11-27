@@ -432,10 +432,57 @@ pub(super) fn office_env_names() -> Vec<EnvName> {
         "RUSTUP_HOME",
         "CARGO_HOME",
         "CARGO_NET_OFFLINE",
+        "CARGO_BUILD_JOBS",
+        "RAYON_NUM_THREADS",
+        "MAKEFLAGS",
+        "NPM_CONFIG_JOBS",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static env name"))
     .collect()
+}
+
+/// Computes the bounded default per-agent build concurrency from host parallelism: `(cpus/2).clamp(1,4)`.
+pub fn default_build_concurrency_jobs() -> u32 {
+    let cpus = std::thread::available_parallelism().map_or(2, |n| n.get() as u32);
+    (cpus / 2).clamp(1, 4)
+}
+
+/// Clamps configured build concurrency jobs into `1..=16`.
+pub fn clamp_build_concurrency_jobs(jobs: u32) -> u32 {
+    jobs.clamp(1, 16)
+}
+
+/// Supervisor-enforced bounded build-concurrency variables injected into child sessions (`TASK-133`).
+pub(crate) fn build_concurrency_env(jobs: u32) -> [(&'static str, String); 4] {
+    let capped = clamp_build_concurrency_jobs(jobs);
+    let n = capped.to_string();
+    [
+        ("CARGO_BUILD_JOBS", n.clone()),
+        ("RAYON_NUM_THREADS", n.clone()),
+        ("MAKEFLAGS", format!("-j{n}")),
+        ("NPM_CONFIG_JOBS", n),
+    ]
+}
+
+/// Injects bounded build-concurrency caps into the supervised launch environment and declares their
+/// names on `plan.auth_env_names` (never `secret_env_names`, never colliding with `plan.env_add`).
+pub(super) fn apply_build_concurrency_env(
+    plan: &mut org_agent_runtime::LaunchPlan,
+    launch_env: &mut Vec<(OsString, OsString)>,
+    jobs: u32,
+) {
+    for (name, value) in build_concurrency_env(jobs) {
+        if plan.env_add.iter().any(|(k, _)| k.as_str() == name) {
+            continue;
+        }
+        launch_env.retain(|(k, _)| k != name);
+        launch_env.push((OsString::from(name), OsString::from(value)));
+        if !plan.auth_env_names.iter().any(|n| n.as_str() == name) {
+            plan.auth_env_names
+                .push(EnvName::try_from(name).expect("static build-cap env name"));
+        }
+    }
 }
 
 /// What the tasks `task_refs` change about `employee_id`'s standing processes, for the turn that

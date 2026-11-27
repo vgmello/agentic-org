@@ -238,6 +238,9 @@ fn send_turn_fenced<'a>(
     }
     if crate::pump::queue_turn_with_attachments(state, tx, turn) {
         slot_guard.release_locked(&mut reg);
+        drop(reg);
+        mgr.hibernation
+            .note_activity(emp_id, std::time::Instant::now());
         return FencedSend::Delivered;
     }
     let old = reg.live.remove(emp_id);

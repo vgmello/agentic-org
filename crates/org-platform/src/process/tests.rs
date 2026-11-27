@@ -87,4 +87,5 @@ fn on_a_refusing_build_every_public_function_refuses_first() {
     )));
     assert!(refusal(super::entropy(&mut [0; 32])));
     assert!(refusal(super::RecoveryScan::new("ORG_SESSION_MARK")));
+    assert_eq!(super::process_tree_rss_bytes(own as u32), None);
 }

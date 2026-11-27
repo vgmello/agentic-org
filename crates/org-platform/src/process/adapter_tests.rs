@@ -623,3 +623,36 @@ fn is_descendant_of_walks_live_parent_chain_and_refuses_unrelated_or_invalid_pid
     );
     assert_eq!(ppid, Some(self_pid));
 }
+
+#[test]
+fn process_tree_rss_bytes_samples_self_and_child_and_rejects_absent_pids() {
+    let self_rss = super::process_tree_rss_bytes(std::process::id())
+        .expect("current process must report non-zero RSS");
+    assert!(self_rss > 0, "expected positive RSS, got {self_rss}");
+    assert_eq!(super::process_tree_rss_bytes(0), None);
+    assert_eq!(super::process_tree_rss_bytes(u32::MAX), None);
+
+    let mut short_lived = std::process::Command::new("/bin/sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("spawn short-lived process");
+    let gone_pid = short_lived.id();
+    let _ = short_lived.wait();
+    assert_eq!(
+        super::process_tree_rss_bytes(gone_pid),
+        None,
+        "reaped PID {gone_pid} must return None"
+    );
+
+    let mut tree = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 5 & wait"])
+        .spawn()
+        .expect("spawn process tree");
+    let tree_rss = super::process_tree_rss_bytes(tree.id());
+    let _ = tree.kill();
+    let _ = tree.wait();
+    assert!(
+        tree_rss.is_some_and(|bytes| bytes > 0),
+        "live child tree must report positive RSS, got {tree_rss:?}"
+    );
+}
