@@ -57,6 +57,9 @@ function planCrumbs(id, tab, sub) {
   return [[`${base}/${tab}`, label], [null, ref]];
 }
 const inDocs = (t) => t.view === "documents" || t.view === "features";
+/* The release strip is for the working tabs; Activity, Releases and everything under Docs leave it out */
+const NO_STRIP = new Set(["activity", "releases", "docs"]);
+const stripShown = (tab, docsKeys) => !NO_STRIP.has(tab) && !docsKeys.includes(tab);
 function pageProject(id, tab, sub) {
   const pr = P[id]; if (!pr) return notFound();
   tab = tab || "overview";
@@ -81,7 +84,7 @@ function pageProject(id, tab, sub) {
   return crumbs([["#/projects", "Projects"], [trail.length ? "#/projects/" + id : null, pr.name], ...trail]) + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", (pr.archived ? "" : favStar(id)) + projPill(id))}
     ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : docsKeys.includes(tab) ? "docs" : tab), more)}
-  </div>` + (tab === "activity" || tab === "releases" || tab === "docs" ? "" : projectReleaseSummary(id)) + projectBody(id, tab, sub);
+  </div>` + (stripShown(tab, docsKeys) ? projectReleaseSummary(id) : "") + projectBody(id, tab, sub);
 }
 function projectBody(id, tab, sub) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
