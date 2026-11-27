@@ -144,7 +144,8 @@
 				{
 					"spec": "dialog-focus-webkit.spec.ts",
 					"match": "pointer-opened dialog restores focus on close in WebKit and ShortcutsDialog",
-					"count": 1
+					"count": 1,
+					"webkit": true
 				},
 				{
 					"spec": "desktop-navigation-focus.spec.ts",

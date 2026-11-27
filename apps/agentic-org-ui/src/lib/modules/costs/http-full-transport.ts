@@ -108,11 +108,14 @@ export function createCostsFullTransport(deps: {
 
 	async function isOwnerOrAdmin(
 		organizationId: string,
-		snapshot: OrgSnapshot | undefined
+		snapshot: OrgSnapshot | undefined,
+		signal?: AbortSignal
 	): Promise<boolean> {
 		if (deps.session()?.accountAdmin) return true;
 		try {
-			const reply = await deps.http.read('/api/v1/organizations');
+			const reply = await (signal
+				? deps.http.read('/api/v1/organizations', signal)
+				: deps.http.read('/api/v1/organizations'));
 			if (reply.status !== 200) return false;
 			const env = readResponse(reply.body, readJsonObject);
 			if ('error' in env) return false;
@@ -123,7 +126,8 @@ export function createCostsFullTransport(deps: {
 				? snapshot?.members.find((m) => m.id === org.employee_id)
 				: undefined;
 			return Boolean(viewer?.owner);
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return false;
 		}
 	}

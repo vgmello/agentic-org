@@ -19,8 +19,8 @@
 	const frame = projectFrame();
 	const shellData = useShellData();
 
-	const activityRead = new Resource(() =>
-		projectsApi.activity(frame.organizationId, frame.projectId)
+	const activityRead = new Resource((signal) =>
+		projectsApi.activity(frame.organizationId, frame.projectId, signal)
 	);
 	const releasesRead = new Resource(() => releasesApi.list(frame.organizationId, frame.projectId));
 

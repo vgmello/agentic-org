@@ -121,18 +121,21 @@ export function createHttpMembersApi({
 		}
 	}
 
-	async function readOfficeNames(organizationId: string): Promise<Map<string, string>> {
+	async function readOfficeNames(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<Map<string, string>> {
 		const map = new Map<string, string>();
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`;
 		try {
-			const reply = await http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`
-			);
+			const reply = await (signal ? http.read(path, signal) : http.read(path));
 			if (reply.status !== 200) return map;
 			const envelope = readResponse(reply.body, readOfficeList);
 			if ('result' in envelope) {
 				for (const o of envelope.result.offices) map.set(o.id, o.name);
 			}
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			// Fall back to org.offices when offices endpoint is unavailable.
 		}
 		return map;
@@ -195,7 +198,7 @@ export function createHttpMembersApi({
 				readAccessMap(organizationId, signal),
 				readOrgView(organizationId, signal),
 				safeWorkRows(organizationId, signal),
-				readOfficeNames(organizationId)
+				readOfficeNames(organizationId, signal)
 			]);
 			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
 			const membersById = new Map(snapshot.members.map((m) => [m.id, m]));

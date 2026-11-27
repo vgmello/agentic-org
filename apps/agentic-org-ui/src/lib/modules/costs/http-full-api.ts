@@ -68,7 +68,7 @@ export function createHttpCostsFullApi(deps: {
 				if (signal?.aborted) throw err;
 				return undefined;
 			}),
-			loadSnapshot(organizationId)
+			loadSnapshot(organizationId, signal)
 		]);
 		if (!reply) {
 			throw {
@@ -83,7 +83,7 @@ export function createHttpCostsFullApi(deps: {
 		const prices = rawPrices
 			.map((p) => decodePriceVersion(p, membersById))
 			.filter((p): p is PriceVersion => p !== undefined);
-		const canManage = await isOwnerOrAdmin(organizationId, snapshot);
+		const canManage = await isOwnerOrAdmin(organizationId, snapshot, signal);
 		return { prices, viewer: { canManage } };
 	}
 
@@ -157,7 +157,7 @@ export function createHttpCostsFullApi(deps: {
 					queryBody(period, { include_records: true, limit: 500 }),
 					signal
 				),
-				loadSnapshot(organizationId)
+				loadSnapshot(organizationId, signal)
 			]);
 			const rawRecords = Array.isArray(result.records) ? result.records : [];
 			const records = rawRecords

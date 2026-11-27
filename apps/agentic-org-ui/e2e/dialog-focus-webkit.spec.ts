@@ -3,8 +3,8 @@ import { enterMockedOrganization } from './mock-organization';
 import { visit } from './ready';
 
 test(
-	'pointer-opened dialog restores focus on close in WebKit and ShortcutsDialog @webkit',
-	{ tag: '@journey' },
+	'pointer-opened dialog restores focus on close in WebKit and ShortcutsDialog',
+	{ tag: ['@journey', '@webkit'] },
 	async ({ page }) => {
 		await enterMockedOrganization(page);
 		await visit(page, '/projects/atlas/work');

@@ -89,18 +89,20 @@ function decodeBudgetPeriod(r: Rec): BudgetPeriodState | undefined {
 
 async function loadMemberLookup(
 	orgApi: Pick<OrgApi, 'view'>,
-	organizationId: string
+	organizationId: string,
+	signal?: AbortSignal
 ): Promise<Map<string, { name: string; former: boolean }>> {
 	const memberLookup = new Map<string, { name: string; former: boolean }>();
 	try {
-		const { snapshot } = await orgApi.view(organizationId);
+		const { snapshot } = await orgApi.view(organizationId, signal);
 		for (const m of snapshot.members) {
 			memberLookup.set(m.id, {
 				name: m.name,
 				former: m.agent?.status === 'offboarded'
 			});
 		}
-	} catch {
+	} catch (err) {
+		if (signal?.aborted) throw err;
 		// Fall back to agent IDs if the org snapshot cannot be resolved alongside budgets.
 	}
 	return memberLookup;
@@ -235,7 +237,7 @@ export function createHttpCostsReadApi({
 				return { zone: { name: null, source: 'hq' }, agents: [] };
 			}
 
-			const memberLookup = await loadMemberLookup(orgApi, organizationId);
+			const memberLookup = await loadMemberLookup(orgApi, organizationId, signal);
 			const first = rawBudgets[0];
 			const zoneName = asStr(first.time_zone) ?? null;
 			const zoneSource = asStr(first.time_zone_source) === 'owner_person' ? 'owner_account' : 'hq';

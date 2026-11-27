@@ -16,8 +16,8 @@
 
 	const team = teamPageContext();
 
-	const conversations = new Resource(() =>
-		teamsApi.conversations(team.organizationId, team.teamId)
+	const conversations = new Resource((signal) =>
+		teamsApi.conversations(team.organizationId, team.teamId, signal)
 	);
 	reloadOnChange(conversations, () => team.loads);
 </script>

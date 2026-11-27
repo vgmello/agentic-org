@@ -34,8 +34,12 @@
 			page.url.pathname === '/approve' ||
 			page.url.pathname === '/cli-approve'
 	);
+	// Key dismissal on the session object reference (a fresh object on every sign-in/boot),
+	// not the 2-value string union `current.reauth`, so a future session expiry reopens the modal.
 	const reauthToken = $derived(
-		!elsewhere && current.kind === 'signed-in' ? current.reauth : undefined
+		!elsewhere && current.kind === 'signed-in' && current.reauth !== undefined
+			? current.session
+			: undefined
 	);
 	const ended = $derived(reauthToken !== undefined);
 	const showConfirm = $derived(

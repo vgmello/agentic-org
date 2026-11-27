@@ -317,7 +317,14 @@ export function createHttpTeamsApi({
 					.filter((m) => isMemberActive(m) && m.home_team_id === teamId)
 					.map((m) => m.id)
 			);
-			return readTeamConversations(http, organizationId, teamId, team?.name ?? '', memberIds);
+			return readTeamConversations(
+				http,
+				organizationId,
+				teamId,
+				team?.name ?? '',
+				memberIds,
+				signal
+			);
 		},
 		archive: unavailableCall,
 

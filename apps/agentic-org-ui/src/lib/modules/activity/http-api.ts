@@ -160,10 +160,13 @@ function decodeMessage(raw: unknown, fallbackConvId: string): WireMessage | unde
 async function readChatFeed(
 	http: GatewayHttpTransport,
 	organizationId: string,
-	viewerId?: string
+	viewerId?: string,
+	signal?: AbortSignal
 ): Promise<{ conversations: WireConversation[]; messages: WireMessage[] }> {
 	const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat`;
-	const convReply: GatewayReply = await http.read(`${base}/conversations`);
+	const convReply: GatewayReply = await (signal
+		? http.read(`${base}/conversations`, signal)
+		: http.read(`${base}/conversations`));
 	const convResult = unwrapGatewayResult(convReply, 'Conversations could not be loaded.');
 	const rawConvs = Array.isArray(convResult.conversations) ? convResult.conversations : [];
 	const conversations = rawConvs
@@ -179,16 +182,17 @@ async function readChatFeed(
 	const lists = await Promise.all(
 		readable.slice(0, 20).map(async (conv) => {
 			try {
-				const reply = await http.submit(`${base}/messages/list`, {
-					conversation: conv.id,
-					limit: 30
-				});
+				const body = { conversation: conv.id, limit: 30 };
+				const reply = await (signal
+					? http.submit(`${base}/messages/list`, body, signal)
+					: http.submit(`${base}/messages/list`, body));
 				const res = unwrapGatewayResult(reply, 'Messages could not be loaded.');
 				const items = Array.isArray(res.messages) ? res.messages : [];
 				return items
 					.map((item) => decodeMessage(item, conv.id))
 					.filter((m): m is WireMessage => m !== undefined);
-			} catch {
+			} catch (err) {
+				if (signal?.aborted) throw err;
 				return [];
 			}
 		})
@@ -317,7 +321,7 @@ export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
 		const [workRes, inboxRes, chatRes] = await Promise.allSettled([
 			deps.workItemsApi.queue(organizationId, { kind: 'organization' }, signal),
 			deps.inboxApi.list(organizationId, signal),
-			readChatFeed(deps.http, organizationId, viewerId)
+			readChatFeed(deps.http, organizationId, viewerId, signal)
 		]);
 
 		const people = actorMap(snapshot);

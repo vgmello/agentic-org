@@ -5,6 +5,7 @@
   asks once, in the same dialog.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
@@ -52,13 +53,16 @@
 	let lastRequest = $state<JoinRequest | undefined>();
 	const shown = $derived(open ? (request ?? lastRequest) : lastRequest);
 
-	function resetOnOpen() {
+	function resetOnOpen(event: Event) {
 		// Only opening resets the dialog: the list reloading behind it (a wrong code) must not clear its stage or what was typed.
 		if (request) lastRequest = request;
 		stage = 'approve';
 		typed = '';
 		hint = false;
 		error = undefined;
+		// Stage may transition from 'decline'/'ended' back to 'approve'; focus the code input after DOM flush.
+		event.preventDefault();
+		void tick().then(() => input?.focus());
 	}
 	const read = $derived(readCheckCode(typed));
 	const name = $derived(shown?.officeName ?? 'this office');

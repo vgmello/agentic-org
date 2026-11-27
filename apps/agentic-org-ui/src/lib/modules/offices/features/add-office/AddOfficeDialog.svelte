@@ -5,7 +5,7 @@
   separately, and may wait for running agents to stop; closing the dialog doesn't cancel it.
 -->
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/proto';
 	import { trimWhiteSpace, validateName } from '$lib/name';
@@ -59,11 +59,16 @@
 	let nameInput = $state<HTMLInputElement | null>(null);
 	let timer: ReturnType<typeof setInterval> | undefined;
 	let ended = false;
-	onDestroy(() => clearInterval(timer));
-
-	function resetOnOpen() {
-		// Only opening resets the form: a list that reloads behind the dialog must not clear what was typed.
+	function stopWatching() {
+		ended = true;
 		clearInterval(timer);
+		timer = undefined;
+	}
+	onDestroy(stopWatching);
+
+	function resetOnOpen(event: Event) {
+		// Only opening resets the form: a list that reloads behind the dialog must not clear what was typed.
+		stopWatching();
 		error = undefined;
 		note = undefined;
 		nameError = undefined;
@@ -80,6 +85,10 @@
 			stage = 'form';
 			where = canAddOnInstance ? 'instance' : 'machine';
 		}
+		// Stage may transition from a non-form branch (invitation/refused/failed/unchecked) back to the form;
+		// focus the office name input after the DOM flushes so Bits UI does not focus an unmounting node.
+		event.preventDefault();
+		void tick().then(() => nameInput?.focus());
 	}
 
 	const trimmed = $derived(trimWhiteSpace(name));
@@ -100,8 +109,7 @@
 				if (next.phase === 'waiting') stage = 'waiting';
 				else if (next.phase === 'creating' || next.phase === 'synchronizing') stage = 'working';
 				else {
-					ended = true;
-					clearInterval(timer);
+					stopWatching();
 					if (next.phase === 'ready') {
 						open = false;
 						toast.success(`${name} added. It's starting.`);
@@ -115,10 +123,10 @@
 					await onchanged();
 				}
 			} catch (e) {
+				if (ended || operationId !== id) return;
 				// Reading the progress failed, not the add: it may still be running at HQ. Keep the operation and offer
 				// to check it again; never a new add (§6.2: an idempotent retry).
-				ended = true;
-				clearInterval(timer);
+				stopWatching();
 				error = `Can't check how adding ${name} is going: ${toAppError(e).message}`;
 				stage = 'unchecked';
 			}
@@ -166,8 +174,7 @@
 		try {
 			const cancelled = await officesApi.cancelAdd(organizationId, operationId);
 			if (cancelled) {
-				ended = true;
-				clearInterval(timer);
+				stopWatching();
 				note = `${name} wasn't added.`;
 				stage = 'form';
 				await onchanged();
@@ -194,7 +201,15 @@
 	);
 </script>
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
+<Dialog
+	bind:open
+	onOpenChange={(next) => {
+		if (!next) {
+			if (busy) open = true;
+			else stopWatching();
+		}
+	}}
+>
 	<DialogContent
 		onOpenAutoFocus={resetOnOpen}
 		{onCloseAutoFocus}
@@ -363,7 +378,10 @@
 							type="button"
 							variant="outline"
 							class={mobileButton}
-							onclick={() => (open = false)}>Close</Button
+							onclick={() => {
+								stopWatching();
+								open = false;
+							}}>Close</Button
 						>
 						<Button
 							type="button"
