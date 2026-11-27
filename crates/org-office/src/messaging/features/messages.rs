@@ -17,7 +17,8 @@ use crate::messaging::{
 };
 
 use super::catchup::{delta_bounds, is_top_level, sent_by, snippet, ThreadStats};
-use super::conversations::{all_conversations_including_auto, find_channel, may_read};
+use super::conversations::{all_conversations_including_auto, find_channel};
+use crate::messaging::access::may_read;
 
 /// Resolves a conversation UUIDv7, `#channel` or channel name the caller may read.
 pub(super) fn resolve_conversation_ref(
