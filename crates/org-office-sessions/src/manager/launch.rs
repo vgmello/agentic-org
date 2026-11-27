@@ -26,7 +26,7 @@ use super::registry_guards::{
 };
 use super::spec::{
     build_launch_context, build_session_spec_for_launch, canonical_or_spec,
-    compute_launch_spec_hash, is_linux_claude_bwrap, ModelChoice,
+    compute_launch_spec_hash, is_linux_bwrap_sandbox, ModelChoice,
 };
 use super::warm::{
     dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, StartReservation,
@@ -325,7 +325,7 @@ impl SessionManager {
             .ensure_private_home(&emp_id)
             .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not prepare agent home"))?;
         let workspace_real = resolve_workspace(&home, params.workspace.as_deref())?;
-        ensure_operator_home(employee, &home, &workspace_real)?;
+        ensure_operator_home(employee, &home, &workspace_real, &self.config.runtimes)?;
         let workspace_spec = canonical_or_spec(&workspace_real)?;
 
         let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
@@ -349,9 +349,9 @@ impl SessionManager {
             .resolve_binary(admitted.adapter.as_ref(), None)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
 
-        let is_linux_claude_bwrap =
-            is_linux_claude_bwrap(admitted.sandbox_enabled, admitted.adapter.id().as_str());
-        let bwrap_masked_siblings = if is_linux_claude_bwrap {
+        let host_profile = admitted.adapter.host_profile();
+        let is_linux_bwrap = is_linux_bwrap_sandbox(admitted.sandbox_enabled, host_profile);
+        let bwrap_masked_siblings = if is_linux_bwrap {
             Some(super::bwrap_isolation::ensure_bwrap_deny_dirs(
                 self, &emp_id,
             )?)
@@ -376,7 +376,7 @@ impl SessionManager {
         let instructions =
             self.build_instructions(employee, &home, &workspace_real, &preset_cfg)?;
         let mut read_only_dirs = self.collect_session_read_only_dirs(
-            admitted.adapter.id(),
+            admitted.adapter.as_ref(),
             &home,
             &workspace_real,
             preset_cfg.sandbox.enabled,
@@ -393,7 +393,7 @@ impl SessionManager {
             read_only_dirs,
             instructions,
             &preset_cfg,
-            is_linux_claude_bwrap,
+            is_linux_bwrap,
         )?;
         let spec_hash = compute_launch_spec_hash(&spec, &admitted.route_digest_suffix);
         let run_id = format!("run-{}", next_entropy_hex(10)?);
@@ -401,15 +401,13 @@ impl SessionManager {
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
         let allow_host_auth =
             crate::host_auth::allows_host_subscription_auth(&admitted.auth_env, admitted.auth_mode);
-        let adapter_id = admitted.adapter.id();
-        let runtime_name = adapter_id.as_str();
         let ctx = build_launch_context(
             binary,
             &runtime_dir,
             &tmpdir,
             &session_id,
             opts.resume_runtime_session_id,
-            runtime_name,
+            host_profile.host_config_subdir,
             allow_host_auth,
         )?;
         let (plan, session) = admitted
@@ -420,7 +418,7 @@ impl SessionManager {
         let (launch_env, oauth_expires_at_ms, oauth_token_fp) = assemble_launch_env(
             admitted.auth_env,
             admitted.endpoint_env,
-            runtime_name,
+            host_profile.uses_host_oauth_token_injection,
             allow_host_auth,
             &ctx.runtime_path,
             &plan,

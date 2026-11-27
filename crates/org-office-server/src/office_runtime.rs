@@ -109,6 +109,7 @@ fn prepare_office_runtime(
     socket: &Path,
     auth: serve::LaunchAuth,
     from_host: Lifetime,
+    runtimes: org_office_sessions::RuntimeRegistry,
 ) -> Option<PreparedOfficeRuntime> {
     let wake = Arc::new(org_feed::FeedWake::new());
     let live_wake = Arc::clone(&wake);
@@ -130,7 +131,7 @@ fn prepare_office_runtime(
             return None;
         }
     };
-    let session_manager = start_session_manager(Arc::clone(office), socket);
+    let session_manager = start_session_manager_with_runtimes(Arc::clone(office), socket, runtimes);
     let channel_watcher = start_channel_watcher(Arc::clone(office), &session_manager);
     let sat_sync_wake = Arc::new(SatSyncWake::default());
     let hq_fed_slot: HqFederationSlot = Arc::default();
@@ -224,8 +225,20 @@ fn prepare_office_runtime(
     })
 }
 
+pub(crate) struct ServeOfficeRequest<'a> {
+    pub(crate) control: Control,
+    pub(crate) transfer: Option<startup::Transfer>,
+    pub(crate) from_host: Lifetime,
+    pub(crate) runtime: &'a Path,
+    pub(crate) office: Office,
+    pub(crate) auth: serve::LaunchAuth,
+    pub(crate) instance: String,
+    pub(crate) runtimes: org_office_sessions::RuntimeRegistry,
+}
+
+#[cfg(test)]
 pub(crate) fn serve_office(
-    mut control: Control,
+    control: Control,
     transfer: Option<startup::Transfer>,
     from_host: Lifetime,
     runtime: &Path,
@@ -233,6 +246,29 @@ pub(crate) fn serve_office(
     auth: serve::LaunchAuth,
     instance: String,
 ) -> i32 {
+    serve_office_with_runtimes(ServeOfficeRequest {
+        control,
+        transfer,
+        from_host,
+        runtime,
+        office,
+        auth,
+        instance,
+        runtimes: org_office_sessions::RuntimeRegistry::production(),
+    })
+}
+
+pub(crate) fn serve_office_with_runtimes(req: ServeOfficeRequest<'_>) -> i32 {
+    let ServeOfficeRequest {
+        mut control,
+        transfer,
+        from_host,
+        runtime,
+        office,
+        auth,
+        instance,
+        runtimes,
+    } = req;
     let info = office.info().clone();
     let office = Arc::new(office);
     let socket = match socket_path(runtime, &info.office_id) {
@@ -259,9 +295,15 @@ pub(crate) fn serve_office(
         }
     };
     signals::install();
-    let Some(mut prepared) =
-        prepare_office_runtime(&mut control, &office, &info, &socket, auth, from_host)
-    else {
+    let Some(mut prepared) = prepare_office_runtime(
+        &mut control,
+        &office,
+        &info,
+        &socket,
+        auth,
+        from_host,
+        runtimes,
+    ) else {
         return 1;
     };
     announce_ready(&mut control, &socket, &mut prepared.shared);
@@ -327,8 +369,11 @@ fn run_serve_loop(
         Arc::clone(&wake_stop),
         std::time::Duration::from_secs(2),
     );
-    let readiness_thread =
-        provider_refresh::spawn_readiness_refresh_loop(Arc::clone(office), Arc::clone(&wake_stop));
+    let readiness_thread = provider_refresh::spawn_readiness_refresh_loop(
+        Arc::clone(office),
+        Arc::clone(&wake_stop),
+        session_manager.runtimes().clone(),
+    );
     let snooze_thread = shared.mailbox().map(|mailbox| {
         let stop_flag = Arc::clone(&wake_stop);
         std::thread::Builder::new()
@@ -473,11 +518,25 @@ impl org_office_sessions::TurnAttachmentResolver for SatelliteAttachmentResolver
     }
 }
 
+#[cfg(test)]
 pub(crate) fn start_session_manager(
     office: Arc<Office>,
     socket: &Path,
 ) -> Arc<org_office_sessions::SessionManager> {
+    start_session_manager_with_runtimes(
+        office,
+        socket,
+        org_office_sessions::RuntimeRegistry::production(),
+    )
+}
+
+pub(crate) fn start_session_manager_with_runtimes(
+    office: Arc<Office>,
+    socket: &Path,
+    runtimes: org_office_sessions::RuntimeRegistry,
+) -> Arc<org_office_sessions::SessionManager> {
     let mut cfg = org_office_sessions::SessionManagerConfig::production(socket.to_path_buf());
+    cfg.runtimes = runtimes;
     if office.info().role == org_office::OfficeRole::Satellite {
         cfg.hq_permits = Some(Arc::new(federation::SatelliteHqPermitCoordinator::new(
             Arc::clone(&office),

@@ -1,4 +1,8 @@
 //! Bounded, symlink-safe discovery of runtime session and sub-agent transcript files.
+//!
+//! Filesystem traversal, symlink refusal, and `O_NOFOLLOW | O_NONBLOCK` + `(dev, ino)` opens live
+//! exclusively here in the office; runtime adapters supply only pure layout descriptors and
+//! metadata extractors via [`TranscriptParser`].
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
@@ -6,33 +10,68 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use org_proto::sessions::TranscriptFormat;
-use serde_json::Value;
+use org_agent_runtime::transcript::{TranscriptDiscoveryLayout, TranscriptParser};
+
+use crate::runtime_registry::RuntimeRegistry;
 
 use super::{
-    agy, is_safe_session_id, DiscoveredSession, SubagentFile, MAX_META_READ_BYTES,
+    is_safe_session_id, DiscoveredSession, SubagentFile, MAX_META_READ_BYTES,
     MAX_TRANSCRIPT_READ_BYTES, MAX_WALK_DEPTH,
 };
 
-pub(super) fn discover_sessions(canon_home: &Path) -> Vec<DiscoveredSession> {
+pub(super) fn discover_sessions(
+    canon_home: &Path,
+    runtimes: &RuntimeRegistry,
+) -> Vec<DiscoveredSession> {
     let mut out = Vec::new();
-    for rel in [".claude/projects", ".config/claude/projects"] {
-        discover_claude_under(&canon_home.join(rel), canon_home, &mut out);
+    for adapter in runtimes.adapters() {
+        let Some(parser) = adapter.transcript_parser() else {
+            continue;
+        };
+        match parser.discovery_layout() {
+            TranscriptDiscoveryLayout::RecursiveJsonl {
+                search_roots,
+                skip_parent_dir,
+                subagents_subdir,
+                subagent_stem_prefix,
+            } => {
+                for rel in search_roots {
+                    discover_recursive_jsonl(
+                        &canon_home.join(rel),
+                        canon_home,
+                        parser,
+                        skip_parent_dir,
+                        subagents_subdir,
+                        subagent_stem_prefix,
+                        &mut out,
+                    );
+                }
+            }
+            TranscriptDiscoveryLayout::ConversationDir {
+                brain_root,
+                transcript_rel_path,
+            } => {
+                discover_conversation_dirs(
+                    &canon_home.join(brain_root),
+                    transcript_rel_path,
+                    canon_home,
+                    parser,
+                    &mut out,
+                );
+            }
+            _ => {}
+        }
     }
-    for rel in [".codex/sessions", ".codex/archived_sessions"] {
-        discover_codex_under(&canon_home.join(rel), canon_home, &mut out);
-    }
-    discover_agy_under(
-        &canon_home.join(".gemini/antigravity-cli/brain"),
-        canon_home,
-        &mut out,
-    );
     out
 }
 
-pub(super) fn discover_claude_under(
+fn discover_recursive_jsonl(
     root: &Path,
     canon_home: &Path,
+    parser: &dyn TranscriptParser,
+    skip_parent_dir: Option<&str>,
+    subagents_subdir: Option<&str>,
+    subagent_stem_prefix: Option<&str>,
     out: &mut Vec<DiscoveredSession>,
 ) {
     let mut files = Vec::new();
@@ -41,25 +80,37 @@ pub(super) fn discover_claude_under(
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
-        if path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            == Some("subagents")
-        {
-            continue;
+        if let Some(skip) = skip_parent_dir {
+            if path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                == Some(skip)
+            {
+                continue;
+            }
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        if !is_safe_session_id(stem) {
+        let session_id = read_prefix_utf8(&path, canon_home, 4096)
+            .ok()
+            .and_then(|prefix| parser.extract_session_id_from_prefix(&prefix))
+            .filter(|id| is_safe_session_id(id))
+            .unwrap_or_else(|| stem.to_owned());
+        if !is_safe_session_id(&session_id) {
             continue;
         }
         let (modified_ms, size_bytes) = file_meta(&path);
-        let subagent_files = discover_claude_subagents(&path, canon_home);
+        let subagent_files = match subagents_subdir {
+            Some(sub_rel) => {
+                discover_nested_subagents(&path, canon_home, parser, sub_rel, subagent_stem_prefix)
+            }
+            None => Vec::new(),
+        };
         out.push(DiscoveredSession {
-            session_id: stem.to_owned(),
-            format: TranscriptFormat::Claude,
+            session_id,
+            format_id: parser.format_id(),
             path,
             modified_ms,
             size_bytes,
@@ -68,9 +119,12 @@ pub(super) fn discover_claude_under(
     }
 }
 
-pub(super) fn discover_claude_subagents(
+fn discover_nested_subagents(
     session_file: &Path,
     canon_home: &Path,
+    parser: &dyn TranscriptParser,
+    subagents_subdir: &str,
+    subagent_stem_prefix: Option<&str>,
 ) -> Vec<SubagentFile> {
     let Some(stem) = session_file.file_stem().and_then(|s| s.to_str()) else {
         return Vec::new();
@@ -78,7 +132,7 @@ pub(super) fn discover_claude_subagents(
     let Some(parent) = session_file.parent() else {
         return Vec::new();
     };
-    let sub_dir = parent.join(stem).join("subagents");
+    let sub_dir = parent.join(stem).join(subagents_subdir);
     let mut files = Vec::new();
     walk_regular_files(&sub_dir, canon_home, 0, &mut files);
     let mut out = Vec::new();
@@ -89,11 +143,15 @@ pub(super) fn discover_claude_subagents(
         let Some(raw_name) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        let agent_id = raw_name
-            .strip_prefix("agent-")
+        let agent_id = subagent_stem_prefix
+            .and_then(|prefix| raw_name.strip_prefix(prefix))
             .unwrap_or(raw_name)
             .to_owned();
-        let (label, parent_tool_use_id) = read_claude_subagent_meta(&path, canon_home);
+        let meta_path = path.with_extension("meta.json");
+        let meta_raw = read_prefix_utf8(&meta_path, canon_home, MAX_META_READ_BYTES).ok();
+        let prefix = read_prefix_utf8(&path, canon_home, 8192).ok();
+        let (label, parent_tool_use_id) =
+            parser.parse_subagent_meta(meta_raw.as_deref(), prefix.as_deref());
         out.push(SubagentFile {
             agent_id,
             label,
@@ -105,78 +163,13 @@ pub(super) fn discover_claude_subagents(
     out
 }
 
-pub(super) fn read_claude_subagent_meta(
-    jsonl_path: &Path,
-    canon_home: &Path,
-) -> (Option<String>, Option<String>) {
-    let meta_path = jsonl_path.with_extension("meta.json");
-    let mut label = None;
-    let mut parent_tool_use_id = None;
-    if let Ok(raw) = read_prefix_utf8(&meta_path, canon_home, MAX_META_READ_BYTES) {
-        if let Ok(val) = serde_json::from_str::<Value>(&raw) {
-            label = val
-                .get("description")
-                .or_else(|| val.get("agentType"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-            parent_tool_use_id = val
-                .get("parent_tool_use_id")
-                .or_else(|| val.get("parentToolUseId"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-        }
-    }
-    if parent_tool_use_id.is_none() {
-        parent_tool_use_id = sniff_first_line_field(jsonl_path, canon_home, "parentToolUseId")
-            .or_else(|| sniff_first_line_field(jsonl_path, canon_home, "parent_tool_use_id"));
-    }
-    (label, parent_tool_use_id)
-}
-
-pub(super) fn discover_codex_under(
+fn discover_conversation_dirs(
     root: &Path,
+    transcript_rel_path: &str,
     canon_home: &Path,
+    parser: &dyn TranscriptParser,
     out: &mut Vec<DiscoveredSession>,
 ) {
-    let mut files = Vec::new();
-    walk_regular_files(root, canon_home, 0, &mut files);
-    for path in files {
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        let session_id = extract_codex_session_id(&path, canon_home)
-            .filter(|id| is_safe_session_id(id))
-            .unwrap_or_else(|| stem.to_owned());
-        if !is_safe_session_id(&session_id) {
-            continue;
-        }
-        let (modified_ms, size_bytes) = file_meta(&path);
-        out.push(DiscoveredSession {
-            session_id,
-            format: TranscriptFormat::Codex,
-            path,
-            modified_ms,
-            size_bytes,
-            subagent_files: Vec::new(),
-        });
-    }
-}
-
-pub(super) fn extract_codex_session_id(path: &Path, canon_home: &Path) -> Option<String> {
-    let raw = read_prefix_utf8(path, canon_home, 4096).ok()?;
-    let first = raw.lines().next()?.trim();
-    let val: Value = serde_json::from_str(first).ok()?;
-    val.pointer("/payload/id")
-        .or_else(|| val.get("thread_id"))
-        .and_then(Value::as_str)
-        .filter(|s| is_safe_session_id(s))
-        .map(ToOwned::to_owned)
-}
-
-pub(super) fn discover_agy_under(root: &Path, canon_home: &Path, out: &mut Vec<DiscoveredSession>) {
     let Ok(meta) = fs::symlink_metadata(root) else {
         return;
     };
@@ -205,14 +198,20 @@ pub(super) fn discover_agy_under(root: &Path, canon_home: &Path, out: &mut Vec<D
         if !is_safe_session_id(&conv_id) {
             continue;
         }
-        let transcript = entry.path().join(".system_generated/logs/transcript.jsonl");
+        let transcript = entry.path().join(transcript_rel_path);
         if is_safe_regular_file(&transcript, canon_home) {
             let (modified_ms, size_bytes) = file_meta(&transcript);
-            let subagent_files =
-                discover_agy_subagent_files(&transcript, &canon_root, canon_home, &conv_id);
+            let subagent_files = discover_sibling_subagent_files(
+                &transcript,
+                &canon_root,
+                transcript_rel_path,
+                canon_home,
+                parser,
+                &conv_id,
+            );
             out.push(DiscoveredSession {
                 session_id: conv_id,
-                format: TranscriptFormat::Agy,
+                format_id: parser.format_id(),
                 path: transcript,
                 modified_ms,
                 size_bytes,
@@ -222,28 +221,28 @@ pub(super) fn discover_agy_under(root: &Path, canon_home: &Path, out: &mut Vec<D
     }
 }
 
-pub(super) fn discover_agy_subagent_files(
+fn discover_sibling_subagent_files(
     transcript: &Path,
     brain_root: &Path,
+    transcript_rel_path: &str,
     canon_home: &Path,
+    parser: &dyn TranscriptParser,
     parent_id: &str,
 ) -> Vec<SubagentFile> {
     let Ok(prefix) = read_prefix_utf8(transcript, canon_home, MAX_META_READ_BYTES) else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for r in agy::extract_agy_subagent_refs(&prefix, parent_id) {
-        if !is_safe_session_id(&r.conversation_id) {
+    for r in parser.extract_subagent_refs(&prefix, parent_id) {
+        if !is_safe_session_id(&r.agent_id) {
             continue;
         }
-        let sub_path = brain_root
-            .join(&r.conversation_id)
-            .join(".system_generated/logs/transcript.jsonl");
+        let sub_path = brain_root.join(&r.agent_id).join(transcript_rel_path);
         if is_safe_regular_file(&sub_path, canon_home) {
             out.push(SubagentFile {
-                agent_id: r.conversation_id,
+                agent_id: r.agent_id,
                 label: r.label,
-                parent_tool_use_id: r.tool_call_id,
+                parent_tool_use_id: r.parent_tool_use_id,
                 path: sub_path,
             });
         }
@@ -360,22 +359,6 @@ pub(super) fn read_prefix_utf8(
     let mut buf = Vec::new();
     file.take(max_bytes).read_to_end(&mut buf)?;
     Ok(String::from_utf8_lossy(&buf).into_owned())
-}
-
-pub(super) fn sniff_first_line_field(
-    path: &Path,
-    canon_home: &Path,
-    field: &str,
-) -> Option<String> {
-    let raw = read_prefix_utf8(path, canon_home, 8192).ok()?;
-    for line in raw.lines().take(5) {
-        if let Ok(val) = serde_json::from_str::<Value>(line.trim()) {
-            if let Some(s) = val.get(field).and_then(Value::as_str) {
-                return Some(s.to_owned());
-            }
-        }
-    }
-    None
 }
 
 pub(super) fn file_meta(path: &Path) -> (u64, u64) {

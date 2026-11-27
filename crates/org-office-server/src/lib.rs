@@ -121,8 +121,22 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
     }
 }
 
-/// Runs the server and returns its exit code.
+/// Runs the server using the process's installed default runtime registry and returns its exit code.
 pub fn run(args: &[String], control: ControlPipe) -> i32 {
+    run_with_runtimes(
+        args,
+        control,
+        org_office_sessions::RuntimeRegistry::production(),
+    )
+}
+
+/// Runs the server with an explicit composition-root [`org_office_sessions::RuntimeRegistry`] and
+/// returns its exit code (`TASK-216`).
+pub fn run_with_runtimes(
+    args: &[String],
+    control: ControlPipe,
+    runtimes: org_office_sessions::RuntimeRegistry,
+) -> i32 {
     if matches!(parse_args(args), Ok(Mode::InspectImport)) {
         return inspect_import(control);
     }
@@ -146,9 +160,9 @@ pub fn run(args: &[String], control: ControlPipe) -> i32 {
     };
     match mode {
         Mode::Discard(id) => discard(control, &home, &id),
-        Mode::Create => create_and_serve(control, &home, &runtime),
-        Mode::Join => join_and_serve(control, &home, &runtime),
-        Mode::Serve(id) => open_and_serve(control, &home, &runtime, &id),
+        Mode::Create => create_and_serve(control, &home, &runtime, runtimes),
+        Mode::Join => join_and_serve(control, &home, &runtime, runtimes),
+        Mode::Serve(id) => open_and_serve(control, &home, &runtime, &id, runtimes),
         Mode::InspectImport => unreachable!(),
     }
 }

@@ -17,7 +17,7 @@ use super::environment::{
     agent_git_identity, combine_agent_instructions, office_env_names, write_owner_only_binding_file,
 };
 use super::rust_toolchain::{append_rust_toolchain_env, link_host_rust_caches};
-use super::sandbox_rules::{append_agy_credential_denies, collect_agy_read_only_dirs};
+use super::sandbox_rules::{append_runtime_credential_denies, collect_agy_read_only_dirs};
 use super::spec::{apply_linux_claude_bwrap_pruning, pattern_exists_for_bwrap};
 use super::BindingGuard;
 use std::os::unix::fs::PermissionsExt as _;
@@ -447,7 +447,10 @@ fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_
         &PathPattern::try_from("/*").unwrap()
     ));
     let mut agy_denies = Vec::new();
-    append_agy_credential_denies(&mut agy_denies);
+    append_runtime_credential_denies(
+        &crate::runtime_registry::RuntimeRegistry::production(),
+        &mut agy_denies,
+    );
     if std::env::var_os("HOME").is_some() {
         for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
             assert!(

@@ -5,10 +5,13 @@ use std::path::Path;
 use crate::failure::{emit, fail, fail_with};
 use crate::hq_creation;
 use crate::launch::Launch;
-use crate::office_runtime::{admit, first_line, serve_office, socket_path};
+use crate::office_runtime::{
+    admit, first_line, serve_office_with_runtimes, socket_path, ServeOfficeRequest,
+};
 use crate::startup::Control;
 use org_office::Office;
 use org_office_launch::{office_dir, FailCode, FirstLine, OfficeFile, ServerEvent};
+use org_office_sessions::RuntimeRegistry;
 use org_proto::OfficeRole;
 
 /// `--discard`: needs no key, because the databases are plain SQLite (ADR-0016); a key the
@@ -61,7 +64,12 @@ fn holds_writer_custody(folder: &Path) -> bool {
         .unwrap_or_else(|error| error.kind() != std::io::ErrorKind::NotFound)
 }
 
-pub(crate) fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
+pub(crate) fn create_and_serve(
+    mut control: Control,
+    home: &Path,
+    runtime: &Path,
+    runtimes: RuntimeRegistry,
+) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Create, None) {
         Ok(first) => first,
         Err(code) => return code,
@@ -171,18 +179,25 @@ pub(crate) fn create_and_serve(mut control: Control, home: &Path, runtime: &Path
     };
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
-    serve_office(
+    serve_office_with_runtimes(ServeOfficeRequest {
         control,
         transfer,
         from_host,
         runtime,
         office,
-        create.auth,
-        create.instance,
-    )
+        auth: create.auth,
+        instance: create.instance,
+        runtimes,
+    })
 }
 
-pub(crate) fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -> i32 {
+pub(crate) fn open_and_serve(
+    mut control: Control,
+    home: &Path,
+    runtime: &Path,
+    id: &str,
+    runtimes: RuntimeRegistry,
+) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Start, Some(id)) {
         Ok(first) => first,
         Err(code) => return code,
@@ -268,7 +283,14 @@ pub(crate) fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, 
         Ok(hq_creation::CaStatus::NotHq | hq_creation::CaStatus::Available) => {}
         Err(error) => return fail_with(&mut control, &error),
     }
-    serve_office(
-        control, transfer, from_host, runtime, office, auth, instance,
-    )
+    serve_office_with_runtimes(ServeOfficeRequest {
+        control,
+        transfer,
+        from_host,
+        runtime,
+        office,
+        auth,
+        instance,
+        runtimes,
+    })
 }

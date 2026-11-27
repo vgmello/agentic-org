@@ -13,11 +13,13 @@ mod plan;
 mod probe;
 mod protocol;
 mod session;
+mod transcript;
 
+use org_agent_runtime::transcript::TranscriptParser;
 use org_agent_runtime::{
     AgentRuntime, Capabilities, CostBasis, ImageInputMode, LaunchContext, LaunchPlan,
-    MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId,
-    Session, SessionSpec, UsageScope, VersionRange,
+    MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun,
+    RuntimeHostProfile, RuntimeId, Session, SessionSpec, UsageScope, VersionRange,
 };
 
 pub use crate::plan::AGY_CONFIG_CREDENTIAL_FILES;
@@ -107,6 +109,36 @@ impl AgentRuntime for AgyRuntime {
 
     fn parse_probe(&self, probe: Probe, out: &ProbeOutput) -> ProbeResult {
         probe::parse_probe(probe, out)
+    }
+
+    fn aliases(&self) -> &'static [&'static str] {
+        &["google", "antigravity", "antigravity-cli", "gemini"]
+    }
+
+    fn host_profile(&self) -> RuntimeHostProfile {
+        RuntimeHostProfile {
+            host_config_subdir: Some(".gemini"),
+            config_credential_files: AGY_CONFIG_CREDENTIAL_FILES,
+            uses_host_oauth_token_injection: false,
+            uses_linux_bwrap_sandbox: false,
+            needs_explicit_sandbox_ro_dirs: true,
+        }
+    }
+
+    fn endpoint_env_var(&self) -> Option<&'static str> {
+        Some("GOOGLE_GEMINI_BASE_URL")
+    }
+
+    fn auth_env_var(&self, subscription_cli: bool, _secret: &str) -> Option<&'static str> {
+        Some(if subscription_cli {
+            "AGY_AUTH_TOKEN"
+        } else {
+            "GEMINI_API_KEY"
+        })
+    }
+
+    fn transcript_parser(&self) -> Option<&dyn TranscriptParser> {
+        Some(&transcript::AGY_TRANSCRIPT_PARSER)
     }
 }
 

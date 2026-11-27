@@ -11,11 +11,13 @@
 mod plan;
 mod probe;
 mod session;
+mod transcript;
 
+use org_agent_runtime::transcript::TranscriptParser;
 use org_agent_runtime::{
     AgentRuntime, Capabilities, CostBasis, ImageInputMode, LaunchContext, LaunchPlan,
-    MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId,
-    Session, SessionSpec, UsageScope, VersionRange,
+    MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun,
+    RuntimeHostProfile, RuntimeId, Session, SessionSpec, UsageScope, VersionRange,
 };
 
 use crate::plan::{build_headless_plan, build_take_over_plan};
@@ -144,6 +146,36 @@ impl AgentRuntime for ClaudeRuntime {
                 && (lower.contains("oauth") || lower.contains("authentication_error")))
             || lower.starts_with("401 oauth access token has expired")
             || lower == "oauth access token has expired"
+    }
+
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
+    }
+
+    fn host_profile(&self) -> RuntimeHostProfile {
+        RuntimeHostProfile {
+            host_config_subdir: None,
+            config_credential_files: &[],
+            uses_host_oauth_token_injection: true,
+            uses_linux_bwrap_sandbox: true,
+            needs_explicit_sandbox_ro_dirs: false,
+        }
+    }
+
+    fn endpoint_env_var(&self) -> Option<&'static str> {
+        Some("ANTHROPIC_BASE_URL")
+    }
+
+    fn auth_env_var(&self, subscription_cli: bool, secret: &str) -> Option<&'static str> {
+        Some(if subscription_cli || secret.starts_with("sk-ant-oat") {
+            "CLAUDE_CODE_OAUTH_TOKEN"
+        } else {
+            "ANTHROPIC_API_KEY"
+        })
+    }
+
+    fn transcript_parser(&self) -> Option<&dyn TranscriptParser> {
+        Some(&transcript::CLAUDE_TRANSCRIPT_PARSER)
     }
 }
 

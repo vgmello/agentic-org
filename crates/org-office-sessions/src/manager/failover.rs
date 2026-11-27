@@ -35,7 +35,7 @@ pub(crate) fn is_host_claude_subscription_refresh_eligible(
         return None;
     }
     let adapter = mgr.config.runtimes.resolve(&conn.runtime_driver).ok()?;
-    if adapter.id().as_str() != "claude" {
+    if !adapter.host_profile().uses_host_oauth_token_injection {
         return None;
     }
     if mgr

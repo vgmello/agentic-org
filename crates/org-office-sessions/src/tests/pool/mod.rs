@@ -167,6 +167,18 @@ impl AgentRuntime for PoolScriptedRuntime {
         "pool-scripted"
     }
 
+    fn endpoint_env_var(&self) -> Option<&'static str> {
+        Some("ANTHROPIC_BASE_URL")
+    }
+
+    fn auth_env_var(&self, subscription_cli: bool, secret: &str) -> Option<&'static str> {
+        Some(if subscription_cli || secret.starts_with("sk-ant-oat") {
+            "CLAUDE_CODE_OAUTH_TOKEN"
+        } else {
+            "ANTHROPIC_API_KEY"
+        })
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,

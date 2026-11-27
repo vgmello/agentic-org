@@ -6,16 +6,87 @@
 
 use std::collections::BTreeMap;
 
-use org_proto::sessions::{
-    FileEventKind, SubagentTranscriptView, TranscriptEntry, TranscriptEntryKind, TranscriptFormat,
+use org_agent_runtime::transcript::{
+    aggregate_file_touches, base_entry, extract_file_event_from_tool, merge_usage, truncate_output,
+    LoadedSubagentTranscript, ParsedTranscript, SubagentTranscript, TranscriptDiscoveryLayout,
+    TranscriptEntry, TranscriptEntryKind, TranscriptFileEventKind, TranscriptParser,
     TranscriptUsage,
 };
 use serde_json::Value;
 
-use super::{
-    aggregate_file_touches, extract_file_event_from_tool, merge_usage, truncate_output,
-    ParsedTranscript,
-};
+/// Sans-I/O Claude Code transcript parser registered by [`crate::ClaudeRuntime`].
+pub(crate) struct ClaudeTranscriptParser;
+
+/// Static parser instance returned by [`crate::ClaudeRuntime::transcript_parser`].
+pub(crate) static CLAUDE_TRANSCRIPT_PARSER: ClaudeTranscriptParser = ClaudeTranscriptParser;
+
+impl TranscriptParser for ClaudeTranscriptParser {
+    fn format_id(&self) -> &'static str {
+        "claude"
+    }
+
+    fn discovery_layout(&self) -> TranscriptDiscoveryLayout {
+        TranscriptDiscoveryLayout::RecursiveJsonl {
+            search_roots: &[".claude/projects", ".config/claude/projects"],
+            skip_parent_dir: Some("subagents"),
+            subagents_subdir: Some("subagents"),
+            subagent_stem_prefix: Some("agent-"),
+        }
+    }
+
+    fn parse_subagent_meta(
+        &self,
+        meta_json: Option<&str>,
+        transcript_prefix: Option<&str>,
+    ) -> (Option<String>, Option<String>) {
+        let mut label = None;
+        let mut parent_tool_use_id = None;
+        if let Some(raw) = meta_json {
+            if let Ok(val) = serde_json::from_str::<Value>(raw) {
+                label = val
+                    .get("description")
+                    .or_else(|| val.get("agentType"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+                parent_tool_use_id = val
+                    .get("parent_tool_use_id")
+                    .or_else(|| val.get("parentToolUseId"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+            }
+        }
+        if parent_tool_use_id.is_none() {
+            if let Some(prefix) = transcript_prefix {
+                parent_tool_use_id = sniff_first_lines_field(prefix, "parentToolUseId")
+                    .or_else(|| sniff_first_lines_field(prefix, "parent_tool_use_id"));
+            }
+        }
+        (label, parent_tool_use_id)
+    }
+
+    fn parse(&self, raw: &str) -> ParsedTranscript {
+        parse_claude_jsonl(raw)
+    }
+
+    fn attach_subagents(
+        &self,
+        parent: &mut ParsedTranscript,
+        subagents: Vec<LoadedSubagentTranscript>,
+    ) {
+        attach_claude_subagents(parent, subagents);
+    }
+}
+
+fn sniff_first_lines_field(prefix: &str, field: &str) -> Option<String> {
+    for line in prefix.lines().take(5) {
+        if let Ok(val) = serde_json::from_str::<Value>(line.trim()) {
+            if let Some(s) = val.get(field).and_then(Value::as_str) {
+                return Some(s.to_owned());
+            }
+        }
+    }
+    None
+}
 
 /// Parses a single Claude Code JSONL transcript (main or sub-agent).
 pub(crate) fn parse_claude_jsonl(raw: &str) -> ParsedTranscript {
@@ -32,7 +103,7 @@ pub(crate) fn parse_claude_jsonl(raw: &str) -> ParsedTranscript {
     }
     let files = aggregate_file_touches(&state.entries);
     ParsedTranscript {
-        format: TranscriptFormat::Claude,
+        format_id: "claude".to_owned(),
         entries: state.entries,
         files,
         usage: state.usage,
@@ -44,23 +115,29 @@ pub(crate) fn parse_claude_jsonl(raw: &str) -> ParsedTranscript {
 /// the parent tool-use ID is not present in the main log; `SUB-6`).
 pub(crate) fn attach_claude_subagents(
     parent: &mut ParsedTranscript,
-    subagents: Vec<(String, Option<String>, Option<String>, ParsedTranscript)>,
+    subagents: Vec<LoadedSubagentTranscript>,
 ) {
-    let mut attached_by_tool: BTreeMap<String, Vec<SubagentTranscriptView>> = BTreeMap::new();
+    let mut attached_by_tool: BTreeMap<String, Vec<SubagentTranscript>> = BTreeMap::new();
     let mut unlinked = Vec::new();
-    for (agent_id, label, parent_tool_id, parsed) in subagents {
-        merge_usage(&mut parent.usage, &parsed.usage);
-        let view = SubagentTranscriptView {
+    for sub in subagents {
+        let LoadedSubagentTranscript {
             agent_id,
             label,
-            parent_tool_use_id: parent_tool_id.clone(),
-            format: parsed.format,
+            parent_tool_use_id,
+            parsed,
+        } = sub;
+        merge_usage(&mut parent.usage, &parsed.usage);
+        let view = SubagentTranscript {
+            agent_id,
+            label,
+            parent_tool_use_id: parent_tool_use_id.clone(),
+            format_id: parsed.format_id,
             entry_count: parsed.entries.len() as u32,
             entries: parsed.entries,
             files: parsed.files,
             usage: parsed.usage,
         };
-        if let Some(tid) = parent_tool_id {
+        if let Some(tid) = parent_tool_use_id {
             attached_by_tool.entry(tid).or_default().push(view);
         } else {
             unlinked.push(view);
@@ -86,8 +163,8 @@ pub(crate) fn attach_claude_subagents(
 
 fn attach_matching_subagents(
     entry: &mut TranscriptEntry,
-    attached_by_tool: &mut BTreeMap<String, Vec<SubagentTranscriptView>>,
-) -> Vec<SubagentTranscriptView> {
+    attached_by_tool: &mut BTreeMap<String, Vec<SubagentTranscript>>,
+) -> Vec<SubagentTranscript> {
     if entry.kind != TranscriptEntryKind::ToolCall {
         return Vec::new();
     }
@@ -103,7 +180,7 @@ fn attach_matching_subagents(
     list
 }
 
-fn make_subagent_run_entry(turn_index: u32, sub: SubagentTranscriptView) -> TranscriptEntry {
+fn make_subagent_run_entry(turn_index: u32, sub: SubagentTranscript) -> TranscriptEntry {
     let id = format!("subagent-{}", sub.agent_id);
     let label = sub
         .label
@@ -465,7 +542,7 @@ impl ClaudeParseState {
                         None,
                     );
                     fe.file_path = Some(path.clone());
-                    fe.file_action = Some(FileEventKind::Edit);
+                    fe.file_action = Some(TranscriptFileEventKind::Edit);
                     self.entries.push(fe);
                 }
             }
@@ -483,35 +560,6 @@ impl ClaudeParseState {
         );
         entry.raw_type = Some(raw_type.to_owned());
         self.entries.push(entry);
-    }
-}
-
-fn base_entry(
-    id: String,
-    turn_index: u32,
-    kind: TranscriptEntryKind,
-    timestamp: Option<String>,
-    role: Option<&str>,
-    text: Option<String>,
-) -> TranscriptEntry {
-    TranscriptEntry {
-        id,
-        turn_index,
-        kind,
-        timestamp,
-        role: role.map(ToOwned::to_owned),
-        text,
-        tool_name: None,
-        tool_use_id: None,
-        tool_input: None,
-        tool_output: None,
-        is_error: false,
-        file_path: None,
-        file_action: None,
-        diff_preview: None,
-        usage: None,
-        raw_type: None,
-        subagent: None,
     }
 }
 

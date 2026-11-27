@@ -257,6 +257,7 @@ impl SessionManager {
         Ok(crate::transcript::list_agent_sessions(
             employee.id.as_str(),
             &home,
+            &self.config.runtimes,
             live_sid.as_deref(),
             params.limit,
             &refs,
@@ -316,6 +317,7 @@ impl SessionManager {
         crate::transcript::load_agent_transcript(
             employee.id.as_str(),
             &home,
+            &self.config.runtimes,
             params.session_id.as_deref(),
             live_sid.as_deref(),
             query,
@@ -383,10 +385,11 @@ impl SessionManager {
         };
         conn.auth_mode
             == org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
-            && matches!(
-                conn.runtime_driver.trim().to_ascii_lowercase().as_str(),
-                "anthropic" | "claude" | "claude-code"
-            )
+            && self
+                .config
+                .runtimes
+                .resolve(&conn.runtime_driver)
+                .is_ok_and(|adapter| adapter.host_profile().uses_host_oauth_token_injection)
     }
 
     pub(super) fn live_runtime_session_id(&self, employee_id: &str) -> Option<String> {

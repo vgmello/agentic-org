@@ -119,17 +119,18 @@ pub(crate) fn allows_host_subscription_auth(
     auth_env.is_empty() && matches!(auth_mode, None | Some(ProviderAuthMode::SubscriptionCli))
 }
 
-/// Locates the host user's runtime config dir for Codex (`~/.codex`) or Agy (`~/.gemini`).
-/// Returns `None` for Claude so host user plugins are never loaded into isolated sessions.
-pub(crate) fn host_config_dir_for(runtime_id: &str, allowed: bool) -> Option<SpecPath> {
+/// Locates the host user's runtime config dir under `$HOME/<subdir>` when host subscription auth
+/// is allowed and the runtime adapter declares a host config subdirectory (e.g. `.codex`,
+/// `.gemini`). Returns `None` when `host_config_subdir` is `None` (e.g. Claude, so host user
+/// plugins are never loaded into isolated sessions).
+pub(crate) fn host_config_dir_for(
+    host_config_subdir: Option<&str>,
+    allowed: bool,
+) -> Option<SpecPath> {
     if !allowed {
         return None;
     }
-    let subdir = match runtime_id {
-        "codex" => ".codex",
-        "agy" => ".gemini",
-        _ => return None,
-    };
+    let subdir = host_config_subdir?;
     let candidate = std::env::var_os("HOME").map(PathBuf::from)?.join(subdir);
     if !candidate.is_dir() {
         return None;
@@ -157,18 +158,19 @@ pub(crate) fn oauth_token_fingerprint(token: &str) -> String {
     out
 }
 
-/// Appends `CLAUDE_CODE_OAUTH_TOKEN` to `launch_env` when a Claude `subscription_cli` route has
-/// no vault credential and the runtime plan both accepts and protects `CLAUDE_CODE_OAUTH_TOKEN`.
+/// Appends `CLAUDE_CODE_OAUTH_TOKEN` to `launch_env` when a `subscription_cli` route whose
+/// runtime declares `uses_host_oauth_token_injection` has no vault credential and the runtime
+/// plan both accepts and protects `CLAUDE_CODE_OAUTH_TOKEN`.
 /// Proactively refreshes an expiring/expired host OAuth token via `runtime_binary` before launch
 /// and returns its non-secret expiry and token fingerprint metadata.
 pub(crate) fn append_host_claude_oauth(
-    runtime_id: &str,
+    uses_host_oauth: bool,
     allowed: bool,
     runtime_binary: &Path,
     plan: &LaunchPlan,
     launch_env: &mut Vec<(OsString, OsString)>,
 ) -> Option<HostOAuthMeta> {
-    if !allowed || runtime_id != "claude" || !plan_protects_claude_oauth(plan) {
+    if !allowed || !uses_host_oauth || !plan_protects_claude_oauth(plan) {
         return None;
     }
     let _keychain_scope = CLAUDE_KEYCHAIN_CACHE.scope();

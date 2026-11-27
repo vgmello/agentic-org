@@ -22,6 +22,7 @@ pub mod binding;
 pub mod credentials;
 mod employee_locks;
 mod external;
+mod external_sessions;
 mod host_auth;
 pub mod instructions;
 mod lifecycle;
@@ -66,7 +67,9 @@ pub use recovery::{
     MAX_RESUME_ATTEMPTS,
 };
 pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
-pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
+pub use runtime_registry::{
+    install_default_runtimes, RuntimeFactory, RuntimeRegistry, RuntimeRegistryError,
+};
 pub use stream_hub::{
     SessionActivity, SessionStreamEvent, SessionStreamFrame, SessionStreamHub, SessionStreamKey,
     SessionStreamSubscription, StreamFilter, TurnEnd,

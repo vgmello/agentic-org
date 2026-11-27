@@ -13,10 +13,11 @@ use org_proto::{ApiError, ErrorCode};
 use zeroize::Zeroizing;
 
 use crate::credentials::{format_rfc3339_ms, is_safe_id, now_ms};
+use crate::external::{
+    decode_pubkey, refuse_builtin_agent, validate_workspace_label, verify_signature,
+    ExternalLeaseRecord, NonceEntry,
+};
 use crate::manager::SessionManager;
-
-use super::nonces::{verify_signature, NonceEntry};
-use super::{decode_pubkey, refuse_builtin_agent, validate_workspace_label, ExternalLeaseRecord};
 
 fn refused() -> ApiError {
     ApiError::new(
