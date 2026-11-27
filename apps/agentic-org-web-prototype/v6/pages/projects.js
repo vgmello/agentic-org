@@ -14,6 +14,11 @@ import { render } from "../shell/router.js";
 import { S } from "../state.js";
 import { acts, av, avStack, crumbs, esc, feed, hdr, ic, itemActions, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, plural, presPill, progress, projMembers, projPill, recommendationCallout, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
 
+/* A star toggles a project in the sidebar's Favorite projects (owner); filled when it is a favorite */
+function favStar(p, cls = "") {
+  const on = S.favProjs.includes(p), name = esc(P[p].name);
+  return `<button class="btn ghost icon proj-fav${on ? " is-fav" : ""}${cls ? " " + cls : ""}" type="button" data-act="fav-proj" data-id="${p}" aria-pressed="${on}" aria-label="${on ? "Remove " + name + " from favorites" : "Add " + name + " to favorites"}" title="${on ? "Remove from favorites" : "Add to favorites"}">${ic("star", "ic16")}</button>`;
+}
 function pageProjects() {
   const q = S.projectQuery.trim().toLowerCase();
   const matchesQuery = (p) => !q || [P[p].name, leadTxt(p), ...P[p].teams.map((t) => TEAMS[t].name)].join(" ").toLowerCase().includes(q);
@@ -28,7 +33,7 @@ function pageProjects() {
   `<ul class="rows" role="list">${ids.map((p) => {
     const pr = P[p], ws = W.filter((w) => w.proj === p), openN = ws.filter(OPEN).length;
     return `<li class="linked"><span class="chip-i" style="margin-left:0;width:32px;height:32px;font-size:12px" aria-hidden="true">${esc(pr.name[0])}</span>
-      <div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(pr.name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p>
+      <div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(pr.name)}</a>${pr.archived ? "" : favStar(p, "proj-fav-row")}${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p>
       <div class="meta"><span>${pr.teams.map((t) => `<a href="#/teams/${t}">${esc(TEAMS[t].name)}</a>`).join(", ")}</span>${SEP}<span>${openN} open</span>${pr.due ? SEP + `<span>Due ${esc(pr.due)}</span>` : ""}${SEP}<span>Updated ${esc(pr.updated)}</span></div>
       <div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>
       <span class="hide-sm">${avStack(projMembers(p), 4)}</span>${projPill(p)}${ic("chev-right", "ic20 chev")}</li>`;
@@ -70,7 +75,7 @@ function pageProject(id, tab, sub) {
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit") + `<button role="menuitem" type="button" data-dev-act="choose" data-id="${esc(id)}">${ic("files", "ic20")}Development process…</button>`, "ghost");
   const trail = tab === "docs" ? docCrumbs(id, sub) : planCrumbs(id, tab, sub);
   return crumbs([["#/projects", "Projects"], [trail.length ? "#/projects/" + id : null, pr.name], ...trail]) + `<div class="section-header project-header">
-    ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
+    ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", (pr.archived ? "" : favStar(id)) + projPill(id))}
     ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), more)}
   </div>` + (tab === "activity" || tab === "releases" || tab === "docs" ? "" : projectReleaseSummary(id)) + projectBody(id, tab, sub);
 }

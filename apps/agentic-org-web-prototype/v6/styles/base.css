@@ -1415,6 +1415,16 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 .settings > .ph { grid-column: 1 / -1; }
 /* Organization pages that reuse the settings layout without its section nav */
 .settings.org-standalone { grid-template-columns: minmax(0, 1fr); }
+/* Project favorite star: outline when off, filled amber when on */
+#main .proj-fav { color: var(--gray-400); position: relative; z-index: 2; }
+#main .proj-fav:hover { color: var(--white); }
+#main .proj-fav.is-fav { color: var(--tone-warn-ink); }
+#main .proj-fav.is-fav .ic { fill: currentColor; }
+#main .ph-t > .proj-fav { align-self: center; margin-inline: -4px 2px; }
+/* In a list row the star sits right after the name, small, and only fully visible on hover unless it's a favorite */
+#main .rt > .proj-fav-row { width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; margin-inline: 2px 6px; vertical-align: middle; }
+#main .rows li:not(:hover):not(:focus-within) .proj-fav-row:not(.is-fav) { opacity: 0; }
+@media (pointer: coarse) { #main .rows li .proj-fav-row { opacity: 1; width: 44px; height: 44px; } }
 .settings.org-standalone > .settings-body { grid-column: 1 / -1; }
 .settings-picker { display: none; }
 @media (max-width: 639px) {

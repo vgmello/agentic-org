@@ -375,7 +375,12 @@ const CLICK_ACTIONS = {
       : document.querySelector('[aria-controls="menu-scoped-work-display"], [aria-controls="menu-work-display"]');
     trigger?.focus();
   },
-  "fav-proj": (_e, _t, id) => { const idx = S.favProjs.indexOf(id); if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); } render(false); },
+  "fav-proj": (_e, _t, id) => {
+    const idx = S.favProjs.indexOf(id);
+    if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); }
+    try { localStorage.setItem("agentic-org.v6.favProjs", JSON.stringify(S.favProjs)); } catch (e) {}
+    render(false);
+  },
   answer: (_e, t, id, v) => {
     if (/^Ask why/i.test(v)) { toast("Prototype: your question goes to the agent; the ask stays open."); return; }
     S.answered[id] = v;

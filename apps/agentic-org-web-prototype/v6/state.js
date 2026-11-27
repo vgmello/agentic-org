@@ -58,6 +58,7 @@ function applyTheme(remember = false) {
 applyTheme();
 const NAV_WS_STORE = "agentic-org.v6.navWorkspace.v2";
 try { const saved = JSON.parse(localStorage.getItem(NAV_WS_STORE) || "null"); if (Array.isArray(saved)) S.navWorkspace = saved; } catch (e) {}
+try { const favs = JSON.parse(localStorage.getItem("agentic-org.v6.favProjs") || "null"); if (Array.isArray(favs)) S.favProjs = favs.filter((x) => typeof x === "string"); } catch (e) {}
 function saveNavWorkspace() { try { localStorage.setItem(NAV_WS_STORE, JSON.stringify(S.navWorkspace)); } catch (e) {} }
 const FONT_STORE = "agentic-org.v6.fontStyle.v5";
 const FONT_OPTIONS = [
