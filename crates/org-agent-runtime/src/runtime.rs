@@ -21,6 +21,10 @@ pub struct RuntimeHostProfile {
     /// Credential file paths relative to `host_config_subdir` under `$HOME` that must always be
     /// read-denied to sandboxed agents (`S2`).
     pub config_credential_files: &'static [&'static str],
+    /// Credential file paths relative to the host user's `$HOME` (e.g.
+    /// `".claude/.credentials.json"`) that must always be read-denied to sandboxed agents (`S2`)
+    /// even when `host_config_subdir` is `None`.
+    pub host_credential_files: &'static [&'static str],
     /// Whether this runtime requires host-local OAuth token injection and reactive refresh for
     /// `subscription_cli` routes (e.g. Claude Code `CLAUDE_CODE_OAUTH_TOKEN`).
     pub uses_host_oauth_token_injection: bool,

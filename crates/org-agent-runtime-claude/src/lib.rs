@@ -156,6 +156,7 @@ impl AgentRuntime for ClaudeRuntime {
         RuntimeHostProfile {
             host_config_subdir: None,
             config_credential_files: &[],
+            host_credential_files: &[".claude/.credentials.json"],
             uses_host_oauth_token_injection: true,
             uses_linux_bwrap_sandbox: true,
             needs_explicit_sandbox_ro_dirs: false,
@@ -238,5 +239,16 @@ mod tests {
         assert_eq!(at_limit.len(), 1024);
         assert!(expired(&at_limit));
         assert!(!expired(&format!("{at_limit}x")));
+    }
+
+    #[test]
+    fn host_profile_declares_claude_credentials_without_enabling_config_dir() {
+        let profile = ClaudeRuntime::new().host_profile();
+        assert!(profile.host_config_subdir.is_none());
+        assert!(profile.config_credential_files.is_empty());
+        assert_eq!(
+            profile.host_credential_files,
+            &[".claude/.credentials.json"]
+        );
     }
 }

@@ -119,6 +119,7 @@ impl AgentRuntime for AgyRuntime {
         RuntimeHostProfile {
             host_config_subdir: Some(".gemini"),
             config_credential_files: AGY_CONFIG_CREDENTIAL_FILES,
+            host_credential_files: &[],
             uses_host_oauth_token_injection: false,
             uses_linux_bwrap_sandbox: false,
             needs_explicit_sandbox_ro_dirs: true,

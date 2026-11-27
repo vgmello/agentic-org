@@ -74,6 +74,9 @@ pub(crate) fn parse_agy_jsonl(raw: &str) -> ParsedTranscript {
     }
 }
 
+/// Maximum deduplicated sub-agent references extracted from a single Agy transcript.
+pub(crate) const MAX_SUBAGENTS_PER_TRANSCRIPT: usize = 32;
+
 /// Extracts deduplicated sub-agent references launched via `invoke_subagent`, skipping self-refs.
 pub(crate) fn extract_agy_subagent_refs(
     raw: &str,
@@ -82,6 +85,9 @@ pub(crate) fn extract_agy_subagent_refs(
     let mut seen = BTreeSet::new();
     let mut refs = Vec::new();
     for line in raw.lines() {
+        if refs.len() >= MAX_SUBAGENTS_PER_TRANSCRIPT {
+            break;
+        }
         let Ok(val) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
         };
@@ -472,4 +478,27 @@ fn extract_agy_usage(val: Option<&Value>) -> Option<TranscriptUsage> {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_agy_subagent_refs, MAX_SUBAGENTS_PER_TRANSCRIPT};
+
+    #[test]
+    fn extract_agy_subagent_refs_caps_at_max_subagents_per_transcript() {
+        let mut lines = Vec::new();
+        for idx in 0..(MAX_SUBAGENTS_PER_TRANSCRIPT + 15) {
+            lines.push(format!(
+                r#"{{"type":"TOOL_RESPONSE","tool_call_id":"call_{idx}","result":{{"conversationId":"sub-{idx:03}"}},"spec":{{"role":"Worker {idx}"}}}}"#
+            ));
+        }
+        let raw = lines.join("\n");
+        let refs = extract_agy_subagent_refs(&raw, "parent-conv");
+        assert_eq!(refs.len(), MAX_SUBAGENTS_PER_TRANSCRIPT);
+        assert_eq!(refs[0].agent_id, "sub-000");
+        assert_eq!(
+            refs[MAX_SUBAGENTS_PER_TRANSCRIPT - 1].agent_id,
+            format!("sub-{:03}", MAX_SUBAGENTS_PER_TRANSCRIPT - 1)
+        );
+    }
 }
