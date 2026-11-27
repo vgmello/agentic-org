@@ -47,6 +47,7 @@ org-host-sqlite = { path = "../../crates/org-host-sqlite" }
 org-host-setup = { path = "../../crates/org-host-setup" }
 org-platform = { path = "../../crates/org-platform" }
 org-proto = { path = "../../crates/org-proto" }
+org-redact = { path = "../../crates/org-redact" }
 # The test-support `fake-office-server` binary's descriptor plumbing only.
 libc = { workspace = true, optional = true }
 

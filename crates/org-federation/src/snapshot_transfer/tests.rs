@@ -100,6 +100,34 @@ fn staged_import_guard_fails_closed_when_abandoned_cleanup_fails() {
     fs::set_permissions(&stuck, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+#[test]
+fn staged_import_guard_unlinks_abandoned_directory_symlink_without_deleting_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let import_root = tmp.path().join("snapshot-import");
+    create_private_dir(&import_root).unwrap();
+
+    let victim_dir = tmp.path().join("victim-dir");
+    create_private_dir(&victim_dir).unwrap();
+    let sentinel = victim_dir.join("precious.txt");
+    fs::write(&sentinel, b"must-survive").unwrap();
+
+    let sym = import_root.join("abandoned-symlink");
+    org_platform::fs::create_symlink(&victim_dir, &sym).unwrap();
+    assert!(fs::symlink_metadata(&sym).is_ok());
+
+    let guard = StagedImportGuard::open_reconciled(&import_root, "fresh-run").unwrap();
+    assert!(
+        fs::symlink_metadata(&sym).is_err(),
+        "abandoned symlink entry must be unlinked"
+    );
+    assert!(
+        victim_dir.is_dir(),
+        "symlink target directory must NEVER be deleted"
+    );
+    assert_eq!(fs::read(&sentinel).unwrap(), b"must-survive");
+    drop(guard);
+}
+
 /// A stable ID for the `n`th team, employee or task of a test.
 fn uid(n: u64) -> String {
     format!("01900000-0000-7000-8000-{n:012x}")

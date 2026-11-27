@@ -3,6 +3,7 @@
 //! Extends [`ProjectsRead`] and [`ProjectsWrite`] so messaging operations validate active
 //! employees, teams, and projects in one consistent snapshot or transaction.
 
+use org_proto::resume::ResumeInboxSummary;
 use org_store::{Engine, EngineError, Id};
 
 use crate::projects::ports::{ProjectsRead, ProjectsWrite};
@@ -80,6 +81,20 @@ pub trait MessagingRead: ProjectsRead {
     fn message_local_seq(&self, message_id: &str) -> Result<Option<u64>, EngineError>;
     /// The message or ask-answer file whose attachment ID is `attachment_id`.
     fn message_file(&self, attachment_id: &str) -> Result<Option<BoundMessageFile>, EngineError>;
+    /// Bounded caller-scoped unread inbox counts and newest unread headers (`TASK-220`).
+    fn unread_inbox_summary(
+        &self,
+        employee_id: &Id,
+        limit: usize,
+    ) -> Result<ResumeInboxSummary, EngineError>;
+    /// Bounded open ask candidates `(message, caller_is_recipient)` for `employee_id`.
+    fn open_asks_for_employee(
+        &self,
+        employee_id: &Id,
+        now_utc: &str,
+        caller_is_person: bool,
+        limit: usize,
+    ) -> Result<Vec<(MessageRecord, bool)>, EngineError>;
 }
 
 /// Write operations on the messaging projection during a transaction.

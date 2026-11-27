@@ -1,4 +1,4 @@
-import type { InboxItem } from '$lib/modules/inbox/types';
+import type { InboxItem } from '$lib/platform/workspace/inbox-types';
 import { byName, owner } from '$lib/modules/organization/model';
 import type { Area, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 

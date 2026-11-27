@@ -30,6 +30,7 @@ Pure Python 3 stdlib, zero external dependencies, deterministic fail-closed chec
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,7 @@ _MACRO_EXPORT_RE = re.compile(
     r"#\s*\[\s*macro_export(?:\s*\([^)]*\))?\s*\]"
     r"(?:\s*#\[[^\]]*\])*\s*macro_rules\s*!\s*([A-Za-z_][A-Za-z0-9_]*)"
 )
+_MOD_DECL_RE = re.compile(r"\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*([;{])")
 _MOD_TOKEN_RE = re.compile(r"\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*([;{])|[{}]")
 _DIRECT_PATH_ATTR_RE = re.compile(r'^\s*#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]\s*$')
 _CFG_ATTR_HEAD_RE = re.compile(r"^\s*#\s*\[\s*cfg_attr\s*\(")
@@ -201,24 +203,6 @@ def _discover_bin_names(pkg_name: str, member_dir: Path, data: dict[str, Any]) -
     return frozenset(names)
 
 
-def _discover_exported_macros(
-    member_dir: Path,
-    iter_rs: Callable[[Path], list[Path]],
-    mask_fn: Callable[[str], tuple[str, list[tuple[int, int]]]],
-) -> frozenset[str]:
-    macros: set[str] = set()
-    src_dir = member_dir / "src"
-    if not src_dir.is_dir():
-        return frozenset()
-    for rs_path in iter_rs(src_dir):
-        raw = rs_path.read_text(encoding="utf-8", errors="replace")
-        if "macro_export" not in raw:
-            continue
-        masked, _ = mask_fn(raw)
-        macros.update(_MACRO_EXPORT_RE.findall(masked))
-    return frozenset(macros)
-
-
 def _resolve_build_script(member_dir: Path, data: dict[str, Any]) -> Path | None:
     pkg = data.get("package") or {}
     build_cfg = pkg.get("build")
@@ -231,6 +215,63 @@ def _resolve_build_script(member_dir: Path, data: dict[str, Any]) -> Path | None
     return default if default.is_file() else None
 
 
+def _load_masked_rs(
+    rs_path: Path,
+    resolved: Path,
+    mask_fn: Callable[[str], tuple[str, list[tuple[int, int]]]],
+    cached_files: dict[Path, Any] | None,
+) -> tuple[str, str, list[tuple[int, int]] | None]:
+    entry = cached_files.get(resolved) if cached_files is not None else None
+    if entry is not None:
+        raw = entry.raw
+        if entry.masked is None:
+            entry.masked, _ = mask_fn(raw)
+        return raw, entry.masked, entry.cfg_test_ranges
+    raw = rs_path.read_text(encoding="utf-8", errors="replace")
+    masked, _ = mask_fn(raw)
+    return raw, masked, None
+
+
+def _rel_posix_fast(path: Path, base: Path, base_prefix: str) -> str:
+    raw = path.as_posix()
+    if raw.startswith(base_prefix):
+        return raw[len(base_prefix) :]
+    return path.relative_to(base).as_posix()
+
+
+def _route_crate_source(
+    buckets: _CrateTextBuckets,
+    resolved: Path,
+    rel: str,
+    raw: str,
+    masked: str,
+    cached_ranges: list[tuple[int, int]] | None,
+    build_script: Path | None,
+    is_test_path: Callable[[str], bool],
+    cfg_test_fn: Callable[[str], list[tuple[int, int]]],
+) -> None:
+    if build_script is not None and resolved == build_script:
+        buckets.build_masked.append(masked)
+        buckets.build_raw.append(raw)
+        return
+    if is_test_path(rel) or not rel.startswith("src/"):
+        buckets.test_masked.append(masked)
+        buckets.test_raw.append(raw)
+        return
+    ranges = (
+        cached_ranges
+        if cached_ranges is not None
+        else (cfg_test_fn(masked) if "cfg" in masked else [])
+    )
+    prod_m, test_m = _strip_ranges(masked, ranges)
+    prod_r, test_r = _strip_ranges(raw, ranges)
+    buckets.prod_masked.append(prod_m)
+    buckets.prod_raw.append(prod_r)
+    if test_m:
+        buckets.test_masked.append(test_m)
+        buckets.test_raw.append(test_r)
+
+
 def _bucket_crate_sources(
     member_dir: Path,
     rs_files: list[Path],
@@ -238,31 +279,115 @@ def _bucket_crate_sources(
     is_test_path: Callable[[str], bool],
     mask_fn: Callable[[str], tuple[str, list[tuple[int, int]]]],
     cfg_test_fn: Callable[[str], list[tuple[int, int]]],
-) -> tuple[_CrateTextBuckets, dict[Path, tuple[str, str]]]:
+    cached_files: dict[Path, Any] | None = None,
+) -> tuple[_CrateTextBuckets, dict[Path, tuple[str, str]], frozenset[str], list[tuple[Path, str]]]:
     buckets = _CrateTextBuckets()
     cache: dict[Path, tuple[str, str]] = {}
+    exported_macros: set[str] = set()
+    resolved_entries: list[tuple[Path, str]] = []
+    member_prefix = f"{member_dir.as_posix().rstrip('/')}/"
     for rs_path in rs_files:
-        resolved = rs_path.resolve()
-        raw = rs_path.read_text(encoding="utf-8", errors="replace")
-        masked, _ = mask_fn(raw)
+        resolved = rs_path.resolve() if os.path.islink(rs_path) else rs_path
+        raw, masked, cached_ranges = _load_masked_rs(rs_path, resolved, mask_fn, cached_files)
         cache[resolved] = (raw, masked)
-        rel = rs_path.relative_to(member_dir).as_posix()
-        if build_script is not None and resolved == build_script:
-            buckets.build_masked.append(masked)
-            buckets.build_raw.append(raw)
-        elif is_test_path(rel) or not rel.startswith("src/"):
-            buckets.test_masked.append(masked)
-            buckets.test_raw.append(raw)
-        else:
-            ranges = cfg_test_fn(masked) if "cfg" in masked else []
-            prod_m, test_m = _strip_ranges(masked, ranges)
-            prod_r, test_r = _strip_ranges(raw, ranges)
-            buckets.prod_masked.append(prod_m)
-            buckets.prod_raw.append(prod_r)
-            if test_m:
-                buckets.test_masked.append(test_m)
-                buckets.test_raw.append(test_r)
-    return buckets, cache
+        rel = _rel_posix_fast(rs_path, member_dir, member_prefix)
+        resolved_entries.append((resolved, rel))
+        if rel.startswith("src/") and "macro_export" in raw:
+            exported_macros.update(_MACRO_EXPORT_RE.findall(masked))
+        _route_crate_source(
+            buckets, resolved, rel, raw, masked, cached_ranges, build_script, is_test_path, cfg_test_fn
+        )
+    return buckets, cache, frozenset(exported_macros), resolved_entries
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _at_word_boundary(text: str, start: int, end: int) -> bool:
+    left_ok = start == 0 or not _is_word_char(text[start - 1])
+    right_ok = end == len(text) or not _is_word_char(text[end])
+    return left_ok and right_ok
+
+
+def _skip_ws_forward(text: str, pos: int) -> int:
+    n = len(text)
+    while pos < n and text[pos].isspace():
+        pos += 1
+    return pos
+
+
+def _skip_ws_backward(text: str, pos: int) -> int:
+    while pos > 0 and text[pos - 1].isspace():
+        pos -= 1
+    return pos
+
+
+def _has_keyword_before(text: str, pos: int, kw: str) -> int | None:
+    start = pos - len(kw)
+    if start < 0 or text[start:pos] != kw:
+        return None
+    if start > 0 and _is_word_char(text[start - 1]):
+        return None
+    return start
+
+
+def _preceded_by_use_or_extern_crate(text: str, pos: int) -> bool:
+    k = _skip_ws_backward(text, pos)
+    if k == pos:
+        return False
+    if _has_keyword_before(text, k, "use") is not None:
+        return True
+    crate_start = _has_keyword_before(text, k, "crate")
+    if crate_start is None:
+        return False
+    e = _skip_ws_backward(text, crate_start)
+    return e < crate_start and _has_keyword_before(text, e, "extern") is not None
+
+
+def _ident_used_at(text: str, pos: int, end: int) -> bool:
+    if not _at_word_boundary(text, pos, end):
+        return False
+    if pos >= 2 and text[pos - 2 : pos] == "::":
+        return True
+    j = _skip_ws_forward(text, end)
+    if text[j : j + 2] == "::":
+        return True
+    return _preceded_by_use_or_extern_crate(text, pos)
+
+
+def _ident_is_used(ident: str, masked_blob: str) -> bool:
+    ident_len = len(ident)
+    pos = masked_blob.find(ident)
+    while pos != -1:
+        if _ident_used_at(masked_blob, pos, pos + ident_len):
+            return True
+        pos = masked_blob.find(ident, pos + 1)
+    return False
+
+
+def _macro_is_used(macro: str, masked_blob: str) -> bool:
+    macro_len = len(macro)
+    pos = masked_blob.find(macro)
+    while pos != -1:
+        end = pos + macro_len
+        if _at_word_boundary(masked_blob, pos, end):
+            j = _skip_ws_forward(masked_blob, end)
+            if j < len(masked_blob) and masked_blob[j] == "!":
+                return True
+        pos = masked_blob.find(macro, pos + 1)
+    return False
+
+
+def _bin_env_is_used(bin_names: frozenset[str], raw_blob: str) -> bool:
+    if "CARGO_BIN_EXE_" not in raw_blob:
+        return False
+    for name in bin_names:
+        if f"CARGO_BIN_EXE_{name}" not in raw_blob:
+            continue
+        if re.search(rf"(?<![A-Za-z0-9_])CARGO_BIN_EXE_{re.escape(name)}(?![A-Za-z0-9_-])", raw_blob):
+            return True
+    return False
 
 
 def _is_dep_referenced(
@@ -272,21 +397,11 @@ def _is_dep_referenced(
     masked_blob: str,
     raw_blob: str,
 ) -> bool:
-    if "CARGO_BIN_EXE_" in raw_blob and any(f"CARGO_BIN_EXE_{b}" in raw_blob for b in bin_names):
+    if _bin_env_is_used(bin_names, raw_blob):
         return True
-    if ident in masked_blob:
-        pat = (
-            rf"(?:\buse\s+(?:::)?{re.escape(ident)}\b"
-            rf"|\b{re.escape(ident)}\s*::"
-            rf"|\bextern\s+crate\s+{re.escape(ident)}\b"
-            rf"|::{re.escape(ident)}\b)"
-        )
-        if re.search(pat, masked_blob):
-            return True
-    for macro in macros:
-        if macro in masked_blob and re.search(rf"\b{re.escape(macro)}\s*!", masked_blob):
-            return True
-    return False
+    if ident in masked_blob and _ident_is_used(ident, masked_blob):
+        return True
+    return any(macro in masked_blob and _macro_is_used(macro, masked_blob) for macro in macros)
 
 
 def _merge_deps_by_kind(
@@ -610,6 +725,12 @@ def _resolve_explicit_path(file_path: Path, cur_dirs: list[Path], rel_path: str)
     return None
 
 
+def _resolve_if_file(path: Path) -> Path | None:
+    if not path.is_file():
+        return None
+    return path.resolve() if os.path.islink(path) else path
+
+
 def _resolve_mod_targets(
     file_path: Path,
     cur_dirs: list[Path],
@@ -625,11 +746,11 @@ def _resolve_mod_targets(
     if unconditional:
         return found
     for cur_dir in cur_dirs:
-        file_cand = (cur_dir / f"{mod_name}.rs").resolve()
-        if file_cand.is_file():
+        file_cand = _resolve_if_file(cur_dir / f"{mod_name}.rs")
+        if file_cand is not None:
             found.append((file_cand, cur_dir / mod_name))
-        dir_cand = (cur_dir / mod_name / "mod.rs").resolve()
-        if dir_cand.is_file():
+        dir_cand = _resolve_if_file(cur_dir / mod_name / "mod.rs")
+        if dir_cand is not None:
             found.append((dir_cand, dir_cand.parent))
     return found
 
@@ -641,6 +762,8 @@ def _extract_include_targets(
     masked: str,
     skip_balanced_fn: Callable[[str, int, str, str], int],
 ) -> list[Path]:
+    if "include" not in masked:
+        return []
     targets: list[Path] = []
     for m in _INCLUDE_CALL_RE.finditer(masked):
         close_end = skip_balanced_fn(masked, m.end(), "(", ")")
@@ -677,7 +800,7 @@ def _next_inline_mod_dirs(
     return dirs
 
 
-def _scan_file_mod_edges(
+def _scan_inline_mod_edges(
     file_path: Path,
     default_dir: Path,
     raw: str,
@@ -708,6 +831,27 @@ def _scan_file_mod_edges(
     return edges
 
 
+def _scan_file_mod_edges(
+    file_path: Path,
+    default_dir: Path,
+    raw: str,
+    masked: str,
+    prev_attr_fn: Callable[[str, int, int], tuple[int, int] | None],
+) -> list[tuple[Path, Path]]:
+    if "mod" not in masked:
+        return []
+    mod_matches = list(_MOD_DECL_RE.finditer(masked))
+    if not mod_matches or not any(m.group(2) == ";" for m in mod_matches):
+        return []
+    if all(m.group(2) == ";" for m in mod_matches):
+        edges: list[tuple[Path, Path]] = []
+        for m in mod_matches:
+            uncond, cond = _extract_path_attrs(raw, masked, m.start(), prev_attr_fn)
+            edges.extend(_resolve_mod_targets(file_path, [default_dir], m.group(1), uncond, cond))
+        return edges
+    return _scan_inline_mod_edges(file_path, default_dir, raw, masked, prev_attr_fn)
+
+
 def _crawl_reachable_rs(
     member_dir: Path,
     roots: set[Path],
@@ -736,9 +880,10 @@ def _crawl_reachable_rs(
 
 def _check_member_orphans(
     repo_root: Path,
+    repo_prefix: str,
     member_dir: Path,
     data: dict[str, Any],
-    rs_files: list[Path],
+    resolved_entries: list[tuple[Path, str]],
     build_script: Path | None,
     cache: dict[Path, tuple[str, str]],
     prev_attr_fn: Callable[[str, int, int], tuple[int, int] | None],
@@ -752,21 +897,62 @@ def _check_member_orphans(
         member_dir, extra_roots, cache, prev_attr_fn, skip_balanced_fn
     )
     errors: list[str] = []
-    for rs_path in rs_files:
-        resolved = rs_path.resolve()
-        rel_crate = rs_path.relative_to(member_dir).as_posix()
-        rel_repo = rs_path.relative_to(repo_root).as_posix()
+    for resolved, rel_crate in resolved_entries:
         if rel_crate.startswith("src/") and resolved not in reachable_src:
+            rel_repo = _rel_posix_fast(resolved, repo_root, repo_prefix)
             errors.append(
                 f"Orphan Rust source file `{rel_repo}`: unreachable from crate src roots "
                 f"(missing `mod` declaration or leftover file)."
             )
         elif resolved not in reachable_all:
+            rel_repo = _rel_posix_fast(resolved, repo_root, repo_prefix)
             errors.append(
                 f"Orphan Rust file `{rel_repo}`: unreachable from any crate target root "
                 f"(src/tests/examples/benches)."
             )
     return errors
+
+
+@dataclass
+class _PreparedMember:
+    pkg_name: str
+    member_res: Path
+    data: dict[str, Any]
+    resolved_entries: list[tuple[Path, str]]
+    build_script: Path | None
+    buckets: _CrateTextBuckets
+    cache: dict[Path, tuple[str, str]]
+
+
+def _prepare_members(
+    members: list[tuple[str, Path, dict[str, Any]]],
+    *,
+    iter_rs: Callable[[Path], list[Path]],
+    is_test_path: Callable[[str], bool],
+    mask_fn: Callable[[str], tuple[str, list[tuple[int, int]]]],
+    cfg_test_fn: Callable[[str], list[tuple[int, int]]],
+    source_cache: Any,
+) -> tuple[list[_PreparedMember], dict[str, frozenset[str]]]:
+    cached_member_files = source_cache.member_files if source_cache is not None else {}
+    cached_files = source_cache.files if source_cache is not None else None
+    exported_macros: dict[str, frozenset[str]] = {}
+    prepared: list[_PreparedMember] = []
+    for pkg_name, member_dir, data in members:
+        member_res = member_dir.resolve()
+        rs_files = cached_member_files.get(pkg_name)
+        if rs_files is None:
+            rs_files = iter_rs(member_res)
+        build_script = _resolve_build_script(member_res, data)
+        buckets, cache, pkg_macros, resolved_entries = _bucket_crate_sources(
+            member_res, rs_files, build_script, is_test_path, mask_fn, cfg_test_fn, cached_files
+        )
+        exported_macros[pkg_name] = pkg_macros
+        prepared.append(
+            _PreparedMember(
+                pkg_name, member_res, data, resolved_entries, build_script, buckets, cache
+            )
+        )
+    return prepared, exported_macros
 
 
 def check_workspace_hygiene(
@@ -780,32 +966,34 @@ def check_workspace_hygiene(
     cfg_test_fn: Callable[[str], list[tuple[int, int]]],
     prev_attr_fn: Callable[[str, int, int], tuple[int, int] | None],
     skip_balanced_fn: Callable[[str, int, str, str], int],
+    source_cache: Any = None,
 ) -> list[str]:
     """Run Check #5: unused workspace deps and orphan `.rs` source files across all members."""
+    repo_root_res = repo_root.resolve()
+    repo_prefix = f"{repo_root_res.as_posix().rstrip('/')}/"
     workspace_pkgs = {name for name, _, _ in members}
     lib_idents = {name: _lib_ident_for(name, data) for name, _, data in members}
-    exported_macros = {
-        name: _discover_exported_macros(member_dir, iter_rs, mask_fn)
-        for name, member_dir, _ in members
-    }
     bin_names_map = {
         name: _discover_bin_names(name, member_dir, data) for name, member_dir, data in members
     }
+    prepared, exported_macros = _prepare_members(
+        members,
+        iter_rs=iter_rs,
+        is_test_path=is_test_path,
+        mask_fn=mask_fn,
+        cfg_test_fn=cfg_test_fn,
+        source_cache=source_cache,
+    )
     errors: list[str] = []
-    for pkg_name, member_dir, data in members:
-        rs_files = iter_rs(member_dir)
-        build_script = _resolve_build_script(member_dir, data)
-        buckets, cache = _bucket_crate_sources(
-            member_dir, rs_files, build_script, is_test_path, mask_fn, cfg_test_fn
-        )
-        deps = _collect_member_workspace_deps(data, workspace_pkgs, workspace_dep_renames)
-        manifest_rel = (member_dir / "Cargo.toml").relative_to(repo_root).as_posix()
+    for item in prepared:
+        deps = _collect_member_workspace_deps(item.data, workspace_pkgs, workspace_dep_renames)
+        manifest_rel = _rel_posix_fast(item.member_res / "Cargo.toml", repo_root_res, repo_prefix)
         errors.extend(
             _check_member_deps(
-                pkg_name,
+                item.pkg_name,
                 manifest_rel,
                 deps,
-                buckets,
+                item.buckets,
                 lib_idents,
                 exported_macros,
                 bin_names_map,
@@ -813,12 +1001,13 @@ def check_workspace_hygiene(
         )
         errors.extend(
             _check_member_orphans(
-                repo_root,
-                member_dir,
-                data,
-                rs_files,
-                build_script,
-                cache,
+                repo_root_res,
+                repo_prefix,
+                item.member_res,
+                item.data,
+                item.resolved_entries,
+                item.build_script,
+                item.cache,
                 prev_attr_fn,
                 skip_balanced_fn,
             )

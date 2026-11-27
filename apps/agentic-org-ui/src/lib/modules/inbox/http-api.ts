@@ -7,6 +7,7 @@ import {
 } from '$lib/platform/http/gateway-errors';
 import type { AppError } from '$lib/proto';
 import type { InboxApi } from './api';
+import { appendPendingExternalAuth } from './http-external-auth';
 import { appendSnoozedChatItems } from './http-snoozed';
 import type { InboxAction, InboxItem, InboxKind, InboxPerson, InboxRequest } from './types';
 
@@ -47,9 +48,7 @@ function unwrapInboxReply(reply: GatewayReply, fallbackMessage: string): Rec {
 		} satisfies AppError;
 	}
 	const result = asRec(root?.result);
-	if (!result) {
-		throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies AppError;
-	}
+	if (!result) throw unreachableError(fallbackMessage);
 	return result;
 }
 
@@ -427,14 +426,17 @@ export function createHttpInboxApi({
 				.map((entry) => mapWireInboxItem(entry, asOf))
 				.filter((x): x is { item: InboxItem; rawSource?: string } => x !== undefined);
 
-			const nextSnoozedError = await appendSnoozedChatItems(
-				{ http, unwrapInboxReply, extractMessageId, mapSnoozedChatInboxItem },
-				organizationId,
-				asOf,
-				cachedItems.get(organizationId)?.values() ?? [],
-				mapped,
-				signal
-			);
+			const [nextSnoozedError] = await Promise.all([
+				appendSnoozedChatItems(
+					{ http, unwrapInboxReply, extractMessageId, mapSnoozedChatInboxItem },
+					organizationId,
+					asOf,
+					cachedItems.get(organizationId)?.values() ?? [],
+					mapped,
+					signal
+				),
+				appendPendingExternalAuth(http, organizationId, asOf, mapped, signal)
+			]);
 
 			// Guard cache and snoozedError against stale overlapping list() refreshes.
 			if (listSeqByOrg.get(organizationId) === seq) {
@@ -565,11 +567,7 @@ export function createHttpInboxApi({
 			try {
 				reply = await http.submit(`${base}/chat/unsnooze`, { id: msgId });
 			} catch {
-				throw {
-					source: 'api',
-					code: 'unavailable',
-					message: 'The Inbox un-snooze action could not be reached.'
-				} satisfies AppError;
+				throw unreachableError('The Inbox un-snooze action could not be reached.');
 			}
 			unwrapInboxReply(reply, 'Could not un-snooze this inbox item.');
 			const cached = cachedItems.get(organizationId)?.get(itemId);

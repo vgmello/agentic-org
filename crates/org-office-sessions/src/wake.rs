@@ -40,6 +40,10 @@ pub enum WakeKind {
     AskAnswer,
     WatcherAnswer,
     Recovery,
+    /// Office-supervisor continuation wake queued when an agent prepares a new worktree mid-turn
+    /// inside a stale sandboxed session (`TASK-160`). Always defers to `TurnEnded` so the stale
+    /// warm process recycles cleanly and resumes the same conversation with fresh bare-cache grants.
+    SandboxRefresh,
 }
 
 impl WakeKind {
@@ -52,6 +56,7 @@ impl WakeKind {
             Self::TaskAssignment => "assignment",
             Self::AskAnswer | Self::WatcherAnswer => "answer",
             Self::Recovery => "recovery",
+            Self::SandboxRefresh => "sandbox_refresh",
         }
     }
 
@@ -539,6 +544,9 @@ fn format_action_hint(item: &PendingWakeItem) -> String {
         WakeKind::TaskAssignment => format!("Inspect with `agent-os task inspect --task {sid}`."),
         WakeKind::Recovery => {
             "Resume carefully without duplicating completed side effects.".to_owned()
+        }
+        WakeKind::SandboxRefresh => {
+            "Your sandbox has been refreshed with active Git worktree grants. Continue your work in the prepared worktree; `git status`, `git diff`, and `git commit` are now permitted.".to_owned()
         }
         _ => format!(
             "Inspect with `agent-os msg read --id {sid}` or reply via `agent-os msg reply --id {sid} --body '...'`.",

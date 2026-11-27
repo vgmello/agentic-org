@@ -11,6 +11,7 @@
 	import { isDenyAction } from '../../spotlight';
 	import InboxDetailDenyGuard from './InboxDetailDenyGuard.svelte';
 	import InboxDetailRecommendation from './InboxDetailRecommendation.svelte';
+	import InboxExternalAuthActions from './InboxExternalAuthActions.svelte';
 	import InboxSnoozeDropdown from './InboxSnoozeDropdown.svelte';
 	import { isDeniedOutcome, splitHref, type TriageItem } from './triage-model';
 
@@ -119,6 +120,9 @@
 		)
 	);
 	const deniedHandled = $derived(isDeniedOutcome(item.handled?.outcome));
+	const externalAuthMeta = $derived(
+		item.state === 'open' ? item.inboxItem?.external_auth : undefined
+	);
 
 	const btnTouch =
 		'[@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
@@ -210,6 +214,13 @@
 					/>
 				</div>
 			</div>
+		{:else if externalAuthMeta}
+			<InboxExternalAuthActions
+				meta={externalAuthMeta}
+				agentName={item.actorName}
+				{controlsDisabled}
+				{nowMs}
+			/>
 		{:else}
 			{#if hasReply}
 				<form class="flex w-full flex-col gap-2.5" onsubmit={handleReplySubmit}>

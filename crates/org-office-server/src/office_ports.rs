@@ -9,8 +9,8 @@ use crate::federation_runtime::HqFederationSlot;
 use crate::session_proxy::build_session_hooks;
 use crate::{
     attachment_calls, chat_calls, cost_calls, directory, doc_calls, federation_calls, follow,
-    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, search_calls, serve,
-    task_calls, tess_calls, wake_bridge, watcher,
+    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, resume_calls,
+    search_calls, serve, task_calls, tess_calls, wake_bridge, watcher,
 };
 use org_office::{Office, OfficeError};
 
@@ -372,6 +372,31 @@ fn build_tess_port(
     })
 }
 
+fn build_resume_port(
+    office: &Arc<Office>,
+    git_svc: &Arc<git_calls::GitService>,
+    mailbox: &Arc<org_mailbox::Mailbox>,
+) -> serve::ResumeFn {
+    let resume_svc = Arc::new(resume_calls::ResumeService::new(
+        Arc::clone(office),
+        Arc::clone(git_svc),
+    ));
+    let o = Arc::clone(office);
+    let mb = Arc::clone(mailbox);
+    Box::new(move |member, session_mode, request| {
+        if snapshot_pending(&o) {
+            return Some(org_proto::Response::error(
+                request.id,
+                snapshot_unavailable_api_error(),
+            ));
+        }
+        if let Some(member) = member {
+            let _ = mb.release_due_snoozes_for(member);
+        }
+        resume_svc.dispatch(member, session_mode, request)
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "composes the office's domain ports, federation handle, and sync wakeups"
@@ -411,18 +436,23 @@ pub(crate) fn build_office_ports(
     );
     let reads = build_read_ports(&office, &session_manager, &live);
     let attach_wake = Arc::clone(&sync_wake);
+    let git_svc = Arc::new(
+        git_calls::GitService::new(Arc::clone(&office), Arc::clone(&live))
+            .with_sessions(Arc::downgrade(&session_manager)),
+    );
+    session_manager.set_task_worktree_preparer(
+        Arc::clone(&git_svc) as Arc<dyn org_office_sessions::TaskWorktreePreparer>
+    );
     let task_svc = Arc::new(
         task_calls::TaskService::new(
             Arc::clone(&office),
             Arc::clone(&live),
             Some(Arc::clone(&session_manager)),
         )
+        .with_git_service(Arc::clone(&git_svc))
         .with_sync_wake(sync_wake),
     );
-    let git_svc = Arc::new(git_calls::GitService::new(
-        Arc::clone(&office),
-        Arc::clone(&live),
-    ));
+    let resume = build_resume_port(&office, &git_svc, &messaging.mailbox);
     let delegation_gate = Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
         Arc::clone(&office),
         Arc::clone(&session_manager),
@@ -533,6 +563,7 @@ pub(crate) fn build_office_ports(
             }))
         },
         tess: Some(tess),
+        resume: Some(resume),
         directory: messaging.directory,
         submit,
     }

@@ -52,12 +52,7 @@
 //! ([`ServerCheck::describe_admitted`]). The same policy data serves both: each system's
 //! adapter reads its own fields of [`ExpectedImage`].
 
-/// The office worker's signing identifier (ADR-0003 §2.1): a release host gives an office's key
-/// only to an office worker signed with it by the app's team (`server_check`). The bundle must sign
-/// agentic-org-office with it. The signing identifier is stable across filename changes.
-pub const OFFICE_SIGNING_ID: &str = "com.vgmello.agentic-org.office";
-/// The browser service has no office-worker or Keychain authority (ADR-0008).
-pub const WEB_SIGNING_ID: &str = "com.vgmello.agentic-org.web";
+pub use org_host_release::signing::{OFFICE_SIGNING_ID, WEB_SIGNING_ID};
 
 use std::io;
 use std::path::Path;
@@ -123,15 +118,7 @@ pub(crate) enum ServerCheck {
     ByPath,
 }
 
-/// The exact image the selected release names for one program: plain data from the verified,
-/// signed release manifest. Each system's admission reads its own field: the SHA-256 of the
-/// program's bytes where the verified bytes are executed, the CodeDirectory hash where the
-/// loaded image is checked. A manifest carries the second only for a system that has one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Pin {
-    pub(crate) sha256: [u8; 32],
-    pub(crate) macos_cdhash: Option<[u8; 20]>,
-}
+pub(crate) use org_host_release::Pin;
 
 /// Why a check has no admission to start servers with ([`ServerCheck::admission`]).
 #[derive(Debug)]

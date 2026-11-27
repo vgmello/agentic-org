@@ -5,31 +5,33 @@
 //! verbatim, completely outside `durable/state/`, `durable/journal/`, `office.db`, and Git.
 //! It is NOT a disposable runtime cache (`doc-79` §Private Task Notes).
 
+mod checkpoint;
 mod list;
 mod rows;
 pub(crate) mod schema;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use org_proto::{ApiError, ErrorCode};
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use org_office::private_fs::{
-    absolute, full_sync, private_dir_synced, private_file, sync_dir, tighten_sqlite_sidecars,
+    absolute, private_dir_synced, private_file, sync_dir, tighten_sqlite_sidecars,
 };
 use org_office::private_notes::{
-    check_author_mutation, check_receipt_reuse, monotonic_ts, next_revision,
-    parse_receipt_error_code, replayed_note, require_publishable, Accepted, BeginPublishCmd,
-    CreateNoteCmd, DeleteNoteCmd, EditNoteCmd, NotePage, NoteQuery, PrivateNoteRecord,
-    PrivateNotesStore, PublishAttempt,
+    check_receipt_reuse, monotonic_ts, next_revision, parse_receipt_error_code, replayed_note,
+    require_publishable, Accepted, BeginPublishCmd, CreateNoteCmd, DeleteNoteCmd, EditNoteCmd,
+    NotePage, NoteQuery, PrivateNoteRecord, PrivateNotesStore, PublishAttempt,
 };
 use org_office::storage_layout as layout;
 use org_office::OfficeError;
 
 use rows::{
-    has_pending_publish, insert_completed_receipt, insert_note, load_note, load_receipt, note_row,
-    tombstone, update_content, with_tags, Expected, ReceiptRow, NOTE_COLUMNS,
+    author_mutation, begin, flush_authoritative_db, insert_completed_receipt, insert_note,
+    load_note, load_receipt, note_row, tombstone, update_content, with_tags, Expected, ReceiptRow,
+    NOTE_COLUMNS,
 };
 
 /// SQLite-backed isolated private notes database behind a single serialized writer lock (`ADR-0002`).
@@ -137,46 +139,6 @@ pub(crate) fn load_note_for_index(
     load_note(conn, org_id, note_id)
 }
 
-fn begin(conn: &mut Connection) -> Result<Transaction<'_>, OfficeError> {
-    conn.transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(OfficeError::storage)
-}
-
-/// Explicitly runs `org_platform::fs::full_sync` (`F_FULLFSYNC` on macOS, never downgraded)
-/// on the WAL file (when present) and main DB file so an acknowledged private-note mutation
-/// never relies on SQLite's VFS fallback to plain `fsync` (`TASK-97` / Pass 2 Finding #6).
-fn flush_authoritative_db(db_path: &Path) -> Result<(), OfficeError> {
-    let mut wal = db_path.as_os_str().to_os_string();
-    wal.push("-wal");
-    let wal_path = PathBuf::from(wal);
-    match std::fs::File::open(&wal_path) {
-        Ok(f) => full_sync(&f).map_err(OfficeError::storage)?,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(OfficeError::storage(err)),
-    }
-    let db_file = std::fs::File::open(db_path).map_err(OfficeError::storage)?;
-    full_sync(&db_file).map_err(OfficeError::storage)
-}
-
-/// Validates an author mutation of the stored note inside `tx`.
-fn author_mutation(
-    tx: &Transaction<'_>,
-    org_id: &str,
-    note_id: &str,
-    caller: (&str, bool),
-    expected_revision: u64,
-    pending_msg: &str,
-) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
-    check_author_mutation(
-        load_note(tx, org_id, note_id)?,
-        caller.0,
-        caller.1,
-        expected_revision,
-        || has_pending_publish(tx, org_id, note_id),
-        pending_msg,
-    )
-}
-
 impl PrivateNotesStore for SqlitePrivateNotesStore {
     fn create_note(
         &self,
@@ -221,6 +183,15 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         );
         insert_completed_receipt(&tx, key, "create", cmd.note_id, 1, cmd.now)?;
         self.commit_note(tx, cmd.org_id, cmd.note_id)
+    }
+
+    fn upsert_checkpoint_note(
+        &self,
+        cmd: CreateNoteCmd<'_>,
+    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        let mut conn = self.lock()?;
+        let tx = begin(&mut conn)?;
+        checkpoint::upsert_checkpoint(tx, &self.db_path, cmd)
     }
 
     fn edit_note(
@@ -349,6 +320,16 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
     fn list_notes(&self, query: &NoteQuery<'_>) -> Result<NotePage, OfficeError> {
         let conn = self.lock()?;
         list::list(&conn, query)
+    }
+
+    fn latest_author_notes_for_tasks(
+        &self,
+        org_id: &str,
+        author_id: &str,
+        task_ids: &[String],
+    ) -> Result<BTreeMap<String, PrivateNoteRecord>, OfficeError> {
+        let conn = self.lock()?;
+        checkpoint::latest_author_notes_for_tasks(&conn, org_id, author_id, task_ids)
     }
 
     fn begin_publish(

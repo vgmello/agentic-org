@@ -63,6 +63,7 @@ fn debug_output_of_every_private_note_shape_redacts_private_text() {
         alternatives: Some(SECRETS[2].into()),
         tags: vec![SECRETS[3].into()],
         body_markdown: SECRETS[4].into(),
+        checkpoint: false,
     };
     assert_redacted(&format!("{add:?}"));
 

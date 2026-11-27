@@ -201,6 +201,7 @@ fn stub_handle(
         private_home: "/tmp/tess-home".into(),
         permission_preset: "operator_sandboxed".into(),
         sandbox_enabled: true,
+        allow_host_auth: false,
         spec_hash: "h".into(),
         watchdog: StallWatchdog::new(Duration::from_secs(60), Instant::now()),
         recovery_required: false,

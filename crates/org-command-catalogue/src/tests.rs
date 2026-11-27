@@ -15,8 +15,8 @@ fn command_table_passes_all_org_command_contract_checks() {
     );
     assert_eq!(
         live.rows().len(),
-        126,
-        "the agent-os catalogue has 126 commands"
+        127,
+        "the agent-os catalogue has 127 commands"
     );
 }
 
@@ -55,9 +55,16 @@ fn aliases_expand_cleanly_without_touching_unrelated_commands() {
     for (line, expected) in [
         ("who --team Core", "directory list --team Core"),
         ("context --format yaml", "session context --format yaml"),
+        (
+            "resume --fields identity",
+            "session resume --fields identity",
+        ),
+        ("me --format compact", "session resume --format compact"),
         ("task note add --task T-A1", "task-note add --task T-A1"),
         ("who --help", "directory list --help"),
         ("context --schema", "session context --schema"),
+        ("resume --help", "session resume --help"),
+        ("me --schema", "session resume --schema"),
     ] {
         assert_eq!(
             live.expand(&words(line)).as_ref(),

@@ -1,15 +1,15 @@
 {
-	"lastPassSha": "2a829bb1b",
+	"lastPassSha": "316c3155f",
 	"lastPassDate": "2026-11-27",
 	"auditor": "claude-opus-5-5 (xhigh)",
-	"overall": 9.18,
+	"overall": 9.1,
 	"scores": {
-		"security": 9.3,
-		"reactivity": 9.3,
-		"architecture": 9.2,
-		"bundle": 9.1,
-		"designA11y": 9.0,
-		"maintainability": 9.2
+		"security": 9.2,
+		"reactivity": 9.2,
+		"architecture": 9.1,
+		"bundle": 9.0,
+		"designA11y": 9.1,
+		"maintainability": 9.0
 	},
 	"cadence": {
 		"maxUiCommits": 10,

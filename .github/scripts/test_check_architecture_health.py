@@ -1222,12 +1222,85 @@ class TestWorkspaceHygiene(unittest.TestCase):
             self.assertTrue(any("src/orphan_leftover.rs" in e for e in res.errors), res.errors)
             self.assertTrue(any("tests/orphan_dir/unused.rs" in e for e in res.errors), res.errors)
 
+    def test_layer0_org_release_upward_dependency_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-release", "crates/org-host"],
+                {
+                    "crates/org-release": (
+                        '[package]\nname = "org-release"\nversion = "0.0.0"\n'
+                        '[dependencies]\norg-host = { path = "../org-host" }\n',
+                        {"src/lib.rs": "pub fn check() { let _ = org_host::H; }\n"},
+                    ),
+                    "crates/org-host": (
+                        '[package]\nname = "org-host"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "pub const H: u8 = 1;\n"},
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertTrue(
+                any("Layer-0 stability violation" in e and "`org-release`" in e and "`org-host`" in e for e in res.errors),
+                res.errors,
+            )
+
+            _write(
+                root,
+                "crates/org-release/Cargo.toml",
+                '[package]\nname = "org-release"\nversion = "0.0.0"\n',
+            )
+            _write(root, "crates/org-release/src/lib.rs", "pub fn check() {}\n")
+            ok = health.run_health_check(root)
+            self.assertEqual(ok.errors, [])
+            self.assertIn("org-release", ok.layer0_checked)
+
+    def test_cargo_bin_exe_prefix_does_not_mask_unused_dev_dep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["apps/agentic-org", "apps/agentic-org-office", "crates/org-consumer"],
+                {
+                    "apps/agentic-org": (
+                        '[package]\nname = "agentic-org"\nversion = "0.0.0"\n',
+                        {"src/main.rs": "fn main() {}\n"},
+                    ),
+                    "apps/agentic-org-office": (
+                        '[package]\nname = "agentic-org-office"\nversion = "0.0.0"\n',
+                        {"src/main.rs": "fn main() {}\n"},
+                    ),
+                    "crates/org-consumer": (
+                        '[package]\nname = "org-consumer"\nversion = "0.0.0"\n'
+                        '[dev-dependencies]\n'
+                        'agentic-org = { path = "../../apps/agentic-org" }\n'
+                        'agentic-org-office = { path = "../../apps/agentic-org-office" }\n',
+                        {
+                            "src/lib.rs": "pub fn c() {}\n",
+                            "tests/smoke.rs": (
+                                'const OFFICE: &str = env!("CARGO_BIN_EXE_agentic-org-office");\n'
+                            ),
+                        },
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertTrue(
+                any("Unused workspace dev-dependency" in e and "`agentic-org`" in e for e in res.errors),
+                res.errors,
+            )
+            self.assertFalse(
+                any("`agentic-org-office`" in e for e in res.errors),
+                res.errors,
+            )
+
     def test_dev_dep_default_features_target_widening_and_custom_bin_name_not_flagged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _create_workspace(
                 root,
-                ["crates/org-proto", "crates/org-docs", "apps/org-tool"],
+                ["crates/org-proto", "crates/org-docs", "apps/org-tool", "crates/org-consumer"],
                 {
                     "crates/org-proto": (
                         '[package]\nname = "org-proto"\nversion = "0.0.0"\n',
@@ -1249,6 +1322,14 @@ class TestWorkspaceHygiene(unittest.TestCase):
                         'org-docs = { path = "../../crates/org-docs" }\n',
                         {
                             "src/main.rs": "fn main() { org_proto::p(); org_docs::d(); }\n",
+                        },
+                    ),
+                    "crates/org-consumer": (
+                        '[package]\nname = "org-consumer"\nversion = "0.0.0"\n'
+                        '[dev-dependencies]\n'
+                        'org-tool = { path = "../../apps/org-tool" }\n',
+                        {
+                            "src/lib.rs": "pub fn run() {}\n",
                             "tests/bin.rs": 'const BIN: &str = env!("CARGO_BIN_EXE_custom-cli");\n',
                         },
                     ),

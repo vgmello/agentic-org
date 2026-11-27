@@ -18,7 +18,6 @@
 #   python3 .github/scripts/check_architecture_health.py --print-baseline
 
 [crate_loc]
-org-host 32500
 org-office 74900
 
 [coupling.rusqlite]
