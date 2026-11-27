@@ -37,22 +37,24 @@ in pure Python 3 stdlib (zero third-party dependencies, < 2s full-repo execution
         or Seatbelt/sandbox FFI/type references (`sandbox_init`,
         `sandbox_init_with_parameters`, `sandbox_check`, `sandbox_exec`, `Seatbelt`)
         outside `crates/org-platform/` and `crates/org-platform-host/`.
-     d) `coupling.dead_code_trait`: `#[allow(...dead_code...)]` (including via
-        `#[cfg_attr(..., allow(...dead_code...))]`) directly preceding any `trait`
-        definition across all crates.
+     d) `coupling.dead_code_trait`: `#[allow(...dead_code...)]` / `#[expect(...dead_code...)]`
+        (including via `#[cfg_attr(..., allow|expect(...dead_code...))]`) directly
+        preceding any `trait` definition across all crates.
    - Enforces exact shrink-only agreement with `.github/architecture-boundaries.allow`:
      unlisted hits fail, raised counts fail, and reduced counts must be lowered (or
      deleted at 0) in the same change so wins stay permanently locked in.
 
 3. Workspace Cargo DAG & Layer-0 Foundation Stability Guard:
-   - Parses root `Cargo.toml` workspace members and each member's normal `[dependencies]`
-     and `[target.*.dependencies]` (cleanly excluding `[dev-dependencies]`).
+   - Parses root `Cargo.toml` workspace members (plus `[workspace.dependencies]` rename
+     aliases) and each member's normal `[dependencies]`, `[build-dependencies]`,
+     `[target.*.dependencies]`, and `[target.*.build-dependencies]` (cleanly excluding
+     `[dev-dependencies]`).
    - Verifies 0 cyclic dependencies across all workspace crates (reporting the exact
      cycle path on failure).
    - Verifies Layer-0 foundation crates (`org-proto`, `org-platform`, `org-pki`,
      `org-store`, `org-agent-runtime`, `org-command`, plus zero-dep leaf `org-docs`
-     used by `org-command` for bounded YAML parsing) have zero normal `[dependencies]`
-     edges to any higher-layer application/server/host/office/CLI crate.
+     used by `org-command` for bounded YAML parsing) have zero `[dependencies]` or
+     `[build-dependencies]` edges to any higher-layer application/server/host/office/CLI crate.
 
 4. Shrink-Only Base Diff (`--base <commit-sha>`):
    - Compares `.github/architecture-boundaries.allow` at `<base>` with the working tree.
@@ -202,9 +204,10 @@ _LEX_NO_BLOCK_RE = re.compile(
 _CFG_ATTR_START_RE = re.compile(r"#\s*\[\s*cfg\s*\(")
 _STRUCT_TOK_RE = re.compile(
     r"#\s*\[|[{}\[\]();,<>]"
-    r"|\b(?:let|if|else|where|fn|mod|impl|struct|enum|trait|type|use|const|static|extern|macro_rules)\b"
+    r"|\b(?:where|fn|mod|impl|struct|enum|trait|type|use|const|static|extern|macro_rules)\b"
 )
 _IDENT_AT_START_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_COLON_OR_EQ_RE = re.compile(r"(?<!:):(?!:)|=")
 
 # Coupling detection patterns (applied to comment/string-masked production Rust code).
 _RUSQLITE_RE = re.compile(r"\brusqlite\b")
@@ -225,9 +228,9 @@ _SANDBOX_STR_VALUE_RE = re.compile(
     r"|(?:(?<=[\s\"'])/(?:[^\s\"']*/)?(?:bwrap|sandbox-exec)(?:$|[\s\"']))"
 )
 _TRAIT_DECL_RE = re.compile(
-    r"\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?(?:auto\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)"
+    r"\b(?:pub(?:\s*\([^)]*\)\s*|\s+))?(?:unsafe\s+)?(?:auto\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
-_ALLOW_CALL_RE = re.compile(r"\ballow\s*\(")
+_ALLOW_CALL_RE = re.compile(r"\b(?:allow|expect)\s*\(")
 _DEAD_CODE_WORD_RE = re.compile(r"\bdead_code\b")
 _RAW_STR_PREFIX_RE = re.compile(r"^(?:b|c)?r(#*)\"")
 _PLAIN_STR_PREFIX_RE = re.compile(r"^(?:b|c)?\"")
@@ -346,7 +349,10 @@ def _parse_toml_fallback(text: str) -> dict[str, Any]:
         i += 1
         if not line:
             continue
-        if line.startswith("[") and not line.startswith("[[") and line.endswith("]"):
+        if line.startswith("[[") and line.endswith("]]"):
+            current = {}
+            continue
+        if line.startswith("[") and line.endswith("]"):
             path = _split_dotted(line[1:-1].strip())
             target = root
             for part in path:
@@ -549,16 +555,51 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
         m = _CFG_ATTR_START_RE.search(code, pos)
         if not m:
             break
-        item_start = m.start()
+        cfg_start = m.start()
         # Locate end of `cfg(...)` and enclosing `#[...]`.
         paren_end = _skip_balanced(code, m.end(), "(", ")")
         pred = code[m.end() : paren_end - 1]
-        bracket_pos = code.find("[", item_start)
+        bracket_pos = code.find("[", cfg_start)
         attr_end = _skip_balanced(code, bracket_pos + 1, "[", "]")
         # Ensure `cfg(...)` is the entire attribute (nothing extra besides whitespace before `]`).
         if code[paren_end : attr_end - 1].strip() != "" or not _is_test_only_cfg_predicate(pred):
             pos = attr_end
             continue
+
+        # Walk backwards over any immediately preceding outer attributes `#[...]` attached
+        # to this `#[cfg(test)]` item (skipping `#![...]` inner attributes and never crossing
+        # a previous stripped range). Comments between attributes are already space-masked.
+        item_start = cfg_start
+        min_start = ranges[-1][1] if ranges else 0
+        idx = item_start
+        while idx > min_start:
+            while idx > min_start and code[idx - 1].isspace():
+                idx -= 1
+            if idx > min_start and code[idx - 1] == "]":
+                depth = 1
+                j = idx - 2
+                while j >= min_start and depth > 0:
+                    ch = code[j]
+                    if ch == "]":
+                        depth += 1
+                    elif ch == "[":
+                        depth -= 1
+                    j -= 1
+                if depth != 0:
+                    break
+                open_bracket = j + 1
+                k = open_bracket - 1
+                while k >= min_start and code[k].isspace():
+                    k -= 1
+                if (
+                    k >= min_start
+                    and code[k] == "#"
+                    and code[k + 1 : open_bracket].strip() == ""
+                ):
+                    item_start = k
+                    idx = k
+                    continue
+            break
 
         # Skip any chained outer attributes `#[...]` and whitespace.
         p = attr_end
@@ -577,6 +618,7 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
         # Determine attached item/statement/field kind and scan to its balanced end.
         seen_let = False
         seen_if = False
+        needs_semicolon = False
         in_where = False
         seen_item_kw = False
         paren = 0
@@ -590,8 +632,12 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
             first_kw = wm.group(0)
             if first_kw == "let":
                 seen_let = True
+                needs_semicolon = True
             elif first_kw == "if":
                 seen_if = True
+            elif first_kw in ("use", "type", "static", "const"):
+                seen_item_kw = True
+                needs_semicolon = True
             elif first_kw in (
                 "fn",
                 "mod",
@@ -599,10 +645,6 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
                 "struct",
                 "enum",
                 "trait",
-                "type",
-                "use",
-                "const",
-                "static",
                 "extern",
                 "macro_rules",
             ):
@@ -675,7 +717,7 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
                 brace -= 1
                 cur = tm.end()
                 if brace == 0 and paren == 0 and bracket == 0 and entered_brace:
-                    if seen_let:
+                    if needs_semicolon:
                         continue
                     if seen_if:
                         q = cur
@@ -700,11 +742,12 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
                         and not seen_item_kw
                         and not in_where
                         and not seen_let
+                        and not needs_semicolon
                         and not seen_if
                     ):
                         cur = tm.end()
                         break
-                elif tok in (
+                elif angle == 0 and tok in (
                     "fn",
                     "mod",
                     "impl",
@@ -718,11 +761,28 @@ def find_cfg_test_ranges(code: str) -> list[tuple[int, int]]:
                     "extern",
                     "macro_rules",
                 ):
-                    seen_item_kw = True
+                    if tok == "static" and tm.start() > 0 and code[tm.start() - 1] == "'":
+                        pass
+                    else:
+                        if (
+                            not seen_item_kw
+                            and not entered_brace
+                            and not seen_if
+                            and not seen_let
+                            and tok in ("use", "type", "static", "const")
+                        ):
+                            needs_semicolon = True
+                        if (
+                            tok in ("fn", "trait")
+                            and needs_semicolon
+                            and not entered_brace
+                            and not seen_let
+                            and _COLON_OR_EQ_RE.search(code, p, tm.start()) is None
+                        ):
+                            needs_semicolon = False
+                        seen_item_kw = True
                 elif tok == "where":
                     in_where = True
-                elif tok == "let" and not seen_item_kw:
-                    seen_let = True
             cur = tm.end()
 
         ranges.append((item_start, cur))
@@ -808,7 +868,7 @@ def _attr_contains_allow_dead_code(attr_text: str) -> bool:
 
 
 def find_dead_code_traits(prod_code: str) -> list[str]:
-    """Return names of traits directly preceded by an outer `allow(...dead_code...)` attribute."""
+    """Return names of traits directly preceded by an outer `allow|expect(...dead_code...)` attribute."""
     if "dead_code" not in prod_code or "trait" not in prod_code:
         return []
     hits: list[str] = []
@@ -890,8 +950,21 @@ def scan_production_file(
 # ---------------------------------------------------------------------------
 
 
-def discover_workspace_members(repo_root: Path) -> list[tuple[str, Path, dict[str, Any]]]:
-    """Return sorted `[(package_name, member_dir, manifest_dict), ...]` from root `Cargo.toml`."""
+def _extract_workspace_dep_renames(root_manifest: dict[str, Any]) -> dict[str, str]:
+    """Return `{alias: package_name}` for renamed entries in `[workspace.dependencies]`."""
+    renames: dict[str, str] = {}
+    ws_deps = (root_manifest.get("workspace") or {}).get("dependencies")
+    if isinstance(ws_deps, dict):
+        for alias, spec in ws_deps.items():
+            if isinstance(spec, dict) and isinstance(spec.get("package"), str):
+                renames[alias] = spec["package"]
+    return renames
+
+
+def _load_workspace(
+    repo_root: Path,
+) -> tuple[list[tuple[str, Path, dict[str, Any]]], dict[str, str]]:
+    """Load root `Cargo.toml` and return `(sorted_members, workspace_dep_renames)`."""
     root_manifest_path = repo_root / "Cargo.toml"
     if not root_manifest_path.is_file():
         raise ValueError(f"missing root Cargo.toml at {root_manifest_path}")
@@ -899,6 +972,7 @@ def discover_workspace_members(repo_root: Path) -> list[tuple[str, Path, dict[st
     raw_members = (root_manifest.get("workspace") or {}).get("members") or []
     if not raw_members:
         raise ValueError("root Cargo.toml declares no [workspace].members")
+    workspace_dep_renames = _extract_workspace_dep_renames(root_manifest)
 
     member_dirs: list[Path] = []
     seen_dirs: set[Path] = set()
@@ -924,35 +998,69 @@ def discover_workspace_members(repo_root: Path) -> list[tuple[str, Path, dict[st
             raise ValueError(f"{manifest_path}: missing [package].name")
         members.append((pkg_name, member_dir, data))
     members.sort(key=lambda item: item[0])
+    return members, workspace_dep_renames
+
+
+def discover_workspace_members(repo_root: Path) -> list[tuple[str, Path, dict[str, Any]]]:
+    """Return sorted `[(package_name, member_dir, manifest_dict), ...]` from root `Cargo.toml`."""
+    members, _ = _load_workspace(repo_root)
     return members
 
 
-def _extract_workspace_deps(dep_table: Any, workspace_pkgs: set[str]) -> set[str]:
+def _extract_workspace_deps(
+    dep_table: Any,
+    workspace_pkgs: set[str],
+    workspace_dep_renames: dict[str, str] | None = None,
+) -> set[str]:
     deps: set[str] = set()
     if not isinstance(dep_table, dict):
         return deps
     for key, val in dep_table.items():
         pkg_name = key
-        if isinstance(val, dict) and isinstance(val.get("package"), str):
-            pkg_name = val["package"]
+        if isinstance(val, dict):
+            if isinstance(val.get("package"), str):
+                pkg_name = val["package"]
+            if (
+                val.get("workspace") is True
+                and workspace_dep_renames
+                and pkg_name in workspace_dep_renames
+            ):
+                pkg_name = workspace_dep_renames[pkg_name]
         if pkg_name in workspace_pkgs:
             deps.add(pkg_name)
     return deps
 
 
 def build_normal_dep_graph(
-    members: list[tuple[str, Path, dict[str, Any]]]
+    members: list[tuple[str, Path, dict[str, Any]]],
+    workspace_dep_renames: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
-    """Build workspace normal dependency adjacency list (excluding dev-dependencies)."""
+    """Build workspace normal + build dependency adjacency list (excluding dev-dependencies)."""
     workspace_pkgs = {name for name, _, _ in members}
     graph: dict[str, list[str]] = {}
     for name, _member_dir, data in members:
-        deps = _extract_workspace_deps(data.get("dependencies"), workspace_pkgs)
+        deps = _extract_workspace_deps(
+            data.get("dependencies"), workspace_pkgs, workspace_dep_renames
+        )
+        deps |= _extract_workspace_deps(
+            data.get("build-dependencies"), workspace_pkgs, workspace_dep_renames
+        )
+        deps |= _extract_workspace_deps(
+            data.get("build_dependencies"), workspace_pkgs, workspace_dep_renames
+        )
         targets = data.get("target")
         if isinstance(targets, dict):
             for tdata in targets.values():
                 if isinstance(tdata, dict):
-                    deps |= _extract_workspace_deps(tdata.get("dependencies"), workspace_pkgs)
+                    deps |= _extract_workspace_deps(
+                        tdata.get("dependencies"), workspace_pkgs, workspace_dep_renames
+                    )
+                    deps |= _extract_workspace_deps(
+                        tdata.get("build-dependencies"), workspace_pkgs, workspace_dep_renames
+                    )
+                    deps |= _extract_workspace_deps(
+                        tdata.get("build_dependencies"), workspace_pkgs, workspace_dep_renames
+                    )
         graph[name] = sorted(deps)
     return graph
 
@@ -993,15 +1101,16 @@ def find_dependency_cycles(graph: dict[str, list[str]]) -> list[list[str]]:
 
 
 def check_cargo_dag_and_layer0(
-    members: list[tuple[str, Path, dict[str, Any]]]
+    members: list[tuple[str, Path, dict[str, Any]]],
+    workspace_dep_renames: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Verify acyclic normal workspace DAG and Layer-0 foundation stability."""
+    """Verify acyclic workspace DAG ([dependencies]/[build-dependencies]) and Layer-0 stability."""
     errors: list[str] = []
-    graph = build_normal_dep_graph(members)
+    graph = build_normal_dep_graph(members, workspace_dep_renames=workspace_dep_renames)
 
     for cycle in find_dependency_cycles(graph):
         errors.append(
-            f"Cargo DAG cycle detected in normal [dependencies]: {' -> '.join(cycle)}"
+            f"Cargo DAG cycle detected in [dependencies]/[build-dependencies]: {' -> '.join(cycle)}"
         )
 
     workspace_pkgs = set(graph.keys())
@@ -1010,7 +1119,7 @@ def check_cargo_dag_and_layer0(
         for dep in graph[crate]:
             if dep not in LAYER_0_ALLOWED_WORKSPACE_DEPS:
                 errors.append(
-                    f"Layer-0 stability violation: `{crate}` has a normal [dependencies] edge "
+                    f"Layer-0 stability violation: `{crate}` has a [dependencies]/[build-dependencies] edge "
                     f"to non-Layer-0 crate `{dep}` (Layer-0 crates may only depend on std, "
                     f"external crates, or other Layer-0 crates)."
                 )
@@ -1363,9 +1472,11 @@ def run_health_check(
     except ValueError:
         allowlist_label = resolved_allowlist.as_posix()
 
-    members = discover_workspace_members(repo_root)
+    members, workspace_dep_renames = _load_workspace(repo_root)
     report = scan_workspace(repo_root, members)
-    dag_errors, layer0_checked = check_cargo_dag_and_layer0(members)
+    dag_errors, layer0_checked = check_cargo_dag_and_layer0(
+        members, workspace_dep_renames=workspace_dep_renames
+    )
 
     if not resolved_allowlist.is_file():
         raise ValueError(f"missing allowlist file: {resolved_allowlist}")

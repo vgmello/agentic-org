@@ -57,6 +57,7 @@ def _create_workspace(
     members: list[str],
     crates: dict[str, tuple[str, dict[str, str]]],
     allowlist_text: str | None = None,
+    root_extra: str = "",
 ) -> None:
     """Create a synthetic Cargo workspace under `root`.
 
@@ -64,7 +65,10 @@ def _create_workspace(
     `(cargo_toml_content, {relative_file_path: content})`.
     """
     member_list = ",\n".join(f'  "{m}"' for m in members)
-    _write(root, "Cargo.toml", f"[workspace]\nresolver = \"2\"\nmembers = [\n{member_list}\n]\n")
+    root_toml = f'[workspace]\nresolver = "2"\nmembers = [\n{member_list}\n]\n'
+    if root_extra:
+        root_toml += "\n" + root_extra
+    _write(root, "Cargo.toml", root_toml)
     for member, (manifest, files) in crates.items():
         _write(root, f"{member}/Cargo.toml", manifest)
         for rel_file, content in files.items():
@@ -212,6 +216,102 @@ mod tests {
         # Lines outside #[cfg(test)] blocks:
         # 1..3 (3 lines), 8 (}), 9 (blank), 10..14 (5 lines), 23 (q), 24 (}), 25 (blank) = 13 lines.
         self.assertEqual(loc, 13)
+
+    def test_cfg_test_if_let_and_while_let_do_not_swallow_following_prod_code(self) -> None:
+        src = """\
+fn run() {
+    #[cfg(test)]
+    if let Some(x) = opt() {
+        let _ = x;
+    }
+    use rusqlite::Connection;
+    #[cfg(test)]
+    while let Some(y) = iter.next() {
+        let _ = y;
+    }
+    let _ = UnixStream::connect("/tmp/sock");
+    #[cfg(test)]
+    if let Some(z) = opt2() {
+        let _ = z;
+    } else {
+        let _ = 0;
+    }
+    let _ = rusqlite::Connection::open_in_memory();
+}
+"""
+        loc, rusq, unix, sbox, dct = health.scan_production_file("crates/org-demo/src/lib.rs", src)
+        self.assertEqual(loc, 5)
+        self.assertEqual(rusq, 2)
+        self.assertEqual(unix, 1)
+        self.assertEqual(sbox, 0)
+        self.assertEqual(dct, 0)
+
+    def test_cfg_test_preceding_outer_attributes_stripped_without_leaking(self) -> None:
+        src = (
+            "#[allow(dead_code)]\n"
+            "#[cfg(test)]\n"
+            "fn test_helper() {}\n"
+            "\n"
+            "pub trait RealLivePort {}\n"
+        )
+        loc, rusq, unix, sbox, dct = health.scan_production_file("crates/org-demo/src/lib.rs", src)
+        self.assertEqual(dct, 0)
+        self.assertEqual(loc, 2)
+        self.assertEqual((rusq, unix, sbox), (0, 0, 0))
+
+        # Inner `#![...]` attribute stays intact while outer attrs + intervening comments
+        # and preceding non-test `#[cfg(...)]` on the same test item are stripped cleanly.
+        src_with_inner = (
+            "#![allow(dead_code)]\n"
+            "#[allow(dead_code)]\n"
+            "// note between outer attributes\n"
+            "#[cfg(unix)]\n"
+            "#[cfg(test)]\n"
+            "fn unix_test_helper() {}\n"
+            "\n"
+            "pub trait RealLivePort {}\n"
+        )
+        loc2, _r, _u, _s, dct2 = health.scan_production_file(
+            "crates/org-demo/src/lib.rs", src_with_inner
+        )
+        self.assertEqual(dct2, 0)
+        self.assertEqual(loc2, 3)
+
+    def test_cfg_test_use_group_and_brace_bearing_const_static_stop_at_semicolon(self) -> None:
+        src = """\
+#[cfg(test)]
+use rusqlite::{Connection, OpenFlags};
+#[cfg(test)]
+pub use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(test)]
+const X: usize = { 1 } + { 2 };
+#[cfg(test)]
+static S: Foo = Foo { a: 1 };
+#[cfg(test)]
+const fn test_const_fn() -> usize {
+    1
+}
+#[cfg(test)]
+const F: fn() = || {
+    let _ = 1;
+};
+use rusqlite::Connection;
+pub fn live() {
+    let _ = UnixStream::connect("/tmp/a");
+}
+"""
+        code, _ = health.mask_comments_and_strings(src)
+        ranges = health.find_cfg_test_ranges(code)
+        prod_code = health.blank_ranges(code, ranges)
+        # No stray trailing `;` or `+ { 2 };` leaked before production `use rusqlite::Connection;`.
+        self.assertTrue(prod_code.lstrip().startswith("use rusqlite::Connection;"))
+
+        loc, rusq, unix, sbox, dct = health.scan_production_file("crates/org-demo/src/lib.rs", src)
+        self.assertEqual(loc, 4)
+        self.assertEqual(rusq, 1)
+        self.assertEqual(unix, 1)
+        self.assertEqual(sbox, 0)
+        self.assertEqual(dct, 0)
 
 
 class TestShrinkOnlyBaseEnforcement(unittest.TestCase):
@@ -540,6 +640,33 @@ mod tests {
             ok = health.run_health_check(root)
             self.assertEqual(ok.errors, [])
 
+    def test_expect_dead_code_and_compact_pub_crate_trait_caught(self) -> None:
+        src = """\
+#[expect(dead_code, reason = "deferred wiring")]
+pub trait ExpectedPort {
+    fn ping(&self);
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "pending adapter"))]
+pub(crate)trait CompactVisPort {
+    fn save(&self);
+}
+
+#[allow(dead_code)]
+pub(super)trait CompactSuperPort {}
+
+#[expect(clippy::too_many_arguments, reason = "mentions dead_code in prose")]
+pub trait CleanPort {}
+"""
+        code, _ = health.mask_comments_and_strings(src)
+        hits = health.find_dead_code_traits(code)
+        self.assertEqual(hits, ["ExpectedPort", "CompactVisPort", "CompactSuperPort"])
+
+        loc, rusq, unix, sbox, dct = health.scan_production_file("crates/org-host/src/ports.rs", src)
+        self.assertEqual(dct, 3)
+        self.assertEqual((rusq, unix, sbox), (0, 0, 0))
+        self.assertGreater(loc, 0)
+
 
 class TestCargoDagAndLayer0(unittest.TestCase):
     def test_detects_normal_dependency_cycle_and_ignores_dev_dependency_cycle(self) -> None:
@@ -644,6 +771,85 @@ class TestCargoDagAndLayer0(unittest.TestCase):
             ok = health.run_health_check(root)
             self.assertEqual(ok.errors, [])
 
+    def test_build_dependencies_cycle_and_layer0_upward_build_dep_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-proto", "crates/org-store", "crates/org-office"],
+                {
+                    "crates/org-proto": (
+                        '[package]\nname = "org-proto"\nversion = "0.0.0"\n'
+                        '[build-dependencies]\norg-office = { path = "../org-office" }\n',
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-store": (
+                        '[package]\nname = "org-store"\nversion = "0.0.0"\n'
+                        '[target.\'cfg(unix)\'.build-dependencies]\n'
+                        'off = { package = "org-office", path = "../org-office" }\n',
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-office": (
+                        '[package]\nname = "org-office"\nversion = "0.0.0"\n'
+                        '[dependencies]\norg-proto = { path = "../org-proto" }\n',
+                        {"src/lib.rs": ""},
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertTrue(
+                any(
+                    "Cargo DAG cycle" in e and "org-office -> org-proto -> org-office" in e
+                    for e in res.errors
+                ),
+                f"expected build-dependencies cycle, got: {res.errors}",
+            )
+            self.assertTrue(
+                any("Layer-0" in e and "`org-proto`" in e and "`org-office`" in e for e in res.errors),
+                f"expected org-proto Layer-0 build-dep error, got: {res.errors}",
+            )
+            self.assertTrue(
+                any("Layer-0" in e and "`org-store`" in e and "`org-office`" in e for e in res.errors),
+                f"expected org-store target build-dep error, got: {res.errors}",
+            )
+
+    def test_renamed_workspace_dependencies_layer0_upward_dep_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-proto", "crates/org-store", "crates/org-office"],
+                {
+                    "crates/org-proto": (
+                        '[package]\nname = "org-proto"\nversion = "0.0.0"\n'
+                        "[dependencies]\noff = { workspace = true }\n",
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-store": (
+                        '[package]\nname = "org-store"\nversion = "0.0.0"\n'
+                        "[build-dependencies]\noff.workspace = true\n",
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-office": (
+                        '[package]\nname = "org-office"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": ""},
+                    ),
+                },
+                root_extra=(
+                    "[workspace.dependencies]\n"
+                    'off = { package = "org-office", path = "crates/org-office" }\n'
+                ),
+            )
+            res = health.run_health_check(root)
+            self.assertTrue(
+                any("Layer-0" in e and "`org-proto`" in e and "`org-office`" in e for e in res.errors),
+                f"expected renamed workspace dep violation on org-proto, got: {res.errors}",
+            )
+            self.assertTrue(
+                any("Layer-0" in e and "`org-store`" in e and "`org-office`" in e for e in res.errors),
+                f"expected renamed workspace build-dep violation on org-store, got: {res.errors}",
+            )
+
 
 class TestTomlFallbackAndCli(unittest.TestCase):
     def test_toml_fallback_parses_workspace_and_dependencies(self) -> None:
@@ -672,6 +878,32 @@ org-docs = { path = "../org-docs" }
         self.assertEqual(parsed["package"]["name"], "org-store")
         self.assertEqual(parsed["dependencies"]["renamed"]["package"], "org-proto")
         self.assertIn("org-docs", parsed["target"]["cfg(unix)"]["dependencies"])
+
+    def test_toml_fallback_array_of_tables_does_not_overwrite_package_name(self) -> None:
+        sample = """\
+[package]
+name = "org-office-launch"
+version = "0.0.0"
+
+[[bin]]
+name = "launch"
+path = "src/main.rs"
+
+[[test]]
+name = "launch"
+path = "tests/launch.rs"
+
+[dependencies]
+org-proto = { path = "../org-proto" }
+
+[[example]]
+name = "demo"
+path = "examples/demo.rs"
+"""
+        parsed = health._parse_toml_fallback(sample)
+        self.assertEqual(parsed["package"]["name"], "org-office-launch")
+        self.assertNotIn("path", parsed["package"])
+        self.assertEqual(list(parsed["dependencies"].keys()), ["org-proto"])
 
     def test_cli_exit_codes_and_print_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

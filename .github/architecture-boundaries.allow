@@ -21,7 +21,7 @@
 org-host 43500
 org-office 87000
 org-office-server 28000
-org-office-sessions 31000
+org-office-sessions 30000
 
 [coupling.rusqlite]
 
