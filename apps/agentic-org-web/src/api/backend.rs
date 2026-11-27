@@ -120,12 +120,12 @@ impl SessionApi {
             ));
         }
         let targets = collect_poll_targets(&request, &hq_by_org, self.auth(&caller));
-        WebReply::Stream(sse::open_stream_with_offices(
-            &self.hub,
+        WebReply::Stream(sse::open_stream_on_bus(
+            self.events.as_ref(),
             self.host.instance().to_owned(),
             session.session_id,
             request,
-            Some(self.offices.clone()),
+            Some(Arc::clone(&self.offices)),
             targets,
         ))
     }

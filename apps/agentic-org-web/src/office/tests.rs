@@ -1,4 +1,7 @@
 use super::*;
+use crate::event_hub::InMemoryEventBus;
+use crate::transport::local_unix::LocalUnixOfficeStream;
+use org_proto::{Empty, OrgSnapshotCall};
 use std::io::{BufRead, Write};
 use std::os::unix::net::UnixStream as StdUnixStream;
 
@@ -28,12 +31,12 @@ fn multiplexed_office_channel_correlates_out_of_order_concurrent_replies() {
             writer.flush().unwrap();
         });
         let channels = Arc::new(Mutex::new(BTreeMap::new()));
-        let channel = MultiplexedChannel::from_std(
+        let channel = MultiplexedChannel::from_local_unix(
             "office-1".into(),
             "ch-1".into(),
-            client,
+            LocalUnixOfficeStream::from_std(client),
             channels,
-            EventHub::default(),
+            Arc::new(InMemoryEventBus::default()),
         )
         .unwrap();
         let ch_a = Arc::clone(&channel);
@@ -138,5 +141,72 @@ fn a_completed_round_trip_returns_its_reply_and_leaves_no_entry() {
         assert_eq!(reply["result"]["ok"], true);
         responder.await.unwrap();
         assert!(pending.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn multiplexed_channel_works_over_in_memory_duplex_streams_and_forwards_events_to_event_bus() {
+    use crate::event_hub::HubEvent;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let (client, server) = tokio::io::duplex(4096);
+        let (client_read, client_write) = tokio::io::split(client);
+        let (server_read, mut server_write) = tokio::io::split(server);
+        let bus = Arc::new(InMemoryEventBus::default());
+        let mut sub = bus.subscribe();
+        let channels = Arc::new(Mutex::new(BTreeMap::new()));
+        let channel = MultiplexedChannel::from_async_halves(
+            "office-duplex".into(),
+            "ch-duplex".into(),
+            client_read,
+            client_write,
+            channels,
+            Arc::clone(&bus) as Arc<dyn EventBus>,
+            None,
+        );
+        let peer = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_read);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let req: Value = serde_json::from_str(&line).unwrap();
+            let event = serde_json::json!({
+                "event": "team.created",
+                "seq": 42,
+                "data": { "organization_id": "org-duplex" }
+            });
+            server_write
+                .write_all(format!("{event}\n").as_bytes())
+                .await
+                .unwrap();
+            let reply = serde_json::json!({ "id": req["id"], "result": { "duplex": true } });
+            server_write
+                .write_all(format!("{reply}\n").as_bytes())
+                .await
+                .unwrap();
+            server_write.flush().await.unwrap();
+        });
+        let req = Request::new::<OrgSnapshotCall>(21, &Empty {}).unwrap();
+        let reply = channel.roundtrip_raw(&req, 21).await.unwrap();
+        assert_eq!(reply["result"]["duplex"], true);
+        let received = sub.recv().await.unwrap();
+        match received {
+            HubEvent::OrganizationChanged {
+                org_id,
+                cursor,
+                event,
+                ..
+            } => {
+                assert_eq!(org_id, "org-duplex");
+                assert_eq!(cursor, "org:org-duplex:1:42");
+                assert_eq!(event, "team.created");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        peer.await.unwrap();
     });
 }

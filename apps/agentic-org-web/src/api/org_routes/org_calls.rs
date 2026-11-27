@@ -195,7 +195,7 @@ pub(super) fn finish_named_org_mutation(
                 eprintln!("agentic-org-web: unexpected org mutation reply issue: {issue:?}");
             }
             if matches!(outcome, MutationOutcome::Completed { .. }) {
-                api.hub.publish(HubEvent::OrganizationChanged {
+                api.events.publish(HubEvent::OrganizationChanged {
                     org_id: org_id.to_owned(),
                     cursor: format!("org:{org_id}:{}", op_id.as_str()),
                     event: event_name.to_owned(),
