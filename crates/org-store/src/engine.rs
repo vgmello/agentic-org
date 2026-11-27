@@ -4,8 +4,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    change::{DurablePath, Id, Receipt, Sha256},
+    change::{Id, Receipt, Sha256},
     error::{EngineError, ProjectionError, StoreError},
+    path::DurablePath,
     sequences::{FeedPosition, HighWaters},
 };
 

@@ -89,7 +89,7 @@ impl TestCustody {
         db.seed_account(
             &account,
             "Owner",
-            &crate::service::authentication::hash_password(&password).unwrap(),
+            &crate::authentication::hash_password(&password).unwrap(),
             true,
             1,
         )

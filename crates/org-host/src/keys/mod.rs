@@ -14,7 +14,7 @@
 //!   (`org_platform_host::credentials::protected_store`). The Data Protection keychain, in the
 //!   host's access group, so other code gets `errSecItemNotFound`, never a prompt; or the
 //!   credential directory setup recorded, which the host opened and checked at its start
-//!   (`release_store`). A system without such a store gets the refusing view, which refuses
+//!   (`credential_store_root`). A system without such a store gets the refusing view, which refuses
 //!   every call with a reported reason ([`KeyStoreError::Unsupported`]). It is chosen before any
 //!   Keychain precondition is checked, so such a host never reports a Keychain-only reason (no
 //!   access group, not hardened).

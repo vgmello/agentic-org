@@ -8,13 +8,13 @@ use org_host_control::SessionHandle;
 use org_proto::ApiError;
 use sha2::Sha256;
 
+use crate::control_listener::Connection;
 use crate::hostdb::accounts::Account;
-use crate::service::listener::Connection;
 
 use super::{denied, digest, unavailable, wall_ms, Authentication, Channel, ABSOLUTE};
 
 impl Authentication {
-    pub(in crate::service) fn open_channel(
+    pub(crate) fn open_channel(
         &self,
         connection: &Connection,
         handle: &SessionHandle,
@@ -35,7 +35,7 @@ impl Authentication {
     /// administrator who has no local `account_org_links` row for that organization. The
     /// resulting grant carries `member = office_id`, which the satellite office admits solely for
     /// read-only `office.sync_status` checks.
-    pub(in crate::service) fn open_satellite_operator_channel(
+    pub(crate) fn open_satellite_operator_channel(
         &self,
         connection: &Connection,
         handle: &SessionHandle,
@@ -109,7 +109,7 @@ impl Authentication {
         Ok((id, socket, slot))
     }
 
-    pub(in crate::service) fn grant(
+    pub(crate) fn grant(
         &self,
         connection: &Connection,
         handle: &SessionHandle,
@@ -162,17 +162,17 @@ impl Authentication {
     }
 }
 
-pub(in crate::service) struct GrantInput<'a> {
-    pub(in crate::service) account: &'a str,
-    pub(in crate::service) member: &'a str,
-    pub(in crate::service) org_id: &'a str,
-    pub(in crate::service) office_id: &'a str,
-    pub(in crate::service) channel_id: &'a str,
-    pub(in crate::service) session_id: &'a str,
-    pub(in crate::service) ttl: Duration,
+pub(crate) struct GrantInput<'a> {
+    pub(crate) account: &'a str,
+    pub(crate) member: &'a str,
+    pub(crate) org_id: &'a str,
+    pub(crate) office_id: &'a str,
+    pub(crate) channel_id: &'a str,
+    pub(crate) session_id: &'a str,
+    pub(crate) ttl: Duration,
 }
 
-pub(in crate::service) fn sign_grant(
+pub(crate) fn sign_grant(
     endpoint: &crate::supervisor::channels::Endpoint,
     input: GrantInput<'_>,
 ) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {

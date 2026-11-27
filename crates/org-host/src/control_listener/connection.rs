@@ -57,7 +57,7 @@ pub(crate) struct Connection {
         Mutex<HashMap<String, (mpsc::Sender<()>, crate::supervisor::channels::ChannelSlot)>>,
     pub(super) received_channels: Mutex<HashMap<String, crate::supervisor::channels::ChannelSlot>>,
     pub(super) gateway: Option<Gateway>,
-    pub(crate) recovery_permission: Mutex<Option<crate::recovery::Permission>>,
+    pub(crate) recovery_permission: Mutex<Option<crate::recovery_permission::Permission>>,
 }
 
 #[cfg(test)]
@@ -94,7 +94,7 @@ impl Connection {
         (Arc::new(connection), queue)
     }
 
-    pub(in crate::service) fn liveness(&self) -> std::sync::Weak<AtomicBool> {
+    pub(crate) fn liveness(&self) -> std::sync::Weak<AtomicBool> {
         Arc::downgrade(&self.closed)
     }
 
@@ -172,7 +172,7 @@ impl Connection {
         Self::new(stream.try_clone().unwrap(), Accepted::sample(&stream)).0
     }
     #[cfg(test)]
-    pub(in crate::service) fn record_received_channel_for_test(&self, channel: &str) {
+    pub(crate) fn record_received_channel_for_test(&self, channel: &str) {
         self.record_received_slot_for_test(
             channel,
             crate::supervisor::channels::ChannelSlot::for_test(),
@@ -180,7 +180,7 @@ impl Connection {
     }
 
     #[cfg(test)]
-    pub(in crate::service) fn record_received_slot_for_test(
+    pub(crate) fn record_received_slot_for_test(
         &self,
         channel: &str,
         slot: crate::supervisor::channels::ChannelSlot,

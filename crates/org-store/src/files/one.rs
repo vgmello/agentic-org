@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs, io};
 
 use super::read_limited;
-use crate::change::TEMP_PREFIX;
 use crate::error::FilesError;
+use crate::path::TEMP_PREFIX;
 
 /// Temporary names of [`publish_one`] in this process: one each, never reused.
 pub(super) static ONE_TEMP: AtomicU64 = AtomicU64::new(0);
@@ -61,7 +61,7 @@ pub(super) fn one_path(directory: &Path, name: &str) -> Result<PathBuf, FilesErr
     if !directory.is_absolute() {
         return Err(refused("the folder must be absolute"));
     }
-    if !crate::change::component_ok(name) {
+    if !crate::path::component_ok(name) {
         return Err(refused("the name is not one portable path component"));
     }
     match fs::symlink_metadata(directory) {

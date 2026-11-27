@@ -28,8 +28,8 @@ use super::{
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::accounts::rules::{check_new_password, PasswordRule, Username};
 use crate::accounts::store::{AccountStore, Attempt, ClientAddress, NewAccount, ThrottleKey};
+use crate::control_listener::Connection;
 use crate::links::LinkKind;
-use crate::service::listener::Connection;
 use crate::sessions::{
     Admission, BrowserSessions, Ended, NewSession, Origin, Scheme, SessionDigest, IDLE_MS,
 };

@@ -8,9 +8,10 @@ use std::sync::Arc;
 use std::{fs, io};
 
 use super::{read_file, FileOp, FileVersion, Files, Plan};
-use crate::change::{DurablePath, Sha256, TEMP_PREFIX};
+use crate::change::Sha256;
 use crate::disk::{write_all, DiskFile};
 use crate::error::FilesError;
+use crate::path::{DurablePath, TEMP_PREFIX};
 
 impl Files {
     /// Writes the final state of each path over `versions` (in acceptance order): each file

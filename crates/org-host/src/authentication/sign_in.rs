@@ -14,11 +14,11 @@ use org_host_control::{
 use org_proto::ApiError;
 
 use crate::accounts::identity::{AccountId, LoginKey};
+use crate::control_listener::Connection;
 use crate::hostdb::{
     accounts::Account,
     lockout::{Outcome, Socket},
 };
-use crate::service::listener::Connection;
 
 use super::{
     argon, denied, digest, random_handle, storage, unavailable, wall_ms, Authentication,
