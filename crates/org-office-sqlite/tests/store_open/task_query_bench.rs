@@ -54,11 +54,7 @@ fn bench_meta() -> Meta {
     }
 }
 
-/// Seeds `total` tasks with a realistic Kanban distribution (~90% historical closed, ~10% open)
-/// spread across 5 projects and 4 teams, with labels, modified files, checklist steps, comments,
-/// watchers, and `depends_on` links, then commits cleanly so WAL snapshots serve every read.
-fn seed_realistic_org(engine: &SqliteEngine, total: u64, open_count: u64) {
-    let mut tx = engine.begin().expect("begin write tx");
+fn seed_org_entities(tx: &mut org_office_sqlite::SqliteTx) {
     let org_id = Id::parse(BENCH_ORG).expect("org id");
     let repo_id = bench_id(9, 1);
     let office_id = bench_id(10, 1);
@@ -149,133 +145,158 @@ fn seed_realistic_org(engine: &SqliteEngine, total: u64, open_count: u64) {
         })
         .expect("put employee");
     }
-    for n in 1..=total {
-        let is_open = n > total.saturating_sub(open_count);
-        let status = if is_open {
-            match n % 7 {
-                0 => TaskStatus::Blocked,
-                1..=3 => TaskStatus::InProgress,
-                _ => TaskStatus::Todo,
-            }
-        } else if n % 7 == 0 {
-            TaskStatus::Cancelled
+}
+
+fn build_bench_task(n: u64, total: u64, open_count: u64) -> (TaskRecord, bool) {
+    let is_open = n > total.saturating_sub(open_count);
+    let status = if is_open {
+        match n % 7 {
+            0 => TaskStatus::Blocked,
+            1..=3 => TaskStatus::InProgress,
+            _ => TaskStatus::Todo,
+        }
+    } else if n.is_multiple_of(7) {
+        TaskStatus::Cancelled
+    } else {
+        TaskStatus::Done
+    };
+    let day = 1 + (n % 26);
+    let updated_at = if is_open || n > total.saturating_sub(open_count + 20) {
+        format!("2026-11-{day:02}T12:00:00.000Z")
+    } else {
+        format!("2026-09-{day:02}T12:00:00.000Z")
+    };
+    let proj_idx = 1 + (n % 5);
+    let team_idx = 1 + (proj_idx % 4);
+    let resolution = match status {
+        TaskStatus::Done => Some("completed".to_owned()),
+        TaskStatus::Cancelled => Some("cancelled".to_owned()),
+        _ => None,
+    };
+    let task = TaskRecord {
+        id: bench_id(1, n),
+        office_code: "A".to_owned(),
+        number: n,
+        team_id: bench_id(2, team_idx),
+        assigned_team_id: None,
+        project_id: Some(bench_id(3, proj_idx)),
+        task_type: if n.is_multiple_of(4) { "bug" } else { "task" }.to_owned(),
+        work_type: None,
+        title: format!("Bench task #{n} subsystem pipeline"),
+        status,
+        assignee_id: (!n.is_multiple_of(3)).then(|| bench_id(4, 1 + (n % 6))),
+        body_markdown: format!("Work description for benchmark task {n}"),
+        feature_id: None,
+        milestone_id: None,
+        priority: if n.is_multiple_of(5) {
+            TaskPriority::High
         } else {
-            TaskStatus::Done
-        };
-        let day = 1 + (n % 26);
-        let updated_at = if is_open || n > total.saturating_sub(open_count + 20) {
-            format!("2026-11-{day:02}T12:00:00.000Z")
-        } else {
-            format!("2026-09-{day:02}T12:00:00.000Z")
-        };
-        let proj_idx = 1 + (n % 5);
-        let team_idx = 1 + (proj_idx % 4);
-        let task = TaskRecord {
-            id: bench_id(1, n),
-            office_code: "A".to_owned(),
-            number: n,
-            team_id: bench_id(2, team_idx),
-            assigned_team_id: None,
-            project_id: Some(bench_id(3, proj_idx)),
-            task_type: if n % 4 == 0 { "bug" } else { "task" }.to_owned(),
-            work_type: None,
-            title: format!("Bench task #{n} subsystem pipeline"),
-            status,
-            assignee_id: (n % 3 != 0).then(|| bench_id(4, 1 + (n % 6))),
-            body_markdown: format!("Work description for benchmark task {n}"),
-            feature_id: None,
-            milestone_id: None,
-            priority: if n % 5 == 0 {
-                TaskPriority::High
+            TaskPriority::Normal
+        },
+        effort: Some((n % 5) + 1),
+        severity: None,
+        resolution,
+        blocked_reason: (status == TaskStatus::Blocked)
+            .then(|| format!("Waiting on external vendor review #{n}")),
+        blocked_since: (status == TaskStatus::Blocked)
+            .then(|| "2026-11-20T09:00:00.000Z".to_owned()),
+        waiting_on_owner: status == TaskStatus::Blocked && n.is_multiple_of(10),
+        rank_order: Some((n * 17) % 100),
+        labels: vec![
+            if n.is_multiple_of(2) {
+                "backend"
             } else {
-                TaskPriority::Normal
-            },
-            effort: Some((n % 5) + 1),
-            severity: None,
-            resolution: status.is_closed().then(|| {
-                if status == TaskStatus::Done {
-                    "completed".to_owned()
-                } else {
-                    "cancelled".to_owned()
-                }
-            }),
-            blocked_reason: (status == TaskStatus::Blocked)
-                .then(|| format!("Waiting on external vendor review #{n}")),
-            blocked_since: (status == TaskStatus::Blocked)
-                .then(|| "2026-11-20T09:00:00.000Z".to_owned()),
-            waiting_on_owner: status == TaskStatus::Blocked && n % 10 == 0,
-            rank_order: Some((n * 17) % 100),
-            labels: vec![
-                if n % 2 == 0 { "backend" } else { "infra" }.to_owned(),
-                format!("wave-{}", n % 3),
-            ],
-            reference_files: vec!["docs/arch.md".to_owned()],
-            modified_files: vec![format!("crates/org-office/src/m{}.rs", n % 8)],
-            repositories: Vec::new(),
-            details: None,
-            final_summary: None,
-            meta: TaskMeta {
-                revision: 1,
-                created_at: Some("2026-09-01T00:00:00.000Z".to_owned()),
-                created_by_kind: "system".to_owned(),
-                created_by_id: None,
-                updated_at: Some(updated_at),
-                updated_by_kind: "system".to_owned(),
-                updated_by_id: None,
-            },
-        };
+                "infra"
+            }
+            .to_owned(),
+            format!("wave-{}", n % 3),
+        ],
+        reference_files: vec!["docs/arch.md".to_owned()],
+        modified_files: vec![format!("crates/org-office/src/m{}.rs", n % 8)],
+        repositories: Vec::new(),
+        details: None,
+        final_summary: None,
+        meta: TaskMeta {
+            revision: 1,
+            created_at: Some("2026-09-01T00:00:00.000Z".to_owned()),
+            created_by_kind: "system".to_owned(),
+            created_by_id: None,
+            updated_at: Some(updated_at),
+            updated_by_kind: "system".to_owned(),
+            updated_by_id: None,
+        },
+    };
+    (task, is_open)
+}
+
+fn seed_task_children(
+    tx: &mut org_office_sqlite::SqliteTx,
+    task: &TaskRecord,
+    n: u64,
+    is_open: bool,
+) {
+    if n.is_multiple_of(3) {
+        let steps = vec![ChecklistStepRecord {
+            id: bench_id(5, n),
+            section: ChecklistSection::Acceptance,
+            position: 0,
+            text: "Verify acceptance".to_owned(),
+            required: true,
+            done: task.status == TaskStatus::Done,
+            linked_task_id: None,
+            checked_by_employee_id: None,
+            checked_at: None,
+            revision: 1,
+        }];
+        tx.put_checklist_steps(&task.id, &steps).expect("put steps");
+    }
+    if n.is_multiple_of(4) {
+        tx.put_task_comment(&TaskCommentRecord {
+            task_id: task.id.clone(),
+            id: bench_id(6, n),
+            position: 0,
+            author_id: bench_id(4, 1),
+            created_at: "2026-11-10T00:00:00.000Z".to_owned(),
+            body_markdown: "Checked progress".to_owned(),
+        })
+        .expect("put comment");
+    }
+    if n.is_multiple_of(5) {
+        tx.put_task_watchers(
+            &task.id,
+            &[TaskWatcherRecord {
+                id: bench_id(7, n),
+                watcher_kind: "employee".to_owned(),
+                watcher_id: Some(bench_id(4, 2)),
+            }],
+        )
+        .expect("put watcher");
+    }
+    if is_open && n > 2 && n.is_multiple_of(4) {
+        tx.put_task_links(
+            &task.id,
+            &[TaskLinkRecord {
+                source_id: task.id.clone(),
+                id: bench_id(8, n),
+                kind: "depends_on".to_owned(),
+                target_kind: "task".to_owned(),
+                target_id: bench_id(1, n - 1),
+            }],
+        )
+        .expect("put link");
+    }
+}
+
+/// Seeds `total` tasks with a realistic Kanban distribution (~90% historical closed, ~10% open)
+/// spread across 5 projects and 4 teams, with labels, modified files, checklist steps, comments,
+/// watchers, and `depends_on` links, then commits cleanly so WAL snapshots serve every read.
+fn seed_realistic_org(engine: &SqliteEngine, total: u64, open_count: u64) {
+    let mut tx = engine.begin().expect("begin write tx");
+    seed_org_entities(&mut tx);
+    for n in 1..=total {
+        let (task, is_open) = build_bench_task(n, total, open_count);
         tx.put_task(&task).expect("put task");
-        if n % 3 == 0 {
-            let steps = vec![ChecklistStepRecord {
-                id: bench_id(5, n),
-                section: ChecklistSection::Acceptance,
-                position: 0,
-                text: "Verify acceptance".to_owned(),
-                required: true,
-                done: status == TaskStatus::Done,
-                linked_task_id: None,
-                checked_by_employee_id: None,
-                checked_at: None,
-                revision: 1,
-            }];
-            tx.put_checklist_steps(&task.id, &steps).expect("put steps");
-        }
-        if n % 4 == 0 {
-            tx.put_task_comment(&TaskCommentRecord {
-                task_id: task.id.clone(),
-                id: bench_id(6, n),
-                position: 0,
-                author_id: bench_id(4, 1),
-                created_at: "2026-11-10T00:00:00.000Z".to_owned(),
-                body_markdown: "Checked progress".to_owned(),
-            })
-            .expect("put comment");
-        }
-        if n % 5 == 0 {
-            tx.put_task_watchers(
-                &task.id,
-                &[TaskWatcherRecord {
-                    id: bench_id(7, n),
-                    watcher_kind: "employee".to_owned(),
-                    watcher_id: Some(bench_id(4, 2)),
-                }],
-            )
-            .expect("put watcher");
-        }
-        // Wire dependencies among open tasks so `ready` and `dependency_blocked` exercise joins.
-        if is_open && n > 2 && n % 4 == 0 {
-            tx.put_task_links(
-                &task.id,
-                &[TaskLinkRecord {
-                    source_id: task.id.clone(),
-                    id: bench_id(8, n),
-                    kind: "depends_on".to_owned(),
-                    target_kind: "task".to_owned(),
-                    target_id: bench_id(1, n - 1),
-                }],
-            )
-            .expect("put link");
-        }
+        seed_task_children(&mut tx, &task, n, is_open);
     }
     engine
         .commit(

@@ -44,24 +44,15 @@ fn invalid(message: impl Into<String>) -> Refusal {
     refuse(ErrorCode::InvalidRequest, message)
 }
 
-/// The query `params` ask, or the refusal of what they ask wrongly. Task references in the
-/// dependency filters must name a task (`not_found` otherwise).
-pub(crate) fn list_query<R: TasksRead>(
-    view: &R,
+fn apply_blocking_filters(
     params: &TasksListParams,
-) -> Result<TaskListQuery, Refusal> {
-    let modified_file = normalized_path(params.modified_file.as_deref())?;
-    if params.unassigned && params.assignee_id.is_some() {
-        return Err(invalid(
-            "`unassigned` and `assignee_id` cannot be given together",
-        ));
-    }
+    mut statuses: TaskStatusSet,
+) -> Result<(TaskStatusSet, Option<bool>), Refusal> {
     if params.ready && params.dependency_blocked {
         return Err(invalid(
             "`ready` and `dependency_blocked` cannot be given together",
         ));
     }
-    let mut statuses = statuses(params)?;
     if params.ready {
         if params.status_scope == Some(TaskStatusScope::Closed) {
             return Err(invalid(
@@ -80,32 +71,45 @@ pub(crate) fn list_query<R: TasksRead>(
             .without(TaskStatus::Blocked)
             .without(TaskStatus::Done)
             .without(TaskStatus::Cancelled);
+        return Ok((statuses, Some(false)));
     }
-    let dependency_blocked = if params.dependency_blocked {
-        Some(true)
-    } else if params.ready {
-        Some(false)
-    } else {
-        None
-    };
+    Ok((statuses, params.dependency_blocked.then_some(true)))
+}
+
+/// The query `params` ask, or the refusal of what they ask wrongly. Task references in the
+/// dependency filters must name a task (`not_found` otherwise).
+pub(crate) fn list_query<R: TasksRead>(
+    view: &R,
+    params: &TasksListParams,
+) -> Result<TaskListQuery, Refusal> {
+    let modified_file = normalized_path(params.modified_file.as_deref())?;
+    if params.unassigned && params.assignee_id.is_some() {
+        return Err(invalid(
+            "`unassigned` and `assignee_id` cannot be given together",
+        ));
+    }
+    let (statuses, dependency_blocked) = apply_blocking_filters(params, statuses(params)?)?;
     let done_since_ms = done_since(params.done_since.as_deref())?;
-    let labels = if params.labels.is_empty() {
-        None
-    } else {
-        let labels = normalize_labels(&params.labels).map_err(|e| refuse(e.code, e.message))?;
-        Some(LabelFilter {
-            labels,
-            mode: params.label_match,
+    let labels = (!params.labels.is_empty())
+        .then(|| {
+            normalize_labels(&params.labels)
+                .map(|labels| LabelFilter {
+                    labels,
+                    mode: params.label_match,
+                })
+                .map_err(|e| refuse(e.code, e.message))
         })
-    };
-    let depends_on = match params.depends_on.as_deref() {
-        Some(reference) => Some(require_task(view, reference)?.id),
-        None => None,
-    };
-    let dependent_of = match params.dependent_of.as_deref() {
-        Some(reference) => Some(require_task(view, reference)?.id),
-        None => None,
-    };
+        .transpose()?;
+    let depends_on = params
+        .depends_on
+        .as_deref()
+        .map(|r| require_task(view, r).map(|t| t.id))
+        .transpose()?;
+    let dependent_of = params
+        .dependent_of
+        .as_deref()
+        .map(|r| require_task(view, r).map(|t| t.id))
+        .transpose()?;
     let trimmed = |value: &Option<String>| value.as_deref().map(|v| v.trim().to_owned());
     Ok(TaskListQuery {
         task_type: trimmed(&params.task_type),

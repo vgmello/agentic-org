@@ -70,11 +70,14 @@ fn parse_status_scope(raw: &str) -> Result<TaskStatusScope, Refusal> {
     })
 }
 
-/// The office's `tasks.list` parameters for one page: filters that contradict each other are
-/// refused here, before anything is sent. Defaults to `status_scope = open` unless `--status`,
-/// `--all`, or `--status-scope` is given (`TASK-105`).
-fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refusal> {
-    let i = &request.input;
+struct StatusScopeFilter {
+    status: Option<TaskStatus>,
+    exclude_status: Vec<TaskStatus>,
+    status_scope: Option<TaskStatusScope>,
+    done_since: Option<String>,
+}
+
+fn parse_status_and_scope(i: &Map<String, Value>) -> Result<StatusScopeFilter, Refusal> {
     let status = opt_string(i, "status")
         .map(|s| parse_status(&s))
         .transpose()?;
@@ -83,7 +86,7 @@ fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refu
         .iter()
         .map(|s| parse_status(s))
         .collect::<Result<Vec<_>, _>>()?;
-    if status.is_some_and(|status| exclude_status.contains(&status)) {
+    if status.is_some_and(|s| exclude_status.contains(&s)) {
         return Err(invalid(
             "--status and --exclude-status name the same status.",
             "Give a status to keep with --status, or statuses to leave out with --exclude-status.",
@@ -99,15 +102,23 @@ fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refu
             "Pass either --all or --status-scope <open|closed|all>, not both.",
         ));
     }
-    let status_scope = if all {
-        Some(TaskStatusScope::All)
-    } else if explicit_scope.is_some() {
-        explicit_scope
-    } else if status.is_some() {
-        None
-    } else {
-        Some(TaskStatusScope::Open)
+    let status_scope = match (all, explicit_scope, status) {
+        (true, _, _) => Some(TaskStatusScope::All),
+        (false, Some(scope), _) => Some(scope),
+        (false, None, Some(_)) => None,
+        (false, None, None) => Some(TaskStatusScope::Open),
     };
+    let done_since = parse_done_since_flag(i)?;
+    validate_status_in_scope(status_scope, status, done_since.is_some())?;
+    Ok(StatusScopeFilter {
+        status,
+        exclude_status,
+        status_scope,
+        done_since,
+    })
+}
+
+fn parse_done_since_flag(i: &Map<String, Value>) -> Result<Option<String>, Refusal> {
     let done_since = opt_string(i, "done_since");
     if let Some(ref raw) = done_since {
         if parse_rfc3339_ms(raw.trim()).is_none() {
@@ -117,6 +128,37 @@ fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refu
             ));
         }
     }
+    Ok(done_since)
+}
+
+fn validate_status_in_scope(
+    status_scope: Option<TaskStatusScope>,
+    status: Option<TaskStatus>,
+    has_done_since: bool,
+) -> Result<(), Refusal> {
+    let (Some(scope), Some(st)) = (status_scope, status) else {
+        return Ok(());
+    };
+    let admitted = scope.admits(st)
+        || (scope == TaskStatusScope::Open && st == TaskStatus::Done && has_done_since);
+    if !admitted {
+        return Err(invalid(
+            format!(
+                "--status {} is outside --status-scope {}.",
+                st.as_str(),
+                scope.as_str()
+            ),
+            "Pass --all or a matching --status-scope for that status.",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_blocking_filters(
+    i: &Map<String, Value>,
+    status: Option<TaskStatus>,
+    status_scope: Option<TaskStatusScope>,
+) -> Result<(bool, bool), Refusal> {
     let ready = is_set(i, "ready");
     let dependency_blocked = is_set(i, "dependency_blocked");
     if ready && dependency_blocked {
@@ -137,20 +179,21 @@ fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refu
             "Use --ready with todo/in_progress or omit --status.",
         ));
     }
-    if let (Some(scope), Some(st)) = (status_scope, status) {
-        let admitted = scope.admits(st)
-            || (scope == TaskStatusScope::Open && st == TaskStatus::Done && done_since.is_some());
-        if !admitted {
-            return Err(invalid(
-                format!(
-                    "--status {} is outside --status-scope {}.",
-                    st.as_str(),
-                    scope.as_str()
-                ),
-                "Pass --all or a matching --status-scope for that status.",
-            ));
-        }
-    }
+    Ok((ready, dependency_blocked))
+}
+
+/// The office's `tasks.list` parameters for one page: filters that contradict each other are
+/// refused here, before anything is sent. Defaults to `status_scope = open` unless `--status`,
+/// `--all`, or `--status-scope` is given (`TASK-105`).
+fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refusal> {
+    let i = &request.input;
+    let StatusScopeFilter {
+        status,
+        exclude_status,
+        status_scope,
+        done_since,
+    } = parse_status_and_scope(i)?;
+    let (ready, dependency_blocked) = parse_blocking_filters(i, status, status_scope)?;
     let unassigned = is_set(i, "unassigned");
     if unassigned && i.contains_key("assignee_id") {
         return Err(invalid(

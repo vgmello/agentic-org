@@ -152,10 +152,14 @@ fn matches(query: &TaskListQuery, related: &Related, task: &TaskRecord) -> bool 
         && equal(&query.assignee_id, task.assignee_id.as_ref())
         && equal(&query.project_id, task.project_id.as_ref())
         && (!query.unassigned || task.assignee_id.is_none())
-        && query
-            .labels
-            .as_ref()
-            .is_none_or(|filter| carries(filter, task))
+        && matches_secondary(query, related, task)
+}
+
+fn matches_secondary(query: &TaskListQuery, related: &Related, task: &TaskRecord) -> bool {
+    query
+        .labels
+        .as_ref()
+        .is_none_or(|filter| carries(filter, task))
         && related
             .depends_on
             .as_ref()

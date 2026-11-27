@@ -445,6 +445,53 @@ fn parse_with<T>(
     parse(text).ok_or_else(|| reader.error(key, format!("`{text}` is not a known value")))
 }
 
+fn read_blocking_fields(
+    r: &mut Reader,
+) -> Result<(Option<String>, Option<String>, bool), RecordError> {
+    let blocked_reason = r.optional_text("blocked_reason")?;
+    let blocked_since = if r.has("blocked_since") {
+        r.optional_text("blocked_since")?
+    } else {
+        None
+    };
+    let waiting_on_owner = if r.has("waiting_on_owner") {
+        r.flag("waiting_on_owner")?
+    } else {
+        false
+    };
+    Ok((blocked_reason, blocked_since, waiting_on_owner))
+}
+
+fn validate_blocking_invariants(task: &TaskRecord) -> Result<(), RecordError> {
+    if task.status != TaskStatus::Blocked {
+        if task.blocked_reason.is_some() {
+            return Err(RecordError::new(
+                "blocked_reason",
+                "only a blocked task carries blocked_reason",
+            ));
+        }
+        if task.blocked_since.is_some() {
+            return Err(RecordError::new(
+                "blocked_since",
+                "only a blocked task carries blocked_since",
+            ));
+        }
+        if task.waiting_on_owner {
+            return Err(RecordError::new(
+                "waiting_on_owner",
+                "only a blocked task may set waiting_on_owner",
+            ));
+        }
+        return Ok(());
+    }
+    if let Some(ref reason) = task.blocked_reason {
+        if let Err(err) = validate_blocked_reason(reason) {
+            return Err(RecordError::new("blocked_reason", err.message));
+        }
+    }
+    Ok(())
+}
+
 /// The task and links `task.md` holds, strictly: every field once, none unknown.
 pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
     let (mut r, body) = yaml::decode_source_document(bytes)?;
@@ -464,15 +511,16 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
     if task_type.is_empty() {
         return Err(r.error("type", "empty"));
     }
-    let work_type = match r.optional_text("work_type")? {
-        None => None,
-        Some(text) => Some(parse_with(&r, "work_type", &text, WorkType::parse)?),
-    };
+    let work_type = r
+        .optional_text("work_type")?
+        .map(|text| parse_with(&r, "work_type", &text, WorkType::parse))
+        .transpose()?;
     let status = r.text("status")?;
     let priority = r.text("priority")?;
     let labels = r.strings("labels")?;
     let reference_files = r.strings("reference_files")?;
     let modified_files = r.strings("modified_files")?;
+    let (blocked_reason, blocked_since, waiting_on_owner) = read_blocking_fields(&mut r)?;
     let task = TaskRecord {
         team_id: stable(&mut r, "team_id")?,
         assigned_team_id: optional_stable(&mut r, "assigned_team_id")?,
@@ -487,17 +535,9 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
         effort: r.optional_number("effort")?,
         severity: r.optional_text("severity")?,
         resolution: r.optional_text("resolution")?,
-        blocked_reason: r.optional_text("blocked_reason")?,
-        blocked_since: if r.has("blocked_since") {
-            r.optional_text("blocked_since")?
-        } else {
-            None
-        },
-        waiting_on_owner: if r.has("waiting_on_owner") {
-            r.flag("waiting_on_owner")?
-        } else {
-            false
-        },
+        blocked_reason,
+        blocked_since,
+        waiting_on_owner,
         rank_order: r.optional_number("rank_order")?,
         labels: normalized(&r, "labels", labels, normalize_labels)?,
         reference_files: normalized(&r, "reference_files", reference_files, |l| {
@@ -522,31 +562,7 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
         let reason = "a projectless task has no feature or milestone";
         return Err(RecordError::new("project_id", reason));
     }
-    // Explicit block fields (`TASK-84`) apply only while `status == blocked`.
-    if task.status != TaskStatus::Blocked {
-        if task.blocked_reason.is_some() {
-            return Err(RecordError::new(
-                "blocked_reason",
-                "only a blocked task carries blocked_reason",
-            ));
-        }
-        if task.blocked_since.is_some() {
-            return Err(RecordError::new(
-                "blocked_since",
-                "only a blocked task carries blocked_since",
-            ));
-        }
-        if task.waiting_on_owner {
-            return Err(RecordError::new(
-                "waiting_on_owner",
-                "only a blocked task may set waiting_on_owner",
-            ));
-        }
-    } else if let Some(ref reason) = task.blocked_reason {
-        if let Err(err) = validate_blocked_reason(reason) {
-            return Err(RecordError::new("blocked_reason", err.message));
-        }
-    }
+    validate_blocking_invariants(&task)?;
     let links = read_links(&mut r, &task.id)?;
     let attachments = read_attachments(
         &mut r,
