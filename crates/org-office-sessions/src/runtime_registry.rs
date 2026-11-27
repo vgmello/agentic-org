@@ -337,7 +337,7 @@ mod tests {
 
         let claude = reg.resolve("claude").unwrap();
         assert!(claude.host_profile().uses_host_oauth_token_injection);
-        assert!(claude.host_profile().uses_linux_bwrap_sandbox);
+        assert!(claude.host_profile().uses_mount_mask_sandbox);
         assert!(claude.host_profile().host_config_subdir.is_none());
         assert_eq!(claude.endpoint_env_var(), Some("ANTHROPIC_BASE_URL"));
         assert_eq!(

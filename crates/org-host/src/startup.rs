@@ -79,7 +79,11 @@ pub(super) fn startup_keys(
     instance: &Option<instance::registry::Instance>,
     dev_key_dir: Option<&Path>,
     release_directory: Option<&ReleaseRoot>,
+    injected_keys: Option<Arc<dyn keys::OfficeSecretsKeys>>,
 ) -> Result<Arc<dyn keys::OfficeSecretsKeys>, HostError> {
+    if let Some(keys) = injected_keys {
+        return Ok(keys);
+    }
     let keys = keys::store_for(
         dev_key_dir,
         instance
@@ -138,54 +142,65 @@ pub(super) fn startup_app_policy(config: &Config, selected: bool) -> Result<AppP
     Ok(app)
 }
 
+fn open_startup_custody(
+    instance: &instance::registry::Instance,
+    custody: &mut Option<Arc<dyn host_secrets::HostSecrets>>,
+    dev_key_dir: Option<&Path>,
+    release_directory: Option<&ReleaseRoot>,
+) -> Result<Arc<dyn host_secrets::HostSecrets>, HostError> {
+    if let Some(custody) = custody.take() {
+        return Ok(custody);
+    }
+    host_secrets::store_for(
+        dev_key_dir,
+        instance.root(),
+        instance.id(),
+        code_signing::own_signing,
+        release_directory,
+    )
+    .map_err(|_| HostError::Io {
+        context: "opening protected account custody",
+        source: io::Error::other("protected custody unavailable"),
+    })
+}
+
 pub(super) fn startup_authentication(
     layout: &Layout,
     instance: &Option<instance::registry::Instance>,
     custody: &mut Option<Arc<dyn host_secrets::HostSecrets>>,
+    injected_store: Option<Arc<dyn crate::hostdb::HostStore>>,
     dev_key_dir: Option<&Path>,
     release_directory: Option<&ReleaseRoot>,
 ) -> Result<Option<Arc<crate::authentication::Authentication>>, HostError> {
-    let authentication = if let Some(instance) = instance {
-        match fs::symlink_metadata(layout.home.join("host-registry.db")) {
-            Ok(_) => {
-                let custody = match custody.take() {
-                    Some(custody) => custody,
-                    None => host_secrets::store_for(
-                        dev_key_dir,
-                        instance.root(),
-                        instance.id(),
-                        code_signing::own_signing,
-                        release_directory,
-                    )
-                    .map_err(|_| HostError::Io {
-                        context: "opening protected account custody",
-                        source: io::Error::other("protected custody unavailable"),
-                    })?,
-                };
-                Some(Arc::new(
-                    crate::authentication::Authentication::open(
-                        &layout.home,
-                        custody,
-                        instance.id(),
-                    )
-                    .map_err(|_| HostError::Io {
-                        context: "opening protected account registry",
-                        source: io::Error::other("protected registry unavailable"),
-                    })?,
-                ))
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(source) => {
-                return Err(HostError::Io {
-                    context: "checking protected account registry",
-                    source,
-                })
-            }
-        }
-    } else {
-        None
+    let Some(instance) = instance else {
+        return Ok(None);
     };
-    Ok(authentication)
+    if let Some(store) = injected_store {
+        let custody = open_startup_custody(instance, custody, dev_key_dir, release_directory)?;
+        let auth = crate::authentication::Authentication::with_store(store, custody, instance.id())
+            .map_err(|_| HostError::Io {
+                context: "opening protected account registry",
+                source: io::Error::other("protected registry unavailable"),
+            })?;
+        return Ok(Some(Arc::new(auth)));
+    }
+    match fs::symlink_metadata(layout.home.join("host-registry.db")) {
+        Ok(_) => {
+            let custody = open_startup_custody(instance, custody, dev_key_dir, release_directory)?;
+            let auth =
+                crate::authentication::Authentication::open(&layout.home, custody, instance.id())
+                    .map_err(|_| HostError::Io {
+                    context: "opening protected account registry",
+                    source: io::Error::other("protected registry unavailable"),
+                })?;
+            Ok(Some(Arc::new(auth)))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(HostError::Io {
+            context: "checking protected account registry",
+            source,
+        }),
+    }
 }
 
 pub(super) fn startup_catalog(
@@ -198,8 +213,7 @@ pub(super) fn startup_catalog(
     })?;
     let protected_offices = match authentication {
         Some(auth) => auth
-            .provisioning_storage()
-            .0
+            .provisioning_store()
             .provisioning_offices()
             .map_err(|_| HostError::Io {
                 context: "reading protected provisioning reservations",
@@ -242,10 +256,9 @@ pub(super) fn startup_web_tls(
         }
     };
     let now = web_tls::now().ok_or_else(|| refused("the clock is unavailable".into()))?;
-    let (db, secrets) = authentication.provisioning_storage();
     web_tls::WebTls::start(
-        db,
-        secrets,
+        authentication.web_tls_store(),
+        authentication.custody(),
         listen.origin().clone(),
         supplied
             .as_ref()
@@ -322,10 +335,14 @@ pub(super) fn startup_protected_services(
     };
     let provisioning = match (instance, authentication, &writers) {
         (Some(instance), Some(authentication), Some(writers)) => {
-            let (db, custody) = authentication.provisioning_storage();
+            let stores = provisioning::ProvisioningStores {
+                provisioning: authentication.provisioning_store(),
+                accounts: authentication.accounts_store(),
+                recovery: authentication.recovery_store(),
+            };
             Some(Arc::new(provisioning::Provisioning::new(
-                db,
-                custody,
+                stores,
+                authentication.custody(),
                 Arc::clone(keys),
                 Arc::clone(writers),
                 instance.id(),
@@ -370,8 +387,7 @@ pub(super) fn maybe_init_local_authless(
     else {
         return;
     };
-    let (db, _) = auth.provisioning_storage();
-    if let Err(err) = db.init_local_authless_if_empty(now_ms) {
+    if let Err(err) = auth.accounts_store().init_local_authless_if_empty(now_ms) {
         host_log::log(&format!(
             "could not initialize local authless onboarding mode ({err:?}); authentication remains enforced"
         ));

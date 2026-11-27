@@ -118,7 +118,7 @@ fn require_org_manager(
     org_id: &str,
     account: &crate::hostdb::accounts::Account,
 ) -> Result<(), ApiError> {
-    let (db, _) = authentication.provisioning_storage();
+    let db = authentication.accounts_store();
     let Some((owner_account, _)) = db
         .org_owner(org_id)
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "registry unavailable"))?
@@ -280,7 +280,7 @@ fn handle_account_preferences_set(
         } else {
             None
         };
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.accounts_store();
         let acc_id = AccountId::parse(account.account_id()).map_err(|_| invalid())?;
         let (time_zone, last_org_id) = db
             .set_account_preferences(&acc_id, tz_patch, org_patch)
@@ -316,7 +316,7 @@ fn handle_org_access_list(
         let account =
             authentication.browser_auth_account(connection, &params.auth, now, &mut ended)?;
         require_org_manager(authentication, &params.org_id, &account)?;
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.accounts_store();
         let entries = db
             .list_org_access(&params.org_id, now)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "registry unavailable"))?;
@@ -349,7 +349,7 @@ fn handle_org_invite(
         let account =
             authentication.browser_auth_account(connection, &params.auth, now, &mut ended)?;
         require_org_manager(authentication, &params.org_id, &account)?;
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.accounts_store();
         let issued = db
             .issue_org_invite(&params.org_id, &params.member_id, now)
             .map_err(|err| match err {
@@ -395,7 +395,7 @@ fn handle_org_password_reset_link(
         let account =
             authentication.browser_auth_account(connection, &params.auth, now, &mut ended)?;
         require_org_manager(authentication, &params.org_id, &account)?;
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.accounts_store();
         let issued = db
             .issue_member_password_reset_link(&params.org_id, &params.member_id, now)
             .map_err(|err| match err {
@@ -436,7 +436,7 @@ fn handle_org_remove_access(
         let account =
             authentication.browser_auth_account(connection, &params.auth, now, &mut ended)?;
         require_org_manager(authentication, &params.org_id, &account)?;
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.accounts_store();
         match db
             .remove_org_access(&params.org_id, &params.member_id, now)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "registry unavailable"))?
@@ -500,7 +500,7 @@ fn handle_org_owner_handover(
             &params.password,
             now,
         )?;
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.accounts_store();
         match db
             .handover_org_owner(&params.org_id, &from_id, &params.to_member_id)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "registry unavailable"))?
@@ -571,7 +571,7 @@ fn handle_admin_handover(
             &params.password,
             now,
         )?;
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.accounts_store();
         match db
             .handover_administrator(&from_id, &to_id)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "registry unavailable"))?

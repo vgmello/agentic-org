@@ -21,7 +21,10 @@ use super::sandbox_rules::{
     append_runtime_credential_denies, append_runtime_credential_denies_for_home,
     collect_agy_read_only_dirs,
 };
-use super::spec::{apply_linux_claude_bwrap_pruning, pattern_exists_for_bwrap};
+use super::sandbox_runner::{
+    apply_linux_claude_bwrap_pruning_for_test as apply_linux_claude_bwrap_pruning,
+    pattern_exists_for_bwrap,
+};
 use super::BindingGuard;
 use std::os::unix::fs::PermissionsExt as _;
 

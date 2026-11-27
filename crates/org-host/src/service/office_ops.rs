@@ -41,7 +41,7 @@ pub(super) fn dispatch_session_office_op(
 use crate::hostdb::{
     accounts::Account,
     journal::{Attempt, Effect, Lookup, Stored, Write},
-    Error as DbError, HostStore,
+    Error as DbError, HostAccountsStore, OperationJournalStore,
 };
 
 /// Offices visible to `account`: every office belonging to an organization the account is linked
@@ -89,7 +89,7 @@ fn find_linked_office(
 }
 
 fn check_restart_authority(
-    db: &dyn HostStore,
+    accounts: &dyn HostAccountsStore,
     account: &Account,
     org_id: &str,
     member_id: Option<&str>,
@@ -103,7 +103,8 @@ fn check_restart_authority(
             "only the administrator or organization owner may restart an office",
         ));
     };
-    db.verify_selected_owner(org_id, account.account_id(), member_id)
+    accounts
+        .verify_selected_owner(org_id, account.account_id(), member_id)
         .map_err(|error| match error {
             DbError::Unsafe => ApiError::new(
                 ErrorCode::NotAuthorized,
@@ -119,7 +120,8 @@ fn check_restart_authority(
 )]
 fn run_journaled_restart(
     service: &Service,
-    db: &dyn HostStore,
+    accounts: &dyn HostAccountsStore,
+    journal: &dyn OperationJournalStore,
     account: &Account,
     org_filter: Option<&str>,
     office_id: &str,
@@ -134,12 +136,20 @@ fn run_journaled_restart(
         office_id,
         allow_unlinked_satellite,
     )?;
-    check_restart_authority(db, account, &office.organization_id, member_id.as_deref())?;
+    check_restart_authority(
+        accounts,
+        account,
+        &office.organization_id,
+        member_id.as_deref(),
+    )?;
     // Serialize journal lookup -> restart -> journal write across concurrent worker threads
     // (mirroring `WebTls::set`) so simultaneous retries cannot race into false `Conflict` or
     // execute a duplicate restart before `OperationReused` is recorded.
     let _restart_guard = crate::sync::lock(&service.office_restarting);
-    match db.journal_lookup(attempt, now).map_err(journal_error)? {
+    match journal
+        .journal_lookup(attempt, now)
+        .map_err(journal_error)?
+    {
         Lookup::Replay(stored) => return decode_stored(stored),
         Lookup::NeedsVerification { .. } => {
             return Err(ApiError::new(
@@ -150,7 +160,7 @@ fn run_journaled_restart(
         Lookup::Vacant => {}
     }
     service.offices.restart_office(&office.id)?;
-    let write = db
+    let write = journal
         .journal_commit(
             attempt,
             now,
@@ -195,11 +205,13 @@ pub(super) fn restart_browser_office(
             .params::<BrowserOfficeRestart>()
             .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid restart request"))?;
         let account = authentication.browser_auth_account(connection, &p.auth, now, &mut ended)?;
-        let (db, _) = authentication.provisioning_storage();
+        let accounts = authentication.accounts_store();
+        let journal = authentication.journal_store();
         let attempt = Attempt::new(&p, account.account_id()).map_err(journal_error)?;
         run_journaled_restart(
             service,
-            &*db,
+            &*accounts,
+            &*journal,
             &account,
             Some(&p.org_id),
             &p.office_id,
@@ -271,13 +283,15 @@ pub(super) fn restart_session_office(
         let p = request
             .params::<OfficeRestart>()
             .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid restart request"))?;
-        let (db, _) = authentication.provisioning_storage();
+        let accounts = authentication.accounts_store();
+        let journal = authentication.journal_store();
         let attempt = Attempt::new(&p, account.account_id()).map_err(journal_error)?;
         let allow_unlinked_satellite =
             connection.channel_kind() == org_office_launch::ChannelKind::Local;
         run_journaled_restart(
             service,
-            &*db,
+            &*accounts,
+            &*journal,
             &account,
             None,
             &p.office_id,

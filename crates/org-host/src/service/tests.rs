@@ -798,7 +798,8 @@ fn tls_set_needs_the_administrators_session_on_host_sock() {
             policy
         };
         Arc::new(crate::admin::Admin::new(
-            authentication.provisioning_storage().0,
+            authentication.accounts_store(),
+            authentication.links_store(),
             &crate::ids::uuid_v7().unwrap(),
             org_host_control::listen::ListenOrigin::parse("https://127.0.0.1:8443").unwrap(),
             policy,

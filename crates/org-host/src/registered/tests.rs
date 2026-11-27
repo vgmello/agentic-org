@@ -704,3 +704,105 @@ fn registered_start_and_cli_origin_accept_opt_in_https_upgrade_and_refuse_tamper
         "unexpected refusal: {refused}"
     );
 }
+
+#[test]
+fn start_registered_with_ports_uses_injected_store_and_custody_without_sqlite() {
+    struct MemorySecrets(std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>);
+    impl crate::host_secrets::HostSecrets for MemorySecrets {
+        fn put(
+            &self,
+            name: &crate::host_secrets::Name,
+            value: &crate::host_secrets::Value,
+        ) -> Result<(), crate::host_secrets::Error> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(name.as_str().to_owned(), value.expose().to_vec());
+            Ok(())
+        }
+        fn load(
+            &self,
+            name: &crate::host_secrets::Name,
+        ) -> Result<Option<crate::host_secrets::Value>, crate::host_secrets::Error> {
+            let guard = self.0.lock().unwrap();
+            match guard.get(name.as_str()) {
+                Some(bytes) => Ok(Some(crate::host_secrets::Value::new(bytes.clone())?)),
+                None => Ok(None),
+            }
+        }
+        fn delete(
+            &self,
+            name: &crate::host_secrets::Name,
+        ) -> Result<(), crate::host_secrets::Error> {
+            self.0.lock().unwrap().remove(name.as_str());
+            Ok(())
+        }
+        fn list(&self) -> Result<Vec<crate::host_secrets::Name>, crate::host_secrets::Error> {
+            self.0
+                .lock()
+                .unwrap()
+                .keys()
+                .map(|k| crate::host_secrets::Name::parse(k))
+                .collect()
+        }
+    }
+
+    let f = fixture();
+    let listen = listen(7425);
+    let id = f.reserve(Some(&listen));
+    let record = f.record(listen, Some(id.clone()));
+
+    let store: Arc<dyn HostStore> = Arc::new(crate::hostdb::memory::MemoryHostStore::new(&id, 500));
+    let secrets: Arc<dyn crate::host_secrets::HostSecrets> =
+        Arc::new(MemorySecrets(std::sync::Mutex::new(Default::default())));
+    let keys: Arc<dyn crate::keys::OfficeSecretsKeys> =
+        Arc::new(crate::keys::memory::MemoryKeys::default());
+
+    // No `dev_key_dir` needed when both custody ports are injected.
+    let mut config = f.config();
+    config.dev_key_dir = None;
+    let ports = crate::ports::HostPorts {
+        store: Some(Arc::clone(&store)),
+        secrets: Some(Arc::clone(&secrets)),
+        keys: Some(Arc::clone(&keys)),
+    };
+    let host = Host::start_registered_at_with_ports(config.clone(), &f.paths, None, ports)
+        .expect("registered host starts with injected ports");
+    assert!(
+        !f.registry_db().exists(),
+        "SQLite registry must not be created"
+    );
+    assert!(
+        !f.marker().exists(),
+        "SQLite registry marker must not be written"
+    );
+    assert!(f.custody().is_empty(), "local key directory untouched");
+    let admin = host.service.admin().expect("admin installed");
+    assert!(admin.issues_for(&record.setup_operation, "http://127.0.0.1:7425"));
+    assert_eq!(
+        host.service
+            .authentication
+            .as_ref()
+            .unwrap()
+            .accounts_store()
+            .verify_instance(&id),
+        Ok(())
+    );
+    host.shutdown();
+
+    // Negative check: injected store bound to another instance fails closed.
+    let wrong_store: Arc<dyn HostStore> = Arc::new(crate::hostdb::memory::MemoryHostStore::new(
+        &crate::ids::uuid_v7().unwrap(),
+        500,
+    ));
+    let bad_ports = crate::ports::HostPorts {
+        store: Some(wrong_store),
+        secrets: Some(secrets),
+        keys: Some(keys),
+    };
+    assert!(
+        Host::start_registered_at_with_ports(config, &f.paths, None, bad_ports).is_err(),
+        "mismatched injected store instance ID must fail closed"
+    );
+    assert!(!f.registry_db().exists());
+}

@@ -97,15 +97,8 @@ const AGENT_CLI_PRIVATE: [&str; 3] = ["features", "registry", "runtime"];
 const OPERATOR_COMPOSERS: [&str; 2] = ["cli", "features"];
 
 /// Every strongly connected component of top-level production modules that exists today:
-/// `(crate root, members in name order)`. Shrink only.
-const KNOWN_CYCLES: &[(&str, &[&str])] = &[
-    (
-        "crates/org-agent-runtime/src/lib.rs",
-        &["caps", "event", "spec", "usage"],
-    ),
-    ("crates/org-agent-runtime/src/lib.rs", &["path", "token"]),
-    ("crates/org-supervise/src/lib.rs", &["child", "stop"]),
-];
+/// `(crate root, members in name order)`. Emptied in `TASK-256`: zero intra-crate cycles remain.
+const KNOWN_CYCLES: &[(&str, &[&str])] = &[];
 
 /// Every `org-office` file that names another domain's `features` today: `(file, domain)`.
 /// Emptied in `TASK-218`: zero cross-domain `features/` reach-ins remain.

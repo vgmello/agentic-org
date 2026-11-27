@@ -142,6 +142,11 @@ pub(super) fn is_concrete_path(path: &str) -> bool {
 /// `@anthropic-ai/sandbox-runtime` masks the directory atomically at its boundary instead of
 /// walking inside it and following symlinks into sibling homes (`TASK-163`, `TASK-190`). A
 /// wildcard pattern keeps exactly one trailing `/**` (or its `/*`); the root is left alone.
+/// Normalizes a deny pattern for mount-mask sandboxes (`normalize_bwrap_pattern` alias).
+pub(super) fn normalize_mount_mask_pattern(raw: &str) -> String {
+    normalize_bwrap_pattern(raw)
+}
+
 pub(super) fn normalize_bwrap_pattern(raw: &str) -> String {
     let (base, had_globstar) = split_trailing_globstar(raw);
     let (base, had_star) = match base.strip_suffix("/*") {

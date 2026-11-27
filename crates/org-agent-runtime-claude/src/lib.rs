@@ -158,7 +158,7 @@ impl AgentRuntime for ClaudeRuntime {
             config_credential_files: &[],
             host_credential_files: &[".claude/.credentials.json"],
             uses_host_oauth_token_injection: true,
-            uses_linux_bwrap_sandbox: true,
+            uses_mount_mask_sandbox: true,
             needs_explicit_sandbox_ro_dirs: false,
         }
     }
