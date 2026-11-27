@@ -1420,7 +1420,8 @@ textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
 #main .proj-fav:hover { color: var(--white); }
 #main .proj-fav.is-fav { color: var(--tone-warn-ink); }
 #main .proj-fav.is-fav .ic { fill: currentColor; }
-#main .ph-t > .proj-fav { align-self: center; margin-inline: -4px 2px; }
+#main .ph-t > .proj-fav { align-self: center; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; margin-inline: -19px -6px; }
+@media (pointer: coarse) { #main .ph-t > .proj-fav { width: 44px; height: 44px; } }
 /* In a list row the star sits right after the name, small, and only fully visible on hover unless it's a favorite */
 #main .rt > .proj-fav-row { width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; margin-inline: 2px 6px; vertical-align: middle; }
 #main .rows li:not(:hover):not(:focus-within) .proj-fav-row:not(.is-fav) { opacity: 0; }
