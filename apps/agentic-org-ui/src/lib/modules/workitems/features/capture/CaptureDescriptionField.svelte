@@ -162,7 +162,7 @@
 					{#if emp.role}
 						<span class="text-fg-muted">{emp.role}</span>
 					{/if}
-					<ModalTooltip label="Remove {emp.name}">
+					<ModalTooltip label="Remove {emp.name}" side="bottom-start">
 						<button
 							type="button"
 							aria-label="Remove {emp.name}"

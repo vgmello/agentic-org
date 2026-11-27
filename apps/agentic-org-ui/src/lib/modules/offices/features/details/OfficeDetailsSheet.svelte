@@ -139,34 +139,34 @@
 		restartingOfficeId = id;
 		restartNoteEntry = undefined;
 		const live = () => mine === run && office?.id === id;
-		const clearRestarting = () => {
-			if (restartingOfficeId === id) restartingOfficeId = undefined;
-		};
 		try {
-			await officeApi.restartOffice(id);
-		} catch (e) {
-			if (!live()) return;
-			const err = toAppError(e);
-			const outcome = restartOutcome(err.source === 'api' ? err.code : 'unknown');
-			if (outcome.kind === 'unsupported') {
-				unsupportedState = { officeId: id, canRestart: startedCanRestart };
-			}
-			if (outcome.kind === 'refresh') await onrestarted?.();
-			if (outcome.kind !== 'wait') {
+			try {
+				await officeApi.restartOffice(id);
+			} catch (e) {
 				if (!live()) return;
-				if (statusKey === startedStatusKey && outcome.kind !== 'unsupported' && outcome.message) {
-					restartNoteEntry = { key: startedStatusKey, text: outcome.message };
+				const err = toAppError(e);
+				const outcome = restartOutcome(err.source === 'api' ? err.code : 'unknown');
+				if (outcome.kind === 'unsupported') {
+					unsupportedState = { officeId: id, canRestart: startedCanRestart };
 				}
-				clearRestarting();
-				return;
+				if (outcome.kind === 'refresh') await onrestarted?.();
+				if (outcome.kind !== 'wait') {
+					if (!live()) return;
+					if (statusKey === startedStatusKey && outcome.kind !== 'unsupported' && outcome.message) {
+						restartNoteEntry = { key: startedStatusKey, text: outcome.message };
+					}
+					return;
+				}
 			}
+			await pollUntilOnline(id, live);
+			if (!live()) return;
+			const back = isOfficeBack(id);
+			// The button goes with the stop; keep the keyboard somewhere sensible.
+			if (back)
+				sheetContent?.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.focus();
+		} finally {
+			if (mine === run && restartingOfficeId === id) restartingOfficeId = undefined;
 		}
-		await pollUntilOnline(id, live);
-		if (!live()) return;
-		const back = isOfficeBack(id);
-		clearRestarting();
-		// The button goes with the stop; keep the keyboard somewhere sensible.
-		if (back) sheetContent?.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.focus();
 	}
 
 	async function copy() {

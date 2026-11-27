@@ -100,6 +100,10 @@
 	}}
 >
 	<DialogContent
+		onOpenAutoFocus={() => {
+			busy = false;
+			error = undefined;
+		}}
 		{onCloseAutoFocus}
 		{opener}
 		{fallback}

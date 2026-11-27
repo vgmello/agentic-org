@@ -120,11 +120,16 @@
 		openSnapshot = null;
 		lastTriggerEl = null;
 		if (urlItem) {
-			dismissedUrlItem = normalizeRef(urlItem);
+			const dismissed = normalizeRef(urlItem);
+			dismissedUrlItem = dismissed;
 			const nextUrl = new URL(page.url);
 			nextUrl.searchParams.delete('item');
 			// eslint-disable-next-line svelte/no-navigation-without-resolve -- preserving current already-resolved URL
-			void goto(nextUrl, { replaceState: true, noScroll: true, keepFocus: true });
+			void goto(nextUrl, { replaceState: true, noScroll: true, keepFocus: true }).finally(() => {
+				if (dismissedUrlItem === dismissed && !page.url.searchParams.get('item')) {
+					dismissedUrlItem = null;
+				}
+			});
 		}
 		if (!restoreFocus) return;
 		void tick().then(() => {

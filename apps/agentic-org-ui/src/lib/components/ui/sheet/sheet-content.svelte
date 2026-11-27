@@ -48,9 +48,14 @@
 
 	const closeFocus = (e: Event) => {
 		onCloseAutoFocus?.(e);
+		const captured = capturedOpener;
+		capturedOpener = null;
 		if (e.defaultPrevented) return;
-		const target = opener !== undefined ? opener : capturedOpener;
-		if (target === null && fallback === undefined) return;
+		const target = opener !== undefined ? opener : captured;
+		const targetUsable = Boolean(
+			target?.isConnected && !target.hasAttribute('disabled') && !target.closest('[inert]')
+		);
+		if (!targetUsable && fallback === undefined) return;
 		e.preventDefault();
 		void returnFocus(target, { within: ref, fallback });
 	};

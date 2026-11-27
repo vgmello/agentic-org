@@ -9,11 +9,8 @@ export function isProtectedBuiltInProposal(proposal: TessActionProposal): boolea
 	if (!PROTECTED_PROPOSAL_KINDS.test(proposal.kind)) return false;
 	for (const param of proposal.parameters) {
 		const val = param.value.trim();
-		if (
-			isBuiltInHandle('agent', val) ||
-			val.toLowerCase() === 'chief_of_staff' ||
-			val.toLowerCase() === 'hr lead'
-		) {
+		const norm = val.toLowerCase().replace(/[\s_-]+/g, ' ');
+		if (isBuiltInHandle('agent', val) || norm === 'chief of staff' || norm === 'hr lead') {
 			return true;
 		}
 	}

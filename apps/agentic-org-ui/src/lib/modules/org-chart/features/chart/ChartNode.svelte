@@ -84,6 +84,7 @@
 		{#if hasReports}
 			<Tooltip.ModalTooltip
 				label="{open ? 'Collapse' : 'Expand'} {e.name}'s reports"
+				side="bottom-start"
 				class="col-start-1 row-start-1 mr-3 -my-0.5 shrink-0 max-[639px]:-my-2.5"
 			>
 				<button

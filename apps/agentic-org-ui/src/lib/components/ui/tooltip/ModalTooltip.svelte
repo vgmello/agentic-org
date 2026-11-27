@@ -15,7 +15,7 @@
 		children
 	}: {
 		label: string;
-		side?: 'bottom' | 'left';
+		side?: 'bottom' | 'bottom-start' | 'left';
 		class?: string;
 		children: Snippet;
 	} = $props();
@@ -89,7 +89,11 @@
 			data-tooltip-content=""
 			class={cn(
 				'absolute z-[60]',
-				side === 'left' ? 'top-1/2 right-full -translate-y-1/2 pr-1.5' : 'top-full right-0 pt-1.5'
+				side === 'left'
+					? 'top-1/2 right-full -translate-y-1/2 pr-1.5'
+					: side === 'bottom-start'
+						? 'top-full left-0 pt-1.5'
+						: 'top-full right-0 pt-1.5'
 			)}
 		>
 			<span
