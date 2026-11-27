@@ -15,8 +15,8 @@ fn command_table_passes_all_org_command_contract_checks() {
     );
     assert_eq!(
         live.rows().len(),
-        139,
-        "the agent-os catalogue has 139 commands"
+        140,
+        "the agent-os catalogue has 140 commands"
     );
 }
 
@@ -60,7 +60,8 @@ fn aliases_expand_cleanly_without_touching_unrelated_commands() {
             "session resume --fields identity",
         ),
         ("me --format compact", "session resume --format compact"),
-        ("task note add --task T-A1", "task-note add --task T-A1"),
+        ("task-note add --task T-A1", "note add --task T-A1"),
+        ("task note add --task T-A1", "note add --task T-A1"),
         ("who --help", "directory list --help"),
         ("context --schema", "session context --schema"),
         ("resume --help", "session resume --help"),
@@ -140,9 +141,9 @@ fn mutation_policy_classifies_every_command_and_every_override_targets_a_live_ro
         ("ui", "present"),
         ("status", "set"),
         ("status", "clear"),
-        ("task-note", "add"),
-        ("task-note", "update"),
-        ("task-note", "remove"),
+        ("note", "add"),
+        ("note", "update"),
+        ("note", "remove"),
         ("msg", "reply"),
     ] {
         assert_eq!(
@@ -198,6 +199,7 @@ fn mutation_policy_classifies_every_command_and_every_override_targets_a_live_ro
         ("agent", "execution-get"),
         ("suggestion", "list"),
         ("suggestion", "inspect"),
+        ("search", "query"),
     ] {
         assert_eq!(
             live.mutation_policy_by_name(resource, verb),

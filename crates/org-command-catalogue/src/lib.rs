@@ -19,6 +19,7 @@ pub mod processes;
 pub mod projects;
 pub mod providers;
 pub mod reviews;
+pub mod search;
 pub mod session;
 pub mod session_resume;
 pub mod shared;
@@ -42,6 +43,7 @@ const DOMAIN_ROW_GROUPS: &[&[&[Command]]] = &[
     work::ALL,
     reviews::ALL,
     files::ALL,
+    search::ALL,
     git::ALL,
     processes::ALL,
     budget::ALL,
@@ -85,17 +87,17 @@ pub const POLICY_OVERRIDES: &[PolicyOverride] = &[
         policy: MutationPolicy::AutoSafe,
     },
     PolicyOverride {
-        resource: "task-note",
+        resource: "note",
         verb: "add",
         policy: MutationPolicy::AutoSafe,
     },
     PolicyOverride {
-        resource: "task-note",
+        resource: "note",
         verb: "update",
         policy: MutationPolicy::AutoSafe,
     },
     PolicyOverride {
-        resource: "task-note",
+        resource: "note",
         verb: "remove",
         policy: MutationPolicy::AutoSafe,
     },
@@ -142,6 +144,7 @@ pub const ALIASES: &[Alias] = &[
     session::CONTEXT_ALIAS,
     session_resume::RESUME_ALIAS,
     session_resume::ME_ALIAS,
+    work::TASK_NOTE_LEGACY_ALIAS,
     work::TASK_NOTE_ALIAS,
     organization::WHO_ALIAS,
 ];

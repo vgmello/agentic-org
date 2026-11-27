@@ -330,9 +330,18 @@ fn is_local_agent_verb(args: &[String]) -> bool {
     )
 }
 
+fn norm_note_verb(v: &str) -> &str {
+    if v == "get" {
+        "inspect"
+    } else {
+        v
+    }
+}
+
 fn resource_and_verb(words: &[String]) -> Option<(&str, &str)> {
     match words {
-        [a, b, v, ..] if a == "task" && b == "note" => Some(("task-note", v.as_str())),
+        [a, b, v, ..] if a == "task" && b == "note" => Some(("note", norm_note_verb(v))),
+        [a, v, ..] if a == "task-note" || a == "note" => Some(("note", norm_note_verb(v))),
         [a, ..] if a == "who" => Some(("directory", "list")),
         [r, v, ..] => Some((r.as_str(), v.as_str())),
         _ => None,

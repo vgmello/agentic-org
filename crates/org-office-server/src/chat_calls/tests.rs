@@ -171,6 +171,7 @@ impl LiveOfficeFixture {
             session_token: Some(token),
             agent_id: Some(employee_id.to_owned()),
             external_state: None,
+            ..Binding::default()
         }
     }
 }

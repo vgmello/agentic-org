@@ -349,12 +349,15 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org checklist add|check|edit|remove|move`
   Manage task checklist items over an approved office channel.
   **Use when:** adding, checking/unchecking, editing, removing, or reordering task checklist steps.
-- `agentic-org task-note add|list|get|update|remove|publish` (alias: `agentic-org task note ...`)
-  Manage private task notes over an approved office channel.
-  **Use when:** keeping private working notes on a task or publishing a copy as a shared task comment.
+- `agentic-org note add|list|inspect|update|remove|publish` (aliases: `agentic-org task-note ...`, `agentic-org task note ...`)
+  Manage private working notes, plans, and decisions over an approved office channel.
+  **Use when:** recording private working notes, plans, or decisions, recalling them across tasks/projects, or publishing a copy as a shared task comment.
 - `agentic-org review request|list|inspect|diff|route|finding|verdict|resubmit|close`
   Manage universal code, doc, task, and artifact reviews over an approved office channel.
   **Use when:** requesting reviews, reading bare-cache diffs, raising findings, submitting verdicts, resubmitting rounds (`--fresh` for clean final validation), or closing reviews from the terminal.
+- `agentic-org search query`
+  Full-text BM25 search across tasks, processes, projects, directory, readable messages, or private notes and decisions.
+  **Use when:** locating related tasks, processes, messages, or private working decisions by keyword, type, project, channel, status, label, assignee, or modified file.
 - `agentic-org directory|person|member|session|grant|process|skill|budget <verb>`
   The remaining office resources, over the same approved office channel as `task` and `msg`.
   **Use when:** browsing the directory, people and membership, sessions and grants, organization, team and project processes and standards, agent skills or budgets from the terminal.
@@ -375,12 +378,12 @@ Contract rules every command follows:
 
 - **Output format & structured JSON input.** `--json` (bare switch, before or after the command) selects JSON output; `--format json|yaml|compact` picks an explicit format; `AGENT_OS_FORMAT` sets the default when neither flag is given (managed agent runtimes receive `AGENT_OS_FORMAT=json`). Structured JSON request bodies use `--input-json <object>` (or `--input-file` / `--stdin` with `--input-format json|yaml`).
 - **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` reports no total, and `msg list` reports one only for a `--since-read` or `--after-id` read, whose `meta.next_cursor` is the message the next page starts after).
-- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, review, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
+- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, note, review, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
 - **Retries are safe.** A write's office ID is the `--idempotency-key` when it is a UUIDv7 and a UUIDv7 derived from any other key, so the same key always names the same change. `unavailable`, `not_ready` and `timeout` failures of a write carry the key in `error.retry_with`.
 - **Office error details reach you.** `error.retry_after_ms` (with `rate_limited`) and `error.field` / `error.rule` (an input that broke a rule) are printed when the office reports them.
 - **Yes-or-no flags take no value.** Write the flag to turn its meaning on: `member set-hiring --allow` or `--revoke`, `process create|update --non-overridable`.
 - **Flags are never dropped.** A combination a command cannot honor (for example `msg reply --answer` with `--body`, `msg list --channel` with `--unread-only`, which points to `--since-read`) is refused with `invalid_request`.
-- **Shorthands are one command everywhere**: `who` = `directory list`, `task note` = `task-note`, `context` = `session context`, `resume` / `me` = `session resume`, in a command line, its `--help` and `--schema`, and `session attach` lines.
+- **Shorthands are one command everywhere**: `who` = `directory list`, `task-note` / `task note` = `note`, `context` = `session context`, `resume` / `me` = `session resume`, in a command line, its `--help` and `--schema`, and `session attach` lines.
 
 - `agent-os context` (shorthand for `agent-os session context`)
   One envelope with the mode-appropriate standing rules (`mode: managed` receives managed-turn rules; `mode: external` receives external-workspace rules without managed-only wake copy), the grouped command catalogue, the guide index and, when bound, who you are and the must-follow (non-overridable) processes and standards that apply, whole, within 8 KiB (`mandatory_truncated` and `mandatory_omitted` name any left out, to read with `process inspect`). `--offline` (or a shell without a binding) answers from the binary alone, without the office, in at most 6 KiB; `--project <project>` adds a project's must-follow processes. When a session token or binding file is set, an office or auth failure fails the command; it never falls back to offline.
@@ -403,12 +406,15 @@ Contract rules every command follows:
 - `agent-os checklist add|check|edit|remove|move`
   Step-level checklist tracking on tasks.
   **Use when:** adding, checking/unchecking, editing, removing, or reordering checklist steps on a task.
-- `agent-os task-note add|list|get|update|remove|publish` (alias: `agent-os task note ...`)
-  Private task notes with optional copy-to-comment publishing and optional sparse `--checkpoint` upsert (`task-note add --task <task> --checkpoint --text <text>`) / filter (`task-note list --task <task> --checkpoint`).
-  **Use when:** recording sparse private working notes or updating one pinned working checkpoint on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
+- `agent-os note add|list|inspect|update|remove|publish` (aliases: `agent-os task-note ...`, `agent-os task note ...`)
+  Private working notes, plans, and decisions (`--kind note|plan|decision`, `--title`, `--why`, `--alternatives`, repeatable `--tag`, auto-bound `--task` with `--standalone` override, `--project`, and `--checkpoint` upsert) with compact cross-task recall (`note list` omits `body_markdown` by default and forwards `--fields` server-side) and explicit copy-to-comment publishing (`note publish`).
+  **Use when:** recording private working notes, non-obvious decisions, or one pinned working checkpoint (`add|list|inspect|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
 - `agent-os review request|list|inspect|diff|route|finding|verdict|resubmit|close`
   Universal reviews for code (pinned bare-cache commits and inter-round diffs), docs, tasks, and artifacts, with warm round-2..N continuity and `--fresh` independent validation passes.
   **Use when:** opening a review (`request`), inspecting rounds/findings/staleness (`inspect --fields`), reading bounded commit diffs (`diff --since-round`), raising or resolving findings (`finding --action add|reply`), recording verdicts (`verdict`), resubmitting fixes (`resubmit --fresh`), or closing (`close`).
+- `agent-os search query`
+  Full-text BM25 search across tasks, processes, projects, members, teams, roles, readable messages, or private notes/decisions (`--types private_note|private_decision` on their own) with truthful `meta.coverage` (`searched` / `omitted`), `--count`, `--limit`/`--cursor`, and `--fields`.
+  **Use when:** searching organization knowledge, readable messages, or your private notes/decisions with multi-query keyword expansion before creating tasks or making decisions.
 - `agent-os repo register|list|attach|status|fetch|push`
   Git repository registry, office bare-cache status, on-demand origin fetch, and task-branch pushes.
   **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, seeing branches pushed to the origin after your worktree was prepared (`repo fetch --repo <id-or-key>`), or pushing your task branch (`repo push`).

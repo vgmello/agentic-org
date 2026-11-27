@@ -4,7 +4,7 @@
 //!
 //! Each reader takes the [`Request`] or its input object alike ([`Input`]).
 
-use org_command::{Ack, Answer, Refusal, Request, Status};
+use org_command::{Ack, Answer, Refusal, Request};
 use org_proto::hiring::EntityOpResult;
 use org_proto::org::{CommandAccepted, CommandStatus};
 use org_proto::{Call, ErrorCode};
@@ -252,14 +252,10 @@ pub(crate) fn call_rpc<C: Call, T: OfficeTransport + ?Sized>(
 /// declares ([`write_ack`]) and the revision it made.
 pub(crate) fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer {
     Answer {
-        data,
-        status: Status::Completed,
         operation_id: request.idempotency_key.clone(),
         ack: Some(write_ack(request)),
         revision,
-        next_cursor: None,
-        waiting_messages: None,
-        total: None,
+        ..Answer::completed(data)
     }
 }
 
@@ -372,6 +368,21 @@ pub(crate) fn parse_ttl(text: &str) -> Result<u64, Refusal> {
                 "Pass --ttl like 90m, 24h or 7d.",
             )
         })
+}
+
+/// Rewrites legacy `note get ...` (from `task-note get` / `task note get`) to `note inspect ...`
+/// after shorthand alias expansion, preserving backward compatibility without extra catalogue bytes.
+pub(crate) fn rewrite_note_args(args: &[String]) -> Option<Vec<String>> {
+    if args.first().map(String::as_str) == Some("note")
+        && args.get(1).map(String::as_str) == Some("get")
+    {
+        let mut rewritten = Vec::with_capacity(args.len());
+        rewritten.push("note".to_owned());
+        rewritten.push("inspect".to_owned());
+        rewritten.extend_from_slice(&args[2..]);
+        return Some(rewritten);
+    }
+    None
 }
 
 #[cfg(test)]

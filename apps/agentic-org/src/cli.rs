@@ -226,14 +226,23 @@ pub(crate) enum TopCommand {
     /// Use when: adding, checking, editing, removing, or reordering task checklist steps.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Checklist(PassArgs),
-    /// Private task notes (task-note add|list|get|update|remove|publish; alias `task note`)
-    /// Use when: recording private task notes or publishing a copy as a public task comment.
-    #[command(verbatim_doc_comment, disable_help_flag = true, name = "task-note")]
-    TaskNote(PassArgs),
+    /// Private notes, plans and decisions (note add|list|inspect|update|remove|publish; aliases `task-note`, `task note`)
+    /// Use when: recording private working notes, plans or decisions, recalling them, or publishing a copy as a public task comment.
+    #[command(
+        verbatim_doc_comment,
+        disable_help_flag = true,
+        name = "note",
+        alias = "task-note"
+    )]
+    Note(PassArgs),
     /// Universal reviews (review request|list|inspect|diff|route|finding|verdict|resubmit|close)
     /// Use when: requesting, inspecting, diffing, routing, judging, resubmitting, or closing code, doc, task, or artifact reviews.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Review(PassArgs),
+    /// Search tasks, processes, projects, directory, messages or private notes (search query)
+    /// Use when: finding tasks, processes, messages, people or your private notes by full-text query.
+    #[command(verbatim_doc_comment, disable_help_flag = true)]
+    Search(PassArgs),
     /// Agent and person sessions (session ...)
     /// Use when: inspecting or ending sessions on an office.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
@@ -275,8 +284,9 @@ impl TopCommand {
             Self::Worktree(p) => ("worktree", p),
             Self::Task(p) => ("task", p),
             Self::Checklist(p) => ("checklist", p),
-            Self::TaskNote(p) => ("task-note", p),
+            Self::Note(p) => ("note", p),
             Self::Review(p) => ("review", p),
+            Self::Search(p) => ("search", p),
             Self::Session(p) => ("session", p),
             Self::Grant(p) => ("grant", p),
             Self::Process(p) => ("process", p),
@@ -305,8 +315,9 @@ impl TopCommand {
             Self::Worktree(p) => ("worktree", p),
             Self::Task(p) => ("task", p),
             Self::Checklist(p) => ("checklist", p),
-            Self::TaskNote(p) => ("task-note", p),
+            Self::Note(p) => ("note", p),
             Self::Review(p) => ("review", p),
+            Self::Search(p) => ("search", p),
             Self::Session(p) => ("session", p),
             Self::Grant(p) => ("grant", p),
             Self::Process(p) => ("process", p),

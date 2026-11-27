@@ -48,6 +48,16 @@ pub trait OfficeTransport {
         None
     }
 
+    /// Active run's task key or UUIDv7 (`AGENT_OS_TASK`), when present (`TASK-111` ADEC-3).
+    fn active_task(&self) -> Option<String> {
+        None
+    }
+
+    /// Active run's project key, slug or UUIDv7 (`AGENT_OS_PROJECT`), when present (`TASK-111` ADEC-3).
+    fn active_project(&self) -> Option<String> {
+        None
+    }
+
     /// The `waiting_messages` hint the office gave with the most recent call, taken so it is
     /// reported once: by the command that made the call, never by the next one. `None` for a
     /// transport whose office gives no such hint.
@@ -82,6 +92,14 @@ impl<T: OfficeTransport + ?Sized> OfficeTransport for &mut T {
 
     fn session_mode(&self) -> Option<org_proto::external_auth::SessionMode> {
         (**self).session_mode()
+    }
+
+    fn active_task(&self) -> Option<String> {
+        (**self).active_task()
+    }
+
+    fn active_project(&self) -> Option<String> {
+        (**self).active_project()
     }
 
     fn take_waiting_messages(&mut self) -> Option<u32> {

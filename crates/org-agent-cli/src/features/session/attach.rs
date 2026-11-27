@@ -165,7 +165,9 @@ fn parse_line_args(table: &CommandTable, raw: &str) -> Result<Vec<String>, Strin
     if let Some(word) = parts.iter().find(|word| word.starts_with('-')) {
         return Err(command_flag(word));
     }
-    let mut args = table.expand(&parts).into_owned();
+    let expanded = table.expand(&parts);
+    let mut args = crate::runtime::input::rewrite_note_args(&expanded)
+        .unwrap_or_else(|| expanded.into_owned());
     let row = table.command_for(&args);
     if let Some(input) = obj.get("input").filter(|v| !v.is_null()) {
         let json = serde_json::to_string(input)

@@ -49,7 +49,7 @@ const TASK_LIST_INPUT: &[Field] = &[
     Field::optional(
         "query",
         Type::String,
-        "Substring search over key, title, body, labels, files",
+        "FTS5 search over key, title, body, details, labels, files, comments and checklist",
     ),
     Field::optional(
         "sort",

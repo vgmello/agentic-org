@@ -1006,3 +1006,213 @@ fn tasks_inspect_server_side_fields_pruning_omits_unrequested_wire_keys() {
         assert_eq!(err.code, ErrorCode::InvalidRequest, "{bad:?}");
     }
 }
+
+#[test]
+fn task_list_query_uses_fts5_stemming_comments_and_preserves_structured_filters() {
+    use org_office::EngineChoice;
+    use org_proto::tasks::TasksCommentParams;
+
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let office = Arc::new(Office::for_test(TestOffice {
+            engine: engine.clone(),
+        }));
+        let owner = office.owner_member_id().to_owned();
+        let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+        let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+        let svc = TaskService::new(Arc::clone(&office), live, None);
+
+        let make_task = |n: u64, title: &str, body: &str, labels: Vec<&str>, rank: u64| {
+            let req = Request::new::<TasksCreate>(
+                n,
+                &TasksCreateParams {
+                    command_id: uuid(800 + n),
+                    task_id: uuid(900 + n),
+                    team_id: Some(root_team.clone()),
+                    project_id: None,
+                    assigned_team_id: None,
+                    assignee_id: None,
+                    task_type: Some("task".into()),
+                    work_type: None,
+                    title: title.into(),
+                    body_markdown: body.into(),
+                    priority: None,
+                    effort: None,
+                    severity: None,
+                    rank_order: Some(rank),
+                    labels: labels.into_iter().map(str::to_owned).collect(),
+                    reference_files: vec![],
+                    modified_files: vec![],
+                    depends_on: vec![],
+                    attachment_ids: vec![],
+                    details: None,
+                    dod: None,
+                },
+            )
+            .unwrap();
+            match svc.dispatch(Some(&owner), &req).unwrap().outcome {
+                Outcome::Result(v) => {
+                    serde_json::from_value::<TasksMutationResult>(v)
+                        .unwrap()
+                        .task
+                }
+                Outcome::Error(e) => panic!("create task failed ({engine:?}): {e:?}"),
+            }
+        };
+
+        let t1 = make_task(
+            1,
+            "Stabilize socket retries",
+            "Handle transient connection drops cleanly.",
+            vec!["backend", "reliability"],
+            10,
+        );
+        let t2 = make_task(
+            2,
+            "Audit UI spacing",
+            "Button alignment polish.",
+            vec!["frontend"],
+            5,
+        );
+        let _t3 = make_task(
+            3,
+            "Backoff policy note",
+            "Different topic in body.",
+            vec!["backend"],
+            1,
+        );
+
+        // Add a public comment mentioning "retrying" on T-A3 so search matches via comment!
+        let comment_req = Request::new::<TasksComment>(
+            20,
+            &TasksCommentParams {
+                command_id: uuid(850),
+                task: "T-A3".into(),
+                comment_id: uuid(851),
+                body_markdown: "Investigate retrying exponential backoff on sockets.".into(),
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &comment_req).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+
+        // On SQLite FTS5, Porter stemming matches `"retry"` against `"retries"` and `"retrying"`.
+        // On Memory, prefix matching matches `"retr"` against both.
+        let query_word = match engine {
+            EngineChoice::Sqlite(_) => "retry",
+            EngineChoice::Memory => "retr",
+        };
+        let fts_req = Request::new::<TasksList>(
+            21,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                sort: TaskSortMode::Order,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let res: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &fts_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(res.total, 2, "{engine:?}");
+        let keys: Vec<&str> = res.tasks.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys, vec!["T-A3", "T-A1"], "{engine:?}");
+
+        // Combined with structured filters (`labels`, `offset`, `limit`) and `--count` (`limit: Some(0)`).
+        let filtered_req = Request::new::<TasksList>(
+            22,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                labels: vec!["reliability".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let filtered: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &filtered_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("filtered fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(filtered.total, 1, "{engine:?}");
+        assert_eq!(filtered.tasks[0].id, t1.id, "{engine:?}");
+
+        let count_req = Request::new::<TasksList>(
+            23,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                limit: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let counted: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &count_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("count fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(counted.total, 2, "{engine:?}");
+        assert!(counted.tasks.is_empty(), "{engine:?}");
+
+        // Pagination (`offset: 1, limit: 1`) preserves total=2 and returns second item.
+        let paged_req = Request::new::<TasksList>(
+            24,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                sort: TaskSortMode::Order,
+                offset: Some(1),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let paged: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &paged_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("paged fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(paged.total, 2, "{engine:?}");
+        assert_eq!(paged.tasks.len(), 1, "{engine:?}");
+        assert_eq!(paged.tasks[0].key, "T-A1", "{engine:?}");
+
+        // Non-matching query still validates contradictory structured filters (not swallowed).
+        let bad_req = Request::new::<TasksList>(
+            25,
+            &TasksListParams {
+                query: Some("nonexistenttermxyz".into()),
+                status: Some(TaskStatus::Todo),
+                exclude_status: vec![TaskStatus::Todo],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &bad_req).unwrap().outcome,
+            Outcome::Error(e) if e.code == ErrorCode::InvalidRequest
+        ));
+
+        // Zero hits with valid filters returns empty list and total=0.
+        let empty_req = Request::new::<TasksList>(
+            26,
+            &TasksListParams {
+                query: Some("nonexistenttermxyz".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let empty: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &empty_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("empty fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(empty.total, 0, "{engine:?}");
+        assert!(empty.tasks.is_empty(), "{engine:?}");
+        let _ = t2;
+    }
+}

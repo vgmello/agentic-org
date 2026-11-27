@@ -268,7 +268,11 @@ fn format_compact(data: &Node, columns: &[&str], answer: &Answer, meta: &Node) -
     // no line (`task list --count`, or nothing matched).
     let counted_nothing =
         answer.total.is_some() && matches!(data, Node::List(items) if items.is_empty());
-    if answer.status != Status::Completed || answer.next_cursor.is_some() || counted_nothing {
+    if answer.status != Status::Completed
+        || answer.next_cursor.is_some()
+        || counted_nothing
+        || answer.coverage.is_some()
+    {
         out.push_str(&format!("meta: {}\n", meta.to_one_line()));
     }
     out

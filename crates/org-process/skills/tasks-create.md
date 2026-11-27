@@ -4,14 +4,16 @@ A task is a durable record of work someone has to do. Create one only when the w
 
 ## 1. Search first
 
-Look for an existing task before you write a new one:
+Search across tasks, processes and messages before you write a new task. Because full-text search matches stems and prefixes rather than fuzzy synonyms, run 2 to 3 focused queries with alternate terms (feature name, error code, file path or synonym) using `agent-os search query`:
 
 ```bash
+agent-os search query --q <words> --types task --types process --fields ref,title,excerpt --format compact
+agent-os search query --q <synonym> --types task --types message --project <project> --limit 10 --format compact
 agent-os task list --query <words> --exclude-status done --fields id,title,status --format compact
 agent-os task labels --query <word>
 ```
 
-If a task already covers the work, comment on it or depend on it instead of creating a duplicate:
+Check `meta.coverage` to see which sources were searched (and whether any were omitted). If a task already covers the work, comment on it or depend on it instead of creating a duplicate:
 
 ```bash
 agent-os task comment --task <task> --body <text>
@@ -25,10 +27,11 @@ agent-os task comment --task <task> --body <text>
 
 ## 3. Write it
 
-Write the body to a file and pass it with `--input-file`:
+Write the body to a file and pass it with `--input-file`. Attach supporting files directly with `--attach <path>` (repeatable) or reuse an uploaded file with `--attachment-id <attachment-id>`:
 
 ```bash
-agent-os task create --title <title> --team-id <team-id> --priority normal --input-file <path>
+agent-os task create --title <title> --team-id <team-id> --priority normal --input-file <path> --attach <path>
+agent-os task comment --task <task> --body <text> --attachment-id <attachment-id>
 ```
 
 A good body has:
