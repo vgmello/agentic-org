@@ -47,8 +47,8 @@ pub use self::create::{CreateTask, CreatedTask, TaskNumbering, TASK_NUMBER_BLOCK
 pub use self::list::list_tasks;
 pub use self::ops::{AddDependency, CommentTask, RemoveDependency, UnwatchTask, WatchTask};
 pub use self::queries::{
-    inspect_task, inspect_task_with_fields, list_comments, list_history, list_labels,
-    task_dependencies,
+    inspect_task, inspect_task_with_fields, list_comments, list_history, list_history_filtered,
+    list_labels, task_dependencies,
 };
 pub use self::summary::SetFinalSummary;
 pub use self::transition::TransitionTask;
@@ -357,6 +357,8 @@ pub(crate) fn task_view(task: &TaskRecord, rollup: TaskRollup) -> TaskView {
     let work = rollup.section(ChecklistSection::Work);
     let depends_on = ids(rollup.depends_on);
     let dependents = ids(rollup.dependents);
+    let unmet_blocking_dependencies = rollup.unmet_blocking_dependencies;
+    let dependency_blocked = !unmet_blocking_dependencies.is_empty();
     TaskView {
         id: task.id.as_str().to_owned(),
         office_code: task.office_code.clone(),
@@ -382,6 +384,10 @@ pub(crate) fn task_view(task: &TaskRecord, rollup: TaskRollup) -> TaskView {
         severity: task.severity.clone(),
         resolution: task.resolution.clone(),
         blocked_reason: task.blocked_reason.clone(),
+        blocked_since: task.blocked_since.clone(),
+        waiting_on_owner: task.waiting_on_owner,
+        dependency_blocked,
+        unmet_blocking_dependencies,
         rank_order: task.rank_order,
         labels: task.labels.clone(),
         reference_files: task.reference_files.clone(),

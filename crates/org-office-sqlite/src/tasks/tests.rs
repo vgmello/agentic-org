@@ -109,7 +109,16 @@ fn task(n: u64) -> TaskRecord {
         effort: None,
         severity: None,
         resolution: None,
-        blocked_reason: None,
+        blocked_reason: (STATUSES[(n % 5) as usize] == TaskStatus::Blocked).then(|| {
+            if n.is_multiple_of(3) {
+                "Waiting on owner approval for billing rollout".to_owned()
+            } else {
+                format!("Blocked waiting on external dependency #{n}")
+            }
+        }),
+        blocked_since: (STATUSES[(n % 5) as usize] == TaskStatus::Blocked)
+            .then(|| "2026-11-05T08:00:00.000Z".to_owned()),
+        waiting_on_owner: STATUSES[(n % 5) as usize] == TaskStatus::Blocked && n.is_multiple_of(3),
         rank_order: (!n.is_multiple_of(4)).then_some((n * 37) % 11),
         labels,
         reference_files: if n.is_multiple_of(6) {
@@ -331,6 +340,26 @@ fn questions() -> Vec<TasksListParams> {
             ..TasksListParams::default()
         },
         TasksListParams {
+            query: Some("owner approval".into()),
+            ..open()
+        },
+        TasksListParams {
+            ready: true,
+            ..open()
+        },
+        TasksListParams {
+            ready: true,
+            ..TasksListParams::default()
+        },
+        TasksListParams {
+            dependency_blocked: true,
+            ..open()
+        },
+        TasksListParams {
+            dependency_blocked: true,
+            ..TasksListParams::default()
+        },
+        TasksListParams {
             task_type: Some(" bug ".into()),
             ..open()
         },
@@ -389,6 +418,16 @@ fn questions() -> Vec<TasksListParams> {
             depends_on: Some("T-Z1".into()),
             ..TasksListParams::default()
         },
+        TasksListParams {
+            ready: true,
+            dependency_blocked: true,
+            ..open()
+        },
+        TasksListParams {
+            ready: true,
+            status: Some(TaskStatus::Blocked),
+            ..open()
+        },
     ]);
     out
 }
@@ -409,9 +448,9 @@ fn both_engines_answer_every_list_question_alike() {
         assert_eq!(sqlite, memory, "{params:?}");
         answered += usize::from(sqlite.is_ok_and(|page| !page.tasks.is_empty()));
     }
-    // All but the 3 refusals and the 4 pages that are empty by design (an unknown label,
+    // All but the 5 refusals and the 4 pages that are empty by design (an unknown label,
     // `limit = 0`, and two offsets past the end) list tasks.
-    assert_eq!(answered, questions.len() - 7);
+    assert_eq!(answered, questions.len() - 9);
 
     assert_eq!(on_sqlite.tasks().unwrap(), in_memory.tasks().unwrap());
     let ids: Vec<Id> = (0..=245).map(|n| id(1, n)).collect();
@@ -737,6 +776,9 @@ fn done_since_reads_updated_at_by_the_reference_rule_on_both_engines() {
     for (n, at) in (1..).zip(times) {
         let mut done = task(n);
         done.status = TaskStatus::Done;
+        done.blocked_reason = None;
+        done.blocked_since = None;
+        done.waiting_on_owner = false;
         done.meta.updated_at = Some(at.to_owned());
         on_sqlite.put_task(&done).expect("a task row");
         in_memory.put_task(&done).expect("a task");

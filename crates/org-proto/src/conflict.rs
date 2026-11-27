@@ -266,10 +266,18 @@ fn compact_keys(obj: &Map<String, Value>, kind: &str, keys: &[&str]) -> Value {
 
 fn compact_status(obj: &Map<String, Value>) -> Value {
     let mut out = Map::new();
-    for key in ["type", "from", "to", "resolution"] {
+    for key in [
+        "type",
+        "from",
+        "to",
+        "resolution",
+        "waiting_on_owner",
+        "previous_waiting_on_owner",
+        "blocked_since",
+    ] {
         copy_bounded_scalar(obj, &mut out, key);
     }
-    for key in ["blocked_reason", "note"] {
+    for key in ["blocked_reason", "previous_blocked_reason", "note"] {
         if let Some(text) = obj.get(key).and_then(Value::as_str) {
             out.insert(key.into(), json!(truncate_utf8(text, MAX_PREVIEW_BYTES)));
         }

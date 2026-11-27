@@ -33,6 +33,7 @@ pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
     let status = TaskStatus::parse(&status_raw).ok_or_else(|| bad_col(9, "invalid status"))?;
     let prio_raw: String = row.get(14)?;
     let priority = TaskPriority::parse(&prio_raw).ok_or_else(|| bad_col(14, "invalid priority"))?;
+    let waiting_on_owner_int: i64 = row.get(25)?;
     Ok(TaskRecord {
         id: id(row, 0)?,
         office_code: row.get(1)?,
@@ -53,6 +54,8 @@ pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
         severity: row.get(16)?,
         resolution: row.get(17)?,
         blocked_reason: row.get(18)?,
+        blocked_since: row.get(24)?,
+        waiting_on_owner: waiting_on_owner_int != 0,
         rank_order: opt_u64(row, 19)?,
         labels: Vec::new(),
         reference_files: Vec::new(),

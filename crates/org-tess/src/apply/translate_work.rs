@@ -264,12 +264,27 @@ fn prep_task_transition(
     let status_str = require_str(input, "status")?;
     let status = TaskStatus::parse(status_str)
         .ok_or_else(|| invalid(format!("invalid status `{status_str}`")))?;
+    let waiting_on_enum = opt_string(input, "waiting_on");
+    let waiting_on_bool = input.get("waiting_on_owner").and_then(Value::as_bool);
+    if waiting_on_enum.is_some() && waiting_on_bool.is_some() {
+        return Err(invalid(
+            "cannot pass both `waiting_on` and `waiting_on_owner`",
+        ));
+    }
+    let waiting_on_owner = match waiting_on_enum.as_deref() {
+        Some("owner") => Some(true),
+        Some("none") => Some(false),
+        Some(other) => return Err(invalid(format!("invalid waiting_on `{other}`"))),
+        None => waiting_on_bool,
+    };
     let params = TasksTransitionParams {
         command_id: next_id(),
         task: require_str(input, "task")?.to_owned(),
         expected_revision: require_rev(expected_revision)?,
         status,
+        reason: opt_string(input, "reason"),
         blocked_reason: opt_string(input, "blocked_reason"),
+        waiting_on_owner,
         resolution: opt_string(input, "resolution"),
         note: opt_string(input, "note"),
         done_anyway_reason: None,

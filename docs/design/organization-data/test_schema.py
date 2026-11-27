@@ -1467,6 +1467,46 @@ class GapPreservationTests(unittest.TestCase):
             self.db.execute("UPDATE tasks SET status='closed'")
         self.db.rollback()
 
+    def test_task_blocking_columns_enforce_bounds_and_blocked_status_invariant(self):
+        """TASK-84: blocked_reason (1..=1000 chars, multiline), blocked_since, waiting_on_owner."""
+        columns = [row[1] for row in self.db.execute("PRAGMA table_info(tasks)")]
+        for col in ("blocked_reason", "blocked_since", "waiting_on_owner"):
+            self.assertIn(col, columns)
+        # Default waiting_on_owner is 0.
+        self.assertEqual(
+            self.db.execute("SELECT waiting_on_owner FROM tasks WHERE id='task'").fetchone()[0],
+            0,
+        )
+        # Valid explicit block with multiline reason and owner-actionable flag.
+        self.db.execute(
+            "UPDATE tasks SET status='blocked', blocked_reason=?, blocked_since=?, waiting_on_owner=1 WHERE id='task'",
+            ("Line 1\nLine 2\t" + "a" * 980, "2026-11-27T10:00:00.000Z"),
+        )
+        self.db.commit()
+        # Refuses whitespace-only and >1000 char blocked_reason.
+        for bad_reason in ("", "   ", "\n\t\r ", "x" * 1001):
+            with self.subTest(bad_reason=len(bad_reason)), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute("UPDATE tasks SET blocked_reason=? WHERE id='task'", (bad_reason,))
+            self.db.rollback()
+        # Refuses non-boolean waiting_on_owner.
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE tasks SET waiting_on_owner=2 WHERE id='task'")
+        self.db.rollback()
+        # Refuses leaving blocked while leaving blocked_reason, blocked_since, or waiting_on_owner set.
+        for bad_unblock in (
+            "UPDATE tasks SET status='in_progress', blocked_since=NULL, waiting_on_owner=0 WHERE id='task'",
+            "UPDATE tasks SET status='in_progress', blocked_reason=NULL, waiting_on_owner=0 WHERE id='task'",
+            "UPDATE tasks SET status='in_progress', blocked_reason=NULL, blocked_since=NULL WHERE id='task'",
+        ):
+            with self.subTest(stmt=bad_unblock), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(bad_unblock)
+            self.db.rollback()
+        # Atomic unblock clears all three.
+        self.db.execute(
+            "UPDATE tasks SET status='in_progress', blocked_reason=NULL, blocked_since=NULL, waiting_on_owner=0 WHERE id='task'"
+        )
+        self.db.commit()
+
     def test_milestone_and_release_are_done_when_their_tasks_are(self):
         common = dict(organization_id="org", schema_version=1, revision=1)
         insert(self.db, "releases", **common, id="with-milestone", project_id="project", title="Has a milestone")

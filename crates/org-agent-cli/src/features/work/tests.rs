@@ -1395,3 +1395,358 @@ fn note_adec3_autobind_standalone_turn40_recall_update_and_legacy_aliases() {
         assert_ne!(out.exit_code, 0, "{bad:?}: {}", out.stdout);
     }
 }
+
+#[test]
+fn task_105_and_84_cli_list_defaults_blocking_transitions_and_history_filters() {
+    struct BlockingCliMock {
+        seen: Vec<(String, Value)>,
+    }
+
+    fn blocked_task_json() -> Value {
+        json!({
+            "id": "0193a5c0-0000-7000-8000-000000000100",
+            "office_code": "A",
+            "number": 2,
+            "key": "T-A2",
+            "revision": 3,
+            "team_id": "0193a5c0-0000-7000-8000-000000000010",
+            "type": "task",
+            "title": "Deploy service",
+            "status": "blocked",
+            "priority": "high",
+            "resolution": null,
+            "blocked_reason": "Waiting on owner DNS approval",
+            "blocked_since": "2026-11-26T10:00:00.000Z",
+            "waiting_on_owner": true,
+            "dependency_blocked": true,
+            "unmet_blocking_dependencies": [{
+                "id": "0193a5c0-0000-7000-8000-000000000099",
+                "key": "T-A1",
+                "title": "Provision DNS",
+                "status": "cancelled",
+                "cancelled": true
+            }],
+            "labels": [],
+            "reference_files": [],
+            "modified_files": [],
+            "depends_on": ["0193a5c0-0000-7000-8000-000000000099"],
+            "dependents": [],
+            "created_by_kind": "employee",
+            "updated_by_kind": "employee",
+            "checklist_total": 0,
+            "checklist_done": 0,
+            "comment_count": 0,
+            "watcher_count": 0
+        })
+    }
+
+    impl OfficeTransport for BlockingCliMock {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.seen.push((method.to_owned(), params));
+            match method {
+                "tasks.list" => Ok(json!({ "tasks": [blocked_task_json()], "total": 1 })),
+                "tasks.inspect" => Ok(json!({
+                    "task": blocked_task_json(),
+                    "checklist": [],
+                    "comments": [],
+                    "attachments": [],
+                    "watchers": [],
+                    "depends_on_tasks": [],
+                    "dependent_tasks": [],
+                    "history": []
+                })),
+                "tasks.transition" => Ok(json!({ "task": blocked_task_json() })),
+                "tasks.history" => Ok(json!({
+                    "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                    "events": [
+                        {
+                            "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                            "revision": 1,
+                            "occurred_at": "2026-11-26T09:00:00.000Z",
+                            "actor_kind": "employee",
+                            "change": { "type": "created" },
+                            "payload_sha256": "0".repeat(64)
+                        },
+                        {
+                            "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                            "revision": 2,
+                            "occurred_at": "2026-11-26T09:30:00.000Z",
+                            "actor_kind": "employee",
+                            "change": { "type": "status_changed", "from": "todo", "to": "in_progress" },
+                            "payload_sha256": "1".repeat(64)
+                        },
+                        {
+                            "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                            "revision": 3,
+                            "occurred_at": "2026-11-26T10:00:00.000Z",
+                            "actor_kind": "employee",
+                            "change": {
+                                "type": "status_changed",
+                                "from": "in_progress",
+                                "to": "blocked",
+                                "blocked_reason": "Waiting on owner DNS approval",
+                                "waiting_on_owner": true
+                            },
+                            "payload_sha256": "2".repeat(64)
+                        }
+                    ]
+                })),
+                other => panic!("unexpected RPC: {other}"),
+            }
+        }
+    }
+
+    let run = |office: &mut TransportOffice<BlockingCliMock>, args: &[&str]| {
+        let owned: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+        crate::execute_with_office("agent-os", &owned, office)
+    };
+
+    let mut office = TransportOffice(BlockingCliMock { seen: vec![] });
+
+    // 1. `task list` defaults to `status_scope = "open"` and surfaces blocking fields.
+    let out = run(&mut office, &["task", "list"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["status_scope"], "open");
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    let row = &env["data"][0];
+    assert_eq!(row["blocked_reason"], "Waiting on owner DNS approval");
+    assert_eq!(row["blocked_since"], "2026-11-26T10:00:00.000Z");
+    assert_eq!(row["waiting_on_owner"], true);
+    assert_eq!(row["dependency_blocked"], true);
+    assert_eq!(row["unmet_blocking_dependencies"][0]["key"], "T-A1");
+    assert_eq!(row["unmet_blocking_dependencies"][0]["cancelled"], true);
+
+    // 2. `--all`, `--status done`, `--status-scope`, `--done-since`, `--ready`, `--dependency-blocked`.
+    let out = run(&mut office, &["task", "list", "--all"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["status_scope"], "all");
+
+    let out = run(&mut office, &["task", "list", "--status", "done"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["status"], "done");
+    assert!(office
+        .0
+        .seen
+        .last()
+        .unwrap()
+        .1
+        .get("status_scope")
+        .is_none());
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "list",
+            "--status-scope",
+            "open",
+            "--done-since",
+            "2026-11-20T00:00:00Z",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["status_scope"], "open");
+    assert_eq!(
+        office.0.seen.last().unwrap().1["done_since"],
+        "2026-11-20T00:00:00Z"
+    );
+
+    let out = run(&mut office, &["task", "list", "--ready"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["ready"], true);
+
+    let out = run(&mut office, &["task", "list", "--dependency-blocked"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["dependency_blocked"], true);
+
+    // 3. `task inspect` surfaces blocking fields too.
+    let out = run(&mut office, &["task", "inspect", "--task", "T-A2"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["data"]["task"]["waiting_on_owner"], true);
+    assert_eq!(env["data"]["task"]["dependency_blocked"], true);
+    assert_eq!(
+        env["data"]["task"]["unmet_blocking_dependencies"][0]["status"],
+        "cancelled"
+    );
+
+    // 4. `task transition` primary `--reason`, aliases `--blocked-reason` / `--note`, `--waiting-on owner`, `--waiting-on-owner`.
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--reason",
+            "Waiting on owner DNS approval",
+            "--waiting-on",
+            "owner",
+            "--if-match",
+            "2",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert_eq!(tr["blocked_reason"], "Waiting on owner DNS approval");
+    assert_eq!(tr["waiting_on_owner"], true);
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--blocked-reason",
+            "Legacy alias still works",
+            "--waiting-on-owner",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert_eq!(tr["blocked_reason"], "Legacy alias still works");
+    assert_eq!(tr["waiting_on_owner"], true);
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--note",
+            "Note alias for blocked",
+            "--waiting-on",
+            "none",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert_eq!(tr["blocked_reason"], "Note alias for blocked");
+    assert_eq!(tr["waiting_on_owner"], false);
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--reason",
+            "Owner approved DNS",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert!(tr.get("blocked_reason").is_none());
+    assert_eq!(tr["note"], "Owner approved DNS");
+
+    // 5. Fail-closed CLI refusals (zero transport calls!):
+    //    - `--blocked-reason` on non-blocked transition refused with actionable hint!
+    //    - `--waiting-on owner` on non-blocked transition refused!
+    //    - contradictions on `task list` and `task history` refused!
+    let before = office.0.seen.len();
+    let bad_blocked = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--blocked-reason",
+            "Should not be silently dropped",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_ne!(bad_blocked.exit_code, 0);
+    let bad_env: Value = serde_json::from_str(&bad_blocked.stdout).unwrap();
+    assert_eq!(bad_env["error"]["code"], "invalid_request");
+    assert!(
+        bad_env["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("--reason"),
+        "expected actionable hint naming --reason: {bad_env}"
+    );
+
+    for bad_args in [
+        vec![
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--waiting-on",
+            "owner",
+            "--if-match",
+            "3",
+        ],
+        vec!["task", "list", "--all", "--status-scope", "open"],
+        vec!["task", "list", "--ready", "--dependency-blocked"],
+        vec!["task", "list", "--done-since", "yesterday"],
+        vec!["task", "list", "--ready", "--status", "blocked"],
+        vec![
+            "task",
+            "history",
+            "--task",
+            "T-A2",
+            "--event-type",
+            "created",
+            "--blocks-only",
+        ],
+    ] {
+        let out = run(&mut office, &bad_args);
+        assert_ne!(out.exit_code, 0, "{bad_args:?}: {}", out.stdout);
+    }
+    assert_eq!(
+        office.0.seen.len(),
+        before,
+        "fail-closed CLI checks must never call transport"
+    );
+
+    // 6. `task history --event-type status_changed` and `--blocks-only`.
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "history",
+            "--task",
+            "T-A2",
+            "--event-type",
+            "status_changed",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["data"].as_array().unwrap().len(), 2);
+
+    let out = run(
+        &mut office,
+        &["task", "history", "--task", "T-A2", "--blocks-only"],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    let events = env["data"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["change"]["to"], "blocked");
+}

@@ -32,6 +32,8 @@ pub(super) fn sample_task() -> TaskRecord {
         severity: Some("major".into()),
         resolution: None,
         blocked_reason: Some("waiting: on review".into()),
+        blocked_since: Some("2026-11-26T00:30:00.000Z".into()),
+        waiting_on_owner: true,
         rank_order: Some(7),
         labels: vec!["area:api".into(), "backend".into()],
         reference_files: vec!["docs/a.md".into()],

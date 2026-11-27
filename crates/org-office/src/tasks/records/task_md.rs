@@ -16,8 +16,8 @@ use serde_json::{json, Map, Value};
 
 use super::attachments::{encode_attachments, read_attachments};
 use super::{
-    is_valid_office_code, normalize_file_paths, normalize_labels, DoneAnywayRecord,
-    FinalSummaryRecord, TaskDetailsRecord, TaskLinkRecord, TaskMeta, TaskRecord,
+    is_valid_office_code, normalize_file_paths, normalize_labels, validate_blocked_reason,
+    DoneAnywayRecord, FinalSummaryRecord, TaskDetailsRecord, TaskLinkRecord, TaskMeta, TaskRecord,
     TaskRepositoryRecord, SCHEMA_VERSION,
 };
 use crate::attachments::records::AttachmentRecord;
@@ -166,6 +166,8 @@ pub fn task_fields(
     put("severity", text_value(task.severity.as_deref()));
     put("resolution", text_value(task.resolution.as_deref()));
     put("blocked_reason", text_value(task.blocked_reason.as_deref()));
+    put("blocked_since", text_value(task.blocked_since.as_deref()));
+    put("waiting_on_owner", json!(task.waiting_on_owner));
     put(
         "rank_order",
         task.rank_order.map_or(Value::Null, |n| json!(n)),
@@ -486,6 +488,16 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
         severity: r.optional_text("severity")?,
         resolution: r.optional_text("resolution")?,
         blocked_reason: r.optional_text("blocked_reason")?,
+        blocked_since: if r.has("blocked_since") {
+            r.optional_text("blocked_since")?
+        } else {
+            None
+        },
+        waiting_on_owner: if r.has("waiting_on_owner") {
+            r.flag("waiting_on_owner")?
+        } else {
+            false
+        },
         rank_order: r.optional_number("rank_order")?,
         labels: normalized(&r, "labels", labels, normalize_labels)?,
         reference_files: normalized(&r, "reference_files", reference_files, |l| {
@@ -509,6 +521,31 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
     if task.project_id.is_none() && (task.feature_id.is_some() || task.milestone_id.is_some()) {
         let reason = "a projectless task has no feature or milestone";
         return Err(RecordError::new("project_id", reason));
+    }
+    // Explicit block fields (`TASK-84`) apply only while `status == blocked`.
+    if task.status != TaskStatus::Blocked {
+        if task.blocked_reason.is_some() {
+            return Err(RecordError::new(
+                "blocked_reason",
+                "only a blocked task carries blocked_reason",
+            ));
+        }
+        if task.blocked_since.is_some() {
+            return Err(RecordError::new(
+                "blocked_since",
+                "only a blocked task carries blocked_since",
+            ));
+        }
+        if task.waiting_on_owner {
+            return Err(RecordError::new(
+                "waiting_on_owner",
+                "only a blocked task may set waiting_on_owner",
+            ));
+        }
+    } else if let Some(ref reason) = task.blocked_reason {
+        if let Err(err) = validate_blocked_reason(reason) {
+            return Err(RecordError::new("blocked_reason", err.message));
+        }
     }
     let links = read_links(&mut r, &task.id)?;
     let attachments = read_attachments(

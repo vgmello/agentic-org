@@ -29,7 +29,7 @@ pub(super) const CUES: &[CommandCue] = &[
     ("task", "create", "creating a new task, bug, or request with initial priority, labels, files, or dependencies."),
     ("task", "dep-add", "recording that a task depends on an upstream prerequisite task."),
     ("task", "dep-remove", "removing a direct dependency link between two tasks."),
-    ("task", "transition", "moving a task's lifecycle status (`todo`, `in_progress`, `blocked`, `done`, `cancelled`; requires `--if-match`)."),
+    ("task", "transition", "moving a task's lifecycle status (`todo`, `in_progress`, `blocked`, `done`, `cancelled`; requires `--if-match`; pass `--reason` and optional `--waiting-on owner` when blocking)."),
     ("task", "unwatch", "unsubscribing from updates on a task you no longer need to watch."),
     ("task", "update", "editing a task's title, body (or `--append-body`), work type, priority, effort, severity, order, labels, or files (requires `--if-match`)."),
     ("task", "watch", "subscribing to updates on a task you care about."),
@@ -277,14 +277,92 @@ pub(super) fn write_task_transition<T: OfficeTransport + ?Sized>(
             "Use todo, in_progress, blocked, cancelled, or done.",
         )
     })?;
+    let reason_flag = opt_string(i, "reason");
+    let blocked_reason_flag = opt_string(i, "blocked_reason");
+    let note_flag = opt_string(i, "note");
+    let waiting_on_enum = opt_string(i, "waiting_on");
+    let waiting_on_bool = i
+        .get("waiting_on_owner")
+        .and_then(serde_json::Value::as_bool);
+    reject_pair(
+        waiting_on_enum.is_some() && waiting_on_bool.is_some(),
+        "--waiting-on",
+        "--waiting-on-owner",
+    )?;
+    let waiting_on_owner = match waiting_on_enum.as_deref() {
+        Some("owner") => Some(true),
+        Some("none") => Some(false),
+        Some(other) => {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!("invalid --waiting-on `{other}`"),
+                "Use `--waiting-on owner` or `--waiting-on none`.",
+            ));
+        }
+        None => waiting_on_bool,
+    };
+    let (blocked_reason, note) = if status == TaskStatus::Blocked {
+        reject_pair(
+            reason_flag.is_some() && blocked_reason_flag.is_some(),
+            "--reason",
+            "--blocked-reason",
+        )?;
+        let (effective_blocked, extra_note) = match (blocked_reason_flag, reason_flag, note_flag) {
+            (Some(b), None, n) => (Some(b), n),
+            (None, Some(r), n) => (Some(r), n),
+            // `--note` is accepted as an alias for `--reason` when given alone on `blocked`.
+            (None, None, Some(n)) => (Some(n), None),
+            (None, None, None) => (None, None),
+            (Some(_), Some(_), _) => unreachable!("rejected above"),
+        };
+        if effective_blocked
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
+        {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "transitioning to `blocked` requires a non-empty reason.",
+                "Pass `--reason <text>` (1..=1000 chars) explaining what blocks this task.",
+            ));
+        }
+        (effective_blocked, extra_note)
+    } else {
+        if blocked_reason_flag.is_some() {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "`--blocked-reason` is only allowed when transitioning to `blocked`, not `{status_str}`."
+                ),
+                "Use `--reason <text>` (or `--note <text>`) for an optional note on non-blocked transitions.",
+            ));
+        }
+        if waiting_on_owner.is_some() {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "`--waiting-on` / `--waiting-on-owner` is only allowed when transitioning to `blocked`, not `{status_str}`."
+                ),
+                "Omit `--waiting-on` / `--waiting-on-owner` when leaving `blocked` (it clears automatically).",
+            ));
+        }
+        reject_pair(
+            reason_flag.is_some() && note_flag.is_some(),
+            "--reason",
+            "--note",
+        )?;
+        (None, reason_flag.or(note_flag))
+    };
     let params = TasksTransitionParams {
         command_id: cmd_id(request)?,
         task: require_str(i, "task")?.to_owned(),
         expected_revision: require_if_match(request)?,
         status,
-        blocked_reason: opt_string(i, "blocked_reason"),
+        reason: None,
+        blocked_reason,
+        waiting_on_owner,
         resolution: opt_string(i, "resolution"),
-        note: opt_string(i, "note"),
+        note,
         done_anyway_reason: None,
         final_summary: None,
     };

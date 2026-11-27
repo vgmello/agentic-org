@@ -31,9 +31,9 @@ pub use dod::{
 };
 pub use inspect_fields::TaskInspectSelection;
 pub use records::{
-    ChecklistStepWire, PatchField, TaskCommentWire, TaskDependenciesResult, TaskDependencyEdge,
-    TaskDetailsWire, TaskDoneAnywayWire, TaskEventWire, TaskFinalSummaryWire, TaskInspectResult,
-    TaskLabelSummary, TaskRefSummary, TaskView, TaskWatcherWire,
+    BlockingDependencyWire, ChecklistStepWire, PatchField, TaskCommentWire, TaskDependenciesResult,
+    TaskDependencyEdge, TaskDetailsWire, TaskDoneAnywayWire, TaskEventWire, TaskFinalSummaryWire,
+    TaskInspectResult, TaskLabelSummary, TaskRefSummary, TaskView, TaskWatcherWire,
 };
 
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,10 @@ pub const TASK_MAX_DOD_ITEMS: usize = 25;
 pub const TASK_FINAL_SUMMARY_MAX_CHARS: usize = 8000;
 /// Maximum "done anyway" reason length in Unicode scalar values (`TASK-88`).
 pub const TASK_DONE_ANYWAY_REASON_MAX_CHARS: usize = 1000;
+/// Maximum explicit `blocked_reason` length in Unicode scalar values (`TASK-84`).
+pub const TASK_BLOCKED_REASON_MAX_CHARS: usize = 1000;
+/// Maximum optional transition note/reason length in Unicode scalar values (`TASK-84`).
+pub const TASK_TRANSITION_NOTE_MAX_CHARS: usize = 1000;
 
 /// The section a checklist step belongs to (`TASK-88`): acceptance criteria, the definition
 /// of done, or work steps. Each section numbers its steps from 0 on its own; a task lists

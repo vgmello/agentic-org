@@ -6,7 +6,9 @@
 //! A page therefore costs a fixed number of reads, whether the organization holds 10 tasks
 //! or 10,000; nothing here reads storage.
 
-use org_proto::tasks::{ChecklistSection, LabelMatchMode, TaskSortMode, TaskStatus};
+use org_proto::tasks::{
+    BlockingDependencyWire, ChecklistSection, LabelMatchMode, TaskSortMode, TaskStatus,
+};
 use org_store::Id;
 
 use super::records::TaskRecord;
@@ -110,7 +112,10 @@ pub struct TaskListQuery {
     pub depends_on: Option<Id>,
     /// Only tasks this task directly depends on.
     pub dependent_of: Option<Id>,
-    /// Lowercase ASCII substring of the key, title, body, a label or a file path.
+    /// `Some(true)`: only tasks with at least one unmet direct `depends_on` prerequisite;
+    /// `Some(false)`: only tasks with no unmet direct `depends_on` prerequisites (`TASK-84`).
+    pub dependency_blocked: Option<bool>,
+    /// Lowercase ASCII substring of the key, title, body, blocked_reason, a label or a file path.
     pub text: Option<String>,
     /// A normalized relative path (no `./` in front, no `/` at the end, no `..`): only tasks
     /// whose `modified_files` hold it, or a file under it as a directory.
@@ -151,6 +156,8 @@ pub struct TaskRollup {
     pub depends_on: Vec<Id>,
     /// Tasks that directly depend on this task, sorted and unique.
     pub dependents: Vec<Id>,
+    /// Unmet direct upstream `depends_on` prerequisites (status != `done`), sorted by key (`TASK-84`).
+    pub unmet_blocking_dependencies: Vec<BlockingDependencyWire>,
 }
 
 impl TaskRollup {

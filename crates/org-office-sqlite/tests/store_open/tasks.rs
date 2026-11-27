@@ -10,8 +10,8 @@ use org_proto::tasks::{
     TasksAddDependencyParams, TasksAssignParams, TasksChecklistAddParams,
     TasksChecklistCheckParams, TasksChecklistEditParams, TasksChecklistMoveParams,
     TasksChecklistRemoveParams, TasksCommentParams, TasksCreateParams, TasksFinalSummaryParams,
-    TasksLabelsParams, TasksListParams, TasksRemoveDependencyParams, TasksTransitionParams,
-    TasksUnwatchParams, TasksUpdateParams, TasksWatchParams, WorkType,
+    TasksHistoryParams, TasksLabelsParams, TasksListParams, TasksRemoveDependencyParams,
+    TasksTransitionParams, TasksUnwatchParams, TasksUpdateParams, TasksWatchParams, WorkType,
 };
 use org_proto::ErrorCode;
 use org_store::{Id, Operation, Sha256};
@@ -232,7 +232,9 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 task: t1.key.clone(),
                 expected_revision: t1.revision,
                 status: TaskStatus::InProgress,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: None,
                 note: None,
                 done_anyway_reason: None,
@@ -282,7 +284,9 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 task: t1.key.clone(),
                 expected_revision: 1,
                 status: TaskStatus::InProgress,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: None,
                 note: None,
                 done_anyway_reason: None,
@@ -304,7 +308,9 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 task: t1.key.clone(),
                 expected_revision: assigned.revision,
                 status: TaskStatus::Blocked,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: None,
                 note: None,
                 done_anyway_reason: None,
@@ -325,7 +331,9 @@ fn assert_auth_and_transitions(s: &Seed, t1: &org_proto::tasks::TaskView) {
                 task: t1.key.clone(),
                 expected_revision: assigned.revision,
                 status: TaskStatus::InProgress,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: None,
                 note: Some("Starting work".into()),
                 done_anyway_reason: None,
@@ -499,7 +507,7 @@ fn assert_comments_watchers_and_history(s: &Seed, task_key: &str) {
     let (history_res, _) = s
         .store
         .read(TaskHistoryRead {
-            task: task_key.to_owned(),
+            params: TasksHistoryParams::new(task_key),
         })
         .unwrap();
     let history = history_res.unwrap();
@@ -1337,6 +1345,8 @@ fn atomic_task_write_authority_enforced_inside_unit_of_work() {
             severity: None,
             resolution: None,
             blocked_reason: None,
+            blocked_since: None,
+            waiting_on_owner: false,
             rank_order: None,
             labels: Vec::new(),
             reference_files: Vec::new(),
@@ -1415,7 +1425,9 @@ fn atomic_task_write_authority_enforced_inside_unit_of_work() {
                     task: hq_task.key.clone(),
                     expected_revision: rev_after_attach,
                     status: TaskStatus::InProgress,
+                    reason: None,
                     blocked_reason: None,
+                    waiting_on_owner: None,
                     resolution: None,
                     note: None,
                     done_anyway_reason: None,

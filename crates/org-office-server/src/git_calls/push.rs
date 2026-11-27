@@ -224,6 +224,8 @@ mod tests {
             severity: None,
             resolution: None,
             blocked_reason: None,
+            blocked_since: None,
+            waiting_on_owner: false,
             rank_order: None,
             labels: Vec::new(),
             reference_files: Vec::new(),

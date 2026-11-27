@@ -33,6 +33,39 @@ fn task_list_query_parses_multi_labels_sort_and_rejects_unknown_params() {
     assert_eq!(parse_list_query(None).ok().unwrap().status_scope, None);
     assert!(parse_list_query(Some("status_scope=recent")).is_err());
     assert!(parse_list_query(Some("status_scope=Open")).is_err());
+    assert!(parse_list_query(Some("done_since=yesterday")).is_err());
+    assert!(parse_list_query(Some("done_since=2026-11-20")).is_err());
+
+    // `TASK-84`: `ready` and `dependency_blocked` strict boolean parsing & contradiction check.
+    let ready_q = parse_list_query(Some("status_scope=open&ready=true&offset=10"))
+        .ok()
+        .expect("valid ready query");
+    assert!(ready_q.ready);
+    assert!(!ready_q.dependency_blocked);
+    assert_eq!(ready_q.offset, Some(10));
+    let dep_q = parse_list_query(Some("dependency_blocked=1"))
+        .ok()
+        .expect("valid dep blocked query");
+    assert!(dep_q.dependency_blocked);
+    assert!(!dep_q.ready);
+    assert!(parse_list_query(Some("ready=maybe")).is_err());
+    assert!(parse_list_query(Some("dependency_blocked=yes")).is_err());
+    assert!(parse_list_query(Some("ready=true&dependency_blocked=true")).is_err());
+
+    // `TASK-84`: history filtering query params.
+    let hist = parse_history_query("T-A1", Some("event_type=status_changed&blocks_only=true"))
+        .ok()
+        .expect("valid history query");
+    assert_eq!(hist.event_type.as_deref(), Some("status_changed"));
+    assert!(hist.blocks_only);
+    assert!(parse_history_query("T-A1", Some("event_type=")).is_err());
+    assert!(parse_history_query("T-A1", Some("blocks_only=maybe")).is_err());
+    assert!(parse_history_query("T-A1", Some("event_type=created&blocks_only=true")).is_err());
+
+    // `TASK-84`: transition payload accepts reason, blocked_reason, and waiting_on_owner.
+    let auth = CallerAuth::LocalAuthless;
+    let tr_body = br#"{"command_id":"0193a5c0-0000-7000-8000-0000000000ad","task":"T-A1","expected_revision":2,"status":"blocked","reason":"Waiting on owner approval","waiting_on_owner":true}"#;
+    assert!(prepare(TaskRoute::Transition(auth, org()), tr_body).is_ok());
 
     let lp = parse_labels_query(Some("q=sec"))
         .ok()

@@ -42,7 +42,7 @@ pub enum TaskRoute {
     Comments(CallerAuth, String, String),
     Watch(CallerAuth, String),
     Unwatch(CallerAuth, String),
-    History(CallerAuth, String, String),
+    History(CallerAuth, String, TasksHistoryParams),
     Dependencies(CallerAuth, String, String),
     AddDependency(CallerAuth, String),
     RemoveDependency(CallerAuth, String),
@@ -69,7 +69,7 @@ pub enum TaskCall {
     Comments(CallerAuth, String, String),
     Watch(CallerAuth, String, TasksWatchParams),
     Unwatch(CallerAuth, String, TasksUnwatchParams),
-    History(CallerAuth, String, String),
+    History(CallerAuth, String, TasksHistoryParams),
     Dependencies(CallerAuth, String, String),
     AddDependency(CallerAuth, String, TasksAddDependencyParams),
     RemoveDependency(CallerAuth, String, TasksRemoveDependencyParams),
@@ -137,6 +137,47 @@ fn decode_query_value(raw: &str) -> Result<String, ApiReply> {
     String::from_utf8(out).map_err(|_| invalid())
 }
 
+fn parse_bool_query(raw: &str) -> Result<bool, ApiReply> {
+    match raw {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(invalid()),
+    }
+}
+
+fn parse_history_query(task: &str, query: Option<&str>) -> Result<TasksHistoryParams, ApiReply> {
+    let mut params = TasksHistoryParams::new(task);
+    let Some(q) = query.filter(|s| !s.is_empty()) else {
+        return Ok(params);
+    };
+    for pair in q.split('&') {
+        let Some((k, raw_v)) = pair.split_once('=') else {
+            return Err(invalid());
+        };
+        let v = decode_query_value(raw_v)?;
+        match k {
+            "event_type" => {
+                let trimmed = v.trim();
+                if trimmed.is_empty() {
+                    return Err(invalid());
+                }
+                params.event_type = Some(trimmed.to_owned());
+            }
+            "blocks_only" => params.blocks_only = parse_bool_query(&v)?,
+            _ => return Err(invalid()),
+        }
+    }
+    if params.blocks_only
+        && params
+            .event_type
+            .as_deref()
+            .is_some_and(|kind| kind != "status_changed")
+    {
+        return Err(invalid());
+    }
+    Ok(params)
+}
+
 fn parse_list_query(query: Option<&str>) -> Result<TasksListParams, ApiReply> {
     let mut params = TasksListParams::default();
     let Some(q) = query.filter(|s| !s.is_empty()) else {
@@ -179,13 +220,26 @@ fn parse_list_query(query: Option<&str>) -> Result<TasksListParams, ApiReply> {
                 };
             }
             "limit" => params.limit = Some(v.parse::<u32>().map_err(|_| invalid())?),
-            // `TASK-105`: the office validates `done_since` as RFC 3339 and refuses it otherwise.
+            "offset" => params.offset = Some(v.parse::<u64>().map_err(|_| invalid())?),
+            // `TASK-105`: strict RFC 3339 validation matching `org-office`.
             "status_scope" => {
                 params.status_scope = Some(TaskStatusScope::parse(&v).ok_or_else(invalid)?);
             }
-            "done_since" => params.done_since = Some(v),
+            "done_since" => {
+                let trimmed = v.trim();
+                if org_proto::parse_rfc3339_ms(trimmed).is_none() {
+                    return Err(invalid());
+                }
+                params.done_since = Some(trimmed.to_owned());
+            }
+            // `TASK-84`: two-kind blocking filters (`ready` and `dependency_blocked`).
+            "ready" => params.ready = parse_bool_query(&v)?,
+            "dependency_blocked" => params.dependency_blocked = parse_bool_query(&v)?,
             _ => return Err(invalid()),
         }
+    }
+    if params.ready && params.dependency_blocked {
+        return Err(invalid());
     }
     Ok(params)
 }
@@ -286,13 +340,23 @@ pub(super) fn try_route(
                 (*task).to_owned(),
             )))
         })()),
+        ["tasks", task, "history"] if is_get => Some((|| {
+            let pair = api.caller_auth(request)?;
+            valid_org_id(org)?;
+            valid_task_ref(task)?;
+            let params = parse_history_query(task, request.uri.query())?;
+            Ok(Route::Tasks(TaskRoute::History(
+                pair,
+                org.to_owned(),
+                params,
+            )))
+        })()),
         ["tasks", task, sub] if is_get && !query => Some((|| {
             let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             valid_task_ref(task)?;
             let route = match *sub {
                 "comments" => TaskRoute::Comments(pair, org.to_owned(), (*task).to_owned()),
-                "history" => TaskRoute::History(pair, org.to_owned(), (*task).to_owned()),
                 "dependencies" => TaskRoute::Dependencies(pair, org.to_owned(), (*task).to_owned()),
                 _ => return Err(not_found()),
             };
@@ -493,8 +557,8 @@ pub(super) async fn execute(api: &SessionApi, call: TaskCall) -> ApiReply {
         }
         TaskCall::Watch(c, o, p) => run_office::<TasksWatch>(api, c, &o, &p, false).await,
         TaskCall::Unwatch(c, o, p) => run_office::<TasksUnwatch>(api, c, &o, &p, false).await,
-        TaskCall::History(c, o, task) => {
-            run_office::<TasksHistory>(api, c, &o, &TasksHistoryParams { task }, true).await
+        TaskCall::History(c, o, params) => {
+            run_office::<TasksHistory>(api, c, &o, &params, true).await
         }
         TaskCall::Dependencies(c, o, task) => {
             run_office::<TasksDependencies>(api, c, &o, &TasksDependenciesParams { task }, true)

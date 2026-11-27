@@ -449,7 +449,10 @@ CREATE TABLE tasks (
   effort INTEGER CHECK (effort >= 0),
   severity TEXT,
   resolution TEXT,
-  blocked_reason TEXT,
+  blocked_reason TEXT CHECK (blocked_reason IS NULL OR (
+    length(trim(blocked_reason, char(9, 10, 13, 32))) > 0 AND length(blocked_reason) <= 1000)),
+  blocked_since TEXT,
+  waiting_on_owner INTEGER NOT NULL DEFAULT 0 CHECK (waiting_on_owner IN (0, 1)),
   rank_order INTEGER CHECK (rank_order >= 0),
   -- TASK-88: the attributed closing summary, set on close or by `tasks.final_summary` only.
   final_summary TEXT CHECK (final_summary IS NULL OR (
@@ -465,6 +468,9 @@ CREATE TABLE tasks (
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
+  CHECK (blocked_reason IS NULL OR status = 'blocked'),
+  CHECK (blocked_since IS NULL OR status = 'blocked'),
+  CHECK (waiting_on_owner = 0 OR status = 'blocked'),
   CHECK ((final_summary IS NULL AND final_summary_at IS NULL AND final_summary_by_kind IS NULL
           AND final_summary_by_id IS NULL)
       OR (final_summary IS NOT NULL AND final_summary_at IS NOT NULL

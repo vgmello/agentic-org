@@ -9,9 +9,9 @@ use org_proto::tasks::{
     TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
     TasksChecklistMoveParams, TasksChecklistRemoveParams, TasksChecklistResult, TasksCommentParams,
     TasksCommentResult, TasksCommentsResult, TasksCreateParams, TasksFinalSummaryParams,
-    TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
-    TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams, TasksUpdateParams,
-    TasksWatchParams,
+    TasksHistoryParams, TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams,
+    TasksListResult, TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams,
+    TasksUpdateParams, TasksWatchParams,
 };
 use org_proto::ApiError;
 
@@ -401,11 +401,17 @@ impl Office {
         &self,
         task: &str,
     ) -> Result<Result<TasksHistoryResult, ApiError>, OfficeError> {
+        self.task_history_filtered(TasksHistoryParams::new(task))
+    }
+
+    /// Lists task history with optional `event_type` and `blocks_only` filters (`TASK-84`).
+    pub fn task_history_filtered(
+        &self,
+        params: TasksHistoryParams,
+    ) -> Result<Result<TasksHistoryResult, ApiError>, OfficeError> {
         let (res, _) = self
             .store
-            .read(TaskHistoryRead {
-                task: task.to_owned(),
-            })
+            .read(TaskHistoryRead { params })
             .map_err(storage)?;
         Ok(res)
     }

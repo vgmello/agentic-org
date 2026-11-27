@@ -62,6 +62,31 @@ const TASK_LIST_INPUT: &[Field] = &[
         "Leave out tasks in this status (repeat for several)",
     ),
     Field::optional(
+        "all",
+        Type::Boolean,
+        "Include closed tasks (shorthand for --status-scope all)",
+    ),
+    Field::optional(
+        "status_scope",
+        Type::Enum(&["open", "closed", "all"]),
+        "Lifecycle scope: open (default), closed, or all",
+    ),
+    Field::optional(
+        "done_since",
+        Type::String,
+        "Include done tasks updated at or after RFC 3339 timestamp",
+    ),
+    Field::optional(
+        "ready",
+        Type::Boolean,
+        "Only ready tasks (open, not explicitly blocked, not dependency-blocked)",
+    ),
+    Field::optional(
+        "dependency_blocked",
+        Type::Boolean,
+        "Only tasks with unmet upstream depends_on prerequisites",
+    ),
+    Field::optional(
         "unassigned",
         Type::Boolean,
         "Only tasks no employee is assigned to",
@@ -75,6 +100,20 @@ const TASK_LIST_INPUT: &[Field] = &[
         "count",
         Type::Boolean,
         "Answer no tasks, only how many match (meta.total)",
+    ),
+];
+
+const TASK_HISTORY_INPUT: &[Field] = &[
+    Field::required("task", Type::String, "Task UUIDv7 or T-<CODE><N> key"),
+    Field::optional(
+        "event_type",
+        Type::String,
+        "Filter history events by change.type (e.g. status_changed)",
+    ),
+    Field::optional(
+        "blocks_only",
+        Type::Boolean,
+        "Keep only block, blocked-reason edit, and unblock status_changed events",
     ),
 ];
 
@@ -188,7 +227,7 @@ pub const TASK_READ_COMMANDS: &[Command] = &[
         summary: "List task history",
         call: "tasks.history",
         kind: Kind::List,
-        input: TASK_REF_INPUT,
+        input: TASK_HISTORY_INPUT,
         content_field: None,
         output: EVENT_FIELDS,
         errors: READ_ERRORS,

@@ -34,6 +34,8 @@ fn task_json(id: &str, code: &str, number: u64, team_id: &str, actor: &str) -> V
         severity: None,
         resolution: None,
         blocked_reason: None,
+        blocked_since: None,
+        waiting_on_owner: false,
         rank_order: None,
         labels: Vec::new(),
         reference_files: Vec::new(),

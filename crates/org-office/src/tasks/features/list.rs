@@ -56,7 +56,38 @@ pub(crate) fn list_query<R: TasksRead>(
             "`unassigned` and `assignee_id` cannot be given together",
         ));
     }
-    let statuses = statuses(params)?;
+    if params.ready && params.dependency_blocked {
+        return Err(invalid(
+            "`ready` and `dependency_blocked` cannot be given together",
+        ));
+    }
+    let mut statuses = statuses(params)?;
+    if params.ready {
+        if params.status_scope == Some(TaskStatusScope::Closed) {
+            return Err(invalid(
+                "`ready` cannot be combined with `status_scope` closed",
+            ));
+        }
+        if let Some(status) = params.status {
+            if status == TaskStatus::Blocked || status.is_closed() {
+                return Err(invalid(format!(
+                    "`ready` contradicts `status` {}",
+                    status.as_str()
+                )));
+            }
+        }
+        statuses = statuses
+            .without(TaskStatus::Blocked)
+            .without(TaskStatus::Done)
+            .without(TaskStatus::Cancelled);
+    }
+    let dependency_blocked = if params.dependency_blocked {
+        Some(true)
+    } else if params.ready {
+        Some(false)
+    } else {
+        None
+    };
     let done_since_ms = done_since(params.done_since.as_deref())?;
     let labels = if params.labels.is_empty() {
         None
@@ -88,6 +119,7 @@ pub(crate) fn list_query<R: TasksRead>(
         labels,
         depends_on,
         dependent_of,
+        dependency_blocked,
         text: params
             .query
             .as_deref()
