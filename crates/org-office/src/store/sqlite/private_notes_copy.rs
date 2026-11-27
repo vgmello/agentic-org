@@ -15,35 +15,49 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::error::OfficeError;
 use crate::private_fs::full_sync;
+use crate::store::sqlite::private_notes::schema::{self, Layout};
 
 /// One private database a backup carries as a consistent copy.
 struct PrivateDatabase {
-    /// Counts the tables its schema creates.
-    tables: &'static str,
-    /// How many tables that query must find.
-    expected_tables: i64,
+    /// Whether the copy holds the database's schema.
+    has_schema: fn(&Connection) -> Result<bool, OfficeError>,
     integrity_failed: &'static str,
     schema_missing: &'static str,
 }
 
-/// The tables `private-notes-schema.sql` creates; a copy without them is not a notes database.
+/// A notes copy holds `private-notes-schema.sql`, or the `TASK-50` layout the store upgrades
+/// when it opens it; anything else is not a notes database.
 const TASK_NOTES: PrivateDatabase = PrivateDatabase {
-    tables: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN \
-             ('private_note_authors', 'private_note_tasks', 'private_task_notes', \
-             'private_note_command_receipts')",
-    expected_tables: 4,
+    has_schema: notes_schema,
     integrity_failed: "the private task notes database fails its integrity check",
     schema_missing: "the private task notes database lacks its schema",
 };
 
 /// The table `user-space-schema.sql` creates; a copy without it is not a private file space.
 const USER_SPACE: PrivateDatabase = PrivateDatabase {
-    tables: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN \
-             ('user_space_files')",
-    expected_tables: 1,
+    has_schema: user_space_schema,
     integrity_failed: "the private file space database fails its integrity check",
     schema_missing: "the private file space database lacks its schema",
 };
+
+fn notes_schema(conn: &Connection) -> Result<bool, OfficeError> {
+    Ok(matches!(
+        schema::layout(conn)?,
+        Some(Layout::Current | Layout::Task50)
+    ))
+}
+
+fn user_space_schema(conn: &Connection) -> Result<bool, OfficeError> {
+    let tables: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN \
+             ('user_space_files')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(OfficeError::storage)?;
+    Ok(tables == 1)
+}
 
 fn open_read_only(path: &Path) -> Result<Connection, OfficeError> {
     if !path.is_absolute() {
@@ -55,6 +69,10 @@ fn open_read_only(path: &Path) -> Result<Connection, OfficeError> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(path, flags).map_err(OfficeError::storage)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(OfficeError::storage)?;
+    // Private text never spills to a temporary file outside `durable/private/` while a copy
+    // is written or checked.
+    conn.execute_batch("PRAGMA temp_store = MEMORY;")
         .map_err(OfficeError::storage)?;
     Ok(conn)
 }
@@ -120,10 +138,7 @@ fn check(database: &PrivateDatabase, path: &Path) -> Result<(), OfficeError> {
     if answers != ["ok"] {
         return Err(OfficeError::Invalid(database.integrity_failed));
     }
-    let tables: i64 = conn
-        .query_row(database.tables, [], |row| row.get(0))
-        .map_err(OfficeError::storage)?;
-    if tables != database.expected_tables {
+    if !(database.has_schema)(&conn)? {
         return Err(OfficeError::Invalid(database.schema_missing));
     }
     Ok(())
