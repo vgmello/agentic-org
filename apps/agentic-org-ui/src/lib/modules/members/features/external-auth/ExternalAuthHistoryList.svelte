@@ -4,11 +4,20 @@
 -->
 <script lang="ts">
 	import StatusPill from '$lib/components/StatusPill.svelte';
-	import { formatExternalAuthTime } from '$lib/platform/workspace/external-auth';
+	import {
+		formatExternalAuthTime,
+		resolveExternalAuthActor
+	} from '$lib/platform/workspace/external-auth';
 	import { historyEventLabel, historyEventTone } from '../../external-auth-present';
 	import type { ExternalHistoryEntry } from '../../external-auth-types';
 
-	let { history }: { history: readonly ExternalHistoryEntry[] } = $props();
+	let {
+		history,
+		membersById
+	}: {
+		history: readonly ExternalHistoryEntry[];
+		membersById?: ReadonlyMap<string, string>;
+	} = $props();
 </script>
 
 <div class="space-y-2.5" data-testid="external-auth-history-block">
@@ -35,7 +44,9 @@
 							</span>
 						{/if}
 						{#if entry.actor_id}
-							<span class="text-fg-muted [overflow-wrap:anywhere]">by {entry.actor_id}</span>
+							<span class="text-fg-muted [overflow-wrap:anywhere]">
+								by {resolveExternalAuthActor(entry.actor_id, membersById)}
+							</span>
 						{/if}
 						{#if entry.pubkey_fingerprint}
 							<span class="font-mono text-fg-muted [overflow-wrap:anywhere]">

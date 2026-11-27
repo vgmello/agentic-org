@@ -27,11 +27,13 @@
 		pending,
 		nowMs,
 		busy = false,
+		membersById,
 		onApprove
 	}: {
 		pending: readonly PendingExternalAuthView[];
 		nowMs: number;
 		busy?: boolean;
+		membersById?: ReadonlyMap<string, string>;
 		onApprove: (request: PendingExternalAuthView, opener: HTMLElement | null) => void;
 	} = $props();
 </script>
@@ -39,7 +41,11 @@
 <ul role="list" class="space-y-3" data-testid="external-auth-pending-list">
 	{#each pending as req (req.request_id)}
 		{@const fam = familiarityMeta(req.workspace_familiarity)}
-		{@const lastApproved = formatLastApproved(req.last_approved_by, req.last_approved_at)}
+		{@const lastApproved = formatLastApproved(
+			req.last_approved_by,
+			req.last_approved_at,
+			membersById
+		)}
 		{@const handleLabel = formatHandle(req.handle)}
 		{@const expired = isExpired(req.expires_at, nowMs)}
 		{@const remaining = formatTimeRemaining(req.expires_at, nowMs)}
@@ -87,11 +93,12 @@
 					<Button
 						type="button"
 						class={mobileButton}
-						disabled={busy}
+						disabled={busy || expired}
+						aria-label="Approve external sign-in for {req.workspace_label}"
 						onclick={(e) => onApprove(req, e.currentTarget)}
 					>
 						<KeyRound class="size-4" aria-hidden="true" />
-						<span>Approve…</span>
+						<span>{expired ? 'Expired' : 'Approve…'}</span>
 					</Button>
 				</div>
 			</div>

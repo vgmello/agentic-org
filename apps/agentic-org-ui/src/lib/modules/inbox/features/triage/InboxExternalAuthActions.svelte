@@ -16,27 +16,24 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { tone } from '$lib/components/pills';
 	import {
+		FAMILIARITY_TONE_KEY,
+		buildMemberNameMap,
+		canUseExternalSignIn,
 		familiarityInfo,
-		formatExternalAuthTime,
+		formatApprovedSessionToast,
 		formatHandle,
 		formatLastApproved,
 		formatTimeRemaining,
+		isExpired,
 		type ExternalSessionView,
-		type FamiliaritySeverity,
 		type PendingExternalAuthView
 	} from '$lib/platform/workspace/external-auth';
 	import type { InboxExternalAuthMeta } from '$lib/platform/workspace/inbox-types';
 	import { useShellData } from '$lib/platform/workspace/shell-data-context';
+	import { refreshInboxAfterExternalApproval } from '../../http-external-auth';
 
 	type ApproveDialogComponent =
 		typeof import('$lib/modules/members/external-auth-ui').ExternalAuthApproveDialog;
-
-	const FAMILIARITY_TONE: Record<FamiliaritySeverity, string> = {
-		warning: tone.owner,
-		caution: tone.bad,
-		familiar: tone.ok,
-		unknown: tone.neutral
-	};
 
 	let {
 		meta,
@@ -59,12 +56,20 @@
 	let currentRequestId = '';
 	let destroyed = false;
 
+	const membersById = $derived(buildMemberNameMap(shellData.snapshot?.members));
+	const targetMember = $derived(shellData.snapshot?.members.find((m) => m.id === meta.employee_id));
+	const isBuiltIn = $derived(
+		!canUseExternalSignIn(targetMember, { kind: 'agent', handle: meta.handle })
+	);
 	const pendingView = $derived<PendingExternalAuthView>({ ...meta });
 	const familiarity = $derived(familiarityInfo(meta.workspace_familiarity));
-	const familiarityTone = $derived(FAMILIARITY_TONE[familiarity.severity]);
-	const lastApproved = $derived(formatLastApproved(meta.last_approved_by, meta.last_approved_at));
+	const familiarityTone = $derived(tone[FAMILIARITY_TONE_KEY[familiarity.severity]]);
+	const lastApproved = $derived(
+		formatLastApproved(meta.last_approved_by, meta.last_approved_at, membersById)
+	);
 	const handleLabel = $derived(formatHandle(meta.handle));
 	const remaining = $derived(formatTimeRemaining(meta.expires_at, nowMs));
+	const expired = $derived(isExpired(meta.expires_at, nowMs));
 
 	const btnTouch =
 		'[@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
@@ -111,6 +116,7 @@
 	}
 
 	async function openApproveDialog(from: HTMLElement | null) {
+		if (isBuiltIn || expired) return;
 		const startRequestId = meta.request_id;
 		opener = from;
 		if (!ApproveDialog) {
@@ -131,20 +137,22 @@
 	}
 
 	async function handleApproved(session: ExternalSessionView) {
-		toast.success(`Approved external sign-in for ${agentName}.`, {
-			description: `${session.workspace_label} · expires ${formatExternalAuthTime(session.expires_at)}`
+		const notice = formatApprovedSessionToast(session, {
+			expectedEmployeeId: meta.employee_id,
+			expectedAgentName: agentName,
+			membersById
 		});
-		await tick();
-		try {
-			const refreshed = await shellData.refresh();
-			if (!refreshed.inboxUpdated) {
-				toast.warning('Sign-in approved, but Inbox could not refresh automatically.');
-				return;
-			}
-		} catch {
-			toast.warning('Sign-in approved, but Inbox could not refresh automatically.');
-			return;
+		if (notice.kind === 'warning') {
+			toast.warning(notice.title, { description: notice.description });
+		} else {
+			toast.success(notice.title, { description: notice.description });
 		}
+		await tick();
+		const updated = await refreshInboxAfterExternalApproval(
+			() => shellData.refresh(),
+			(message) => toast.warning(message)
+		);
+		if (!updated) return;
 		await tick();
 		recoverFocusIfStranded();
 		setTimeout(recoverFocusIfStranded, 0);
@@ -207,18 +215,24 @@
 	</div>
 
 	<div class="flex flex-wrap items-center gap-2">
-		<button
-			type="button"
-			disabled={controlsDisabled || loadingDialog}
-			onclick={(e) => void openApproveDialog(e.currentTarget)}
-			class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 {btnTouch}"
-		>
-			<span class="exec-cta-fill" aria-hidden="true"></span>
-			<span class="exec-cta-inner">
-				<KeyRound class="size-4" aria-hidden="true" />
-				<span>Approve sign-in…</span>
-			</span>
-		</button>
+		{#if isBuiltIn}
+			<p class="text-xs/5 text-fg-muted" data-testid="inbox-external-auth-builtin-note">
+				Built-in agents can't use external sign-in.
+			</p>
+		{:else}
+			<button
+				type="button"
+				disabled={controlsDisabled || loadingDialog || expired}
+				onclick={(e) => void openApproveDialog(e.currentTarget)}
+				class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 {btnTouch}"
+			>
+				<span class="exec-cta-fill" aria-hidden="true"></span>
+				<span class="exec-cta-inner">
+					<KeyRound class="size-4" aria-hidden="true" />
+					<span>{expired ? 'Expired' : 'Approve sign-in…'}</span>
+				</span>
+			</button>
+		{/if}
 
 		<a
 			href={resolve(`/members/${encodeURIComponent(meta.employee_id)}` as '/teams/members')}
@@ -230,13 +244,16 @@
 	</div>
 </div>
 
-{#if ApproveDialog}
+{#if ApproveDialog && !isBuiltIn}
 	<ApproveDialog
 		bind:open={dialogOpen}
 		organizationId={shellData.organizationId}
 		{agentName}
 		agentHandle={meta.handle}
+		expectedEmployeeId={meta.employee_id}
 		pending={pendingView}
+		pendingCandidates={[pendingView]}
+		{membersById}
 		{opener}
 		fallback={inboxFocusFallback}
 		onApproved={handleApproved}

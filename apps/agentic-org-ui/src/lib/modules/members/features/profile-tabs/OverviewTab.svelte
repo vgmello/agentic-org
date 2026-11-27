@@ -205,6 +205,7 @@
 		<ExternalAuthSection
 			organizationId={ctx.organizationId}
 			profile={p}
+			snapshotMembers={ctx.snapshot.members}
 			changes={ctx.changes}
 			onChanged={ctx.changed}
 		/>

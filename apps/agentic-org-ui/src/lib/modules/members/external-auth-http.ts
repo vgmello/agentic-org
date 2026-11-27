@@ -8,6 +8,8 @@ import {
 	asNum,
 	asRec,
 	asStr,
+	optStrs,
+	reqStrs,
 	type Rec
 } from '$lib/platform/http/decode';
 import type { GatewayHttpTransport, GatewayReply } from '$lib/platform/http/gateway-errors';
@@ -50,25 +52,6 @@ function statusToErrorCode(status: number): ExternalAuthErrorCode {
 	if (status === 410) return 'expired';
 	if (status === 429) return 'rate_limited';
 	return 'unavailable';
-}
-
-function optStrs<K extends string>(r: Rec, keys: readonly K[]): Partial<Record<K, string>> {
-	const out: Partial<Record<K, string>> = {};
-	for (const k of keys) {
-		const v = asNonEmptyStr(r[k]);
-		if (v) out[k] = v;
-	}
-	return out;
-}
-
-function reqStrs<K extends string>(r: Rec, keys: readonly K[]): Record<K, string> | undefined {
-	const out = {} as Record<K, string>;
-	for (const k of keys) {
-		const v = asNonEmptyStr(r[k]);
-		if (!v) return undefined;
-		out[k] = v;
-	}
-	return out;
 }
 
 export function isExternalAuthError(value: unknown): value is ExternalAuthError {
@@ -360,7 +343,7 @@ export function createHttpExternalAuthApi({
 			const session_id = asNonEmptyStr(result.session_id);
 			return {
 				employee_id: asNonEmptyStr(result.employee_id) ?? memberId,
-				revoked: asBool(result.revoked) ?? true,
+				revoked: asBool(result.revoked) ?? false,
 				...(session_id ? { session_id } : {})
 			};
 		}

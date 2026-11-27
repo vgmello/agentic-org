@@ -1,20 +1,16 @@
 // Live Inbox adapter for pending BYOA external-agent sign-in requests (`TASK-249`).
-// Calls `GET /api/v1/organizations/{org}/external-auth/pending`, fails soft on 403/404/501,
-// and dynamically loads the shared pending decoder only when pending requests exist so Shell
-// first-paint JS stays within its shrink-only bundle budget.
+// Calls `GET /api/v1/organizations/{org}/external-auth/pending` and fails soft on 403/404/501/network errors.
 import { asRec } from '$lib/platform/http/decode';
 import type { GatewayHttpTransport, GatewayReply } from '$lib/platform/http/gateway-errors';
-import type { PendingExternalAuthView } from '$lib/platform/workspace/external-auth';
+import {
+	decodePendingList,
+	familiarityInfo,
+	formatHandle,
+	type PendingExternalAuthView
+} from '$lib/platform/workspace/external-auth';
 import type { InboxItem } from './types';
 
 export const EXTERNAL_AUTH_INBOX_PREFIX = 'external-auth:pending:';
-
-const FAMILIARITY_LABEL: Record<PendingExternalAuthView['workspace_familiarity'], string> = {
-	first_time: 'First-time workspace',
-	returning_new_key: 'Returning workspace (new key)',
-	returning_known_key: 'Returning workspace (known key)',
-	unknown: 'Workspace familiarity unknown'
-};
 
 function recommendationFor(req: PendingExternalAuthView): string {
 	switch (req.workspace_familiarity) {
@@ -33,10 +29,8 @@ export function mapPendingExternalAuthToInboxItem(
 	req: PendingExternalAuthView,
 	fallbackIso: string
 ): InboxItem {
-	const cleanHandle = req.handle?.trim().replace(/^@+/, '');
-	const handleLabel = cleanHandle ? `@${cleanHandle}` : req.employee_id;
-	const familiarityLabel =
-		FAMILIARITY_LABEL[req.workspace_familiarity] ?? FAMILIARITY_LABEL.unknown;
+	const handleLabel = formatHandle(req.handle) ?? req.employee_id;
+	const familiarityLabel = familiarityInfo(req.workspace_familiarity).label;
 	const takeoverNote = req.managed_turn_active
 		? ' A managed turn is active and will be parked on takeover.'
 		: '';
@@ -98,13 +92,35 @@ export async function appendPendingExternalAuth(
 ): Promise<void> {
 	const rawPending = await readRawPending(http, organizationId, signal);
 	if (!rawPending) return;
-	const { decodePendingList } = await import('$lib/platform/workspace/external-auth');
-	if (signal?.aborted) return;
 	const seen = new Set(mapped.map((entry) => entry.item.id));
 	for (const req of decodePendingList(rawPending)) {
 		const item = mapPendingExternalAuthToInboxItem(req, asOf);
 		if (seen.has(item.id)) continue;
 		seen.add(item.id);
 		mapped.push({ item, rawSource: 'external_auth' });
+	}
+}
+
+export const INBOX_APPROVAL_REFRESH_WARNING =
+	'Sign-in approved, but Inbox could not refresh automatically.';
+
+/**
+ * Refreshes Inbox shell state after a BYOA approval succeeds. Returns `true` when Inbox refreshed
+ * cleanly; warns the user (without reverting approval) if `refresh()` rejects or reports `inboxUpdated: false`.
+ */
+export async function refreshInboxAfterExternalApproval(
+	refresh: () => Promise<{ inboxUpdated: boolean }>,
+	onWarn: (message: string) => void
+): Promise<boolean> {
+	try {
+		const refreshed = await refresh();
+		if (!refreshed.inboxUpdated) {
+			onWarn(INBOX_APPROVAL_REFRESH_WARNING);
+			return false;
+		}
+		return true;
+	} catch {
+		onWarn(INBOX_APPROVAL_REFRESH_WARNING);
+		return false;
 	}
 }

@@ -39,3 +39,27 @@ export function unwrapResult(body: unknown): Rec | undefined {
 	if (!rec) return undefined;
 	return asRec(rec.result) ?? rec;
 }
+
+/** Picks optional trimmed non-empty string fields from an untrusted wire record. */
+export function optStrs<K extends string>(r: Rec, keys: readonly K[]): Partial<Record<K, string>> {
+	const out: Partial<Record<K, string>> = {};
+	for (const k of keys) {
+		const v = asNonEmptyStr(r[k]);
+		if (v) out[k] = v;
+	}
+	return out;
+}
+
+/** Extracts required trimmed non-empty string fields; returns `undefined` if any key is missing. */
+export function reqStrs<K extends string>(
+	r: Rec,
+	keys: readonly K[]
+): Record<K, string> | undefined {
+	const out = {} as Record<K, string>;
+	for (const k of keys) {
+		const v = asNonEmptyStr(r[k]);
+		if (!v) return undefined;
+		out[k] = v;
+	}
+	return out;
+}

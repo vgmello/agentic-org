@@ -4,12 +4,21 @@ import type { PendingExternalAuthView } from '$lib/platform/workspace/external-a
 import type { OrgSnapshot } from '$lib/proto';
 import { executeDecisionAction } from './decisions';
 import { createHttpInboxApi } from './http-api';
-import { appendPendingExternalAuth, mapPendingExternalAuthToInboxItem } from './http-external-auth';
+import {
+	INBOX_APPROVAL_REFRESH_WARNING,
+	appendPendingExternalAuth,
+	mapPendingExternalAuthToInboxItem,
+	refreshInboxAfterExternalApproval
+} from './http-external-auth';
 import { deriveDecisionSpotlight } from './spotlight';
 import { deriveTriageItems } from './features/triage/triage-derive';
 import type { InboxItem } from './types';
 
 const ORG = '0193a5c0-0000-7000-8000-000000000001';
+const KAI_ID = '0193a5c0-0000-7000-8000-000000000010';
+const ALEX_ID = '0193a5c0-0000-7000-8000-000000000002';
+const REQ_ID = '0193a5c0-0000-7000-8000-000000000201';
+const OFFICE_ID = '0193a5c0-0000-7000-8000-000000000301';
 const INBOX_PATH = `/api/v1/organizations/${ORG}/inbox`;
 const PENDING_PATH = `/api/v1/organizations/${ORG}/external-auth/pending`;
 
@@ -18,10 +27,10 @@ function ok(result: unknown): GatewayReply {
 }
 
 const SAMPLE_PENDING = {
-	request_id: 'req-ext-1',
-	employee_id: 'mem-kai',
+	request_id: REQ_ID,
+	employee_id: KAI_ID,
 	handle: '@kai',
-	office_id: 'off-hq',
+	office_id: OFFICE_ID,
 	office_name: 'HQ Mac',
 	hostname: 'studio-mac.local',
 	workspace_path: '/Users/dev/agentic-org',
@@ -32,7 +41,7 @@ const SAMPLE_PENDING = {
 	expires_at: '2026-11-27T10:10:00Z',
 	code_prefix: 'K7P4-••••',
 	workspace_familiarity: 'returning_new_key',
-	last_approved_by: 'Alex Rivera',
+	last_approved_by: ALEX_ID,
 	last_approved_at: '2026-11-20T09:00:00Z'
 };
 
@@ -58,16 +67,16 @@ describe('appendPendingExternalAuth & Inbox triage derivation', () => {
 		expect(read).toHaveBeenCalledWith(PENDING_PATH);
 		expect(items).toHaveLength(1);
 		expect(items[0]).toMatchObject({
-			id: 'external-auth:pending:req-ext-1',
+			id: `external-auth:pending:${REQ_ID}`,
 			kind: 'approval',
 			source: 'External sign-in',
 			title: 'Approve external sign-in for @kai',
 			actions: [],
 			snoozeable: false,
 			state: 'open',
-			open: { path: '/members/mem-kai', label: 'Open agent profile' },
+			open: { path: `/members/${KAI_ID}`, label: 'Open agent profile' },
 			external_auth: {
-				request_id: 'req-ext-1',
+				request_id: REQ_ID,
 				office_name: 'HQ Mac',
 				code_prefix: 'K7P4-••••',
 				workspace_familiarity: 'returning_new_key',
@@ -80,7 +89,7 @@ describe('appendPendingExternalAuth & Inbox triage derivation', () => {
 			teams: [],
 			members: [
 				{
-					id: 'mem-kai',
+					id: KAI_ID,
 					kind: 'agent',
 					name: 'Kai Lindqvist',
 					handle: 'kai',
@@ -149,7 +158,7 @@ describe('appendPendingExternalAuth & Inbox triage derivation', () => {
 		const snapshot: OrgSnapshot = {
 			position: { epoch: 1, seq: 1 },
 			teams: [],
-			members: [{ id: 'mem-kai', kind: 'agent', name: 'Kai Lindqvist', handle: 'kai', version: 1 }]
+			members: [{ id: KAI_ID, kind: 'agent', name: 'Kai Lindqvist', handle: 'kai', version: 1 }]
 		};
 		const baseReq: PendingExternalAuthView = {
 			...(SAMPLE_PENDING as PendingExternalAuthView),
@@ -224,7 +233,30 @@ describe('appendPendingExternalAuth & Inbox triage derivation', () => {
 			const primaryNav = await executeDecisionAction(ORG, decision, 'primary', snapshot);
 			const secondaryNav = await executeDecisionAction(ORG, decision, 'secondary', snapshot);
 			expect(primaryNav.navigateTo, c.name).toBe(`/inbox?item=${encodeURIComponent(item.id)}`);
-			expect(secondaryNav.navigateTo, c.name).toBe('/members/mem-kai');
+			expect(secondaryNav.navigateTo, c.name).toBe(`/members/${KAI_ID}`);
 		}
+	});
+
+	it('warns when shellData.refresh() reports inboxUpdated: false or throws after BYOA approval (M4)', async () => {
+		const warn = vi.fn();
+		await expect(
+			refreshInboxAfterExternalApproval(async () => ({ inboxUpdated: false }), warn)
+		).resolves.toBe(false);
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(warn).toHaveBeenCalledWith(INBOX_APPROVAL_REFRESH_WARNING);
+
+		warn.mockClear();
+		await expect(
+			refreshInboxAfterExternalApproval(async () => {
+				throw new Error('network down');
+			}, warn)
+		).resolves.toBe(false);
+		expect(warn).toHaveBeenCalledWith(INBOX_APPROVAL_REFRESH_WARNING);
+
+		warn.mockClear();
+		await expect(
+			refreshInboxAfterExternalApproval(async () => ({ inboxUpdated: true }), warn)
+		).resolves.toBe(true);
+		expect(warn).not.toHaveBeenCalled();
 	});
 });

@@ -1,8 +1,9 @@
-// Pure presentation, Crockford code validation, and expiry helpers for BYOA external sign-in (`TASK-249`).
+// Pure presentation, Crockford code validation, prefix matching, and expiry helpers for BYOA external sign-in (`TASK-249`).
 import { tone } from '$lib/components/pills';
 import {
 	CROCKFORD_ALPHABET,
 	EXPIRING_SOON_MS,
+	FAMILIARITY_TONE_KEY,
 	familiarityInfo,
 	formatExternalAuthTime,
 	formatHandle,
@@ -13,6 +14,7 @@ import {
 	normalizeHandle,
 	type FamiliarityInfo,
 	type FamiliaritySeverity,
+	type PendingExternalAuthView,
 	type WorkspaceFamiliarity
 } from '$lib/platform/workspace/external-auth';
 import type { ExternalAuthError } from './external-auth-types';
@@ -20,6 +22,7 @@ import type { ExternalAuthError } from './external-auth-types';
 export {
 	CROCKFORD_ALPHABET,
 	EXPIRING_SOON_MS,
+	FAMILIARITY_TONE_KEY,
 	familiarityInfo,
 	formatExternalAuthTime,
 	formatHandle,
@@ -33,6 +36,8 @@ export {
 };
 
 const CROCKFORD_SET = new Set(CROCKFORD_ALPHABET.split(''));
+const CLI_CODE_TOKEN_RE =
+	/(?:^|[\s:'"(])([0-9A-Za-z]{4}[\s-]+[0-9A-Za-z]{4}|[0-9A-Za-z]{8})(?=$|[\s.,;:'")\]])/g;
 
 export const MIN_LEASE_TTL_SECONDS = 300;
 export const MAX_LEASE_TTL_SECONDS = 604_800;
@@ -51,35 +56,44 @@ export interface FamiliarityPresentation extends FamiliarityInfo {
 	toneClass: string;
 }
 
-const FAMILIARITY_TONE: Record<FamiliaritySeverity, string> = {
-	warning: tone.owner,
-	caution: tone.bad,
-	familiar: tone.ok,
-	unknown: tone.neutral
-};
-
 /** Exact familiarity badges and semantic tones across all 7 themes (`doc-102` §4). */
 export function familiarityMeta(familiarity: WorkspaceFamiliarity): FamiliarityPresentation {
 	const info = familiarityInfo(familiarity);
-	return { ...info, toneClass: FAMILIARITY_TONE[info.severity] };
-}
-
-/**
- * Live input formatting assist for 8-character Crockford codes (`XXXX-YYYY`).
- * Preserves typed characters so invalid letters (e.g. `U`) remain visible for explicit validation feedback.
- */
-export function formatApprovalCodeAssist(raw: string): string {
-	const stripped = raw
-		.replace(/[\s-]+/g, '')
-		.toUpperCase()
-		.slice(0, 8);
-	return stripped.length > 4 ? `${stripped.slice(0, 4)}-${stripped.slice(4)}` : stripped;
+	return { ...info, toneClass: tone[FAMILIARITY_TONE_KEY[info.severity]] };
 }
 
 function mapCrockfordChar(ch: string): string | undefined {
 	const upper = ch.toUpperCase();
 	const mapped = upper === 'O' ? '0' : upper === 'I' || upper === 'L' ? '1' : upper;
 	return CROCKFORD_SET.has(mapped) ? mapped : undefined;
+}
+
+function extractLastCliCode(raw: string): string | undefined {
+	let last: string | undefined;
+	for (const match of raw.matchAll(CLI_CODE_TOKEN_RE)) {
+		const token = match[1]?.replace(/[\s-]+/g, '').toUpperCase();
+		if (
+			token &&
+			token.length === 8 &&
+			[...token].every((ch) => mapCrockfordChar(ch) !== undefined)
+		) {
+			last = token;
+		}
+	}
+	return last;
+}
+
+/**
+ * Live input formatting assist for 8-character Crockford codes (`XXXX-YYYY`).
+ * Extracts the last valid `XXXX-YYYY` token when pasting a full CLI command (e.g.
+ * `agentic-org agent approve K7P4-9M2X`), while preserving short typed characters so invalid
+ * letters (e.g. `U`) remain visible for explicit validation feedback.
+ */
+export function formatApprovalCodeAssist(raw: string): string {
+	const stripped = raw.replace(/[\s-]+/g, '').toUpperCase();
+	const candidate =
+		stripped.length > 8 ? (extractLastCliCode(raw) ?? stripped.slice(0, 8)) : stripped;
+	return candidate.length > 4 ? `${candidate.slice(0, 4)}-${candidate.slice(4)}` : candidate;
 }
 
 /**
@@ -113,14 +127,83 @@ export function validateApprovalCode(
 	return { ok: true, code: `${digits.slice(0, 4).join('')}-${digits.slice(4).join('')}` };
 }
 
+function prefixOfCodePrefix(codePrefix: string | undefined): string | undefined {
+	if (!codePrefix) return undefined;
+	const expected = codePrefix.split('-')[0]?.trim().toUpperCase();
+	return expected && expected.length === 4 && /^[0-9A-HJ-NP-TV-Z]{4}$/.test(expected)
+		? expected
+		: undefined;
+}
+
+/** Extracts the normalized 4-character Crockford lookup prefix once 4 valid digits are entered. */
+export function extractCodeLookupPrefix(rawCode: string): string | undefined {
+	const stripped = rawCode.replace(/[\s-]+/g, '');
+	if (stripped.length < 4) return undefined;
+	let out = '';
+	for (const ch of stripped.slice(0, 4)) {
+		const mapped = mapCrockfordChar(ch);
+		if (!mapped) return undefined;
+		out += mapped;
+	}
+	return out;
+}
+
 /** True when a complete normalized code's lookup half disagrees with the selected request's `XXXX-••••` prefix. */
 export function codePrefixMismatch(rawCode: string, codePrefix: string | undefined): boolean {
-	if (!codePrefix) return false;
-	const expected = codePrefix.split('-')[0]?.trim().toUpperCase();
-	if (!expected || expected.length !== 4 || !/^[0-9A-HJ-NP-TV-Z]{4}$/.test(expected)) return false;
+	const expected = prefixOfCodePrefix(codePrefix);
+	if (!expected) return false;
 	const validated = validateApprovalCode(rawCode);
 	if (!validated.ok) return false;
 	return validated.code.slice(0, 4) !== expected;
+}
+
+export type PendingApprovalResolution =
+	| { status: 'matched'; display: PendingExternalAuthView; matched: PendingExternalAuthView }
+	| { status: 'awaiting_prefix'; display?: PendingExternalAuthView; matched: undefined }
+	| { status: 'mismatch'; display?: PendingExternalAuthView; matched: undefined }
+	| { status: 'no_pending'; display: undefined; matched: undefined };
+
+/**
+ * Resolves which pending BYOA request for the viewed agent matches the entered code prefix.
+ * Blocks cross-agent or unmatched-prefix approval so operators always review the exact workspace
+ * familiarity, host, path, fingerprint, and takeover state for the code they submit.
+ */
+export function resolvePendingApprovalTarget(options: {
+	rawCode: string;
+	explicitPending?: PendingExternalAuthView;
+	candidates?: readonly PendingExternalAuthView[];
+	expectedEmployeeId?: string;
+}): PendingApprovalResolution {
+	const { rawCode, explicitPending, candidates, expectedEmployeeId } = options;
+	const typedPrefix = extractCodeLookupPrefix(rawCode);
+
+	if (explicitPending) {
+		if (expectedEmployeeId && explicitPending.employee_id !== expectedEmployeeId) {
+			return { status: 'mismatch', display: undefined, matched: undefined };
+		}
+		const expectedPrefix = prefixOfCodePrefix(explicitPending.code_prefix);
+		if (!typedPrefix) {
+			return { status: 'awaiting_prefix', display: explicitPending, matched: undefined };
+		}
+		if (expectedPrefix && typedPrefix !== expectedPrefix) {
+			return { status: 'mismatch', display: explicitPending, matched: undefined };
+		}
+		return { status: 'matched', display: explicitPending, matched: explicitPending };
+	}
+
+	const scoped = (candidates ?? []).filter(
+		(req) => !expectedEmployeeId || req.employee_id === expectedEmployeeId
+	);
+	if (scoped.length === 0) {
+		return { status: 'no_pending', display: undefined, matched: undefined };
+	}
+	if (!typedPrefix) {
+		return { status: 'awaiting_prefix', display: undefined, matched: undefined };
+	}
+	const matched = scoped.find((req) => prefixOfCodePrefix(req.code_prefix) === typedPrefix);
+	return matched
+		? { status: 'matched', display: matched, matched }
+		: { status: 'mismatch', display: undefined, matched: undefined };
 }
 
 export function historyEventLabel(event: string): string {

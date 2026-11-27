@@ -7,19 +7,20 @@ import type {
 	MemberExternalSessionsView
 } from './external-auth-types';
 
-const ORG_A = 'org-a';
-const MEM_A = 'mem-a';
-const MEM_B = 'mem-b';
+const ORG_A = '0193a5c0-0000-7000-8000-000000000001';
+const MEM_A = '0193a5c0-0000-7000-8000-000000000010';
+const MEM_B = '0193a5c0-0000-7000-8000-000000000011';
+const APPROVER_ID = '0193a5c0-0000-7000-8000-000000000002';
 
 function sampleSessions(memberId: string, label: string): MemberExternalSessionsView {
 	return {
 		employee_id: memberId,
 		active: {
-			session_id: `sess-${label}`,
+			session_id: `0193a5c0-0000-7000-8000-00000000010${label.length % 10}`,
 			employee_id: memberId,
 			workspace_label: `ws-${label}`,
 			pubkey_fingerprint: '0011223344556677',
-			approved_by: 'Alex',
+			approved_by: APPROVER_ID,
 			approved_at: '2026-11-27T08:00:00Z',
 			expires_at: '2026-12-04T08:00:00Z',
 			active: true,
@@ -132,7 +133,7 @@ describe('ExternalAuthController', () => {
 
 		await controller.load(ORG_A, MEM_A);
 		expect(controller.status).toBe('ready');
-		expect(controller.data?.active?.session_id).toBe('sess-initial');
+		expect(controller.data?.active?.workspace_label).toBe('ws-initial');
 
 		const reloadPromise = controller.reload();
 		expect(capturedSignal?.aborted).toBe(false);
@@ -175,11 +176,11 @@ describe('ExternalAuthController', () => {
 			retry_after_ms: 30_000
 		};
 		const renewedSession: ExternalSessionView = {
-			session_id: 'sess-1',
+			session_id: '0193a5c0-0000-7000-8000-000000000101',
 			employee_id: MEM_A,
 			workspace_label: 'ws-1',
 			pubkey_fingerprint: '0011223344556677',
-			approved_by: 'Alex',
+			approved_by: APPROVER_ID,
 			approved_at: '2026-11-27T08:00:00Z',
 			expires_at: '2026-12-04T08:00:00Z',
 			active: true,
@@ -190,17 +191,19 @@ describe('ExternalAuthController', () => {
 			.fn<ExternalAuthApi['memberSessions']>()
 			.mockRejectedValueOnce(forbidden)
 			.mockResolvedValue(sampleSessions(MEM_A, 'ok'));
-		const approve = vi
-			.fn<ExternalAuthApi['approve']>()
+		const renew = vi
+			.fn<ExternalAuthApi['renew']>()
 			.mockRejectedValueOnce(conflict)
-			.mockRejectedValueOnce(rateLimited);
-		const renew = vi.fn<ExternalAuthApi['renew']>().mockResolvedValueOnce(renewedSession);
-		const revoke = vi
-			.fn<ExternalAuthApi['revoke']>()
-			.mockResolvedValueOnce({ employee_id: MEM_A, revoked: true, session_id: 'sess-1' });
+			.mockRejectedValueOnce(rateLimited)
+			.mockResolvedValueOnce(renewedSession);
+		const revoke = vi.fn<ExternalAuthApi['revoke']>().mockResolvedValueOnce({
+			employee_id: MEM_A,
+			revoked: true,
+			session_id: '0193a5c0-0000-7000-8000-000000000101'
+		});
 
 		const controller = new ExternalAuthController({
-			api: createStubApi({ memberSessions, approve, renew, revoke }),
+			api: createStubApi({ memberSessions, renew, revoke }),
 			onSessionEnded: () => () => {}
 		});
 
@@ -211,14 +214,18 @@ describe('ExternalAuthController', () => {
 		await controller.load(ORG_A, MEM_A);
 		expect(controller.status).toBe('ready');
 
-		await expect(controller.approve(ORG_A, { code: 'K7P4-9M2X' })).rejects.toMatchObject({
+		await expect(
+			controller.renew(ORG_A, MEM_A, { session_id: '0193a5c0-0000-7000-8000-000000000101' })
+		).rejects.toMatchObject({
 			code: 'conflict',
 			status: 409
 		});
 		expect(controller.busyAction).toBeUndefined();
 		expect(controller.actionError).toMatchObject({ code: 'conflict', status: 409 });
 
-		await expect(controller.approve(ORG_A, { code: 'K7P4-9M2X' })).rejects.toMatchObject({
+		await expect(
+			controller.renew(ORG_A, MEM_A, { session_id: '0193a5c0-0000-7000-8000-000000000101' })
+		).rejects.toMatchObject({
 			code: 'rate_limited',
 			status: 429,
 			retry_after_ms: 30_000
@@ -230,14 +237,16 @@ describe('ExternalAuthController', () => {
 		});
 
 		const renewed = await controller.renew(ORG_A, MEM_A, {
-			session_id: 'sess-1',
+			session_id: '0193a5c0-0000-7000-8000-000000000101',
 			ttl_seconds: 604_800
 		});
-		expect(renewed.session_id).toBe('sess-1');
+		expect(renewed.session_id).toBe('0193a5c0-0000-7000-8000-000000000101');
 		expect(controller.busyAction).toBeUndefined();
 		expect(controller.actionError).toBeUndefined();
 
-		const revoked = await controller.revoke(ORG_A, MEM_A, { session_id: 'sess-1' });
+		const revoked = await controller.revoke(ORG_A, MEM_A, {
+			session_id: '0193a5c0-0000-7000-8000-000000000101'
+		});
 		expect(revoked.revoked).toBe(true);
 		expect(controller.busyAction).toBeUndefined();
 		expect(memberSessions).toHaveBeenCalledTimes(4);

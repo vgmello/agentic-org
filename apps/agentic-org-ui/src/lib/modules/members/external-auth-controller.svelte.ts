@@ -4,7 +4,6 @@ import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { asExternalAuthError, externalAuthApi } from './external-auth-http';
 import type {
 	ExternalAuthApi,
-	ExternalAuthApproveInput,
 	ExternalAuthError,
 	ExternalAuthRenewInput,
 	ExternalAuthRevokeInput,
@@ -14,7 +13,7 @@ import type {
 } from './external-auth-types';
 
 export type ExternalAuthLoadStatus = 'idle' | 'loading' | 'ready' | 'unauthorized' | 'error';
-export type ExternalAuthBusyAction = 'approve' | 'renew' | 'revoke';
+export type ExternalAuthBusyAction = 'renew' | 'revoke';
 
 export interface ExternalAuthControllerOptions {
 	api?: ExternalAuthApi;
@@ -196,20 +195,6 @@ export class ExternalAuthController {
 			if (this.#actionAbort === abort) this.#actionAbort = undefined;
 			if (actionGen === this.#actionGen) this.busyAction = undefined;
 		}
-	}
-
-	approve(
-		organizationId: string,
-		input: ExternalAuthApproveInput,
-		options?: { reload?: boolean; recordActionError?: boolean }
-	): Promise<ExternalSessionView> {
-		return this.#runAction(
-			'approve',
-			'External sign-in approval was refused.',
-			{ organizationId },
-			(signal) => this.#api.approve(organizationId, input, signal),
-			options
-		);
 	}
 
 	renew(
