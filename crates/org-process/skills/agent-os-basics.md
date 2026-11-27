@@ -41,7 +41,7 @@ Put long bodies in a file and pass `--input-file <path>`; it fills the command's
 agent-os task comment --task <task> --input-file <path>
 ```
 
-`--json <object>` gives the whole input, or the part the flags do not give, as one JSON object. Fields with structure, such as the questions of an ask, can only be given that way.
+`--input-json <object>` gives the whole input, or the part the flags do not give, as one JSON object. Fields with structure, such as the questions of an ask, can only be given that way.
 
 ## Writes
 
@@ -56,6 +56,21 @@ agent-os team create --name <name> --parent-team-id <team-id> --dry-run
 ## Many calls at once
 
 `agent-os session attach` runs many commands over one connection, one JSON line each. See the `batch-and-attach` guide.
+
+## Wake and resume
+
+On a fresh wake or after context compaction, fetch your working snapshot in one call:
+
+```bash
+agent-os resume --format compact
+agent-os me --fields identity,unread_inbox,active_tasks
+```
+
+Both are shorthands for `agent-os session resume` and return your identity, unread inbox summary, open assigned tasks (each with an optional pointer to your own latest private note), open asks, active worktrees and budget status. Keep private checkpoint notes sparse and optional: update one pinned checkpoint before a pause only when context would otherwise be lost:
+
+```bash
+agent-os task-note add --task <task> --checkpoint --text <text>
+```
 
 ## Know yourself
 

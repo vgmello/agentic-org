@@ -4,6 +4,9 @@
 //! Engine-independent: runs identically on `MemoryEngine` and `SqliteEngine` (`ENG-1`).
 
 pub mod features;
+#[cfg(any(test, feature = "testkit"))]
+pub mod ops;
+#[cfg(not(any(test, feature = "testkit")))]
 pub(crate) mod ops;
 pub mod ports;
 pub mod projector;

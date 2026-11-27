@@ -3,7 +3,7 @@
 //! refusal as a diagnostic on standard error. Every value is sanitized by the shell's
 //! renderer before it reaches the terminal.
 
-use org_cli_shell::context::ExecutionContext;
+use org_cli_shell::context::{ExecutionContext, OutputFormat};
 use org_cli_shell::output::{Cell, ListView, Row, Style, Table};
 use org_command::{Command, Output};
 use serde_json::{Map, Value};
@@ -71,6 +71,9 @@ fn refusal(error: &Value, exit: u8) -> CliError {
 }
 
 fn note_meta(meta: &Value, ctx: &mut ExecutionContext) {
+    if ctx.output_format() != OutputFormat::Table {
+        return;
+    }
     if let Some(status) = meta["status"]
         .as_str()
         .filter(|status| *status != "completed")
@@ -271,5 +274,22 @@ mod tests {
         assert_eq!(error.code(), "office::invalid_request");
         assert_eq!(error.help().as_deref(), Some("The resources are: task."));
         assert!(streams.stdout.text().is_empty());
+    }
+
+    #[test]
+    fn tsv_suppresses_meta_notes_on_stderr_even_on_a_tty() {
+        let envelope = r#"{"ok":true,"data":[{"id":"T-1","title":"Ship"}],"meta":{"status":"waiting","dry_run":true,"next_cursor":"c2"},"error":null}"#;
+        let tsv = Modes {
+            format: Some(OutputFormat::Tsv),
+            ..Modes::default()
+        };
+        let (mut ctx, streams) = captured(tsv, tty(Some(80)), &[]);
+        answer(&output(envelope, 0), None, false, &mut ctx).unwrap();
+        assert_eq!(streams.stdout.text(), "T-1\tShip\n");
+        assert!(
+            streams.stderr.text().is_empty(),
+            "TSV must emit zero meta notes to stderr: {:?}",
+            streams.stderr.text()
+        );
     }
 }

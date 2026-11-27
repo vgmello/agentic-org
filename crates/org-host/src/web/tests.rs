@@ -20,7 +20,7 @@ use crate::cloexec::SPAWN_LOCK;
 use crate::control_listener::{Connection, Handler, WebConnection};
 use crate::server_check::ServerCheck;
 use crate::sync::lock;
-use crate::test_programs::{fake_web, image_identity, sibling_program};
+use crate::test_programs_tests::{fake_web, image_identity, sibling_program};
 use org_host_control::listen::ListenConfig;
 use org_host_control::web::{WebHandoff, WEB_HANDOFF_FDS};
 use org_host_control::WebState;

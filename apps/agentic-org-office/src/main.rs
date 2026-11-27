@@ -78,6 +78,8 @@ fn main() {
         }
     };
     org_office_server::install_panic_hook();
+    // Composition root: inject the concrete SQLite storage backend.
+    org_office_sqlite::install();
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(org_office_server::run_with_runtimes(
         &args,

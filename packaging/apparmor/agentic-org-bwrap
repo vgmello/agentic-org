@@ -1,0 +1,19 @@
+# Minimal scoped AppArmor 4.0+ profile for bubblewrap (`bwrap`) used by
+# Agentic Org managed agent sandboxes on Ubuntu 24.04+ / 26.04+ hosts.
+#
+# Keep `kernel.apparmor_restrict_unprivileged_userns` enabled (1) host-wide
+# rather than disabling it globally. This profile grants `userns` exclusively
+# to `/{usr/,}bin/bwrap` so all other unprivileged processes stay restricted.
+#
+# Install:
+#   sudo bash scripts/install.sh --install-bwrap-apparmor
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile agentic-org-bwrap /{usr/,}bin/bwrap flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides.
+  include if exists <local/agentic-org-bwrap>
+}

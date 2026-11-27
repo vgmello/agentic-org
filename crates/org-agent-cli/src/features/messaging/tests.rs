@@ -52,7 +52,7 @@ fn msg_ask_and_wait_ask_pass_timeout_budget_above_short_hold() {
         &[
             "msg".into(),
             "ask".into(),
-            "--json".into(),
+            "--input-json".into(),
             ask_json.to_string(),
         ],
         &mut t,
@@ -97,7 +97,7 @@ fn negative_wait_ms_and_conflicting_answer_ask_id_are_refused() {
         &[
             "msg".into(),
             "ask".into(),
-            "--json".into(),
+            "--input-json".into(),
             neg_json.to_string(),
         ],
         &mut t,
@@ -269,7 +269,7 @@ fn all_twelve_msg_channel_status_writes_fail_closed_on_dry_run_with_zero_rpcs() 
     let answer_json = json!([{ "question_id": "q1", "option_ids": ["yes"] }]).to_string();
     let cases: Vec<Vec<&str>> = vec![
         vec!["msg", "send", "--to", "owner", "--body", "hi", "--dry-run"],
-        vec!["msg", "ask", "--json", &ask_json, "--dry-run"],
+        vec!["msg", "ask", "--input-json", &ask_json, "--dry-run"],
         vec![
             "msg",
             "withdraw",

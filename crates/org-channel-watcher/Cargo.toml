@@ -1,0 +1,28 @@
+[package]
+name = "org-channel-watcher"
+description = "Office-local tool-less channel question watcher, catch-up summarization, and local watcher store."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Test helpers shared with downstream integration suites; never enabled in production builds.
+testkit = []
+
+[dependencies]
+org-copilot = { path = "../org-copilot" }
+org-office = { path = "../org-office" }
+org-office-sessions = { path = "../org-office-sessions" }
+org-platform = { path = "../org-platform" }
+org-proto = { path = "../org-proto" }
+org-store = { path = "../org-store" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+org-office = { path = "../org-office", features = ["testkit"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

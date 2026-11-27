@@ -846,7 +846,7 @@ fn tls_set_needs_the_administrators_session_on_host_sock() {
     // with the administrator's session. Where it names a peer by its user alone (Linux),
     // the user is the admission, as for every administrator call.
     let by_code = matches!(
-        crate::test_programs::image_identity(),
+        crate::test_programs_tests::image_identity(),
         org_platform_host::admission::ImageIdentity::CodeSignature
     );
     let before = tls.fetch().unwrap().0;

@@ -16,11 +16,14 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::context::ExecutionContext;
+use crate::context::{ExecutionContext, OutputFormat};
 use crate::error::ShellError;
 use crate::escape::{escape_json_controls, sanitize};
 
 mod table;
+mod yaml;
+
+pub use table::{column_priority, ColumnPriority};
 
 /// How a value is shown on a terminal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,10 +176,10 @@ struct DryRun<'a, T: ?Sized> {
 }
 
 impl ExecutionContext {
-    /// `value` as JSON on standard output: indented on a terminal, one line otherwise, DEL /
-    /// C1 / line separators escaped, then a newline.
+    /// `value` as JSON on standard output: indented on a human terminal, one compact line in a
+    /// pipe or agent-harness PTY, DEL / C1 / line separators escaped, then a newline.
     pub fn write_json<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), ShellError> {
-        let encoded = if self.is_tty_stdout() {
+        let encoded = if self.is_tty_stdout() && !self.is_agent_harness() {
             serde_json::to_string_pretty(value)
         } else {
             serde_json::to_string(value)
@@ -187,17 +190,21 @@ impl ExecutionContext {
         self.out(&text)
     }
 
+    /// `value` as deterministic, terminal-safe YAML on standard output.
+    pub fn write_yaml(&mut self, value: &Value) -> Result<(), ShellError> {
+        let text = yaml::render_yaml(value);
+        self.out(&text)
+    }
+
     /// Prints a list in the current mode (see the module table). `json` is printed as given
-    /// under `--json`; `view` supplies the empty-list note and the total.
+    /// under `--json` / `AGENT_OS_FORMAT=json` / agent-harness PTY, or as YAML under `yaml`;
+    /// `view` supplies the empty-list note and the total.
     pub fn render_table(
         &mut self,
         table: &Table,
         json: &Value,
         view: &ListView<'_>,
     ) -> Result<(), ShellError> {
-        if self.modes().json {
-            return self.write_json(json);
-        }
         if self.modes().quiet {
             // A row without an ID prints nothing, never an empty line.
             let ids: String = table
@@ -212,17 +219,25 @@ impl ExecutionContext {
                 self.out(&ids)
             };
         }
+        match self.output_format() {
+            OutputFormat::Json => return self.write_json(json),
+            OutputFormat::Yaml => return self.write_yaml(json),
+            OutputFormat::Compact | OutputFormat::Tsv => {
+                if table.rows.is_empty() {
+                    return Ok(());
+                }
+                let text = table::render_tsv(table);
+                return self.out(&text);
+            }
+            OutputFormat::Table => {}
+        }
         if table.rows.is_empty() {
             if self.is_tty_stderr() && !view.empty.is_empty() {
                 self.note(view.empty);
             }
             return Ok(());
         }
-        let text = if self.is_tty_stdout() {
-            table::render_tty(table, self.stdout_color(), self.term_width())
-        } else {
-            table::render_tsv(table)
-        };
+        let text = table::render_tty(table, self.stdout_color(), self.term_width());
         self.out(&text)?;
         if let Some(total) = view.total.filter(|total| *total > table.rows.len()) {
             if self.is_tty_stderr() {
@@ -242,17 +257,15 @@ impl ExecutionContext {
         self.render_table(&Table::from_rows(items), json, view)
     }
 
-    /// Prints one record: `json` under `--json`, `id` under `-q`, an aligned `KEY  value`
-    /// card on a terminal, `key\tvalue` lines otherwise.
+    /// Prints one record: `json` under JSON, YAML under YAML, `id` under `-q`, an aligned
+    /// `KEY  value` card under table, `key: value` lines under compact, or `key\tvalue` lines
+    /// under TSV.
     pub fn render_detail(
         &mut self,
         id: &str,
         fields: &[(&str, Cell)],
         json: &Value,
     ) -> Result<(), ShellError> {
-        if self.modes().json {
-            return self.write_json(json);
-        }
         if self.modes().quiet {
             // A record without an ID prints nothing, never an empty line.
             if id.is_empty() {
@@ -260,10 +273,12 @@ impl ExecutionContext {
             }
             return self.out(&format!("{}\n", sanitize(id)));
         }
-        let text = if self.is_tty_stdout() {
-            table::render_card(fields, self.stdout_color())
-        } else {
-            table::render_pairs(fields)
+        let text = match self.output_format() {
+            OutputFormat::Json => return self.write_json(json),
+            OutputFormat::Yaml => return self.write_yaml(json),
+            OutputFormat::Compact => table::render_compact_pairs(fields),
+            OutputFormat::Tsv => table::render_pairs(fields),
+            OutputFormat::Table => table::render_card(fields, self.stdout_color()),
         };
         if text.is_empty() {
             return Ok(());
@@ -271,23 +286,35 @@ impl ExecutionContext {
         self.out(&text)
     }
 
-    /// Previews a mutation that `--dry-run` skips. Under `--json` standard output gets
+    /// Previews a mutation that `--dry-run` skips. Under JSON standard output gets
     /// `{"dry_run":true, ..plan}` (`plan` must serialize as a map or struct, without its own
-    /// `dry_run` key); under `-q` nothing is printed; otherwise standard error gets
-    /// `[DRY-RUN] summary` (bold magenta tag with color) and standard output nothing.
+    /// `dry_run` key); under YAML the same structure as YAML; under `-q` nothing is printed;
+    /// otherwise standard error gets `[DRY-RUN] summary` (bold magenta tag with color) and
+    /// standard output nothing.
     pub fn render_dry_run<T: Serialize + ?Sized>(
         &mut self,
         summary: &str,
         plan: &T,
     ) -> Result<(), ShellError> {
-        if self.modes().json {
-            return self.write_json(&DryRun {
-                dry_run: true,
-                plan,
-            });
-        }
         if self.modes().quiet {
             return Ok(());
+        }
+        match self.output_format() {
+            OutputFormat::Json => {
+                return self.write_json(&DryRun {
+                    dry_run: true,
+                    plan,
+                });
+            }
+            OutputFormat::Yaml => {
+                let value = serde_json::to_value(DryRun {
+                    dry_run: true,
+                    plan,
+                })
+                .map_err(|e| ShellError::io("encoding the YAML output", io::Error::other(e)))?;
+                return self.write_yaml(&value);
+            }
+            OutputFormat::Compact | OutputFormat::Tsv | OutputFormat::Table => {}
         }
         let tag = if self.stderr_color() {
             "[DRY-RUN]".magenta().bold().to_string()

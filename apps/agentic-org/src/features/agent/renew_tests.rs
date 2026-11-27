@@ -134,6 +134,19 @@ fn renew_rejects_missing_member_and_invalid_ttl_before_rpc() {
         .unwrap()
         .is_none());
     assert!(out.stdout.text().contains("agentic-org agent renew"));
+
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    let parsed = parse_renew_args(&words(&["--member", "@ada", "--format", "yaml"]), &mut ctx)
+        .unwrap()
+        .unwrap();
+    assert_eq!(parsed.format, Some(FormatArg::Yaml));
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    let err = parse_renew_args(
+        &words(&["--member", "@ada", "--json", "--format", "tsv"]),
+        &mut ctx,
+    )
+    .unwrap_err();
+    assert_eq!(err.exit_code(), 2);
 }
 
 #[test]

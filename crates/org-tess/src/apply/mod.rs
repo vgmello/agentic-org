@@ -412,34 +412,102 @@ fn build_receipt(
     }
 }
 
-fn extract_entity_link(call: &str, data: &Value) -> (Option<String>, Option<String>) {
-    let str_at = |key: &str| data.get(key).and_then(Value::as_str).map(str::to_owned);
-    if call.starts_with("tasks.") {
-        if let Some(key) = str_at("key") {
-            let label = str_at("title").unwrap_or_else(|| key.clone());
-            return (Some(format!("/tasks/{key}")), Some(label));
-        }
-    } else if call.starts_with("project.") {
-        if let Some(key) = str_at("key") {
-            let label = str_at("name").unwrap_or_else(|| key.clone());
-            return (Some(format!("/projects/{key}")), Some(label));
-        }
-    } else if call.starts_with("team.") {
-        if let Some(id) = str_at("team_id").or_else(|| str_at("id")) {
-            let label = str_at("name").unwrap_or_else(|| id.clone());
-            return (Some(format!("/org/teams/{id}")), Some(label));
-        }
-    } else if call.starts_with("chat.channel_") {
-        if let Some(id) = str_at("id") {
-            let label = str_at("name").unwrap_or_else(|| id.clone());
-            return (Some(format!("/chat/channels/{id}")), Some(label));
-        }
-    } else if call.starts_with("hr.hire") {
-        if let Some(id) = str_at("request_id").or_else(|| str_at("id")) {
-            return (Some(format!("/hr/hires/{id}")), Some(format!("Hire {id}")));
-        }
+fn field_str(data: &Value, key: &str) -> Option<String> {
+    data.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+fn nested_field_str(data: &Value, parent: &str, key: &str) -> Option<String> {
+    data.get(parent)
+        .and_then(|v| v.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+fn extract_task_link(data: &Value) -> Option<(String, String)> {
+    let key = field_str(data, "key")?;
+    let label = field_str(data, "title").unwrap_or_else(|| key.clone());
+    Some((format!("/work/{key}"), label))
+}
+
+fn extract_project_link(call: &str, data: &Value) -> Option<(String, String)> {
+    let allow_bare_id = !matches!(call, "project.add_team" | "project.remove_team");
+    let id = field_str(data, "project_id")
+        .or_else(|| allow_bare_id.then(|| field_str(data, "id")).flatten())?;
+    let label = field_str(data, "name")
+        .or_else(|| field_str(data, "key"))
+        .unwrap_or_else(|| id.clone());
+    Some((format!("/projects/{id}"), label))
+}
+
+fn extract_process_link(data: &Value) -> Option<(String, String)> {
+    let id = field_str(data, "document_id")
+        .or_else(|| nested_field_str(data, "document", "id"))
+        .or_else(|| field_str(data, "id"))?;
+    let label = nested_field_str(data, "document", "title")
+        .or_else(|| field_str(data, "title"))
+        .unwrap_or_else(|| id.clone());
+    Some((format!("/settings/processes/documents/{id}"), label))
+}
+
+fn extract_id_link(
+    data: &Value,
+    primary_key: &str,
+    fallback_key: &str,
+    label_key: &str,
+    prefix: &str,
+) -> Option<(String, String)> {
+    let id = field_str(data, primary_key).or_else(|| field_str(data, fallback_key))?;
+    let label = field_str(data, label_key).unwrap_or_else(|| id.clone());
+    Some((format!("{prefix}{id}"), label))
+}
+
+fn extract_org_entity_link(call: &str, data: &Value) -> Option<(String, String)> {
+    if matches!(
+        call,
+        "team.delete" | "member.remove" | "member.agent_offboard" | "member.offboard"
+    ) {
+        return None;
     }
-    (None, None)
+    match call.split('.').next().unwrap_or("") {
+        "project" => extract_project_link(call, data),
+        "team" if call == "team.set_title" => {
+            extract_id_link(data, "member_id", "id", "name", "/members/")
+        }
+        "team" => extract_id_link(data, "team_id", "id", "name", "/teams/"),
+        "member" => extract_id_link(data, "member_id", "id", "name", "/members/"),
+        "role" => extract_id_link(data, "role_id", "id", "name", "/settings/roles/"),
+        _ => None,
+    }
+}
+
+fn extract_work_or_chat_link(call: &str, data: &Value) -> Option<(String, String)> {
+    if call.starts_with("tasks.") {
+        return extract_task_link(data);
+    }
+    if call.starts_with("process.") {
+        return extract_process_link(data);
+    }
+    if call.starts_with("chat.channel_") {
+        return extract_id_link(data, "id", "conversation_id", "name", "/chat?c=");
+    }
+    if call.starts_with("hr.hire") {
+        let id = field_str(data, "request_id").or_else(|| field_str(data, "id"))?;
+        return Some(("/teams/hires".to_owned(), format!("Hire {id}")));
+    }
+    None
+}
+
+pub(crate) fn extract_entity_link(call: &str, data: &Value) -> (Option<String>, Option<String>) {
+    match extract_work_or_chat_link(call, data).or_else(|| extract_org_entity_link(call, data)) {
+        Some((href, label)) => (Some(href), Some(label)),
+        None => (None, None),
+    }
 }
 
 // --- Shared pure input helpers for apply translators ---

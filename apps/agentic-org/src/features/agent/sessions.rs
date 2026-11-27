@@ -6,7 +6,7 @@
 use clap::Parser;
 use clap_complete::engine::ArgValueCompleter;
 use org_agent_cli::OfficeTransport;
-use org_cli_shell::context::ExecutionContext;
+use org_cli_shell::context::{ExecutionContext, OutputFormat};
 use org_proto::external_auth::{
     MemberExternalPending, MemberExternalPendingParams, MemberExternalSessions,
     MemberExternalSessionsParams,
@@ -17,7 +17,7 @@ use super::common::{
     merge_inner_modes, merge_selector, open_channel, parse_verb_args, refusal_to_cli,
     validate_member, InnerModes,
 };
-use crate::args::InstanceArgs;
+use crate::args::{FormatArg, InstanceArgs};
 use crate::completers;
 use crate::error::CliError;
 use crate::selection;
@@ -66,6 +66,9 @@ pub(crate) struct SessionsArgs {
     /// Print only IDs, one per line
     #[arg(short, long, conflicts_with = "json")]
     pub(crate) quiet: bool,
+    /// Output format (overrides AGENT_OS_FORMAT): json, compact, yaml, tsv or table
+    #[arg(long, value_enum, value_name = "FORMAT", conflicts_with = "quiet")]
+    pub(crate) format: Option<FormatArg>,
     /// Never prompt; fail instead when a value or confirmation is missing
     #[arg(long)]
     pub(crate) no_input: bool,
@@ -125,6 +128,7 @@ fn parse_sessions_args(
         &InnerModes {
             json: args.json,
             quiet: args.quiet,
+            format: args.format.map(FormatArg::into_shell),
             dry_run: false,
             no_input: args.no_input,
             no_color: args.no_color,
@@ -264,15 +268,15 @@ fn execute_member_sessions<T: OfficeTransport + ?Sized>(
     let raw = transport
         .call_method(MemberExternalSessions::METHOD, raw_params)
         .map_err(refusal_to_cli)?;
-    if ctx.modes().json {
-        return view::detail(ctx, &raw, &raw, "active.session_id", &ACTIVE_FIELDS);
-    }
     if ctx.modes().quiet {
         let id = view::text(view::lookup(&raw, "active.session_id"));
         if !id.is_empty() {
             ctx.out(&format!("{}\n", org_cli_shell::terminal::sanitize(&id)))?;
         }
         return Ok(());
+    }
+    if matches!(ctx.output_format(), OutputFormat::Json | OutputFormat::Yaml) {
+        return view::detail(ctx, &raw, &raw, "active.session_id", &ACTIVE_FIELDS);
     }
     if view::lookup(&raw, "active").is_some_and(|v| !v.is_null()) {
         view::detail(ctx, &raw, &raw, "active.session_id", &ACTIVE_FIELDS)?;

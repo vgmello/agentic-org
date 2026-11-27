@@ -25,9 +25,9 @@ mod wake_queue;
 mod wake_turn;
 
 #[cfg(test)]
-pub(crate) use drain::{
-    drain_into_live_pump_with_acquirer, recycle_stale_warm_handle_in, WarmPermitAcquirer,
-};
+pub(crate) use crate::manager::recycle_stale_warm_handle_in;
+#[cfg(test)]
+pub(crate) use drain::{drain_into_live_pump_with_acquirer, WarmPermitAcquirer};
 use usage::flush_pending_usage;
 
 struct DispatchWakeGuard {
@@ -120,7 +120,7 @@ impl SessionManager {
     /// office state so untrusted callers cannot forge provenance.
     fn enrich_wake_provenance(&self, target: &Employee, item: &mut PendingWakeItem) {
         let sender_emp = self.office.load_employee(&item.sender_id).ok().flatten();
-        let supervisor = item.kind == WakeKind::Recovery
+        let supervisor = matches!(item.kind, WakeKind::Recovery | WakeKind::SandboxRefresh)
             && item.sender_relation.as_deref() == Some("office_supervisor");
         let relation = if supervisor {
             "office_supervisor"

@@ -203,3 +203,69 @@ fn sessions_surfaces_not_authorized_refusal() {
     assert_eq!(err.exit_code(), 1);
     assert_eq!(err.code(), "office::not_authorized");
 }
+
+#[test]
+fn sessions_yaml_emits_a_single_document_and_accepts_post_subcommand_format() {
+    use org_cli_shell::context::OutputFormat;
+
+    let mut transport = FakeTransport {
+        calls: Vec::new(),
+        refuse: None,
+    };
+    let member_args =
+        SessionsArgs::try_parse_from(["agentic-org agent sessions", "@ada", "--format", "yaml"])
+            .unwrap();
+    assert_eq!(member_args.format, Some(FormatArg::Yaml));
+
+    let (mut ctx, out) = captured(
+        Modes {
+            format: Some(OutputFormat::Yaml),
+            ..Modes::default()
+        },
+        tty(Some(80)),
+        &[],
+    );
+    execute_with_transport(&member_args, &mut transport, &mut ctx).unwrap();
+    let yaml = out.stdout.text();
+    let top_level_keys: Vec<&str> = yaml
+        .lines()
+        .filter(|line| !line.starts_with(' ') && !line.is_empty())
+        .map(|line| line.split(':').next().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        top_level_keys,
+        vec!["active", "employee_id", "history"],
+        "YAML must be printed once as a single valid document (no duplicate copy):\n{yaml}"
+    );
+    assert!(
+        yaml.contains("0193a5c0-0000-7000-8000-000000000051")
+            && yaml.contains("ext-0193a5c0-0000-7000-8000-000000000070"),
+        "{yaml}"
+    );
+
+    // Post-subcommand `--format` accepts all formats; `--json --format json` is idempotent;
+    // `--json --format yaml` and `-q --format yaml` are refused (exit 2).
+    for fmt in ["json", "yaml", "compact", "tsv", "table"] {
+        let parsed = SessionsArgs::try_parse_from([
+            "agentic-org agent sessions",
+            "--pending",
+            "--format",
+            fmt,
+        ])
+        .unwrap();
+        assert!(parsed.format.is_some(), "{fmt}");
+    }
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    assert!(parse_sessions_args(
+        &words(&["--pending", "--json", "--format", "json"]),
+        &mut ctx
+    )
+    .is_ok());
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    let err = parse_sessions_args(
+        &words(&["--pending", "--json", "--format", "yaml"]),
+        &mut ctx,
+    )
+    .unwrap_err();
+    assert_eq!(err.exit_code(), 2);
+}

@@ -16,6 +16,7 @@ path = "tests/launch.rs"
 
 [dependencies]
 org-office-server = { path = "../../crates/org-office-server" }
+org-office-sqlite = { path = "../../crates/org-office-sqlite" }
 # Composition root wiring: concrete vendor runtime adapters are injected here so
 # `org-office-sessions` never links vendor adapter crates.
 org-agent-runtime = { path = "../../crates/org-agent-runtime" }
@@ -31,10 +32,8 @@ libc.workspace = true
 org-client = { path = "../../crates/org-client", features = ["testkit"] }
 org-office = { path = "../../crates/org-office", features = ["testkit"] }
 org-office-launch = { path = "../../crates/org-office-launch" }
-org-platform = { path = "../../crates/org-platform" }
 org-proto = { path = "../../crates/org-proto" }
 org-socket = { path = "../../crates/org-socket" }
-org-store = { path = "../../crates/org-store" }
 hmac.workspace = true
 sha2.workspace = true
 serde.workspace = true

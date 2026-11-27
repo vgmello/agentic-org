@@ -67,6 +67,7 @@ mod spec;
 mod turn_controls;
 mod views;
 mod warm;
+mod worktree_refresh;
 
 pub(crate) use environment::task_process_context;
 #[cfg(test)]
@@ -80,7 +81,9 @@ pub(crate) use install::{install_unrecovered_pre_pump_handle, PrePumpHandleMeta}
 pub(crate) use lifecycle_ops::{take_clearable_live_handle, ClearableHandle};
 #[cfg(test)]
 pub(crate) use operator_home::clean_operator_rules;
-pub(crate) use reap::{reap_live_handle, ReapMode};
+pub(crate) use reap::{reap_live_handle, recycle_stale_warm_handle_in, ReapMode};
+use registry_guards::BgSpawnGuard;
+pub(crate) use registry_guards::StartSlotGuard;
 #[cfg(test)]
 pub(crate) use rust_toolchain::host_rust_dir_env_from;
 #[cfg(test)]
@@ -100,6 +103,10 @@ pub(crate) use spec::effective_approval_writable_roots_from;
 pub(crate) use spec::{build_session_spec, ModelChoice};
 #[cfg(test)]
 pub(crate) use warm::StartReservation;
+pub use worktree_refresh::{
+    PreparedWorktreeNotice, TaskWorktreePreparer, WorktreeSandboxRefreshOutcome,
+    MID_TURN_SANDBOX_REFRESH_HINT,
+};
 
 /// Configuration for [`SessionManager`].
 #[derive(Clone)]
@@ -126,7 +133,7 @@ pub struct SessionManagerConfig {
     /// this crate's unit tests start with none, so no test writes under the real account.
     pub agent_os_state_roots: Vec<PathBuf>,
     /// Optional consumer-owned attachment payload resolver (`TASK-98.3`). When `None`, defaults to
-    /// [`crate::LocalOfficeAttachmentResolver`]; satellites wire a
+    /// [`crate::turn_attachments_adapter::LocalOfficeAttachmentResolver`]; satellites wire a
     /// federation-backed resolver in `org-office-server`.
     pub attachment_resolver: Option<Arc<dyn crate::turn_attachments::TurnAttachmentResolver>>,
     /// Per-office idle hibernation TTL, resident RSS ceiling, and child build concurrency (`TASK-133`).
@@ -238,55 +245,6 @@ impl SessionRegistry {
     }
 }
 
-struct BgSpawnGuard<'a> {
-    registry: &'a Mutex<SessionRegistry>,
-}
-
-impl Drop for BgSpawnGuard<'_> {
-    fn drop(&mut self) {
-        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        reg.bg_spawning = reg.bg_spawning.saturating_sub(1);
-    }
-}
-
-pub(crate) struct StartSlotGuard<'a> {
-    registry: &'a Mutex<SessionRegistry>,
-    employee_id: String,
-    armed: bool,
-}
-
-impl<'a> StartSlotGuard<'a> {
-    pub(crate) fn new(registry: &'a Mutex<SessionRegistry>, employee_id: String) -> Self {
-        Self {
-            registry,
-            employee_id,
-            armed: true,
-        }
-    }
-
-    /// Releases the slot inside the `registry` critical section the caller already holds, so
-    /// registering a handle and releasing its start slot are one atomic step (`TASK-190`).
-    pub(crate) fn release_locked(mut self, reg: &mut SessionRegistry) {
-        reg.starting.remove(&self.employee_id);
-        self.armed = false;
-    }
-
-    /// Keeps the slot reserved for the next owner (a warm send handing over to a cold start).
-    pub(crate) fn keep_reserved(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for StartSlotGuard<'_> {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        reg.starting.remove(&self.employee_id);
-    }
-}
-
 struct PermitGuard<'a> {
     office: &'a Office,
     hq_permits: Option<&'a dyn crate::router::HqPermitCoordinator>,
@@ -330,6 +288,7 @@ struct PlannedSessionLaunch {
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
     model_supports_vision: bool,
+    allow_host_auth: bool,
     sandbox_plan: SandboxPlan,
     connection_id: Option<String>,
     route_digest: String,
@@ -364,6 +323,7 @@ struct PreparedSessionLaunch {
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
     model_supports_vision: bool,
+    allow_host_auth: bool,
     sandbox_plan: SandboxPlan,
     connection_id: Option<String>,
     route_digest: String,
@@ -468,6 +428,7 @@ pub struct SessionManager {
     pub(crate) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
     pub(crate) mid_turn_rates: Arc<Mutex<HashMap<String, MidTurnRateTracker>>>,
     pub(crate) hibernation: hibernation::HibernationState,
+    pub(crate) task_worktree_preparer: Mutex<Option<Arc<dyn TaskWorktreePreparer>>>,
     watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
@@ -533,6 +494,7 @@ impl SessionManager {
             waiting_messages: Arc::new(Mutex::new(HashMap::new())),
             mid_turn_rates: Arc::new(Mutex::new(HashMap::new())),
             hibernation: hibernation::HibernationState::default(),
+            task_worktree_preparer: Mutex::new(None),
             watch_notice_provider: Mutex::new(None),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),

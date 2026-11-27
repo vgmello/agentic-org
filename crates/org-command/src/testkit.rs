@@ -194,7 +194,7 @@ fn example_input(row: &Command) -> Map<String, Value> {
 pub fn args_for(row: &Command, input: &Map<String, Value>) -> Vec<String> {
     let mut args = vec![row.resource.to_owned(), row.verb.to_owned()];
     if !row.input.is_empty() {
-        args.push("--json".to_owned());
+        args.push("--input-json".to_owned());
         args.push(Value::Object(input.clone()).to_string());
     }
     if row.if_match() == IfMatch::Required {
@@ -311,7 +311,7 @@ pub fn check_grammar(table: &CommandTable, make: OfficeFactory) {
             let mut args = vec![
                 row.resource.to_owned(),
                 row.verb.to_owned(),
-                "--json".to_owned(),
+                "--input-json".to_owned(),
             ];
             args.push(Value::Object(input.clone()).to_string());
             let (output, office) = run_recorded(table, &args, &mut StubSources::default(), make);
@@ -551,8 +551,8 @@ pub fn check_schemas(table: &CommandTable, make: OfficeFactory) {
 pub const HARD_TEXT: &str = "# Title with \"double\" and 'single' quotes\n\n`code` and ```fenced```, $HOME, $(rm -rf /), ${x}\n\\ back\\slash \\n not a new line\n\ttab, trailing spaces  \n- ünïcödé — 日本語 — 🚀\nkey: \"value\" # not a comment\n";
 
 /// CLI-7: Markdown with quotes, backticks, dollar signs, new lines and non-ASCII text arrives
-/// byte-identical through `--input-file`, `--stdin` and `--json` (and the field's own flag). A
-/// row with no content field refuses `--input-file` and `--stdin` and reads neither.
+/// byte-identical through `--input-file`, `--stdin` and `--input-json` (and the field's own flag).
+/// A row with no content field refuses `--input-file` and `--stdin` and reads neither.
 pub fn check_content(table: &CommandTable, make: OfficeFactory) {
     for row in table.rows() {
         let name = row.name();
@@ -589,7 +589,7 @@ pub fn check_content(table: &CommandTable, make: OfficeFactory) {
                 with(args_for(row, &input), &["--input-file", "content.md"]),
             ),
             ("--stdin", with(args_for(row, &input), &["--stdin"])),
-            ("--json", args_for(row, &whole)),
+            ("--input-json", args_for(row, &whole)),
             (
                 "its own flag",
                 with(args_for(row, &input), &[&flag, HARD_TEXT]),

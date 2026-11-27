@@ -26,11 +26,12 @@ mod directory;
 mod doc_calls;
 mod failure;
 pub mod fdswap;
-pub mod federation;
+pub(crate) use org_federation as federation;
 mod federation_calls;
-mod federation_link;
+#[cfg(test)]
+pub(crate) use org_federation::testkit::federation_link;
 mod federation_runtime;
-mod federation_stream;
+pub(crate) use org_federation::stream as federation_stream;
 mod follow;
 mod git_calls;
 mod grant;
@@ -49,12 +50,14 @@ mod org_feed;
 mod process_calls;
 mod provider_calls;
 mod provider_refresh;
+mod resume_calls;
 mod revocations;
 mod search_calls;
 mod serve;
 mod session_proxy;
 mod signals;
-mod snapshot_transfer;
+#[cfg(test)]
+pub(crate) use org_federation::testkit::snapshot_transfer;
 mod startup;
 mod task_calls;
 mod tess_calls;
@@ -62,8 +65,11 @@ mod tess_calls;
 pub mod test_support;
 mod transfer;
 mod wake_bridge;
-mod watcher;
-mod watcher_store;
+pub(crate) use org_channel_watcher as watcher;
+#[cfg(test)]
+pub(crate) use org_channel_watcher::store as watcher_store;
+#[cfg(test)]
+mod watcher_tests;
 mod zeroed;
 
 #[cfg(test)]
@@ -122,13 +128,6 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
     }
 }
 
-/// Runs the server with an empty (fail-closed) runtime registry and returns its exit code.
-/// Production composition roots (`apps/agentic-org-office`) MUST call [`run_with_runtimes`] with
-/// explicitly constructed runtime adapters.
-pub fn run(args: &[String], control: ControlPipe) -> i32 {
-    run_with_runtimes(args, control, org_office_sessions::RuntimeRegistry::empty())
-}
-
 /// Runs the server with an explicit composition-root [`org_office_sessions::RuntimeRegistry`] and
 /// returns its exit code (`TASK-216`).
 pub fn run_with_runtimes(
@@ -136,6 +135,7 @@ pub fn run_with_runtimes(
     control: ControlPipe,
     runtimes: org_office_sessions::RuntimeRegistry,
 ) -> i32 {
+    org_office_sqlite::install();
     if matches!(parse_args(args), Ok(Mode::InspectImport)) {
         return inspect_import(control);
     }

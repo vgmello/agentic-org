@@ -17,7 +17,7 @@ mod relay;
 mod txn;
 
 use core::current_unix_ms;
-pub(crate) use core::ReplicationCoreData;
+pub use core::ReplicationCoreData;
 pub(crate) use txn::{CoreMessageTxn, CoreOrgTxn};
 
 /// In-memory transactional [`ReplicationStore`] implementing `ENG-2`/`ENG-3` atomic rollback.

@@ -95,7 +95,7 @@ impl fmt::Debug for DeliveryAttachmentPayload {
 }
 
 /// The stores an office keeps its attachments in, beside its journal.
-pub(crate) struct AttachmentStores {
+pub struct AttachmentStores {
     /// `<durable>/blobs/`: shared bytes.
     pub shared: Arc<dyn blobs::BlobStore>,
     /// `<durable>/private/blobs/`: HQ's private bytes; `None` on a satellite.

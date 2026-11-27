@@ -450,6 +450,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
         private_home: "/tmp/home".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
+        allow_host_auth: false,
         spec_hash: "h".into(),
         watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
         recovery_required: false,

@@ -5,7 +5,11 @@ use std::sync::Arc;
 
 use org_store::OfficeIdentity;
 
-use crate::{error::OfficeError, model::OfficeInfo, store::open::EngineChoice};
+use crate::{
+    error::OfficeError,
+    model::OfficeInfo,
+    store::{backend::OfficeStorageBackend, open::EngineChoice},
+};
 
 use super::DataRoots;
 
@@ -21,6 +25,7 @@ pub(super) struct CompanionStores {
 
 pub(super) struct CompanionOpenSpec<'a> {
     pub engine: EngineChoice,
+    pub backend: Option<&'a Arc<dyn OfficeStorageBackend>>,
     pub roots: &'a DataRoots,
     pub info: &'a OfficeInfo,
     pub identity: &'a OfficeIdentity,
@@ -36,6 +41,7 @@ pub(super) fn open_companion_stores(
     let is_hq = spec.info.role == crate::model::OfficeRole::Hq;
     let private = crate::store::open::open_private_notes(
         spec.engine,
+        spec.backend,
         &spec.roots.durable,
         &spec.roots.runtime,
         &spec.info.office_id,
@@ -47,12 +53,14 @@ pub(super) fn open_companion_stores(
         private_search: private.search,
         attachments: crate::store::open::open_attachments(
             spec.engine,
+            spec.backend,
             &spec.roots.durable,
             &spec.info.office_id,
             is_hq,
         )?,
         accounting: crate::store::open::open_accounting(
             spec.engine,
+            spec.backend,
             &spec.roots.durable,
             &spec.roots.runtime,
             &spec.info.office_id,
@@ -60,6 +68,7 @@ pub(super) fn open_companion_stores(
         )?,
         budgets: crate::store::open::open_budgets(
             spec.engine,
+            spec.backend,
             &spec.roots.durable,
             &spec.roots.runtime,
             &spec.info.office_id,
@@ -68,6 +77,7 @@ pub(super) fn open_companion_stores(
         )?,
         providers: crate::store::open::open_providers(
             spec.engine,
+            spec.backend,
             &spec.roots.durable,
             &spec.roots.runtime,
             &spec.info.office_id,
@@ -77,6 +87,7 @@ pub(super) fn open_companion_stores(
         replication: crate::store::open::open_replication(
             crate::store::open::ReplicationOpenSpec {
                 engine: spec.engine,
+                backend: spec.backend,
                 durable_root: &spec.roots.durable,
                 runtime_root: &spec.roots.runtime,
                 org_id: &spec.info.org_id,

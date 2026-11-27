@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 
 use org_office::organization_family::records::{BuiltinKey, EmployeeStatus};
 use org_office::Office;
-use org_proto::sessions::SessionState;
 
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{now_ms, rfc3339_now};
@@ -29,81 +28,7 @@ pub(super) fn recycle_stale_warm_handle(
     let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) else {
         return false;
     };
-    recycle_stale_warm_handle_in(&mgr, employee_id, expected_run_id, reason)
-}
-
-pub(crate) fn recycle_stale_warm_handle_in(
-    mgr: &Arc<SessionManager>,
-    employee_id: &str,
-    expected_run_id: &str,
-    reason: &str,
-) -> bool {
-    let removed = {
-        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.draining || reg.shutting_down || reg.starting.contains(employee_id) {
-            return false;
-        }
-        let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
-            let permit_free = handle
-                .active_permit
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .is_none();
-            let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            st.run_id.as_deref() == Some(expected_run_id)
-                && st.state == SessionState::Idle
-                && !st.recovery_required
-                && permit_free
-        });
-        if !still_recyclable {
-            return false;
-        }
-        let Some(handle) = reg.live.remove(employee_id) else {
-            return false;
-        };
-        reg.starting.insert(employee_id.to_owned());
-        reg.bg_workers.retain(|h| !h.is_finished());
-        reg.bg_spawning += 1;
-        let _ = handle.tx.send(PumpCommand::Stop {
-            reason: reason.to_owned(),
-        });
-        handle
-    };
-    let emp = employee_id.to_owned();
-    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(removed)));
-    let worker_slot = std::sync::Arc::clone(&slot);
-    let spawned = crate::manager::spawn_bg_worker_reserved(mgr, "org-warm-recycle", move |m| {
-        let mut reaped_cleanly = true;
-        {
-            let _start_guard = crate::manager::StartSlotGuard::new(&m.registry, emp.clone());
-            if let Some(old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
-                reaped_cleanly = crate::manager::reap_live_handle(
-                    &m,
-                    &emp,
-                    old,
-                    None,
-                    crate::manager::ReapMode::FailClosedRestore {
-                        conflict_message: format!(
-                            "could not verify teardown of recycled warm session `{emp}`; resolve recovery first"
-                        ),
-                    },
-                )
-                .is_ok();
-            }
-        }
-        if reaped_cleanly {
-            let _ = m.process_due_wakes_for(&emp);
-        }
-    });
-    if !spawned {
-        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(old) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            reg.live.insert(employee_id.to_owned(), old);
-        }
-        reg.starting.remove(employee_id);
-        return false;
-    }
-    true
+    crate::manager::recycle_stale_warm_handle_in(&mgr, employee_id, expected_run_id, reason)
 }
 
 pub(super) fn try_send_wake_on_live_handle(
@@ -333,6 +258,12 @@ pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEn
     let Some(claim) = claim_live_drain_batch(employee_id, ctx) else {
         return;
     };
+    if !claim.task_refs.is_empty() {
+        if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
+            let refs: Vec<&str> = claim.task_refs.iter().map(String::as_str).collect();
+            mgr.preprepare_task_worktrees(employee_id, &refs);
+        }
+    }
     let sent = try_send_wake_on_live_handle(
         employee_id,
         claim.task_id.as_deref(),
@@ -362,6 +293,7 @@ pub(super) struct LiveDrainClaim {
     pub(super) objective: String,
     pub(super) attachment_ids: Vec<String>,
     pub(super) task_id: Option<String>,
+    pub(super) task_refs: Vec<String>,
     pub(super) person_triggered: bool,
     pub(super) trigger: serde_json::Value,
     pub(super) ts: u64,
@@ -405,6 +337,7 @@ pub(super) fn claim_live_drain_batch(
     let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
     let task_refs = assigned_task_refs(&queue.items);
     let task_id = task_refs.first().map(|t| (*t).to_owned());
+    let task_refs_owned: Vec<String> = task_refs.iter().map(|t| (*t).to_owned()).collect();
     if office_budget_held(&ctx.office, employee_id, &task_refs)
         || ctx
             .budget_hold
@@ -454,6 +387,7 @@ pub(super) fn claim_live_drain_batch(
         objective,
         attachment_ids,
         task_id,
+        task_refs: task_refs_owned,
         person_triggered,
         trigger,
         ts,

@@ -294,12 +294,6 @@ html[data-ui-theme='graphite'] {
 	--exec-nav-dot-halo: transparent;
 	--exec-nav-dot-ring: var(--graphite-rail);
 
-	/* Home scroll cue */
-	--exec-scroll-hint-bg: var(--graphite-canvas);
-	--exec-scroll-hint-pill-bg: transparent;
-	--exec-scroll-hint-ink: #a2a5ad;
-	--exec-scroll-hint-ink-hover: #f1f1f3;
-
 	--exec-hor-item-bg: var(--graphite-canvas);
 	--exec-hor-item-bg-hover: var(--graphite-hover);
 	--exec-hor-date-bg: var(--graphite-panel);

@@ -130,14 +130,6 @@ pub struct SignedIn {
     pub saved_context: Option<CliContext>,
 }
 
-/// What `agentic-org context clear` found: a saved context it removed, or none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextCleared {
-    Cleared,
-    NothingSaved,
-}
-
 /// Runs the browser-approved sign-in flow against `target`, printing the one-time approval
 /// URL to `out` and polling until approved, declined, expired, or timed out.
 pub(crate) fn approve_on_target(
@@ -364,12 +356,6 @@ fn office_id_usage(office: &str) -> HostCliError {
         .with_help("run `agentic-org office list` to inspect offices")
 }
 
-/// `agentic-org context show`: the saved context, if any.
-pub fn context_show() -> Result<Option<CliContext>, HostCliError> {
-    let path = cli_context::default_context_path()?;
-    Ok(cli_context::load_from(&path)?)
-}
-
 /// `agentic-org context use`: saves and returns the default instance and office.
 pub fn context_use(
     instance_name: Option<&str>,
@@ -387,16 +373,6 @@ pub fn context_use(
     let path = cli_context::default_context_path()?;
     cli_context::save_to(&path, &ctx)?;
     Ok(ctx)
-}
-
-/// `agentic-org context clear`.
-pub fn context_clear() -> Result<ContextCleared, HostCliError> {
-    let path = cli_context::default_context_path()?;
-    Ok(if cli_context::clear_at(&path)? {
-        ContextCleared::Cleared
-    } else {
-        ContextCleared::NothingSaved
-    })
 }
 
 #[cfg(test)]

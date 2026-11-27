@@ -393,6 +393,7 @@ fn assert_rebuilds(f: Fixture, suffix: u8, live: &Structure) {
     sat.close().unwrap();
     f.server.stop();
     let tasks: Vec<String> = live.tasks.keys().cloned().collect();
+    org_office_sqlite::install();
     for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
         let runtime = tempfile::tempdir().unwrap();
         let config = StoreConfig::new(

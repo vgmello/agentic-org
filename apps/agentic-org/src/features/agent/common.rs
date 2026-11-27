@@ -5,7 +5,7 @@ use std::io;
 use clap::error::ErrorKind;
 use clap::Parser;
 use org_agent_cli::OfficeTransport;
-use org_cli_shell::context::{ColorMode, ExecutionContext};
+use org_cli_shell::context::{ColorMode, ExecutionContext, OutputFormat};
 use org_command::Refusal;
 use org_host_setup::ApprovedOfficeChannel;
 use serde_json::Value;
@@ -37,6 +37,7 @@ pub(super) fn refusal_to_cli(refusal: Refusal) -> CliError {
 pub(super) struct InnerModes<'a> {
     pub(super) json: bool,
     pub(super) quiet: bool,
+    pub(super) format: Option<OutputFormat>,
     pub(super) dry_run: bool,
     pub(super) no_input: bool,
     pub(super) no_color: bool,
@@ -44,23 +45,56 @@ pub(super) struct InnerModes<'a> {
     pub(super) help_cmd: &'static str,
 }
 
+impl InnerModes<'_> {
+    fn has_any(&self) -> bool {
+        self.json
+            || self.quiet
+            || self.format.is_some()
+            || self.dry_run
+            || self.no_input
+            || self.no_color
+            || self.color.is_some()
+    }
+}
+
+fn validate_merged_modes(modes: &org_cli_shell::context::Modes) -> Result<(), CliError> {
+    if modes.quiet && modes.json {
+        return Err(CliError::usage(
+            "--quiet and --json cannot be used together",
+        ));
+    }
+    if modes.quiet && modes.format.is_some() {
+        return Err(CliError::usage(
+            "--quiet and --format cannot be used together",
+        ));
+    }
+    if modes.json && modes.format.is_some_and(|f| f != OutputFormat::Json) {
+        return Err(CliError::usage(
+            "--json cannot be combined with a non-json --format",
+        ));
+    }
+    Ok(())
+}
+
 /// Merges flags passed after the verb into the active [`ExecutionContext`].
 pub(super) fn merge_inner_modes(
     inner: &InnerModes<'_>,
     ctx: &mut ExecutionContext,
 ) -> Result<(), CliError> {
-    if !(inner.json
-        || inner.quiet
-        || inner.dry_run
-        || inner.no_input
-        || inner.no_color
-        || inner.color.is_some())
-    {
+    if !inner.has_any() {
         return Ok(());
     }
     let mut modes = ctx.modes().clone();
     modes.json |= inner.json;
     modes.quiet |= inner.quiet;
+    if let Some(fmt) = inner.format {
+        if modes.format.is_some_and(|existing| existing != fmt) {
+            return Err(CliError::usage(
+                "--format is given more than once with conflicting values",
+            ));
+        }
+        modes.format = Some(fmt);
+    }
     modes.dry_run |= inner.dry_run;
     modes.no_input |= inner.no_input;
     modes.no_color |= inner.no_color;
@@ -69,10 +103,9 @@ pub(super) fn merge_inner_modes(
             CliError::usage("--color is auto, always or never").with_help(inner.help_cmd)
         })?;
     }
-    if modes.quiet && modes.json {
-        return Err(CliError::usage(
-            "--quiet and --json cannot be used together",
-        ));
+    validate_merged_modes(&modes)?;
+    if modes.json || modes.quiet || modes.format.is_some() {
+        modes.ignore_env_format = true;
     }
     *ctx = ExecutionContext::detect(modes);
     Ok(())

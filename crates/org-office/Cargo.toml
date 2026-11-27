@@ -30,7 +30,6 @@ org-proto = { path = "../org-proto" }
 # Only `writer::marker`: the host's custody marker in an office folder.
 org-office-launch = { path = "../org-office-launch" }
 org-platform = { path = "../org-platform" }
-rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # Only the `testkit` suites: each runs its store in a temporary directory.
@@ -38,9 +37,8 @@ tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 image.workspace = true
-org-media = { path = "../org-media", features = ["sanitize", "testkit"] }
-# The flush steps the platform counted, for the publication evidence tests.
-org-platform = { path = "../org-platform", features = ["test-support"] }
+# Only `examples/store_latency.rs` (benchmarking the SQLite projection via `org-office`'s public seam).
+org-office-sqlite = { path = "../org-office-sqlite" }
 org-reviews = { path = "../org-reviews", features = ["testkit"] }
 org-store = { path = "../org-store", features = ["testkit"] }
 serde_json.workspace = true

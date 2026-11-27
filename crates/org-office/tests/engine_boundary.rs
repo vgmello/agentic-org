@@ -1,11 +1,11 @@
 //! The engine boundary (ADR-0018 ENG-1) for the office:
 //!
-//! - `rusqlite` is a dependency of `org-office` and `org-host` alone;
-//! - inside `crates/org-office`, only `src/store/sqlite/` names the engine's crate or
-//!   holds SQL. Every other Rust file of the crate (library, tests, benches, examples,
-//!   build script) is parsed with `syn`, and a path through `rusqlite`, a string literal
-//!   that reads as an SQL statement, or a `.sql` file is a violation. The allowlist is
-//!   empty: there is nothing outside the adapter to excuse.
+//! - `rusqlite` is a dependency of `org-office-sqlite` and `org-host-sqlite` alone (never `org-office` or `org-host`);
+//! - inside `crates/org-office`, zero Rust files (library, tests, benches, examples,
+//!   build script) may name `rusqlite` or hold SQL, and zero `.sql` files may exist.
+//!   The allowlist is empty: there is nothing in `org-office` to excuse.
+//! - the control scan runs against `crates/org-office-sqlite/src` to prove the detector
+//!   still recognizes `rusqlite` and SQL statements in the extracted adapter crate.
 //!
 //! The detector's own cases are in `tests/engine_boundary/*.rs.txt`, which this scan
 //! does not read (they are not `.rs` files), so the guard never has to excuse itself.
@@ -23,10 +23,10 @@ const ENGINE_CRATE: &str = "rusqlite";
 /// Folders that hold no source of this workspace.
 const SKIPPED: [&str; 4] = ["target", "node_modules", ".git", ".agents"];
 
-/// The only folder of `crates/org-office` that may name the engine or hold SQL.
-const ENGINE_ADAPTER: &str = "src/store/sqlite";
+/// The extracted SQLite adapter crate relative to the workspace root.
+const SQLITE_ADAPTER_SRC: &str = "crates/org-office-sqlite/src";
 
-/// Files outside the adapter excused from the scan. It stays empty (ENG-1).
+/// Files inside `crates/org-office` excused from the scan. It stays empty (ENG-1).
 const ALLOWED: [&str; 0] = [];
 
 fn workspace() -> PathBuf {
@@ -337,17 +337,13 @@ fn violations(source: &str, name: &str) -> Vec<String> {
     scan.violations
 }
 
-/// Every violation in `crates/org-office` outside the adapter, as `path: violation`, and
-/// the number of Rust files read.
+/// Every violation in `crates/org-office`, as `path: violation`, and the number of Rust
+/// files read.
 fn crate_violations() -> (Vec<String>, usize) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let adapter = manifest.join(ENGINE_ADAPTER);
     let mut found = Vec::new();
     let mut scanned = 0;
     for file in files(manifest, |_| true) {
-        if file.starts_with(&adapter) {
-            continue;
-        }
         let relative = file.strip_prefix(manifest).expect("under the crate");
         let relative = relative.to_str().expect("a UTF-8 path").replace('\\', "/");
         if ALLOWED.contains(&relative.as_str()) {
@@ -381,7 +377,7 @@ fn fixture(name: &str) -> String {
 }
 
 #[test]
-fn only_the_office_and_the_host_depend_on_the_engines_crate() {
+fn only_the_dedicated_sqlite_adapter_crates_depend_on_the_engines_crate() {
     let root = workspace();
     let mut dependents = Vec::new();
     let manifests = files(&root, |name| name == "Cargo.toml");
@@ -402,29 +398,32 @@ fn only_the_office_and_the_host_depend_on_the_engines_crate() {
         }
     }
     dependents.sort();
-    assert_eq!(dependents, ["crates/org-host", "crates/org-office"]);
+    assert_eq!(
+        dependents,
+        ["crates/org-host-sqlite", "crates/org-office-sqlite"]
+    );
 }
 
 #[test]
 fn only_the_sqlite_adapter_names_the_engine_or_holds_sql() {
     assert!(
         ALLOWED.is_empty(),
-        "ENG-1 allows no file outside the adapter"
+        "ENG-1 allows no file in org-office to name rusqlite or hold SQL"
     );
     let (found, scanned) = crate_violations();
-    // The crate has about sixty Rust files outside the adapter; a scan that read only a
-    // handful lost its way.
+    // The crate has over a hundred Rust files; a scan that read only a handful lost its way.
     assert!(scanned > 40, "only {scanned} files were scanned");
     assert!(
         found.is_empty(),
-        "outside {ENGINE_ADAPTER}, the engine is named or SQL is written: {found:#?}"
+        "crates/org-office must never name rusqlite or hold SQL: {found:#?}"
     );
 }
 
 #[test]
 fn the_scan_finds_the_engine_and_its_sql_in_the_adapter() {
-    // The control: the same scan over the adapter itself must see what it guards against.
-    let adapter = Path::new(env!("CARGO_MANIFEST_DIR")).join(ENGINE_ADAPTER);
+    // The control: the same scan over the extracted SQLite adapter crate must see what it
+    // guards against.
+    let adapter = workspace().join(SQLITE_ADAPTER_SRC);
     let mut named = 0;
     let mut statements = 0;
     for file in files(&adapter, |name| name.ends_with(".rs")) {

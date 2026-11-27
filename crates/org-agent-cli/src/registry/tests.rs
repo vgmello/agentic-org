@@ -94,7 +94,7 @@ fn every_write_command_honors_dry_run_without_live_side_effects() {
         checked += 1;
         let mut args = vec![cmd.resource.to_owned(), cmd.verb.to_owned()];
         if !cmd.input.is_empty() {
-            args.push("--json".to_owned());
+            args.push("--input-json".to_owned());
             args.push(cmd.example.input.to_owned());
         }
         args.push("--dry-run".to_owned());
@@ -474,8 +474,8 @@ fn the_table_has_every_row_of_every_slice_once_and_dispatch_owns_each() {
     );
     assert_eq!(
         live.rows().len(),
-        126,
-        "the agent-os catalogue has 126 commands"
+        127,
+        "the agent-os catalogue has 127 commands"
     );
     // Every row reaches its slice's dispatch, which sends the office its call: none falls
     // through to `not wired`.

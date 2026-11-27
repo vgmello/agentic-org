@@ -113,6 +113,7 @@ impl Environment {
                 "AGENT_OS_SOCKET"
                     | "AGENT_OS_SESSION_TOKEN"
                     | "AGENT_OS_BINDING_FILE"
+                    | "AGENT_OS_FORMAT"
                     | "AGENT_OS_ORG"
                     | "AGENT_OS_OFFICE"
                     | "AGENT_OS_AGENT_ID"

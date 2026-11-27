@@ -22,7 +22,7 @@ use super::endpoint::{
     is_valid_bearer_token, resolve_expected_origin, transport_error_msg,
     validate_usage_endpoint_url,
 };
-use super::oauth::parse_usage_oauth_credential;
+use super::oauth::parse_oauth_envelope;
 use super::transport::{attempt_schedule_map, record_scheduling_attempt};
 use super::{
     SubscriptionUsageCollectOutcome, SubscriptionUsageCollectRequest, SubscriptionUsageCollector,
@@ -476,10 +476,14 @@ pub(super) fn load_active_credential(
                     },
                 )
             };
-            if is_expired(cred.expires_at.as_deref(), now_ms) {
-                return Err(expired_err());
-            }
-            let Some(oauth) = parse_usage_oauth_credential(&cred.secret) else {
+            let outer_exp_ms = match cred.expires_at.as_deref() {
+                Some(raw) => match org_proto::parse_rfc3339_ms(raw) {
+                    Some(exp) if now_ms < exp => Some(exp),
+                    _ => return Err(expired_err()),
+                },
+                None => None,
+            };
+            let Ok(oauth) = parse_oauth_envelope(&cred.secret) else {
                 return Err((
                     SubscriptionUsageAuthSource::EnrolledSubscriptionCredential,
                     SubscriptionUsageCollectOutcome::AuthRequired {
@@ -488,12 +492,16 @@ pub(super) fn load_active_credential(
                     },
                 ));
             };
-            if cred.expires_at.is_none() {
-                if oauth.expires_at_ms.is_some_and(|exp| now_ms >= exp) {
-                    return Err(expired_err());
-                }
-                cred.expires_at = oauth.expires_at_ms.map(format_rfc3339_ms);
+            if oauth.expires_at_ms.is_some_and(|exp| now_ms >= exp) {
+                return Err(expired_err());
             }
+            let effective_exp_ms = match (outer_exp_ms, oauth.expires_at_ms) {
+                (Some(outer), Some(inner)) => Some(outer.min(inner)),
+                (Some(outer), None) => Some(outer),
+                (None, Some(inner)) => Some(inner),
+                (None, None) => None,
+            };
+            cred.expires_at = effective_exp_ms.map(format_rfc3339_ms);
             cred.secret = zeroize::Zeroizing::new(oauth.access_token.as_bytes().to_vec());
             Ok((
                 SubscriptionUsageAuthSource::EnrolledSubscriptionCredential,

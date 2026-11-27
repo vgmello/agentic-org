@@ -54,8 +54,8 @@ impl Field {
         self.name.replace('_', "-")
     }
 
-    /// Whether the field can be given as a flag. A field with structure is given in `--json`,
-    /// or in a file or standard input with `--input-format json` or `yaml`.
+    /// Whether the field can be given as a flag. A field with structure is given in
+    /// `--input-json`, or in a file or standard input with `--input-format json` or `yaml`.
     pub fn is_flag(&self) -> bool {
         match self.ty {
             Type::String | Type::Integer | Type::Boolean | Type::Enum(_) => true,
@@ -301,7 +301,13 @@ pub(crate) const OPTIONS: &[CommonOption] = &[
         "format",
         Some("json|yaml|compact"),
         Applies::All,
-        "How the answer is printed. Default json",
+        "How the answer is printed. Default json (or AGENT_OS_FORMAT)",
+    ),
+    option(
+        "json",
+        None,
+        Applies::All,
+        "Print the answer as JSON (shorthand for --format json)",
     ),
     option(
         "fields",
@@ -329,7 +335,7 @@ pub(crate) const OPTIONS: &[CommonOption] = &[
         "Where to continue: meta.next_cursor of the page before",
     ),
     option(
-        "json",
+        "input-json",
         Some("object"),
         Applies::WithInput,
         "The whole input, or the part the flags do not give, as one JSON object of at most 1 MiB",

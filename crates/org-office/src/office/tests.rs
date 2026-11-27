@@ -32,14 +32,7 @@ use crate::{
     structure::wire,
 };
 
-#[path = "chief_of_staff_hardening_tests.rs"]
-mod chief_of_staff_hardening_tests;
-#[path = "chief_of_staff_tests.rs"]
-mod chief_of_staff_tests;
-#[path = "hiring_tests.rs"]
-mod hiring_tests;
-
-const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
+const ENGINES: [EngineChoice; 1] = [EngineChoice::Memory];
 const CREATOR: &str = "01900000-0000-7000-8000-000000000012";
 const HR: &str = "01900000-0000-7000-8000-000000000013";
 const TOP_TEAM: &str = "01900000-0000-7000-8000-000000000011";
@@ -132,10 +125,6 @@ impl Site {
     fn durable(&self, path: &str) -> PathBuf {
         self.roots.durable.join(path)
     }
-
-    fn runtime_folder(&self) -> PathBuf {
-        self.roots.runtime.join(identity().office_id.as_str())
-    }
 }
 
 /// Every file under `root`, by its path under it.
@@ -206,14 +195,14 @@ fn team_create(n: u64, team: &str, parent: &str) -> OrgCommand {
 /// TASK-172: the durable folders a creation lays out are the office's, not the engine's;
 /// an engine adds only its rebuildable projection under `runtime/`.
 #[test]
-fn creation_lays_out_the_same_durable_folders_on_every_engine() {
-    let [sqlite, memory] = ENGINES.map(|engine| {
-        let site = Site::new();
-        site.provision(engine).unwrap().close().unwrap();
-        folders(&site.roots.durable)
-    });
-    assert!(sqlite.contains("authority/agent-execution"), "{sqlite:?}");
-    assert_eq!(sqlite, memory);
+fn creation_lays_out_the_expected_durable_folders_on_memory() {
+    let site = Site::new();
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+    let durable = folders(&site.roots.durable);
+    assert!(durable.contains("authority/agent-execution"), "{durable:?}");
 }
 
 /// STORE-6 on the production path: the creation's files under `durable/` are exactly the
@@ -310,7 +299,7 @@ fn a_foreign_file_where_creation_writes_stops_it_and_is_named() {
         let site = Site::new();
         std::fs::create_dir_all(site.durable("state")).unwrap();
         std::fs::write(site.durable(planted), b"planted: true\n").unwrap();
-        let error = site.provision(EngineChoice::Sqlite).unwrap_err();
+        let error = site.provision(EngineChoice::Memory).unwrap_err();
         if planted == "state/organization.yaml" {
             assert!(
                 matches!(
@@ -334,25 +323,6 @@ fn a_foreign_file_where_creation_writes_stops_it_and_is_named() {
         assert_eq!(kept, b"planted: true\n");
         assert!(!site.folder.join("office.json").exists());
     }
-}
-
-/// A team, then the projection deleted: the reopened office rebuilds the same rows and
-/// reads the same snapshot (SQLite: the memory engine always rebuilds).
-#[test]
-fn deleting_the_runtime_folder_rebuilds_an_equal_projection() {
-    let site = Site::new();
-    let office = site.provision(EngineChoice::Sqlite).unwrap();
-    let answer = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
-    assert_eq!(answer.unwrap().unwrap().status, CommandStatus::Committed);
-    let (dump, snapshot) = (office.dump(), office.org_snapshot().unwrap());
-    office.close().unwrap();
-    std::fs::remove_dir_all(site.runtime_folder()).unwrap();
-
-    let office = site.open(EngineChoice::Sqlite).unwrap();
-    assert_eq!(office.dump(), dump);
-    assert_eq!(office.org_snapshot().unwrap(), snapshot);
-    assert!(site.runtime_folder().join("office.db").is_file());
-    office.close().unwrap();
 }
 
 /// A dropped office is a killed one: what it answered is there, and the next opening is
@@ -458,87 +428,6 @@ fn a_creation_that_dies_around_the_journal_anchor_completes_on_retry() {
 }
 
 type Spoil = Box<dyn Fn(&Site)>;
-
-fn rewrite_key(site: &Site, edit: impl Fn(&mut local::CaKey)) {
-    let path = site.durable(local::ca_key_path(&identity().office_id).as_str());
-    let mut key = local::decode_ca_key(&std::fs::read(&path).unwrap()).unwrap();
-    edit(&mut key);
-    std::fs::write(&path, local::encode_ca_key(&key)).unwrap();
-}
-
-/// M1: an HQ whose CA records are missing or disagree is not opened, and a creation retry
-/// generates nothing in their place.
-#[test]
-fn opening_refuses_missing_or_mismatched_ca_records() {
-    let escrow = "state/security/ca-escrow.v1.bin";
-    let cases: Vec<(&str, Spoil)> = vec![
-        (
-            "no escrow package",
-            Box::new(|site| std::fs::remove_file(site.durable(escrow)).unwrap()),
-        ),
-        (
-            "no key record",
-            Box::new(|site| {
-                let key = local::ca_key_path(&identity().office_id);
-                std::fs::remove_file(site.durable(key.as_str())).unwrap();
-            }),
-        ),
-        (
-            "another package",
-            Box::new(|site| {
-                let mut bytes = std::fs::read(site.durable(escrow)).unwrap();
-                *bytes.last_mut().unwrap() ^= 1;
-                std::fs::write(site.durable(escrow), bytes).unwrap();
-            }),
-        ),
-        (
-            "another public key",
-            Box::new(|site| {
-                let other = ca_material(&identity().organization_id, 5).public_key;
-                rewrite_key(site, |key| key.public_key = other);
-            }),
-        ),
-        (
-            "another organization",
-            Box::new(|site| {
-                rewrite_key(site, |key| {
-                    key.organization_id = org_store::testkit::id(0xB2);
-                });
-            }),
-        ),
-        (
-            "another operation",
-            Box::new(|site| {
-                rewrite_key(site, |key| key.operation_id = org_store::testkit::id(0x99));
-            }),
-        ),
-    ];
-    for (case, spoil) in cases {
-        let site = Site::new();
-        site.provision(EngineChoice::Sqlite)
-            .unwrap()
-            .close()
-            .unwrap();
-        spoil(&site);
-        let refused = site.open(EngineChoice::Sqlite).unwrap_err();
-        assert!(
-            matches!(
-                refused,
-                OfficeError::Invalid("HQ provisioning requires recovery")
-            ),
-            "{case}: {refused:?}"
-        );
-        // A creation retry neither generates a CA in their place nor hands records that
-        // disagree to `material`.
-        let called = Cell::new(false);
-        let retried = site.provision_with(EngineChoice::Sqlite, |prior| {
-            called.set(true);
-            prior.map_or_else(|| testkit::record(9), Ok)
-        });
-        assert!(retried.is_err(), "{case}");
-        assert!(!called.get(), "{case}");
-    }
-}
 
 /// An office folder the old databases made is refused by both ways in, never migrated.
 #[test]
@@ -1297,7 +1186,7 @@ fn a_create_completes_beside_the_hosts_custody_marker() {
 fn the_final_checks_stop_office_json() {
     let site = Site::new();
     let (new, binding) = testkit::request();
-    let mut options = site.options(EngineChoice::Sqlite);
+    let mut options = site.options(EngineChoice::Memory);
     let key = site.durable(local::ca_key_path(&identity().office_id).as_str());
     options.before_final_checks = Some(Arc::new(move || {
         std::fs::remove_file(&key).unwrap();

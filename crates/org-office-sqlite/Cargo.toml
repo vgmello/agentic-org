@@ -1,0 +1,36 @@
+[package]
+name = "org-office-sqlite"
+description = "SQLite storage engine and companion database adapters for the Agentic Org office store (ADR-0018, TASK-255)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `testkit`: projection dump, extra-DDL schema testing, and drift test helpers for conformance suites.
+testkit = ["org-office/testkit", "org-store/testkit"]
+
+[dependencies]
+org-office = { path = "../org-office" }
+org-platform = { path = "../org-platform" }
+org-process = { path = "../org-process" }
+org-proto = { path = "../org-proto" }
+org-store = { path = "../org-store" }
+org-sync = { path = "../org-sync" }
+org-sync-proto = { path = "../org-sync-proto" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+image.workspace = true
+org-media = { path = "../org-media", features = ["sanitize", "testkit"] }
+org-office = { path = "../org-office", features = ["testkit"] }
+org-office-sqlite = { path = ".", features = ["testkit"] }
+org-pki = { path = "../org-pki" }
+org-store = { path = "../org-store", features = ["testkit"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

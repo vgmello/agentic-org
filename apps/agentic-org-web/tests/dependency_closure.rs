@@ -19,14 +19,32 @@ const FORBIDDEN: &[&str] = &[
     "org-host-setup",
     "org-host-sqlite",
     "org-office",
+    "org-office-sqlite",
     "org-client",
     "rusqlite",
     "libsqlite3-sys",
 ];
 
+/// Exact workspace-crate allowlist for `agentic-org-web`'s normal dependency closure.
+/// Any newly added workspace crate must be reviewed and added deliberately so host, office,
+/// client, or storage crates cannot enter the web process transitively.
+const ALLOWED_WORKSPACE_DEPS: &[&str] = &[
+    "org-host-control",
+    "org-office-launch",
+    "org-platform",
+    "org-proto",
+    "org-release",
+    "org-socket",
+];
+
+struct NormalClosure {
+    all: BTreeSet<String>,
+    workspace: BTreeSet<String>,
+}
+
 /// The package names reachable from `agentic-org-web` through normal dependency
 /// edges (any target platform), from the locked workspace resolve.
-fn normal_closure() -> BTreeSet<String> {
+fn normal_closure() -> NormalClosure {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut output = Command::new(cargo);
@@ -84,6 +102,12 @@ fn normal_closure() -> BTreeSet<String> {
             )
         })
         .collect();
+    let workspace_ids: BTreeSet<&str> = metadata["workspace_members"]
+        .as_array()
+        .expect("workspace_members")
+        .iter()
+        .map(|id| id.as_str().expect("workspace member id"))
+        .collect();
     let root = names
         .iter()
         .find(|(_, name)| **name == "agentic-org-web")
@@ -96,9 +120,10 @@ fn normal_closure() -> BTreeSet<String> {
         .map(|node| (node["id"].as_str().expect("node id"), node))
         .collect();
     // Traverse by package id, so a second version of a crate is still walked;
-    // collect names separately for the forbidden-crate check.
+    // collect names separately for the forbidden-crate and workspace-allowlist checks.
     let mut visited = BTreeSet::new();
-    let mut seen = BTreeSet::new();
+    let mut all = BTreeSet::new();
+    let mut workspace = BTreeSet::new();
     let mut pending = vec![root];
     while let Some(id) = pending.pop() {
         for dep in nodes[id]["deps"].as_array().expect("node deps") {
@@ -109,27 +134,35 @@ fn normal_closure() -> BTreeSet<String> {
                 .any(|kind| kind["kind"].is_null());
             let dep_id = dep["pkg"].as_str().expect("dep pkg");
             if normal && visited.insert(dep_id) {
-                seen.insert(names[dep_id].to_owned());
+                let name = names[dep_id].to_owned();
+                if workspace_ids.contains(dep_id) {
+                    workspace.insert(name.clone());
+                }
+                all.insert(name);
                 pending.push(dep_id);
             }
         }
     }
-    seen
+    NormalClosure { all, workspace }
 }
 
 #[test]
 fn the_web_links_no_host_office_or_client_crate() {
     let closure = normal_closure();
-    // Not vacuous: the walk reaches the web process's real workspace dependencies.
-    for expected in ["org-host-control", "org-proto", "org-socket", "org-release"] {
-        assert!(
-            closure.contains(expected),
-            "{expected} missing: {closure:?}"
-        );
-    }
+    let allowed: BTreeSet<String> = ALLOWED_WORKSPACE_DEPS
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    let unexpected: Vec<_> = closure.workspace.difference(&allowed).collect();
+    let missing: Vec<_> = allowed.difference(&closure.workspace).collect();
+    assert!(
+        unexpected.is_empty() && missing.is_empty(),
+        "agentic-org-web workspace dependency closure drifted: unexpected={unexpected:?}, missing={missing:?}, actual={:?}",
+        closure.workspace
+    );
     let linked: Vec<_> = FORBIDDEN
         .iter()
-        .filter(|name| closure.contains(**name))
+        .filter(|name| closure.all.contains(**name))
         .collect();
     assert!(
         linked.is_empty(),

@@ -552,13 +552,13 @@ fn offline_skill_list_supports_category_filter_pagination_formats_and_fields() {
     assert_eq!(empty_env["data"]["skills"], serde_json::json!([]));
     assert!(empty_env["meta"].get("next_cursor").is_none());
 
-    // --json input, --fields projection, --format yaml, and --format compact all report offline scope.
+    // --input-json input, --fields projection, --format yaml, and --format compact all report offline scope.
     let (via_json, calls) = run_skill(
         false,
         &[
             "skill",
             "list",
-            "--json",
+            "--input-json",
             r#"{"offline":true,"category":"chief_of_staff"}"#,
             "--fields",
             "key,title",

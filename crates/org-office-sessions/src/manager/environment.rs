@@ -316,6 +316,7 @@ impl SessionManager {
                 OsString::from("AGENT_OS_BINDING_FILE"),
                 input.binding_file.as_os_str().to_os_string(),
             ),
+            (OsString::from("AGENT_OS_FORMAT"), OsString::from("json")),
             (OsString::from("GIT_AUTHOR_NAME"), OsString::from(&git_name)),
             (
                 OsString::from("GIT_AUTHOR_EMAIL"),
@@ -425,6 +426,7 @@ pub(super) fn office_env_names() -> Vec<EnvName> {
         "AGENT_OS_SESSION_ID",
         "AGENT_OS_SESSION_TOKEN",
         "AGENT_OS_BINDING_FILE",
+        "AGENT_OS_FORMAT",
         "GIT_AUTHOR_NAME",
         "GIT_AUTHOR_EMAIL",
         "GIT_COMMITTER_NAME",

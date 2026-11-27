@@ -329,6 +329,7 @@ fn private_decisions_list_across_tasks_and_never_notify_live_events() {
             alternatives: None,
             tags: vec!["Arch".into()],
             body_markdown: "Keep notes at HQ\nonly".into(),
+            checkpoint: false,
         },
     )
     .unwrap();

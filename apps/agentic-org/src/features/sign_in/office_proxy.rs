@@ -7,7 +7,7 @@
 //! - `-q`: the IDs of the answer, one per line;
 //! - a terminal: a borderless table for a list, an aligned card for a record, and a refusal
 //!   as a diagnostic on standard error;
-//! - a pipe: the table's `compact` form (headerless, tab-separated lines).
+//! - a pipe: headerless, tab-separated lines (`OutputFormat::Tsv` / `Shown::Tsv`).
 //!
 //! The exit code is the table's: 0, 1 (refused) or 2 (a command line it cannot read). A line
 //! this command cannot split (a selector given twice, a flag left without its value at the
@@ -19,7 +19,7 @@
 //! `sign-in -- <command>` reads its line the same way ([`sign_in_and_execute`]).
 
 use org_agent_cli::{OfficeTransport, TransportOffice};
-use org_cli_shell::context::{ColorMode, ExecutionContext};
+use org_cli_shell::context::{ColorMode, ExecutionContext, OutputFormat};
 use org_command::{Command, Office, Output, Refusal};
 use org_host_setup::{ApprovedOfficeChannel, HostCliError, HostCliErrorKind};
 use org_proto::ErrorCode;
@@ -112,15 +112,19 @@ impl OfficeTransport for LazyGrantTransport {
 /// How the answer is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Shown {
-    /// The table's own output, as the caller asked for it.
+    /// The table's own output, as the caller asked for it (or via injected `--format`).
     AsWritten,
     /// `--format json`, printed as it is.
     Json,
-    /// `--format compact`, printed as it is (a pipe).
+    /// `--format yaml`, printed as it is.
+    Yaml,
+    /// `--format compact`, printed as it is.
     Compact,
+    /// Consistent headerless TSV across TTY and pipe, with zero stderr prose.
+    Tsv,
     /// The IDs.
     Quiet,
-    /// A table or a card (a terminal).
+    /// A borderless table or aligned card (even when piped if `--format table` is active).
     Rendered,
 }
 
@@ -133,15 +137,17 @@ pub(super) fn shown(forwarded: &[String], ctx: &ExecutionContext) -> Shown {
             &["--format", "--help", "-h", "--schema", "--version"],
         )
     {
-        Shown::AsWritten
-    } else if ctx.modes().json {
-        Shown::Json
-    } else if ctx.modes().quiet {
-        Shown::Quiet
-    } else if ctx.is_tty_stdout() {
-        Shown::Rendered
-    } else {
-        Shown::Compact
+        return Shown::AsWritten;
+    }
+    if ctx.modes().quiet {
+        return Shown::Quiet;
+    }
+    match ctx.output_format() {
+        OutputFormat::Table => Shown::Rendered,
+        OutputFormat::Tsv => Shown::Tsv,
+        OutputFormat::Json => Shown::Json,
+        OutputFormat::Yaml => Shown::Yaml,
+        OutputFormat::Compact => Shown::Compact,
     }
 }
 
@@ -297,7 +303,8 @@ fn ask(mut forwarded: Vec<String>, ctx: &ExecutionContext, office: &mut dyn Offi
     match shown {
         Shown::AsWritten => {}
         Shown::Compact => added.extend(["--format".to_owned(), "compact".to_owned()]),
-        Shown::Json | Shown::Quiet | Shown::Rendered => {
+        Shown::Yaml => added.extend(["--format".to_owned(), "yaml".to_owned()]),
+        Shown::Json | Shown::Quiet | Shown::Rendered | Shown::Tsv => {
             added.extend(["--format".to_owned(), "json".to_owned()]);
         }
     }
@@ -319,10 +326,10 @@ fn show(answered: &Answered, ctx: &mut ExecutionContext) -> Result<(), CliError>
         output,
     } = answered;
     match shown {
-        Shown::Quiet | Shown::Rendered => {
+        Shown::Quiet | Shown::Rendered | Shown::Tsv => {
             render::answer(output, *command, *shown == Shown::Quiet, ctx)
         }
-        Shown::AsWritten | Shown::Json | Shown::Compact => {
+        Shown::AsWritten | Shown::Json | Shown::Yaml | Shown::Compact => {
             print_answer(ctx, &output.stdout, output.exit_code)
         }
     }
@@ -492,8 +499,8 @@ mod tests {
 
     /// TASK-137 B1: the operator shorthand (`agent approve <code>`, `agent sessions @<handle>`,
     /// `agent revoke @<handle> [<session>]`) reaches the office whatever the run adds after
-    /// the command path (`--format json` on a terminal or with `--json`, `--format compact` in
-    /// a pipe), through both ways in. So does the exact line `agent-os exec` runs.
+    /// the command path (`--format json` for terminal, pipe/`OutputFormat::Tsv`, or `--json`),
+    /// through both ways in. So does the exact line `agent-os exec` runs.
     #[test]
     fn the_operator_shorthand_reaches_the_office_through_the_added_format() {
         let json = Modes {
@@ -584,7 +591,8 @@ mod tests {
     }
 
     /// B-02: a value that reads `-h` or `--help` is text, not a request for help: the answer
-    /// is shown as the run asked (`-q`, a table, compact), never the table's help as written.
+    /// is shown as the run asked (`-q`, a table, or `Shown::Tsv` in a pipe), never the table's
+    /// help as written.
     #[test]
     fn a_value_that_reads_help_is_sent_and_shown_as_asked() {
         let quiet = Modes {
@@ -598,7 +606,7 @@ mod tests {
                 &["msg", "send", "--to", "ada", "--body", "-h"][..],
                 "body",
                 "-h",
-                Shown::Compact,
+                Shown::Tsv,
             ),
             (
                 Modes::default(),
@@ -629,6 +637,95 @@ mod tests {
         let (ctx, _streams) = captured(Modes::default(), tty(Some(80)), &[]);
         assert_eq!(
             shown(&words(&["task", "create", "--title", "t", "--help"]), &ctx),
+            Shown::AsWritten
+        );
+    }
+
+    struct StubListOffice;
+
+    impl Office for StubListOffice {
+        fn call(&mut self, _request: &Request) -> Result<Answer, Refusal> {
+            Ok(Answer {
+                status: org_command::Status::Waiting,
+                next_cursor: Some("c2".to_owned()),
+                ..Answer::completed(serde_json::json!([
+                    {
+                        "id": "0193a5c0-0000-7000-8000-000000000001",
+                        "name": "Ada",
+                        "handle": "ada",
+                        "kind": "agent",
+                        "owner": false,
+                        "agent_status": "active",
+                        "role_title": "Engineer",
+                        "presence": "online"
+                    }
+                ]))
+            })
+        }
+    }
+
+    /// P1-2: `shown` dispatches strictly on `ctx.output_format()`: `--format table` renders a
+    /// borderless table even when piped, and `--format tsv` produces identical TSV across TTY and
+    /// pipe with zero stderr prose.
+    #[test]
+    fn shown_honors_table_when_piped_and_tsv_consistently_with_zero_stderr_prose() {
+        let cmd = words(&["who"]);
+
+        // Piped `--format table` -> `Shown::Rendered` -> borderless UPPERCASE table.
+        let table_modes = Modes {
+            format: Some(OutputFormat::Table),
+            ..Modes::default()
+        };
+        let (mut ctx, streams) = captured(table_modes, Terminal::piped(), &[]);
+        assert_eq!(shown(&cmd, &ctx), Shown::Rendered);
+        execute(cmd.clone(), &mut ctx, &mut StubListOffice).unwrap();
+        let piped_table = streams.stdout.text();
+        assert!(
+            piped_table.contains("HANDLE") && piped_table.contains("ada"),
+            "piped --format table must render borderless table:\n{piped_table}"
+        );
+
+        // `OutputFormat::Tsv` on TTY and pipe -> `Shown::Tsv`, byte-identical stdout, zero stderr.
+        let tsv_modes = Modes {
+            format: Some(OutputFormat::Tsv),
+            ..Modes::default()
+        };
+        let (mut tty_ctx, tty_streams) = captured(tsv_modes.clone(), tty(Some(80)), &[]);
+        let (mut pipe_ctx, pipe_streams) = captured(tsv_modes, Terminal::piped(), &[]);
+        assert_eq!(shown(&cmd, &tty_ctx), Shown::Tsv);
+        assert_eq!(shown(&cmd, &pipe_ctx), Shown::Tsv);
+        execute(cmd.clone(), &mut tty_ctx, &mut StubListOffice).unwrap();
+        execute(cmd.clone(), &mut pipe_ctx, &mut StubListOffice).unwrap();
+        assert_eq!(tty_streams.stdout.text(), pipe_streams.stdout.text());
+        assert!(tty_streams.stdout.text().contains('\t'));
+        assert!(
+            tty_streams.stderr.text().is_empty(),
+            "TSV on TTY must emit zero stderr prose: {:?}",
+            tty_streams.stderr.text()
+        );
+        assert!(pipe_streams.stderr.text().is_empty());
+
+        // `Json`, `Yaml`, and `Compact` dispatch directly or `AsWritten` when `--format` is set.
+        let (json_ctx, _) = captured(
+            Modes {
+                format: Some(OutputFormat::Json),
+                ..Modes::default()
+            },
+            Terminal::piped(),
+            &[],
+        );
+        assert_eq!(shown(&cmd, &json_ctx), Shown::Json);
+        let (yaml_ctx, _) = captured(
+            Modes {
+                format: Some(OutputFormat::Yaml),
+                ..Modes::default()
+            },
+            Terminal::piped(),
+            &[],
+        );
+        assert_eq!(shown(&cmd, &yaml_ctx), Shown::Yaml);
+        assert_eq!(
+            shown(&words(&["who", "--format", "yaml"]), &yaml_ctx),
             Shown::AsWritten
         );
     }

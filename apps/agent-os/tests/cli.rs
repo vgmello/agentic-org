@@ -18,6 +18,7 @@ fn bin() -> Command {
         .env_remove("ORG_OFFICE_HOME")
         .env_remove("AGENT_OS_SESSION_TOKEN")
         .env_remove("AGENT_OS_AGENT_ID")
+        .env_remove("AGENT_OS_FORMAT")
         // No signed-in workspace of the account running the tests is ever picked up.
         .env("AGENT_OS_STATE_DIR", "/nonexistent/agent-os-test-state");
     cmd
@@ -1085,4 +1086,177 @@ fn task_223_bound_explicit_offline_bypasses_socket_and_preserves_scope() {
     assert!(env["data"]["caveat"]
         .as_str()
         .is_some_and(|c| !c.is_empty()));
+}
+
+#[test]
+fn task_212_agent_os_format_precedence_and_json_before_after_subcommand() {
+    // 1. AGENT_OS_FORMAT=yaml shapes offline context and offline skill list.
+    let yaml_ctx = bin()
+        .args(["context", "--offline"])
+        .env("AGENT_OS_FORMAT", " yaml ")
+        .output()
+        .unwrap();
+    assert_eq!(yaml_ctx.status.code(), Some(0));
+    let yaml_text = String::from_utf8(yaml_ctx.stdout).unwrap();
+    assert!(yaml_text.starts_with("ok: true\n"), "{yaml_text}");
+
+    let compact_ctx = bin()
+        .args(["context", "--offline"])
+        .env("AGENT_OS_FORMAT", "COMPACT")
+        .output()
+        .unwrap();
+    assert_eq!(compact_ctx.status.code(), Some(0));
+    let compact_text = String::from_utf8(compact_ctx.stdout).unwrap();
+    assert!(!compact_text.starts_with('{'), "{compact_text}");
+
+    // 2. Explicit --json before OR after subcommand overrides AGENT_OS_FORMAT=yaml.
+    for args in [
+        &["--json", "context", "--offline"][..],
+        &["context", "--offline", "--json"],
+        &["--json", "skill", "list", "--offline"],
+        &["skill", "list", "--offline", "--json"],
+    ] {
+        let out = bin()
+            .args(args)
+            .env("AGENT_OS_FORMAT", "yaml")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        let env: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(env["ok"], true, "{args:?}");
+    }
+
+    // 3. Explicit --format overrides AGENT_OS_FORMAT (even an invalid one).
+    let override_bad = bin()
+        .args(["context", "--offline", "--format", "yaml"])
+        .env("AGENT_OS_FORMAT", "invalid-format")
+        .output()
+        .unwrap();
+    assert_eq!(override_bad.status.code(), Some(0));
+    assert!(String::from_utf8(override_bad.stdout)
+        .unwrap()
+        .starts_with("ok: true\n"));
+
+    // 4. Invalid AGENT_OS_FORMAT without explicit CLI flag exits 2 cleanly.
+    let bad_env = bin()
+        .args(["context", "--offline"])
+        .env("AGENT_OS_FORMAT", "table")
+        .output()
+        .unwrap();
+    assert_eq!(bad_env.status.code(), Some(2));
+    let env: Value = serde_json::from_slice(&bad_env.stdout).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "invalid_request");
+    assert!(env["error"]["message"]
+        .as_str()
+        .is_some_and(|m| m.contains("AGENT_OS_FORMAT")));
+
+    // 5. `--input-json` carries structured JSON input cleanly alongside `--json` output.
+    let input_json = bin()
+        .args([
+            "--json",
+            "skill",
+            "list",
+            "--input-json",
+            r#"{"offline":true,"category":"chief_of_staff"}"#,
+        ])
+        .env("AGENT_OS_FORMAT", "yaml")
+        .output()
+        .unwrap();
+    assert_eq!(input_json.status.code(), Some(0));
+    let env: Value = serde_json::from_slice(&input_json.stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["mode"], "offline_builtin_only");
+
+    // 6. P1-5: lifecycle verbs (`login`, `whoami`, `logout`, `exec`) and `session attach` accept
+    //    bare `--json` before OR after the verb (exit 0 for help, exit 1 when unbound/offline —
+    //    never exit 2 unknown-flag usage error).
+    for help_args in [
+        &["--json", "whoami", "--help"][..],
+        &["whoami", "--json", "--help"],
+        &["--json", "logout", "--help"],
+        &["logout", "--json", "--help"],
+        &["--json", "login", "--help"],
+        &["login", "--json", "--help"],
+        &["--json", "exec", "--help"],
+        &["exec", "--json", "--help"],
+        &["--json", "session", "attach", "--help"],
+        &["session", "attach", "--json", "--help"],
+    ] {
+        let out = bin().args(help_args).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{help_args:?}: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    let tmp_cwd = tempfile::tempdir().unwrap();
+    let dead_sock = tmp_cwd.path().join("no-office.sock");
+    for unbound_args in [
+        &["--json", "whoami"][..],
+        &["whoami", "--json"],
+        &["--json", "logout"],
+        &["logout", "--json"],
+        &[
+            "--json",
+            "login",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+        ],
+        &[
+            "login",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+            "--json",
+        ],
+        &[
+            "--json",
+            "exec",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+            "--",
+            "echo",
+            "--json",
+        ],
+        &[
+            "exec",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+            "--json",
+            "--",
+            "echo",
+            "--json",
+        ],
+        &["--json", "session", "attach"],
+        &["session", "attach", "--json"],
+    ] {
+        let out = bin()
+            .args(unbound_args)
+            .current_dir(tmp_cwd.path())
+            .env("XDG_STATE_HOME", tmp_cwd.path().join("state"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{unbound_args:?} must fail with refusal (1), not usage (2): {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let env: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(env["ok"], false, "{unbound_args:?}");
+        assert_ne!(
+            env["error"]["code"], "invalid_request",
+            "{unbound_args:?}: {env}"
+        );
+    }
 }

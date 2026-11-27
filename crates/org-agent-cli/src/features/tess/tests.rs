@@ -55,7 +55,7 @@ fn tess_suggestion_and_ui_commands_dispatch_expected_rpcs() {
             "Create release review task",
             "--expected-revision",
             "2",
-            "--json",
+            "--input-json",
             r#"{"input":{"title":"Review release"}}"#,
         ][..],
         &["suggestion", "list", "--status", "pending"],

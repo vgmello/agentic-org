@@ -24,22 +24,22 @@ mod employee_locks;
 mod external;
 mod external_sessions;
 mod host_auth;
-pub use org_session_instructions as instructions;
+pub(crate) use org_session_instructions as instructions;
 mod lifecycle;
 pub mod manager;
 pub mod partition;
-pub use org_session_presets as preset;
+pub(crate) use org_session_presets as preset;
 mod provenance;
 mod pump;
 pub mod recovery;
-pub use org_redact as redact;
+pub(crate) use org_redact as redact;
 pub mod router;
 pub mod runtime_registry;
 pub mod stream_hub;
 pub mod subagents;
-pub use org_subscription_usage as subscription_usage;
+pub(crate) use org_subscription_usage as subscription_usage;
 pub mod transcript;
-pub use org_turn_attachments as turn_attachments;
+pub(crate) use org_turn_attachments as turn_attachments;
 mod turn_attachments_adapter;
 pub mod wake;
 
@@ -52,19 +52,12 @@ pub use credentials::{
     EnrollmentOutcome, EnrollmentPrompt, EnrollmentVaultError,
 };
 pub use external::{ExternalLeaseRecord, EXTERNAL_LEASE_VERSION};
-pub use instructions::{
-    assemble_standing_instructions, compose_turn_objective, verify_command_references,
-    CommandCatalogue, InstructionInput, StandingInstructions, TurnTrigger,
-    BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
-};
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{
-    LocalOsSandbox, SandboxConfinementMode, SandboxPlan, SandboxPrepareContext, SandboxRunner,
-    SandboxVerifyContext, SessionManager, SessionManagerConfig,
-};
-pub use preset::{
-    build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_roots,
-    decide_escalation_with_tools, EscalationDisposition, PresetConfig, PresetError,
+    LocalOsSandbox, PreparedWorktreeNotice, SandboxConfinementMode, SandboxPlan,
+    SandboxPrepareContext, SandboxRunner, SandboxVerifyContext, SessionManager,
+    SessionManagerConfig, TaskWorktreePreparer, WorktreeSandboxRefreshOutcome,
+    MID_TURN_SANDBOX_REFRESH_HINT,
 };
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,
@@ -81,21 +74,11 @@ pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,
     BackgroundTaskState, BackgroundWake, SubagentDefinition,
 };
-pub use subscription_usage::{
-    HttpUsageResponse, ProviderSubscriptionUsageCollector, SubscriptionUsageCollectOutcome,
-    SubscriptionUsageCollectRequest, SubscriptionUsageCollector, SubscriptionUsageTransport,
-    SystemHttpsUsageTransport, UsageTransportError,
-};
 pub use turn_attachments::{
-    TurnAttachmentMeta, TurnAttachmentRef, TurnAttachmentResolveError, TurnAttachmentResolver,
-    TurnDeliveryAttachment, TurnDeliveryScope, TurnImageDerivative, MAX_DOC_STAGING_BYTES_PER_TURN,
-    MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN, UNTRUSTED_ATTACHMENTS_CLOSE,
-    UNTRUSTED_ATTACHMENTS_OPEN,
+    TurnAttachmentResolveError, TurnAttachmentResolver, TurnDeliveryAttachment, TurnDeliveryScope,
+    MAX_INLINE_IMAGES_PER_TURN,
 };
-pub use turn_attachments_adapter::{
-    from_office_attachment_record, from_office_delivery_payload, from_office_delivery_scope,
-    map_office_delivery_result, to_office_delivery_scope, LocalOfficeAttachmentResolver,
-};
+pub use turn_attachments_adapter::{map_office_delivery_result, to_office_delivery_scope};
 pub use wake::{
     compose_coalesced_wake_objective, compose_mid_turn_notice_batch, sanitize_untrusted_body,
     MidTurnLimits, MidTurnRateTracker, MidTurnSelection, PendingAskAnswer, PendingWakeItem,

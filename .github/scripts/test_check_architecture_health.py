@@ -107,7 +107,15 @@ class TestCrateSizeRatchet(unittest.TestCase):
             root = Path(tmp)
             # 25,000 non-test lines + 6,000 test lines (excluded) => 25,000 non-test LOC -> warn only.
             prod = "pub fn a() {}\n" * 25_000
-            inline_tests = "#[cfg(test)]\nmod tests {\n" + ("    fn t() {}\n" * 6_000) + "}\n"
+            inline_tests = (
+                "#[cfg(test)]\nmod foo_tests;\n"
+                "#[cfg(test)]\nmod tests;\n"
+                "#[cfg(test)]\nmod testkit;\n"
+                "#[cfg(test)]\nmod testkit_helpers;\n"
+                "#[cfg(test)]\nmod inline_t {\n"
+                + ("    fn t() {}\n" * 6_000)
+                + "}\n"
+            )
             _create_workspace(
                 root,
                 ["crates/org-alpha"],
@@ -324,6 +332,7 @@ class TestShrinkOnlyBaseEnforcement(unittest.TestCase):
                 "crates/org-host": (
                     '[package]\nname = "org-host"\nversion = "0.0.0"\n',
                     {
+                        "src/lib.rs": "mod a;\nmod b;\n",
                         "src/a.rs": "use std::os::unix::net::UnixStream;\nfn f(_: UnixStream) {}\n",
                         "src/b.rs": "use std::os::unix::net::UnixStream;\nfn g() {}\n",
                     },
@@ -443,6 +452,7 @@ class TestShrinkOnlyBaseEnforcement(unittest.TestCase):
 
             # Shrink org-host ceiling (45000 -> 44000) and rename/split a.rs (2 -> 1) into a_part.rs (1)
             # while deleting b.rs (1 -> 0): total drops 3 -> 2, no existing path rises -> PASS!
+            _write(root, "crates/org-host/src/lib.rs", "mod a;\nmod a_part;\nmod b;\n")
             _write(root, "crates/org-host/src/a.rs", "use std::os::unix::net::UnixStream;\n")
             _write(root, "crates/org-host/src/a_part.rs", "use std::os::unix::net::UnixStream;\n")
             _write(root, "crates/org-host/src/b.rs", "pub fn clean() {}\n")
@@ -484,17 +494,25 @@ class TestInfraCouplingDetection(unittest.TestCase):
                 root,
                 [
                     "crates/org-office",
+                    "crates/org-office-sqlite",
                     "crates/org-host-sqlite",
                     "crates/org-platform",
                     "crates/org-socket",
                     "crates/org-client",
                 ],
                 {
+                    "crates/org-office-sqlite": (
+                        '[package]\nname = "org-office-sqlite"\nversion = "0.0.0"\n',
+                        {
+                            "src/lib.rs": "mod conn;\n",
+                            # Allowed inside extracted SQLite adapter crate:
+                            "src/conn.rs": "use rusqlite::Connection;\n",
+                        },
+                    ),
                     "crates/org-office": (
                         '[package]\nname = "org-office"\nversion = "0.0.0"\n',
                         {
-                            # Allowed inside SQLite adapter:
-                            "src/store/sqlite/conn.rs": "use rusqlite::Connection;\n",
+                            "src/lib.rs": "mod domain;\nmod clean;\n",
                             # Violating outside adapter:
                             "src/domain.rs": (
                                 "use rusqlite::Connection;\n"
@@ -528,20 +546,27 @@ class TestInfraCouplingDetection(unittest.TestCase):
                     "crates/org-platform": (
                         '[package]\nname = "org-platform"\nversion = "0.0.0"\n',
                         {
+                            "src/lib.rs": "mod confinement { mod macos; }\n",
                             "src/confinement/macos.rs": (
                                 "use std::os::unix::net::UnixStream;\n"
                                 "extern \"C\" { fn sandbox_init_with_parameters(); }\n"
                                 'const BIN: &str = "sandbox-exec";\n'
-                            )
+                            ),
                         },
                     ),
                     "crates/org-socket": (
                         '[package]\nname = "org-socket"\nversion = "0.0.0"\n',
-                        {"src/peer.rs": "use std::os::unix::net::UnixStream;\n"},
+                        {
+                            "src/lib.rs": "mod peer;\n",
+                            "src/peer.rs": "use std::os::unix::net::UnixStream;\n",
+                        },
                     ),
                     "crates/org-client": (
                         '[package]\nname = "org-client"\nversion = "0.0.0"\n',
-                        {"src/transport.rs": "use std::os::unix::net::UnixStream;\n"},
+                        {
+                            "src/lib.rs": "mod transport;\n",
+                            "src/transport.rs": "use std::os::unix::net::UnixStream;\n",
+                        },
                     ),
                 },
             )
@@ -705,7 +730,7 @@ mod tests {
                 {
                     "crates/org-host": (
                         '[package]\nname = "org-host"\nversion = "0.0.0"\n',
-                        {"src/hostdb.rs": src},
+                        {"src/lib.rs": "mod hostdb;\n", "src/hostdb.rs": src},
                     )
                 },
             )
@@ -765,12 +790,12 @@ class TestCargoDagAndLayer0(unittest.TestCase):
                     "crates/org-a": (
                         '[package]\nname = "org-a"\nversion = "0.0.0"\n'
                         '[dependencies]\norg-b = { path = "../org-b" }\n',
-                        {"src/lib.rs": ""},
+                        {"src/lib.rs": "use org_b::B;\n"},
                     ),
                     "crates/org-b": (
                         '[package]\nname = "org-b"\nversion = "0.0.0"\n'
                         '[dependencies]\norg-a = { path = "../org-a" }\n',
-                        {"src/lib.rs": ""},
+                        {"src/lib.rs": "pub struct B;\n#[cfg(test)]\nmod t { use org_a; }\n"},
                     ),
                 },
             )
@@ -818,22 +843,22 @@ class TestCargoDagAndLayer0(unittest.TestCase):
                         '[package]\nname = "org-store"\nversion = "0.0.0"\n'
                         '[dependencies]\norg-platform = { path = "../org-platform" }\n'
                         '[target.\'cfg(unix)\'.dependencies]\noff = { package = "org-office", path = "../org-office" }\n',
-                        {"src/lib.rs": ""},
+                        {"src/lib.rs": "use org_platform::P;\n"},
                     ),
                     "crates/org-command": (
                         '[package]\nname = "org-command"\nversion = "0.0.0"\n'
                         '[dependencies]\norg-proto = { path = "../org-proto" }\n'
                         'org-docs = { path = "../org-docs" }\n',
-                        {"src/lib.rs": ""},
+                        {"src/lib.rs": "use org_proto::A;\nuse org_docs::D;\n"},
                     ),
                     "crates/org-docs": (
                         '[package]\nname = "org-docs"\nversion = "0.0.0"\n',
-                        {"src/lib.rs": ""},
+                        {"src/lib.rs": "pub struct D;\n"},
                     ),
                     "crates/org-office": (
                         '[package]\nname = "org-office"\nversion = "0.0.0"\n'
                         '[dependencies]\norg-proto = { path = "../org-proto" }\n',
-                        {"src/lib.rs": ""},
+                        {"src/lib.rs": "use org_proto::A;\n"},
                     ),
                 },
             )
@@ -1069,6 +1094,249 @@ path = "examples/demo.rs"
                 code2 = health.main(["--repo-root", str(root), "--print-baseline"])
             self.assertEqual(code2, 0)
             self.assertIn("[crate_loc]", out2.getvalue())
+
+
+class TestWorkspaceHygiene(unittest.TestCase):
+    def test_unused_test_only_and_redundant_workspace_deps_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-proto", "crates/org-docs", "crates/org-app"],
+                {
+                    "crates/org-proto": (
+                        '[package]\nname = "org-proto"\nversion = "0.0.0"\n'
+                        "[features]\ntestkit = []\n",
+                        {
+                            "src/lib.rs": (
+                                "#[macro_export]\nmacro_rules! proto_id { () => { 1 }; }\n"
+                            )
+                        },
+                    ),
+                    "crates/org-docs": (
+                        '[package]\nname = "org-docs"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "pub fn doc() {}\n"},
+                    ),
+                    "crates/org-app": (
+                        '[package]\nname = "org-app"\nversion = "0.0.0"\n'
+                        '[dependencies]\n'
+                        'org-proto = { path = "../org-proto" }\n'
+                        'org-docs = { path = "../org-docs" }\n'
+                        '[dev-dependencies]\n'
+                        'org-proto = { path = "../org-proto", features = ["testkit"] }\n'
+                        'org-docs = { path = "../org-docs" }\n'
+                        'org-app = { path = ".", features = [] }\n',
+                        {
+                            "src/lib.rs": (
+                                "pub fn id() -> i32 { proto_id!() }\n"
+                                "#[cfg(test)]\nmod t { fn x() { org_docs::doc(); } }\n"
+                            )
+                        },
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            # org-proto is used via #[macro_export] + feature-activating dev-dep -> clean!
+            self.assertFalse(any("org-proto" in e for e in res.errors), res.errors)
+            # org-app self dev-dep -> clean!
+            self.assertFalse(any("`org-app`" in e for e in res.errors), res.errors)
+            # org-docs is test-only in [dependencies] AND redundant in [dev-dependencies] -> both caught!
+            self.assertTrue(any("only referenced in test code" in e and "`org-docs`" in e for e in res.errors), res.errors)
+            self.assertTrue(any("Redundant workspace dev-dependency" in e and "`org-docs`" in e for e in res.errors), res.errors)
+
+    def test_unused_dev_and_build_deps_and_cargo_bin_exe_recognition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-proto", "crates/org-docs", "apps/org-bin"],
+                {
+                    "crates/org-proto": (
+                        '[package]\nname = "org-proto"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "pub fn p() {}\n"},
+                    ),
+                    "crates/org-docs": (
+                        '[package]\nname = "org-docs"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "pub fn d() {}\n"},
+                    ),
+                    "apps/org-bin": (
+                        '[package]\nname = "org-bin"\nversion = "0.0.0"\n'
+                        '[dev-dependencies]\n'
+                        'org-proto = { path = "../../crates/org-proto" }\n'
+                        'org-docs = { path = "../../crates/org-docs" }\n'
+                        '[build-dependencies]\n'
+                        'org-docs = { path = "../../crates/org-docs" }\n',
+                        {
+                            "build.rs": "fn main() {}\n",
+                            "src/main.rs": "fn main() {}\n",
+                            "tests/smoke.rs": 'const BIN: &str = env!("CARGO_BIN_EXE_org-proto");\n',
+                        },
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertFalse(any("`org-proto`" in e for e in res.errors), res.errors)
+            self.assertTrue(any("Unused workspace dev-dependency" in e and "`org-docs`" in e for e in res.errors), res.errors)
+            self.assertTrue(any("Unused workspace build-dependency" in e and "`org-docs`" in e for e in res.errors), res.errors)
+
+    def test_orphan_rs_files_detected_and_path_inline_include_respected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-clean"],
+                {
+                    "crates/org-clean": (
+                        '[package]\nname = "org-clean"\nversion = "0.0.0"\n'
+                        '[[test]]\nname = "custom"\npath = "extra/suite.rs"\n',
+                        {
+                            "src/lib.rs": (
+                                "mod sub { mod leaf; }\n"
+                                '#[path = "custom_mod.rs"]\npub(crate) mod aliased;\n'
+                                '#[cfg_attr(target_os = "macos", path = "os_mac.rs")]\n'
+                                '#[cfg_attr(target_os = "linux", path = "os_linux.rs")]\n'
+                                "pub mod platform;\n"
+                                '#[cfg_attr(feature = "alt", path = "alt_impl.rs")]\n'
+                                "mod fallback;\n"
+                                'include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/manifest_gen.rs"));\n'
+                                'include!(concat!("gen/", "part.rs"));\n'
+                            ),
+                            "src/sub/leaf.rs": "pub fn leaf() {}\n",
+                            "src/custom_mod.rs": "pub fn aliased() {}\n",
+                            "src/os_mac.rs": "pub fn mac() {}\n",
+                            "src/os_linux.rs": "pub fn lin() {}\n",
+                            "src/alt_impl.rs": "pub fn alt() {}\n",
+                            "src/fallback.rs": "pub fn fb() {}\n",
+                            "src/manifest_gen.rs": "pub fn gen1() {}\n",
+                            "src/gen/part.rs": "pub fn gen2() {}\n",
+                            "src/orphan_leftover.rs": "pub fn dead() {}\n",
+                            "extra/suite.rs": "mod helper;\n",
+                            "extra/helper.rs": "pub fn h() {}\n",
+                            "tests/orphan_dir/unused.rs": "pub fn u() {}\n",
+                        },
+                    )
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertEqual(len(res.errors), 2, res.errors)
+            self.assertTrue(any("src/orphan_leftover.rs" in e for e in res.errors), res.errors)
+            self.assertTrue(any("tests/orphan_dir/unused.rs" in e for e in res.errors), res.errors)
+
+    def test_layer0_org_release_upward_dependency_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-release", "crates/org-host"],
+                {
+                    "crates/org-release": (
+                        '[package]\nname = "org-release"\nversion = "0.0.0"\n'
+                        '[dependencies]\norg-host = { path = "../org-host" }\n',
+                        {"src/lib.rs": "pub fn check() { let _ = org_host::H; }\n"},
+                    ),
+                    "crates/org-host": (
+                        '[package]\nname = "org-host"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "pub const H: u8 = 1;\n"},
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertTrue(
+                any("Layer-0 stability violation" in e and "`org-release`" in e and "`org-host`" in e for e in res.errors),
+                res.errors,
+            )
+
+            _write(
+                root,
+                "crates/org-release/Cargo.toml",
+                '[package]\nname = "org-release"\nversion = "0.0.0"\n',
+            )
+            _write(root, "crates/org-release/src/lib.rs", "pub fn check() {}\n")
+            ok = health.run_health_check(root)
+            self.assertEqual(ok.errors, [])
+            self.assertIn("org-release", ok.layer0_checked)
+
+    def test_cargo_bin_exe_prefix_does_not_mask_unused_dev_dep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["apps/agentic-org", "apps/agentic-org-office", "crates/org-consumer"],
+                {
+                    "apps/agentic-org": (
+                        '[package]\nname = "agentic-org"\nversion = "0.0.0"\n',
+                        {"src/main.rs": "fn main() {}\n"},
+                    ),
+                    "apps/agentic-org-office": (
+                        '[package]\nname = "agentic-org-office"\nversion = "0.0.0"\n',
+                        {"src/main.rs": "fn main() {}\n"},
+                    ),
+                    "crates/org-consumer": (
+                        '[package]\nname = "org-consumer"\nversion = "0.0.0"\n'
+                        '[dev-dependencies]\n'
+                        'agentic-org = { path = "../../apps/agentic-org" }\n'
+                        'agentic-org-office = { path = "../../apps/agentic-org-office" }\n',
+                        {
+                            "src/lib.rs": "pub fn c() {}\n",
+                            "tests/smoke.rs": (
+                                'const OFFICE: &str = env!("CARGO_BIN_EXE_agentic-org-office");\n'
+                            ),
+                        },
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertTrue(
+                any("Unused workspace dev-dependency" in e and "`agentic-org`" in e for e in res.errors),
+                res.errors,
+            )
+            self.assertFalse(
+                any("`agentic-org-office`" in e for e in res.errors),
+                res.errors,
+            )
+
+    def test_dev_dep_default_features_target_widening_and_custom_bin_name_not_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                ["crates/org-proto", "crates/org-docs", "apps/org-tool", "crates/org-consumer"],
+                {
+                    "crates/org-proto": (
+                        '[package]\nname = "org-proto"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "pub fn p() {}\n"},
+                    ),
+                    "crates/org-docs": (
+                        '[package]\nname = "org-docs"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "pub fn d() {}\n"},
+                    ),
+                    "apps/org-tool": (
+                        '[package]\nname = "org-tool"\nversion = "0.0.0"\n'
+                        '[[bin]]\nname = "custom-cli"\npath = "src/main.rs"\n'
+                        '[dependencies]\n'
+                        'org-proto = { path = "../../crates/org-proto", default-features = false }\n'
+                        '[target.\'cfg(unix)\'.dependencies]\n'
+                        'org-docs = { path = "../../crates/org-docs" }\n'
+                        '[dev-dependencies]\n'
+                        'org-proto = { path = "../../crates/org-proto" }\n'
+                        'org-docs = { path = "../../crates/org-docs" }\n',
+                        {
+                            "src/main.rs": "fn main() { org_proto::p(); org_docs::d(); }\n",
+                        },
+                    ),
+                    "crates/org-consumer": (
+                        '[package]\nname = "org-consumer"\nversion = "0.0.0"\n'
+                        '[dev-dependencies]\n'
+                        'org-tool = { path = "../../apps/org-tool" }\n',
+                        {
+                            "src/lib.rs": "pub fn run() {}\n",
+                            "tests/bin.rs": 'const BIN: &str = env!("CARGO_BIN_EXE_custom-cli");\n',
+                        },
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertEqual(res.errors, [])
 
 
 if __name__ == "__main__":

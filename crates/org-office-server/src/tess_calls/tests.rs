@@ -606,7 +606,7 @@ fn ui_present_verifies_entities_and_fails_closed_on_unknown_unauthorized_or_exce
                 }],
                 navigation: vec![UiNavigation {
                     label: "Open ops room".into(),
-                    route: format!("/chat/channels/{}", h.channel_id),
+                    route: format!("/chat?c={}", h.channel_id),
                     entity_kind: Some(UiEntityKind::Channel),
                     entity_id: Some(h.channel_id.clone()),
                 }],
@@ -631,7 +631,7 @@ fn ui_present_verifies_entities_and_fails_closed_on_unknown_unauthorized_or_exce
     assert_eq!(presented.ui_block.follow_ups.len(), 3);
     assert_eq!(
         presented.ui_block.entity_links[0].route,
-        format!("/tasks/{}", h.task_key)
+        format!("/work/{}", h.task_key)
     );
 
     // Non-existent entity fails closed with NotFound.
@@ -1423,14 +1423,14 @@ fn p1_3_ui_present_rejects_entity_route_mismatch_deep_unverified_routes_and_unsa
             &UiPresentParams {
                 navigation: vec![
                     UiNavigation {
-                        label: "All tasks".into(),
-                        route: "/tasks".into(),
+                        label: "All work".into(),
+                        route: "/work".into(),
                         entity_kind: None,
                         entity_id: None,
                     },
                     UiNavigation {
                         label: "Target task".into(),
-                        route: format!("/tasks/{}", h.task_key),
+                        route: format!("/work/{}", h.task_key),
                         entity_kind: Some(UiEntityKind::Task),
                         entity_id: Some(h.task_key.clone()),
                     },
@@ -1440,10 +1440,10 @@ fn p1_3_ui_present_rejects_entity_route_mismatch_deep_unverified_routes_and_unsa
         )
         .unwrap();
     assert_eq!(ok.ui_block.navigation.len(), 2);
-    assert_eq!(ok.ui_block.navigation[0].route, "/tasks");
+    assert_eq!(ok.ui_block.navigation[0].route, "/work");
     assert_eq!(
         ok.ui_block.navigation[1].route,
-        format!("/tasks/{}", h.task_key)
+        format!("/work/{}", h.task_key)
     );
 }
 

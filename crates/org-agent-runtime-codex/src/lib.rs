@@ -122,6 +122,7 @@ impl AgentRuntime for CodexRuntime {
             uses_host_oauth_token_injection: false,
             uses_mount_mask_sandbox: false,
             needs_explicit_sandbox_ro_dirs: false,
+            sandbox_settings_file: None,
         }
     }
 

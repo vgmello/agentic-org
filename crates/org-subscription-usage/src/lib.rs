@@ -20,7 +20,7 @@ use org_proto::costs::{
 };
 use org_proto::sessions::ProviderCredentialView;
 use org_redact::redact_text;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 mod endpoint;
 mod oauth;
@@ -34,9 +34,12 @@ use endpoint::{
     classify_http_and_parse, default_provider_origin, is_valid_bearer_token,
     resolve_provider_endpoint, transport_error_msg,
 };
-use oauth::parse_usage_oauth_credential;
 
 pub use endpoint::{validate_usage_endpoint_url, ValidatedEndpoint};
+pub use oauth::{
+    parse_oauth_envelope, validate_oauth_secret_token, ParsedOAuthEnvelope,
+    MAX_VAULT_OAUTH_CRED_BYTES,
+};
 pub use rollup::{
     collect_subscription_usage, list_subscription_usage, revoke_subscription_usage_credential,
     set_subscription_usage_credential,
@@ -232,11 +235,41 @@ fn extract_usage_bearer_token(
     let candidate = if auth_source == SubscriptionUsageAuthSource::EnrolledSubscriptionCredential
         || raw.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'{')
     {
-        parse_usage_oauth_credential(raw)?.access_token
+        parse_oauth_envelope(raw).ok()?.access_token
     } else {
         Zeroizing::new(std::str::from_utf8(raw).ok()?.trim().to_owned())
     };
     is_valid_bearer_token(candidate.as_str()).then_some(candidate)
+}
+
+/// RAII header list that scrubs every header name and value from heap memory on drop
+/// (including across unwinds) so live bearer tokens never linger unzeroized.
+pub(crate) struct ZeroizingHeaders(Vec<(String, String)>);
+
+impl ZeroizingHeaders {
+    pub(crate) fn new(bearer_token: &str, extra_headers: Vec<(String, String)>) -> Self {
+        let mut auth = String::with_capacity("Bearer ".len() + bearer_token.len());
+        auth.push_str("Bearer ");
+        auth.push_str(bearer_token);
+        let mut headers = Vec::with_capacity(2 + extra_headers.len());
+        headers.push(("Authorization".to_owned(), auth));
+        headers.push(("Accept".to_owned(), "application/json".to_owned()));
+        headers.extend(extra_headers);
+        Self(headers)
+    }
+
+    pub(crate) fn as_slice(&self) -> &[(String, String)] {
+        &self.0
+    }
+}
+
+impl Drop for ZeroizingHeaders {
+    fn drop(&mut self) {
+        for (name, value) in &mut self.0 {
+            name.zeroize();
+            value.zeroize();
+        }
+    }
 }
 
 impl SubscriptionUsageCollector for ProviderSubscriptionUsageCollector {
@@ -282,12 +315,12 @@ impl SubscriptionUsageCollector for ProviderSubscriptionUsageCollector {
             };
         }
         let effective_deadline = cred_deadline.map_or(req.deadline, |cd| req.deadline.min(cd));
-        let mut headers = vec![
-            ("Authorization".to_owned(), format!("Bearer {token}")),
-            ("Accept".to_owned(), "application/json".to_owned()),
-        ];
-        headers.extend(extra_headers);
-        let resp = match self.transport.get_json(&url, &headers, effective_deadline) {
+        let headers = ZeroizingHeaders::new(token, extra_headers);
+        let transport_result =
+            self.transport
+                .get_json(&url, headers.as_slice(), effective_deadline);
+        drop(headers);
+        let resp = match transport_result {
             Ok(r) => r,
             Err(UsageTransportError::InvalidHeader(_)) => {
                 return SubscriptionUsageCollectOutcome::AuthRequired {

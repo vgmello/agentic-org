@@ -6,8 +6,3 @@ pub use org_media::{
     ooxml, pdf, sniff, text, too_large, unsupported, validate, MediaType, ModelDerivative,
     ValidatedFile,
 };
-
-#[cfg(test)]
-pub(crate) mod tests {
-    pub(crate) use org_media::testkit as fixtures;
-}

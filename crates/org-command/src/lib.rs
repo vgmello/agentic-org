@@ -34,7 +34,10 @@ pub use envelope::{code_name, envelope_schema};
 pub use help::CATALOGUE_LIMIT;
 pub use node::Node;
 pub use office::{Answer, KeySource, Office, Refusal, RefusalDetails, Request, Sources, Status};
-pub use parse::{DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES};
+pub use parse::{
+    parse_env_format, Format, DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES,
+    OUTPUT_FORMAT_ENV,
+};
 pub use row::{Ack, Command, Example, Field, IfMatch, Kind, MutationPolicy, Type};
 pub use table::{Alias, CommandTable, PolicyOverride, TableError};
 
@@ -46,7 +49,7 @@ pub fn validate_input(command: &Command, input: &Map<String, Value>) -> Result<(
 }
 
 use org_proto::ErrorCode;
-use parse::{Format, Parsed};
+use parse::Parsed;
 use serde_json::{Map, Value};
 
 /// What a command prints on standard output, and the exit code: 0 when `ok` is true, 1 when it
@@ -106,7 +109,7 @@ pub fn check(
     args: &[String],
     sources: &mut dyn Sources,
 ) -> Result<(), Refusal> {
-    match parse::parse(table, program, args, sources) {
+    match parse::parse(table, program, args, sources, None) {
         Ok(_) => Ok(()),
         Err(usage) => Err(Refusal::new(
             ErrorCode::InvalidRequest,
@@ -116,9 +119,7 @@ pub fn check(
     }
 }
 
-/// Runs one command line. `program` is the executable's name, for help and hints; `args` are
-/// the arguments after it. The command line is read first: one that cannot be read is answered
-/// with `invalid_request` and exit code 2, and neither the key source nor the office is called.
+/// Runs one command line with no ambient environment format override.
 pub fn run(
     table: &CommandTable,
     program: &str,
@@ -127,128 +128,184 @@ pub fn run(
     keys: &mut dyn KeySource,
     office: &mut dyn Office,
 ) -> Output {
-    let mut invocation = match parse::parse(table, program, args, sources) {
-        Ok(Parsed::Help(text)) => {
-            return Output {
-                stdout: text,
-                exit_code: 0,
-            }
-        }
+    run_with_env_format(table, program, args, sources, keys, office, None)
+}
+
+fn parse_invocation(
+    table: &CommandTable,
+    program: &str,
+    args: &[String],
+    sources: &mut dyn Sources,
+    env_format: Option<&str>,
+) -> Result<Box<parse::Invocation>, Output> {
+    match parse::parse(table, program, args, sources, env_format) {
+        Ok(Parsed::Help(text)) => Err(Output {
+            stdout: text,
+            exit_code: 0,
+        }),
         Ok(Parsed::Schema(command, format)) => {
             let data = help::schema(command);
             let stdout = match format {
                 Format::Compact => data.to_compact(&[]),
                 _ => print(&envelope::local(data), format),
             };
-            return Output {
+            Err(Output {
                 stdout,
                 exit_code: 0,
-            };
+            })
         }
-        Ok(Parsed::Call(invocation)) => invocation,
+        Ok(Parsed::Call(invocation)) => Ok(invocation),
         Err(usage) => {
             let refusal = Refusal::new(ErrorCode::InvalidRequest, usage.message, usage.hint);
-            return Output {
+            Err(Output {
                 stdout: print(&envelope::failure(&refusal, false), Format::Json),
                 exit_code: EXIT_USAGE,
-            };
+            })
         }
-    };
-    let command = invocation.request.command;
-    // Every change carries a key (design 2.7). A dry run changes nothing and takes none.
-    if command.is_write()
-        && !invocation.request.dry_run
-        && invocation.request.idempotency_key.is_none()
-    {
-        let key = keys.new_key();
-        if !parse::is_key(&key) {
-            let refusal = Refusal::new(
-                ErrorCode::Unavailable,
-                format!("`{program}` could not make an idempotency key for this change."),
-                "Nothing was sent. Give a key yourself with --idempotency-key: 1 to 64 letters, digits and hyphens.",
-            );
-            return failed(&refusal, false);
-        }
-        invocation.request.idempotency_key = Some(key);
     }
-    let request = &invocation.request;
+}
+
+/// Ensures every live write carries an idempotency key (design 2.7); dry runs take none.
+fn ensure_idempotency_key(
+    program: &str,
+    request: &mut Request,
+    keys: &mut dyn KeySource,
+) -> Result<(), Output> {
+    if !request.command.is_write() || request.dry_run || request.idempotency_key.is_some() {
+        return Ok(());
+    }
+    let key = keys.new_key();
+    if !parse::is_key(&key) {
+        let refusal = Refusal::new(
+            ErrorCode::Unavailable,
+            format!("`{program}` could not make an idempotency key for this change."),
+            "Nothing was sent. Give a key yourself with --idempotency-key: 1 to 64 letters, digits and hyphens.",
+        );
+        return Err(failed(&refusal, false));
+    }
+    request.idempotency_key = Some(key);
+    Ok(())
+}
+
+/// Dispatches `request` to `office`, attaching `operation_id` and `retry_with` hints on transient
+/// failures so repeating a write with the same idempotency key stays safe (design 2.4).
+fn call_office(office: &mut dyn Office, request: &Request) -> Result<Answer, Output> {
     let key = request.idempotency_key.as_deref();
-    let answer = match office.call(request) {
-        Ok(answer) => answer,
-        Err(mut refusal) => {
-            if refusal.operation_id.is_none() {
-                refusal.operation_id = key.map(str::to_owned);
-            }
-            // Repeating the call with the same key is what can succeed (design 2.4). A timeout
-            // is the same: the office may have made the change, and only the same key makes a
-            // repeat safe.
-            if let (ErrorCode::Unavailable | ErrorCode::NotReady | ErrorCode::Timeout, Some(key)) =
-                (refusal.code, key)
-            {
-                refusal
-                    .retry_with
-                    .get_or_insert_with(Map::new)
-                    .insert("idempotency-key".to_owned(), Value::String(key.to_owned()));
-            }
-            return failed(&refusal, request.dry_run);
+    office.call(request).map_err(|mut refusal| {
+        if refusal.operation_id.is_none() {
+            refusal.operation_id = key.map(str::to_owned);
         }
-    };
-    // `data` is exactly what the row declares, or the command fails: nothing the row does not
-    // declare is printed in any format, and a caller never gets a record with a hole in it.
-    let mut data = match shape::conform(command, &answer.data) {
-        Ok(data) => data,
-        Err(problem) => {
-            let changed = if command.is_write() && !request.dry_run {
-                " The change may have been made: read the record before you repeat it."
-            } else {
-                ""
-            };
-            let refusal = Refusal {
-                operation_id: answer.operation_id.clone().or(key.map(str::to_owned)),
-                ..Refusal::new(
-                    ErrorCode::Unavailable,
-                    format!(
-                        "The office's answer to `{}` is not the answer the command declares: {problem}.",
-                        command.name()
-                    ),
-                    format!(
-                        "This is a fault between `{program}` and the office, not in what you gave.{changed} `{program} {} --schema` shows the declared answer.",
-                        command.name()
-                    ),
-                )
-            };
-            return failed(&refusal, request.dry_run);
+        if let (ErrorCode::Unavailable | ErrorCode::NotReady | ErrorCode::Timeout, Some(key)) =
+            (refusal.code, key)
+        {
+            refusal
+                .retry_with
+                .get_or_insert_with(Map::new)
+                .insert("idempotency-key".to_owned(), Value::String(key.to_owned()));
         }
-    };
-    // The columns of a compact list: the chosen fields, or every declared one, in the
-    // record's own order.
-    let mut columns: Vec<&str> = command.output.iter().map(|field| field.name).collect();
+        failed(&refusal, request.dry_run)
+    })
+}
+
+/// Conforms `answer.data` to the command's declared output schema: nothing undeclared is printed,
+/// and a missing required field fails cleanly.
+fn conform_answer(program: &str, request: &Request, answer: &Answer) -> Result<Node, Output> {
+    let command = request.command;
+    let key = request.idempotency_key.as_deref();
+    shape::conform(command, &answer.data).map_err(|problem| {
+        let changed = if command.is_write() && !request.dry_run {
+            " The change may have been made: read the record before you repeat it."
+        } else {
+            ""
+        };
+        let refusal = Refusal {
+            operation_id: answer.operation_id.clone().or(key.map(str::to_owned)),
+            ..Refusal::new(
+                ErrorCode::Unavailable,
+                format!(
+                    "The office's answer to `{}` is not the answer the command declares: {problem}.",
+                    command.name()
+                ),
+                format!(
+                    "This is a fault between `{program}` and the office, not in what you gave.{changed} `{program} {} --schema` shows the declared answer.",
+                    command.name()
+                ),
+            )
+        };
+        failed(&refusal, request.dry_run)
+    })
+}
+
+/// Applies `--fields` projection and formats the conformed answer in the resolved output format.
+fn render_success(invocation: &parse::Invocation, answer: &Answer, mut data: Node) -> Output {
+    let request = &invocation.request;
+    let mut columns: Vec<&str> = request
+        .command
+        .output
+        .iter()
+        .map(|field| field.name)
+        .collect();
     if let Some(paths) = &invocation.fields {
         let paths: Vec<&[String]> = paths.iter().map(Vec::as_slice).collect();
         data = shape::project(data, &paths);
         columns.retain(|column| paths.iter().any(|path| path[0] == *column));
     }
-    let meta = envelope::success_meta(&answer, request.dry_run, key);
+    let meta = envelope::success_meta(answer, request.dry_run, request.idempotency_key.as_deref());
     let stdout = match invocation.format {
-        Format::Compact => {
-            let mut out = data.to_compact(&columns);
-            // `compact` prints `data` alone, except when the caller cannot act without `meta`:
-            // the command did not complete, there is another page, or a list that reports its
-            // total printed no line (`task list --count`, or nothing matched).
-            let counted_nothing =
-                answer.total.is_some() && matches!(&data, Node::List(items) if items.is_empty());
-            if answer.status != Status::Completed || answer.next_cursor.is_some() || counted_nothing
-            {
-                out.push_str(&format!("meta: {}\n", meta.to_one_line()));
-            }
-            out
-        }
+        Format::Compact => format_compact(&data, &columns, answer, &meta),
         format => print(&envelope::success(data, meta), format),
     };
     Output {
         stdout,
         exit_code: 0,
     }
+}
+
+fn format_compact(data: &Node, columns: &[&str], answer: &Answer, meta: &Node) -> String {
+    let mut out = data.to_compact(columns);
+    // `compact` prints `data` alone, except when the caller cannot act without `meta`: the
+    // command did not complete, there is another page, or a list that reports its total printed
+    // no line (`task list --count`, or nothing matched).
+    let counted_nothing =
+        answer.total.is_some() && matches!(data, Node::List(items) if items.is_empty());
+    if answer.status != Status::Completed || answer.next_cursor.is_some() || counted_nothing {
+        out.push_str(&format!("meta: {}\n", meta.to_one_line()));
+    }
+    out
+}
+
+fn execute_with_env_format(
+    table: &CommandTable,
+    program: &str,
+    args: &[String],
+    sources: &mut dyn Sources,
+    keys: &mut dyn KeySource,
+    office: &mut dyn Office,
+    env_format: Option<&str>,
+) -> Result<Output, Output> {
+    let mut invocation = parse_invocation(table, program, args, sources, env_format)?;
+    ensure_idempotency_key(program, &mut invocation.request, keys)?;
+    let answer = call_office(office, &invocation.request)?;
+    let data = conform_answer(program, &invocation.request, &answer)?;
+    Ok(render_success(&invocation, &answer, data))
+}
+
+/// Runs one command line. `program` is the executable's name, for help and hints; `args` are
+/// the arguments after it; `env_format` is the raw value of `AGENT_OS_FORMAT` when set (used when
+/// neither `--json` nor `--format` is passed on the command line). The command line is read first:
+/// one that cannot be read is answered with `invalid_request` and exit code 2, and neither the
+/// key source nor the office is called.
+pub fn run_with_env_format(
+    table: &CommandTable,
+    program: &str,
+    args: &[String],
+    sources: &mut dyn Sources,
+    keys: &mut dyn KeySource,
+    office: &mut dyn Office,
+    env_format: Option<&str>,
+) -> Output {
+    execute_with_env_format(table, program, args, sources, keys, office, env_format)
+        .unwrap_or_else(|output| output)
 }
 
 #[cfg(test)]

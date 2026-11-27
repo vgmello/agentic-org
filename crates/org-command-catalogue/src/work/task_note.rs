@@ -2,6 +2,8 @@
 
 use org_command::{Ack, Alias, Command, Example, Field, IfMatch, Kind, Type};
 
+use crate::shared::STRING_TYPE;
+
 use super::schema::{COMMENT_TYPE, READ_ERRORS, WRITE_ERRORS};
 
 /// `task note <verb>` is `task-note <verb>`.
@@ -15,6 +17,13 @@ const NOTE_OUTPUT_FIELDS: &[Field] = &[
     Field::required("task_id", Type::String, "Task UUIDv7"),
     Field::required("author_id", Type::String, "Author employee UUIDv7"),
     Field::required("revision", Type::Integer, "Note revision"),
+    Field::optional(
+        "kind",
+        Type::Enum(&["note", "plan", "decision", "unknown"]),
+        "Private note kind",
+    ),
+    Field::optional("title", Type::String, "Note title"),
+    Field::optional("tags", Type::List(&STRING_TYPE), "Normalized note tags"),
     Field::required("body_markdown", Type::String, "Private Markdown body"),
     Field::required("created_at", Type::String, "Creation timestamp"),
     Field::required("updated_at", Type::String, "Update timestamp"),
@@ -40,11 +49,21 @@ const NOTE_PUBLISH_FIELDS: &[Field] = &[
 const NOTE_ADD_INPUT: &[Field] = &[
     Field::required("task", Type::String, "Task UUIDv7 or T-<CODE><N> key"),
     Field::required("text", Type::String, "Private note Markdown text"),
+    Field::optional(
+        "checkpoint",
+        Type::Boolean,
+        "Upsert your single pinned working-checkpoint note on this task",
+    ),
 ];
 
 const NOTE_LIST_INPUT: &[Field] = &[
     Field::required("task", Type::String, "Task UUIDv7 or T-<CODE><N> key"),
     Field::optional("author_id", Type::String, "Filter by author ID (people)"),
+    Field::optional(
+        "checkpoint",
+        Type::Boolean,
+        "Filter to working-checkpoint notes only",
+    ),
 ];
 
 const NOTE_ID_INPUT: &[Field] = &[Field::required("id", Type::String, "Private note UUIDv7")];
