@@ -15,8 +15,10 @@ import { listIsOverlay, watchListMode } from "./chat-layout.js";
 import { bindPanelResize, panelWidthStyle } from "./chat-panel-width.js";
 import { closeAssist, mentionsIn, onAssistKeydown, parseCommand, recheckAssist, updateAssist } from "./chat-compose-assist.js";
 import {
-  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, listedConversations, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
+  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, reopenDm, resolveChatId, sentAt, shownConversations, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
+import { dmHeaderMenu } from "./chat-dm-close.js";
+import { channelIntroHtml, openAddMembers } from "./chat-channel-new.js";
 import "./chat-attach-seed.js";
 import { THREAD_SUM_CLICKS, markRoot, rootOpen, setRootOpen, threadSummaryHtml } from "./chat-thread-sum.js";
 import { ATTACH_CLICKS, attachButton, attachmentsForSend, bindAttachments, clearAttachments, trayHtml } from "./chat-attachments.js";
@@ -130,6 +132,7 @@ function messageHtml(m, prev, opts = {}) {
 const msgHtml = (m, i, list) => messageHtml(m, list && i ? list[i - 1] : null);
 
 function emptyConversation(ch) {
+  if (ch.kind === "channel") return channelIntroHtml(ch);
   const dm = ch.kind === "dm", name = dm ? M[ch.with].name : chatTitle(ch);
   const text = dm ? `Messages here go only to ${name}.` : ch.topic || "";
   return `<div class="chat-empty">${dm ? av(ch.with, 32) : ic("hash", "ic20")}<h2>This is the start of ${dm ? "your conversation with " : ""}${esc(name)}</h2>${text ? `<p>${esc(text)}</p>` : ""}</div>`;
@@ -542,19 +545,20 @@ function headerLead(ch) {
   }
   return ch.kind === "a2a" ? `<span class="chat-pair" aria-hidden="true">${ch.pair.map((k) => av(k, 24)).join("")}</span>` : "";
 }
-function headerActions(id, title, meta = "") {
+function headerActions(id, title, meta = "", menu = "") {
   const open = local.search?.id === id;
   return `<div class="ph-actions chat-actions">
       ${meta}
       ${filesButton(local.files, title)}
       <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details" title="Details">${ic("info", "ic16")}<span class="chat-details-word">Details</span></button>
       <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)} (/)" aria-keyshortcuts="/">${ic("search", "ic20")}</button>
+      ${menu}
     </div>`;
 }
 /* Asks waiting in other conversations, each counted once; unread elsewhere shows as a dot. */
 function listButton(id) {
   const here = new Set(CH[id] ? openAsks(CH[id]) : []);
-  const others = listedConversations().filter((k) => k !== id);
+  const others = shownConversations().filter((k) => k !== id);
   const elsewhere = new Set(others.flatMap((k) => openAsks(CH[k])).filter((x) => !here.has(x))).size;
   const unread = others.some((k) => CH[k].unread);
   /* The name always begins with the visible word, whatever the width hides; the badge and dot are described in it. */
@@ -609,7 +613,7 @@ function chatHeaderHtml(id, ch, title) {
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
     </div>
-    ${headerActions(id, title, channelMeta(ch, id))}
+    ${headerActions(id, title, channelMeta(ch, id), ch.kind === "dm" ? dmHeaderMenu(id) : "")}
     ${detailsPanel(ch, id)}
   </header>`;
 }
@@ -710,6 +714,7 @@ function pageChat(id) {
   if (isChatView(id)) return pageChatView(id);
   id = resolveChatId(id);
   const ch = CH[id];
+  reopenDm(id);
   startVisit(id);
   if (S.chatList && S.chatList !== id) S.chatList = null;
   takeLink(id);
@@ -934,6 +939,7 @@ const CLICKS = {
   "chat-open-thread": (_id, t) => openViewThread(t),
   "chat-search": (_id, _t, chId) => toggleSearch(chId),
   "chat-details": () => toggleDetails(),
+  "chat-add-members": (_id, t, chId) => openAddMembers(t, chId),
   "chat-task": (id, t, chId) => turnIntoTask(t, chId, id),
   "chat-asks-jump": () => jumpToAsk(),
   "chat-send-plain": (_id, t) => sendChatMessage(t.closest("form"), true),

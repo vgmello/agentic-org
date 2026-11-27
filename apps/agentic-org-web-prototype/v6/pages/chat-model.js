@@ -121,6 +121,28 @@ function matchReason(ch, q) {
    are reached from an agent's page. */
 const listedConversations = () => Object.keys(CH).filter((k) => CH[k].kind !== "a2a");
 const findConversations = (q) => listedConversations().filter((k) => matchReason(CH[k], q) !== null);
+/* Closed DMs (Slack's "Close conversation"): hidden from the list, history kept. Closing records how many messages
+   the DM had, so a newer message brings it back by itself; opening it again (any Message entry point, a link, Find)
+   reopens it. Kept for this browser session. */
+const CLOSED_STORE = "v6-chat-closed-dms";
+const validClosed = (e) => Array.isArray(e) && typeof e[0] === "string" && Number.isInteger(e[1]);
+function readClosed() {
+  try { const v = JSON.parse(sessionStorage.getItem(CLOSED_STORE) || "[]"); return Array.isArray(v) ? v.filter(validClosed) : []; } catch (e) { return []; }
+}
+const closedDms = new Map(readClosed());
+function saveClosed() {
+  try { sessionStorage.setItem(CLOSED_STORE, JSON.stringify([...closedDms])); } catch (e) { /* closed for this page view only */ }
+}
+const isClosedDm = (key) => CH[key]?.kind === "dm" && closedDms.has(key) && CH[key].msgs.length <= closedDms.get(key);
+function closeDmState(key) {
+  closedDms.set(key, CH[key].msgs.length);
+  saveClosed();
+}
+function reopenDm(key) {
+  if (closedDms.delete(key)) saveClosed();
+}
+/* What the list shows: every listed conversation but closed DMs. Find and the command palette still reach those. */
+const shownConversations = () => listedConversations().filter((k) => !isClosedDm(k));
 /* Recipients for a new message, people first, then agents; existing DMs are included and simply reopen. */
 function recipients(q) {
   const ids = memberIds().filter(canMessage).filter((k) => !q || `${M[k].name} ${M[k].role}`.toLowerCase().includes(q));
@@ -138,14 +160,18 @@ export {
   splitTime,
   DEFAULT_CHAT,
   chatTitle,
+  closeDmState,
   dmSources,
   findConversations,
   listedConversations,
   inboxItem,
+  isClosedDm,
   openAsks,
   openDirectMessage,
   recipients,
+  reopenDm,
   resolveChatId,
+  shownConversations,
   sourceHref,
   sourceLabel,
 };
