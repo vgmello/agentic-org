@@ -489,7 +489,3 @@ impl Office {
             .mark_task_deleted(&self.info.org_id, task_id)
     }
 }
-
-#[cfg(test)]
-#[path = "private_notes_adec_tests.rs"]
-mod adec_tests;

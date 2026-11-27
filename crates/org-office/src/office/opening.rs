@@ -162,6 +162,26 @@ impl Office {
         )
     }
 
+    /// Opens the finished HQ in `folder` with an explicit [`crate::OfficeStorageBackend`].
+    pub fn open_with_backend(
+        folder: impl Into<PathBuf>,
+        key: Option<Key>,
+        instance: &str,
+        roots: DataRoots,
+        custody: Custody,
+        backend: std::sync::Arc<dyn crate::store::backend::OfficeStorageBackend>,
+    ) -> Result<Office, OfficeError> {
+        Self::open_with_owner(
+            folder,
+            key,
+            instance,
+            roots,
+            custody,
+            None,
+            Options::with_backend(backend),
+        )
+    }
+
     /// Opens the finished HQ in `folder` with an explicit host-authoritative owner member ID
     /// (supports organization ownership handover, `TASK-38` / `doc-78`, while keeping the
     /// immutable `creation-intent.json` intact).
@@ -184,8 +204,29 @@ impl Office {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn open_with(
+    /// [`Self::open_as_owner`] with an explicit [`crate::OfficeStorageBackend`].
+    pub fn open_as_owner_with_backend(
+        folder: impl Into<PathBuf>,
+        key: Option<Key>,
+        instance: &str,
+        roots: DataRoots,
+        custody: Custody,
+        active_owner: &str,
+        backend: std::sync::Arc<dyn crate::store::backend::OfficeStorageBackend>,
+    ) -> Result<Office, OfficeError> {
+        Self::open_with_owner(
+            folder,
+            key,
+            instance,
+            roots,
+            custody,
+            Some(active_owner),
+            Options::with_backend(backend),
+        )
+    }
+
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn open_with(
         folder: impl Into<PathBuf>,
         key: Option<Key>,
         instance: &str,
@@ -267,6 +308,7 @@ impl Office {
         let ca_digest = satellite::read_ca_digest_for_open(&roots.durable, &info, &hq_office_id);
         let companions = open_companion_stores(CompanionOpenSpec {
             engine: options.engine,
+            backend: options.backend.as_ref(),
             roots: &roots,
             info: &info,
             identity: &custody.identity,

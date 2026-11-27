@@ -159,6 +159,7 @@ pub(crate) fn verify_in(
     limits: &Limits,
     work: &Path,
 ) -> Result<(Manifest, Vec<PrivateDb>, Rebuilt), BackupError> {
+    org_office_sqlite::install();
     let durable = work.join("durable");
     let runtime = work.join("runtime");
     let manifest = extract(

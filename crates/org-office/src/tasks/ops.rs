@@ -32,7 +32,7 @@ pub enum TaskWriteAuthority {
         removed_offices: BTreeSet<String>,
     },
     /// No local-office restriction (test-only: for direct store-level tests without an `Office`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     Unrestricted,
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn require_local_task_write_authority<R: OrganizationRead>(
             role,
             removed_offices,
         } => (office_id, *role, removed_offices),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testkit"))]
         TaskWriteAuthority::Unrestricted => return Ok(()),
     };
     let allowed = has_local_task_write_authority_in_view(

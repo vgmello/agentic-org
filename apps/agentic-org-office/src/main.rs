@@ -78,7 +78,8 @@ fn main() {
         }
     };
     org_office_server::install_panic_hook();
-    // Composition root: inject concrete runtime adapters.
+    // Composition root: inject concrete storage backend and runtime adapters.
+    org_office_sqlite::install();
     org_office_sessions::install_default_runtimes(production_runtimes);
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(org_office_server::run_with_runtimes(

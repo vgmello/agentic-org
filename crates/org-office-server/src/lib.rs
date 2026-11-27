@@ -138,6 +138,7 @@ pub fn run_with_runtimes(
     control: ControlPipe,
     runtimes: org_office_sessions::RuntimeRegistry,
 ) -> i32 {
+    org_office_sqlite::install();
     if matches!(parse_args(args), Ok(Mode::InspectImport)) {
         return inspect_import(control);
     }

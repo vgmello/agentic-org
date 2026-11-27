@@ -44,7 +44,7 @@ pub use hiring::{
     HireProposal, HireRequest, HireState, ModelProfile, PermissionPreset, ProviderAuthMode,
     ProviderConnection, ReasoningEffort, WatchingModelSetting,
 };
-pub use yaml::RecordError;
+pub use yaml::{canonical_json, RecordError};
 use yaml::{Fields, Reader};
 
 /// The only schema version there is.

@@ -17,6 +17,7 @@ const METADATA_DEADLINE: Duration = Duration::from_secs(120);
 const FORBIDDEN: &[&str] = &[
     "org-host",
     "org-office",
+    "org-office-sqlite",
     "org-client",
     "rusqlite",
     "libsqlite3-sys",

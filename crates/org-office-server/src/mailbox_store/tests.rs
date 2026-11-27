@@ -201,6 +201,7 @@ fn ask(office: &Office, hr: &str, approval: bool) -> String {
 
 #[test]
 fn owner_inbox_items_carry_files_filter_by_has_and_answer_inline_with_files() {
+    org_office_sqlite::install();
     for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
         let office = Arc::new(Office::for_test(TestOffice { engine }));
         let owner = office.owner_member_id().to_owned();

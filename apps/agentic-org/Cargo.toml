@@ -67,6 +67,7 @@ tempfile.workspace = true
 syn = { version = "=2.0.119", features = ["full", "visit"] }
 # The backup CLI test's real SQLite HQ office in a temporary folder (`TestOffice`).
 org-office = { path = "../../crates/org-office", features = ["testkit"] }
+org-office-sqlite = { path = "../../crates/org-office-sqlite" }
 
 [lints]
 workspace = true
