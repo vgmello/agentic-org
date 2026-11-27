@@ -117,6 +117,13 @@ impl ChiefOfStaffPort for ChiefOfStaffGate {
             })
     }
 
+    fn resolve_member(&self, reference: &str) -> Result<Option<String>, ApiError> {
+        self.office.resolve_member_id(reference).map_err(|error| {
+            crate::logged("chief_of_staff.resolve_member", &error);
+            unavailable()
+        })
+    }
+
     fn is_chief_of_staff(&self, member: &str) -> bool {
         self.chief_of_staff_id()
             .map_or(true, |tess| tess == Some(member))

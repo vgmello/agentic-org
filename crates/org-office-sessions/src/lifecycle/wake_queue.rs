@@ -18,6 +18,9 @@ use super::drain::remove_claimed_wakes;
 use super::wake_turn::{assigned_task_refs, compose_wake_turn};
 use super::DispatchWakeGuard;
 
+/// Why a partition's wakes stay queued: the hold, when to retry, and its first wake.
+type PartitionHold = (WakeHoldReason, Option<u64>, PendingWakeItem);
+
 impl SessionManager {
     pub(super) fn queue_hold_reason(
         &self,
@@ -75,6 +78,47 @@ impl SessionManager {
         None
     }
 
+    /// The wakes of the first partition of `items` that may start now
+    /// ([`SessionManager::claim_one_partition`]): each partition's hold is weighed on its own
+    /// wakes alone, so one partition never borrows another's person-triggered quota bypass,
+    /// and a budget-held assignment never holds another partition's DM. Anyone but the Chief
+    /// of Staff has one partition, all of `items`. When every partition is held, the first
+    /// one's hold, with its first wake.
+    fn first_unheld_partition(
+        &self,
+        employee: &Employee,
+        mut items: Vec<PendingWakeItem>,
+        ts: u64,
+    ) -> Result<Vec<PendingWakeItem>, Box<PartitionHold>> {
+        let mut first_hold = None;
+        while !items.is_empty() {
+            let (claimed, _) = self.claim_one_partition(employee, items.clone());
+            let claimed_ids: HashSet<&str> = claimed.iter().map(|i| i.item_id.as_str()).collect();
+            let person_triggered = claimed.iter().any(|i| i.sender_is_person);
+            let refs = assigned_task_refs(&claimed);
+            match self.queue_hold_reason(employee, &refs, person_triggered, ts) {
+                None => return Ok(claimed),
+                // Only a budget or quota hold differs between partitions.
+                Some((reason, retry_after)) => {
+                    let partition_only = matches!(
+                        reason,
+                        WakeHoldReason::BudgetHold | WakeHoldReason::HourlyLimit
+                    );
+                    first_hold.get_or_insert((reason, retry_after, claimed[0].clone()));
+                    if !partition_only {
+                        break;
+                    }
+                }
+            }
+            items.retain(|i| !claimed_ids.contains(i.item_id.as_str()));
+        }
+        // Held, or (never, for a dispatched queue) nothing to claim at all.
+        match first_hold {
+            Some(hold) => Err(Box::new(hold)),
+            None => Ok(items),
+        }
+    }
+
     pub(super) fn try_dispatch_deadlock_breaker(
         &self,
         employee: &Employee,
@@ -121,18 +165,16 @@ impl SessionManager {
                     reason: WakeHoldReason::Suspended,
                 };
             }
-            let person_triggered = matching.iter().any(|i| i.sender_is_person);
-            if let Some((reason, retry_after)) = self.queue_hold_reason(
-                employee,
-                &assigned_task_refs(&matching),
-                person_triggered,
-                ts,
-            ) {
-                queue.set_hold(reason, ts, retry_after);
-                self.write_wakes_redacted(&queue);
-                self.record_wake_held(emp_id, &matching[0], reason, retry_after);
-                return WakeOutcome::Queued { reason };
-            }
+            let matching = match self.first_unheld_partition(employee, matching, ts) {
+                Ok(claimed) => claimed,
+                Err(hold) => {
+                    let (reason, retry_after, first) = *hold;
+                    queue.set_hold(reason, ts, retry_after);
+                    self.write_wakes_redacted(&queue);
+                    self.record_wake_held(emp_id, &first, reason, retry_after);
+                    return WakeOutcome::Queued { reason };
+                }
+            };
             (matching, queue.held_since_ms)
         };
         self.run_deadlock_breaker_launch(employee, susp, matching, held_since, ts)
@@ -147,7 +189,7 @@ impl SessionManager {
         ts: u64,
     ) -> WakeOutcome {
         let emp_id = employee.id.as_str();
-        let (matching, partition) = Self::claim_one_partition(employee, matching);
+        let (matching, partition) = self.claim_one_partition(employee, matching);
         let person_triggered = matching.iter().any(|i| i.sender_is_person);
         let Ok(objective) = compose_wake_turn(&self.office, emp_id, &matching, &susp.asks) else {
             return self.hold_refused_batch(emp_id, ts);
@@ -234,27 +276,27 @@ impl SessionManager {
                 }
                 return WakeOutcome::Ignored;
             }
-            if let Some((reason, retry_after)) = self.queue_hold_reason(
-                employee,
-                &assigned_task_refs(&queue.items),
-                queue.has_person_item(),
-                ts,
-            ) {
-                let first = queue.items[0].clone();
-                let has_mid_turn_eligible =
-                    queue.items.iter().any(|i| i.kind.is_mid_turn_eligible());
-                let changed = queue.hold_reason != Some(reason);
-                queue.set_hold(reason, ts, retry_after);
-                self.write_wakes_redacted(&queue);
-                if changed {
-                    self.record_wake_held(emp_id, &first, reason, retry_after);
+            match self.first_unheld_partition(employee, queue.items.clone(), ts) {
+                Ok(claimed) => {
+                    queue.items = claimed;
+                    queue
                 }
-                if reason == WakeHoldReason::Busy && has_mid_turn_eligible {
-                    self.notify_live_pump_pending_wakes(emp_id);
+                Err(hold) => {
+                    let (reason, retry_after, first) = *hold;
+                    let has_mid_turn_eligible =
+                        queue.items.iter().any(|i| i.kind.is_mid_turn_eligible());
+                    let changed = queue.hold_reason != Some(reason);
+                    queue.set_hold(reason, ts, retry_after);
+                    self.write_wakes_redacted(&queue);
+                    if changed {
+                        self.record_wake_held(emp_id, &first, reason, retry_after);
+                    }
+                    if reason == WakeHoldReason::Busy && has_mid_turn_eligible {
+                        self.notify_live_pump_pending_wakes(emp_id);
+                    }
+                    return WakeOutcome::Queued { reason };
                 }
-                return WakeOutcome::Queued { reason };
             }
-            queue
         };
         self.launch_claimed_wakes(employee, queue, ts)
     }
@@ -271,7 +313,7 @@ impl SessionManager {
     ) -> WakeOutcome {
         let emp_id = employee.id.as_str();
         let (claimed, partition) =
-            Self::claim_one_partition(employee, std::mem::take(&mut queue.items));
+            self.claim_one_partition(employee, std::mem::take(&mut queue.items));
         queue.items = claimed;
         let person_triggered = queue.has_person_item();
         let Ok(objective) = compose_wake_turn(&self.office, emp_id, &queue.items, &[]) else {

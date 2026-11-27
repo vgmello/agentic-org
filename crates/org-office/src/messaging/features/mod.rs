@@ -62,7 +62,7 @@ pub(super) fn is_active_employee(emp: &Employee) -> bool {
     matches!(emp.status, EmployeeStatus::Active | EmployeeStatus::Paused)
 }
 
-pub(super) fn resolve_employee<'a>(
+pub(crate) fn resolve_employee<'a>(
     employees: &'a [Employee],
     owner: &Id,
     reference: &str,

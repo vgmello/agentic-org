@@ -21,6 +21,7 @@
 //! out-of-band "next run" record another start could overwrite or take.
 
 use org_office::organization_family::records::{BuiltinKey, Employee};
+use org_proto::chat::ConversationKind;
 use org_proto::sessions::SessionState;
 use org_proto::{ApiError, ErrorCode};
 
@@ -44,44 +45,63 @@ impl SessionManager {
     }
 
     /// The partition a queued wake `item` of `employee` runs in; `None` for anyone but the
-    /// Chief of Staff. What one sender addressed to her (a DM, a hand-off, an ask) runs in that
-    /// sender's own partition: a person's `tess:ask:<id>`, acting for them, or anyone else's
-    /// `tess:dm:<id>`, acting for nobody. Everything else (mentions, assignments, answers,
-    /// recovery) runs in `tess:wake`, which so never holds a sender's private message.
+    /// Chief of Staff. What one sender addressed to her (a DM, a hand-off, an ask), and anything
+    /// else from a private conversation ([`Self::is_private_wake`]), runs in that sender's own
+    /// partition: a person's `tess:ask:<id>`, acting for them, or anyone else's `tess:dm:<id>`,
+    /// acting for nobody. Everything else (channel mentions and answers, assignments, recovery)
+    /// runs in `tess:wake`, which so never holds a sender's private message.
     pub(crate) fn wake_partition(
+        &self,
         employee: &Employee,
         item: &PendingWakeItem,
     ) -> Option<PartitionKey> {
         Self::turn_partition(employee, None)?;
-        Some(match item.kind {
+        let addressed = matches!(
+            item.kind,
             WakeKind::DirectMessage | WakeKind::Handoff | WakeKind::Ask
-                if item.sender_is_person =>
-            {
-                PartitionKey::tess_ask(&item.sender_id)
-            }
-            WakeKind::DirectMessage | WakeKind::Handoff | WakeKind::Ask => {
-                PartitionKey::tess_dm(&item.sender_id)
-            }
-            _ => PartitionKey::tess_wake(),
+        );
+        Some(if !addressed && !self.is_private_wake(item) {
+            PartitionKey::tess_wake()
+        } else if item.sender_is_person {
+            PartitionKey::tess_ask(&item.sender_id)
+        } else {
+            PartitionKey::tess_dm(&item.sender_id)
         })
+    }
+
+    /// Whether wake `item` comes from a conversation only its members see: a DM or group DM
+    /// (an `@mention` or an answer in one included). An answer from a conversation the office
+    /// cannot name, and any wake whose conversation cannot be read, counts as private (fail
+    /// closed): only a channel's answer reaches `tess:wake`.
+    fn is_private_wake(&self, item: &PendingWakeItem) -> bool {
+        let answer = matches!(item.kind, WakeKind::AskAnswer | WakeKind::WatcherAnswer);
+        let Some(conversation) = item.conversation_id.as_deref() else {
+            return answer;
+        };
+        match self.office.conversation_kind(conversation) {
+            Ok(Some(kind)) => kind != ConversationKind::Channel,
+            Ok(None) => answer,
+            Err(_) => true,
+        }
     }
 
     /// Claims of `items` only those of the first item's partition, and names it: items of
     /// different partitions never share a turn, and the rest stay queued for their own. Anyone
     /// but the Chief of Staff claims them all.
     pub(crate) fn claim_one_partition(
+        &self,
         employee: &Employee,
         items: Vec<PendingWakeItem>,
     ) -> (Vec<PendingWakeItem>, Option<PartitionKey>) {
         let Some(partition) = items
             .first()
-            .and_then(|first| Self::wake_partition(employee, first))
+            .and_then(|first| self.wake_partition(employee, first))
         else {
             return (items, None);
         };
         let claimed = items
             .into_iter()
-            .filter(|item| Self::wake_partition(employee, item).as_ref() == Some(&partition))
+            .filter(|item| self.wake_partition(employee, item).as_ref() == Some(&partition))
             .collect();
         (claimed, Some(partition))
     }

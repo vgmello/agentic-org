@@ -2,6 +2,7 @@
 //! the HQ runs when it opens, and the live authority of the member she acts for, which the
 //! server intersects with hers on every call she makes while acting for them (`caller ∩ tess`).
 
+use org_proto::chat::ConversationKind;
 use org_store::{Actor, Id, Outcome, StoreError};
 
 use super::{storage, Office};
@@ -114,6 +115,40 @@ impl ReadOp for ReadMessageConversation {
     }
 }
 
+/// Reads the kind of one conversation.
+struct ReadConversationKind {
+    conversation: Id,
+}
+
+impl ReadOp for ReadConversationKind {
+    type Out = Option<ConversationKind>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.conversation(&self.conversation)?.map(|c| c.kind))
+    }
+}
+
+/// Resolves a `dm.open` participant reference (an ID, handle, name or `owner`) to the member it
+/// names, exactly as `dm.open` resolves it.
+struct ReadMemberReference {
+    owner: Id,
+    reference: String,
+}
+
+impl ReadOp for ReadMemberReference {
+    type Out = Option<String>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        let owner = crate::organization::owner::effective_owner_id(read, &self.owner)?;
+        let employees = read.employees()?;
+        Ok(
+            crate::messaging::features::resolve_employee(&employees, &owner, &self.reference)
+                .ok()
+                .map(|employee| employee.id.as_str().to_owned()),
+        )
+    }
+}
+
 impl Office {
     /// The organization's built-in Chief of Staff, if she is on record.
     pub fn chief_of_staff(&self) -> Result<Option<Employee>, OfficeError> {
@@ -205,6 +240,30 @@ impl Office {
     pub fn message_conversation_id(&self, message_id: &str) -> Result<Option<String>, OfficeError> {
         let op = ReadMessageConversation {
             message: message_id.to_owned(),
+        };
+        Ok(self.store.read(op).map_err(storage)?.0)
+    }
+
+    /// The kind of conversation `conversation_id`, so the Chief of Staff's wakes from a DM never
+    /// reach her shared wake partition (`TASK-80.1`); `None` for an unknown or malformed ID.
+    pub fn conversation_kind(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<ConversationKind>, OfficeError> {
+        let Ok(conversation) = Id::parse(conversation_id) else {
+            return Ok(None);
+        };
+        let op = ReadConversationKind { conversation };
+        Ok(self.store.read(op).map_err(storage)?.0)
+    }
+
+    /// The member a `dm.open` participant reference names, resolved exactly as `dm.open`
+    /// resolves it and without writing anything, so the `caller ∩ tess` gate can refuse a DM
+    /// the caller would not be in before it is opened; `None` when it names nobody.
+    pub fn resolve_member_id(&self, reference: &str) -> Result<Option<String>, OfficeError> {
+        let op = ReadMemberReference {
+            owner: self.effective_owner_for_ops(),
+            reference: reference.to_owned(),
         };
         Ok(self.store.read(op).map_err(storage)?.0)
     }

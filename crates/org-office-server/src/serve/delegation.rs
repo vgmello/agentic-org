@@ -20,8 +20,8 @@
 //! - **open**: reads and messages any active member may make; still checked against her own
 //!   authority by the method itself, and what a read answers is narrowed to what the caller
 //!   may also see ([`scope`]): a DM is shown only to a participant of it. A call that acts on
-//!   one conversation or message (`dm.open`, marking read, muting, reacting, answering,
-//!   triage) is refused when the caller is not in it.
+//!   one conversation or message (`dm.open`, marking read, muting, reacting, replying,
+//!   answering, triage) is refused when the caller is not in it.
 //!
 //! A run acting for a member who is no longer an active person may do nothing at all. A run
 //! acting for nobody (a wake) gets only the open class, and no DM at all. When the office
@@ -55,6 +55,9 @@ pub trait ChiefOfStaffPort: Send + Sync {
     /// The conversation message `message_id` (a chat or mailbox message, or an ask) is in;
     /// `None` for an unknown message.
     fn message_conversation(&self, message_id: &str) -> Result<Option<String>, ApiError>;
+    /// The member a `dm.open` participant reference (an ID, handle, name or `owner`) names,
+    /// read without writing anything; `None` when it names nobody.
+    fn resolve_member(&self, reference: &str) -> Result<Option<String>, ApiError>;
     /// Whether `member` is the Chief of Staff; `true` when her identity cannot be read (fail
     /// closed), and only ever used to withhold something from her.
     fn is_chief_of_staff(&self, member: &str) -> bool;

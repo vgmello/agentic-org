@@ -715,7 +715,7 @@ fn wake_item(
 fn each_wake_runs_in_the_partition_of_who_addressed_her() {
     let f = Fixture::new();
     let tess = f.tess();
-    let partition = |item: &PendingWakeItem| SessionManager::wake_partition(&tess, item);
+    let partition = |item: &PendingWakeItem| f.manager.wake_partition(&tess, item);
     for kind in [WakeKind::DirectMessage, WakeKind::Handoff, WakeKind::Ask] {
         let from_owner = wake_item("w", kind, &f.owner, true, "hi");
         assert_eq!(partition(&from_owner), Some(f.owner_key()), "{kind:?}");
@@ -727,7 +727,6 @@ fn each_wake_runs_in_the_partition_of_who_addressed_her() {
     for kind in [
         WakeKind::Mention,
         WakeKind::TaskAssignment,
-        WakeKind::AskAnswer,
         WakeKind::Recovery,
     ] {
         let item = wake_item("w", kind, &f.owner, true, "hi");
@@ -737,6 +736,11 @@ fn each_wake_runs_in_the_partition_of_who_addressed_her() {
             "{kind:?}"
         );
     }
+    // An answer from a conversation the office cannot name counts as private (fail closed).
+    for kind in [WakeKind::AskAnswer, WakeKind::WatcherAnswer] {
+        let item = wake_item("w", kind, &f.owner, true, "hi");
+        assert_eq!(partition(&item), Some(f.owner_key()), "{kind:?}");
+    }
     let hr = f
         .office
         .list_employees()
@@ -745,8 +749,8 @@ fn each_wake_runs_in_the_partition_of_who_addressed_her() {
         .find(|e| e.builtin_key == Some(BuiltinKey::Hr))
         .expect("HR");
     let dm = wake_item("w", WakeKind::DirectMessage, &f.owner, true, "hi");
-    assert_eq!(SessionManager::wake_partition(&hr, &dm), None);
-    let (claimed, none) = SessionManager::claim_one_partition(&hr, vec![dm.clone(), dm]);
+    assert_eq!(f.manager.wake_partition(&hr, &dm), None);
+    let (claimed, none) = f.manager.claim_one_partition(&hr, vec![dm.clone(), dm]);
     assert_eq!((claimed.len(), none), (2, None));
 }
 
@@ -824,4 +828,236 @@ fn queued_dms_of_different_senders_never_share_a_turn_or_a_conversation() {
         let state = f.manager.partitions.state(&f.tess, &key).unwrap();
         assert_eq!(state.turns, 1, "{key}");
     }
+}
+
+/// Opens `from`'s DM with `to` and sends `body` into it: `(conversation, message)`.
+fn dm_message(f: &Fixture, from: &str, to: &str, body: &str) -> (String, String) {
+    let opened = f
+        .office
+        .dm_open(
+            from,
+            org_proto::chat::DmOpenParams {
+                participants: vec![to.to_owned()],
+                name: None,
+                conversation_id: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let sent = f
+        .office
+        .chat_send(
+            from,
+            org_proto::chat::ChatSendParams {
+                id: new_uuid_v7(),
+                to: to.to_owned(),
+                kind: "msg".into(),
+                priority: None,
+                subject: None,
+                body: body.to_owned(),
+                meta: Default::default(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    (opened.conversation.id, sent.message.id)
+}
+
+/// Sends one wake to an idle process serving `partition`: the turns it was sent, with no
+/// partition switch.
+fn turns_sent_to(f: &Fixture, partition: PartitionKey) -> Vec<String> {
+    let rx = f.install(SessionState::Idle, Some(partition), Some("conv-live"));
+    let outcome = f.manager.process_due_wakes_for(&f.tess);
+    assert_eq!(outcome, crate::wake::WakeOutcome::Started);
+    let cmds = drained(&rx);
+    assert!(stop_reasons(&cmds).is_empty(), "never switched");
+    cmds.into_iter()
+        .filter_map(|c| match c {
+            PumpCommand::SendTurn(text) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `@tess` inside the owner's private DM, or an answer given there, runs in the owner's own
+/// partition (acting for the owner), never in the shared `tess:wake`, whatever its wake kind
+/// says (`TASK-80.1`, pass 4); an agent's is its own `tess:dm:` partition.
+#[test]
+fn a_mention_or_answer_inside_a_dm_runs_in_the_senders_partition_never_tess_wake() {
+    const OWNER_SECRET: &str = "@tess OWNER-SECRET: the acquisition closes on Friday";
+    const MENTION: &str = "@tess in #general: where are the standup notes?";
+    let f = Fixture::new();
+    let tess = f.tess();
+    let (owner_dm, _) = dm_message(&f, &f.owner, &f.tess, "hello");
+    let in_owner_dm = |kind: WakeKind, sender: &str, person: bool| PendingWakeItem {
+        conversation_id: Some(owner_dm.clone()),
+        ..wake_item("w-owner", kind, sender, person, OWNER_SECRET)
+    };
+    for kind in [
+        WakeKind::Mention,
+        WakeKind::AskAnswer,
+        WakeKind::WatcherAnswer,
+        WakeKind::TaskAssignment,
+    ] {
+        assert_eq!(
+            f.manager
+                .wake_partition(&tess, &in_owner_dm(kind, &f.owner, true)),
+            Some(f.owner_key()),
+            "{kind:?}"
+        );
+        assert_eq!(
+            f.manager
+                .wake_partition(&tess, &in_owner_dm(kind, "agent-ada", false)),
+            Some(PartitionKey::tess_dm("agent-ada")),
+            "{kind:?}"
+        );
+    }
+
+    // Queued behind a channel mention's wake, the owner's DM mention still never shares
+    // `tess:wake`: it runs alone in the owner's partition.
+    let mut queue = PendingWakeQueueRecord::empty(&f.tess);
+    queue.push_dedup(in_owner_dm(WakeKind::Mention, &f.owner, true));
+    queue.push_dedup(wake_item(
+        "w-general",
+        WakeKind::Mention,
+        &f.member,
+        true,
+        MENTION,
+    ));
+    f.manager.store.write_pending_wakes(&queue).unwrap();
+    let turns = turns_sent_to(&f, f.owner_key());
+    assert_eq!(turns.len(), 1);
+    assert!(turns[0].contains("OWNER-SECRET") && !turns[0].contains(MENTION));
+    assert_eq!(f.queued(), ["w-general"]);
+    assert!(f
+        .manager
+        .partitions
+        .state(&f.tess, &PartitionKey::tess_wake())
+        .is_none_or(|s| s.turns == 0));
+}
+
+/// A required ask of hers never suspends her (one process serves every caller, so it would
+/// hold them all), and its answer in the owner's private DM wakes her in the owner's
+/// partition, never `tess:wake` (`TASK-80.1`, pass 4).
+#[test]
+fn her_required_ask_never_suspends_her_and_a_dm_answer_runs_in_the_answerers_partition() {
+    const ANSWER: &str = "OWNER-ANSWER: Friday at nine";
+    let f = Fixture::new();
+    // Her question to the owner, in their private DM.
+    let (owner_dm, ask) = dm_message(&f, &f.tess, &f.owner, "Which day works?");
+    let entry = |waiting: &str| crate::wake::SuspendedAskEntry {
+        ask_id: ask.clone(),
+        conversation_id: owner_dm.clone(),
+        question_summary: "Which day works?".into(),
+        waiting_for_member_id: Some(waiting.to_owned()),
+        waiting_for_name: None,
+        asked_by_subagent: false,
+        opened_at_ms: now_ms(),
+    };
+    f.manager.on_required_ask_opened(&f.tess, entry(&f.owner));
+    f.manager.on_required_ask_wait_expired(&f.tess, &ask);
+    assert!(!f
+        .manager
+        .open_required_asks
+        .lock()
+        .unwrap()
+        .contains_key(&f.tess));
+    assert!(f
+        .manager
+        .store
+        .read_suspended_state(&f.tess)
+        .unwrap()
+        .is_none());
+    // Any other agent's required ask is still recorded.
+    let hr = f
+        .office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.builtin_key == Some(BuiltinKey::Hr))
+        .expect("HR");
+    f.manager
+        .on_required_ask_opened(hr.id.as_str(), entry(&f.owner));
+    assert!(f
+        .manager
+        .open_required_asks
+        .lock()
+        .unwrap()
+        .contains_key(hr.id.as_str()));
+
+    // Her own process idles in the owner's partition; the answer is sent there, warm.
+    let rx = f.install(SessionState::Idle, Some(f.owner_key()), Some("conv-owner"));
+    let outcome = f.manager.on_ask_answered(
+        &f.tess,
+        &ask,
+        "Which day works?",
+        ANSWER,
+        &f.owner,
+        "Owner",
+        true,
+        false,
+        false,
+    );
+    assert_eq!(outcome, crate::wake::WakeOutcome::Started);
+    let cmds = drained(&rx);
+    assert!(
+        stop_reasons(&cmds).is_empty(),
+        "never switched to tess:wake"
+    );
+    assert!(cmds
+        .iter()
+        .any(|c| matches!(c, PumpCommand::SendTurn(text) if text.contains(ANSWER))));
+    assert!(f.queued().is_empty());
+    assert!(f
+        .manager
+        .partitions
+        .state(&f.tess, &PartitionKey::tess_wake())
+        .is_none_or(|s| s.turns == 0));
+}
+
+/// Each partition's hold is weighed on its own wakes (`TASK-80.1`, pass 4): with her hourly
+/// quota spent, an agent's DM partition never borrows the owner's person-triggered bypass, and
+/// the held agent partition never holds the owner's DM behind it.
+#[test]
+fn a_held_partition_never_borrows_or_blocks_another_partitions_hold() {
+    let f = Fixture::new();
+    let window = f.manager.config.wake_window.as_millis() as u64;
+    let mut quota = crate::wake::WakeQuotaRecord::empty(&f.tess);
+    for _ in 0..f.manager.config.hourly_wake_limit {
+        quota.record_start(now_ms(), window);
+    }
+    f.manager.store.write_wake_quota(&quota).unwrap();
+    let mut queue = PendingWakeQueueRecord::empty(&f.tess);
+    queue.push_dedup(wake_item(
+        "w-agent",
+        WakeKind::DirectMessage,
+        "agent-ada",
+        false,
+        "ADA: status?",
+    ));
+    queue.push_dedup(wake_item(
+        "w-owner",
+        WakeKind::DirectMessage,
+        &f.owner,
+        true,
+        "OWNER: plan?",
+    ));
+    f.manager.store.write_pending_wakes(&queue).unwrap();
+
+    let turns = turns_sent_to(&f, f.owner_key());
+    assert_eq!(turns.len(), 1);
+    assert!(turns[0].contains("OWNER: plan?") && !turns[0].contains("ADA: status?"));
+    assert_eq!(f.queued(), ["w-agent"]);
+
+    f.install(SessionState::Idle, Some(f.owner_key()), Some("conv-live"));
+    assert_eq!(
+        f.manager.process_due_wakes_for(&f.tess),
+        crate::wake::WakeOutcome::Queued {
+            reason: crate::wake::WakeHoldReason::HourlyLimit
+        }
+    );
+    assert_eq!(f.queued(), ["w-agent"]);
 }

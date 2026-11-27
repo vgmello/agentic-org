@@ -13,9 +13,11 @@
 //!   conversation they are an active member of (the owner's own list holds every DM in the
 //!   organization, so membership, not that list, decides a DM). Acting for nobody (a wake),
 //!   she sees channels only, never a DM.
-//! - **One conversation or message** ([`admit`]): marking read, muting, reacting, answering or
-//!   withdrawing an ask and triaging a message act only on a conversation the caller sees by
-//!   the same rule. `dm.open` needs a caller and answers only a DM the caller is in.
+//! - **One conversation or message** ([`admit`]): marking read, muting, reacting, replying,
+//!   answering or withdrawing an ask and triaging a message act only on a conversation the
+//!   caller sees by the same rule. `dm.open` needs a caller named among its participants,
+//!   checked before it runs so a refused call opens or reopens nothing, and answers only a DM
+//!   the caller is in.
 //! - **Her mailbox**: a message is shown only when the caller sent it or received it. Acting
 //!   for nobody, none is.
 //!
@@ -31,8 +33,8 @@ use org_proto::hiring::{
     HrHire, HrHireConfirm, HrHireDraft, HrHireInspect, HrHireList, HrHireWithdraw,
 };
 use org_proto::msg::{
-    MessageHeader, MsgDefer, MsgDone, MsgGet, MsgHumanNeedsYou, MsgInbox, MsgList, MsgThreads,
-    MsgUnsnooze,
+    MessageHeader, MsgDefer, MsgDone, MsgGet, MsgHumanNeedsYou, MsgInbox, MsgList, MsgReply,
+    MsgThreads, MsgUnsnooze,
 };
 use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 
@@ -97,9 +99,9 @@ fn admit_conversation(
         Err(err) => Err(Response::error(id, err)),
     };
     match request.method.as_str() {
-        // She opens or resumes a DM only for a caller, and shows only one they are in
-        // ([`narrow`]).
-        DmOpen::METHOD => require(id, delegation.caller_id.is_some()),
+        // She opens or resumes a DM only for a caller who will be in it, checked before it
+        // runs, and shows only one they are in ([`narrow`]).
+        DmOpen::METHOD => dm_open_includes_caller(id, port, request, delegation),
         ChatMarkRead::METHOD => {
             params::<ChatMarkRead>(request).map_or(Ok(()), |p| in_view(&p.conversation_id))
         }
@@ -115,12 +117,37 @@ fn admit_conversation(
         MsgWithdraw::METHOD => {
             params::<MsgWithdraw>(request).map_or(Ok(()), |p| on_message(&p.ask_id))
         }
+        MsgReply::METHOD => params::<MsgReply>(request).map_or(Ok(()), |p| on_message(&p.to_id)),
         MsgAccept::METHOD => params::<MsgAccept>(request).map_or(Ok(()), |p| on_message(&p.id)),
         MsgDefer::METHOD => params::<MsgDefer>(request).map_or(Ok(()), |p| on_message(&p.id)),
         MsgDone::METHOD => params::<MsgDone>(request).map_or(Ok(()), |p| on_message(&p.id)),
         MsgUnsnooze::METHOD => params::<MsgUnsnooze>(request).map_or(Ok(()), |p| on_message(&p.id)),
         _ => Ok(()),
     }
+}
+
+/// `dm.open`, before it runs: admitted only for a caller one of its participants names, so the
+/// DM or group DM it opens, resumes or reopens is one the caller is in. Acting for nobody, or
+/// with parameters that do not decode, nothing is opened (fail closed).
+fn dm_open_includes_caller(
+    id: u64,
+    port: &dyn ChiefOfStaffPort,
+    request: &Request,
+    delegation: &Delegation,
+) -> Result<(), Response> {
+    let (Some(caller), Some(open)) = (delegation.caller_id.as_deref(), params::<DmOpen>(request))
+    else {
+        return Err(denied(id));
+    };
+    for reference in &open.participants {
+        let named = port
+            .resolve_member(reference)
+            .map_err(|err| Response::error(id, err))?;
+        if named.as_deref() == Some(caller) {
+            return Ok(());
+        }
+    }
+    Err(denied(id))
 }
 
 /// Narrows what an admitted call answers; records a draft she made for the caller.

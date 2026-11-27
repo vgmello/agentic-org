@@ -9,11 +9,12 @@ use std::sync::Arc;
 use org_office::rules::OrgCommand;
 use org_office::{Office, TestOffice};
 use org_proto::chat::{
-    ChatConversations, ChatConversationsParams, ChatInbox, ChatInboxParams, ChatMessages,
-    ChatMessagesParams, ChatSendParams, DmOpen, DmOpenParams,
+    ChatConversations, ChatConversationsParams, ChatInbox, ChatInboxItem, ChatInboxParams,
+    ChatMessages, ChatMessagesParams, ChatSendParams, DmOpen, DmOpenParams,
 };
+use org_proto::msg::{MsgReply, MsgReplyParams};
 use org_proto::org::MemberAddPersonParams;
-use org_proto::{Call, ErrorCode, Outcome, Request, Response};
+use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 use serde_json::{json, Value};
 
 use super::{scope, ChiefOfStaffPort, Delegation};
@@ -65,22 +66,7 @@ fn world() -> World {
         .expect("Tess")
         .id
         .to_string();
-    let bob = next_id();
-    let team = office.org_snapshot().unwrap().teams[0].id.clone();
-    office
-        .submit_org(
-            &owner,
-            OrgCommand::MemberAddPerson(MemberAddPersonParams {
-                command_id: next_id(),
-                member_id: bob.clone(),
-                name: "Bob".into(),
-                handle: Some("bob".into()),
-                home_team_id: Some(team),
-                contact: None,
-            }),
-        )
-        .unwrap()
-        .unwrap();
+    let bob = add_person(&office, "Bob", "bob");
     let sessions = Arc::new(org_office_sessions::SessionManager::new(
         Arc::clone(&office),
         org_office_sessions::SessionManagerConfig::production(tmp.path().join("office.sock")),
@@ -100,6 +86,27 @@ fn world() -> World {
         bob_message,
         _tmp: tmp,
     }
+}
+
+/// Adds an active person to the organization's first team: their member ID.
+fn add_person(office: &Office, name: &str, handle: &str) -> String {
+    let member = next_id();
+    let team = office.org_snapshot().unwrap().teams[0].id.clone();
+    office
+        .submit_org(
+            office.owner_member_id(),
+            OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                command_id: next_id(),
+                member_id: member.clone(),
+                name: name.into(),
+                handle: Some(handle.into()),
+                home_team_id: Some(team),
+                contact: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    member
 }
 
 /// Opens `from`'s DM with `to` and sends one message into it: `(conversation, message)`.
@@ -163,6 +170,34 @@ impl World {
         let answer = call(&self.office, &self.tess, params);
         let response = Response::ok::<C>(request.id, &answer).unwrap();
         scope::narrow(&request, &self.gate, &self.tess, delegation, response)
+    }
+
+    /// `call` as Tess makes it on the socket: admitted by the gate first, and only then run
+    /// against the office and narrowed.
+    fn through_gate<C: Call>(
+        &self,
+        params: C::Params,
+        delegation: &Delegation,
+        call: impl FnOnce(&Office, &str, C::Params) -> Result<C::Result, ApiError>,
+    ) -> Response {
+        let request = self.request::<C>(&params);
+        if let Err(refused) = scope::admit(&request, &self.gate, &self.tess, delegation) {
+            return refused;
+        }
+        let response = match call(&self.office, &self.tess, params) {
+            Ok(answer) => Response::ok::<C>(request.id, &answer).unwrap(),
+            Err(err) => Response::error(request.id, err),
+        };
+        scope::narrow(&request, &self.gate, &self.tess, delegation, response)
+    }
+
+    /// Every conversation in the organization (the owner's list holds every DM).
+    fn conversation_count(&self) -> usize {
+        let all = ChatConversationsParams {
+            include_archived: true,
+        };
+        let listed = self.office.list_conversations(&self.owner, all);
+        listed.unwrap().unwrap().conversations.len()
     }
 
     fn admit(&self, method: &str, params: Value, delegation: &Delegation) -> Result<(), Response> {
@@ -279,11 +314,17 @@ fn dm_open_needs_a_caller_and_answers_only_a_dm_the_caller_is_in() {
         &wake
     )));
 
-    // Acting for Bob, his own DM with her opens; the owner's never does.
+    // Acting for Bob, his own DM with her opens; the owner's never does, refused before it
+    // runs and, as defense in depth, again on what it answers.
+    assert!(refused(&w.admit(
+        DmOpen::METHOD,
+        serde_json::to_value(open(&w.owner)).unwrap(),
+        &for_bob
+    )));
     assert!(w
         .admit(
             DmOpen::METHOD,
-            serde_json::to_value(open(&w.owner)).unwrap(),
+            serde_json::to_value(open(&w.bob)).unwrap(),
             &for_bob
         )
         .is_ok());
@@ -339,6 +380,10 @@ fn she_marks_reacts_answers_or_triages_only_in_a_conversation_the_caller_is_in()
             ),
             ("chat.answer", json!({"ask_id": message, "answers": []})),
             ("msg.withdraw", json!({"ask_id": message})),
+            (
+                "msg.reply",
+                json!({"id": next_id(), "to_id": message, "body": "noted"}),
+            ),
             ("msg.accept", json!({"id": message})),
             (
                 "msg.defer",
@@ -387,6 +432,124 @@ fn she_marks_reacts_answers_or_triages_only_in_a_conversation_the_caller_is_in()
     assert!(w
         .admit("msg.done", json!({"id": next_id()}), &for_bob)
         .is_ok());
+}
+
+/// `dm.open` for a caller its participants do not name is refused before it runs (`TASK-80.1`,
+/// pass 4): acting for Bob she never opens, creates or reopens the owner's DM with her or a
+/// group DM without Bob, so a refused call leaves no conversation behind.
+#[test]
+fn dm_open_for_a_caller_not_among_its_participants_opens_nothing() {
+    let w = world();
+    let alice = add_person(&w.office, "Alice", "alice");
+    let for_bob = w.acting_for(&w.bob);
+    let open = |participants: &[&str]| DmOpenParams {
+        participants: participants.iter().map(|p| (*p).to_owned()).collect(),
+        name: Some("Board prep".into()),
+        conversation_id: None,
+    };
+    let before = w.conversation_count();
+    let attempts: [&[&str]; 4] = [
+        &["alice", "owner"],
+        &[alice.as_str(), w.owner.as_str()],
+        &["owner"],
+        &[],
+    ];
+    for participants in attempts {
+        let response = w.through_gate::<DmOpen>(open(participants), &for_bob, |_, _, _| {
+            panic!("dm.open {participants:?} ran for a caller not in it")
+        });
+        assert_eq!(
+            error_code(&response),
+            Some(ErrorCode::NotAuthorized),
+            "{participants:?}"
+        );
+    }
+    assert!(refused(&w.admit(
+        DmOpen::METHOD,
+        json!({"participants": "owner"}),
+        &for_bob
+    )));
+    assert_eq!(
+        w.conversation_count(),
+        before,
+        "a refused dm.open opened nothing"
+    );
+
+    // Named among them, Bob's group DM with the owner and her opens, and he is in it.
+    let group = w.through_gate::<DmOpen>(open(&["bob", "owner"]), &for_bob, |office, tess, p| {
+        office.dm_open(tess, p).unwrap()
+    });
+    assert_eq!(result(&group)["created"], true);
+    assert_eq!(w.conversation_count(), before + 1);
+}
+
+/// `msg.reply` to a message in a conversation the caller is not in is refused before it runs
+/// (`TASK-80.1`, pass 4): acting for Bob, or for nobody, she posts no reply into the owner's
+/// DM with her and marks nothing in it read.
+#[test]
+fn msg_reply_in_another_members_dm_posts_nothing_and_marks_nothing_read() {
+    let w = world();
+    let reply = || MsgReplyParams {
+        id: next_id(),
+        to_id: w.owner_message.clone(),
+        priority: None,
+        subject: None,
+        body: "BOB-REPLY: tell me the owner's plan".into(),
+        meta: Default::default(),
+    };
+    let owner_dm_state = || -> (usize, Option<ChatInboxItem>) {
+        let history = w
+            .office
+            .chat_messages(
+                &w.owner,
+                ChatMessagesParams {
+                    conversation: Some(w.owner_dm.clone()),
+                    thread_id: None,
+                    limit: None,
+                    cursor: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let inbox = w
+            .office
+            .chat_inbox(
+                &w.tess,
+                ChatInboxParams {
+                    include_all: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let parent = inbox.items.into_iter().find(|i| i.id == w.owner_message);
+        (history.messages.len(), parent)
+    };
+    let before = owner_dm_state();
+    assert!(before.1.is_some(), "the owner's message is in her inbox");
+    for delegation in [w.acting_for(&w.bob), Delegation::default()] {
+        let response = w.through_gate::<MsgReply>(reply(), &delegation, |_, _, _| {
+            panic!(
+                "msg.reply ran in the owner's DM for {:?}",
+                delegation.caller_id
+            )
+        });
+        assert_eq!(error_code(&response), Some(ErrorCode::NotAuthorized));
+    }
+    assert_eq!(
+        owner_dm_state(),
+        before,
+        "nothing posted, nothing marked read"
+    );
+
+    // Acting for the owner, the same reply is admitted, and does post and mark it read.
+    let for_owner = w.acting_for(&w.owner);
+    let params = serde_json::to_value(reply()).unwrap();
+    assert!(w.admit(MsgReply::METHOD, params, &for_owner).is_ok());
+    w.office.chat_reply(&w.tess, reply()).unwrap().unwrap();
+    let after = owner_dm_state();
+    assert_eq!(after.0, before.0 + 1);
+    assert_ne!(after.1, before.1, "replying marks the parent read");
 }
 
 #[test]

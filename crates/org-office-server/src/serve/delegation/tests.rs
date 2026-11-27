@@ -87,6 +87,11 @@ impl ChiefOfStaffPort for FakePort {
             .map(|(_, conversation)| conversation.clone()))
     }
 
+    fn resolve_member(&self, reference: &str) -> Result<Option<String>, ApiError> {
+        self.fails()?;
+        Ok(Some(reference.to_owned()))
+    }
+
     fn is_chief_of_staff(&self, member: &str) -> bool {
         member == self.tess
     }
