@@ -239,3 +239,6 @@ code.proc-key { font-family: var(--font-mono); font-size: var(--fs-xs); color: v
 @media (max-width: 639px) {
   .plan-rows > li.dev-row > .dev-row-actions { order: 3; margin-inline-start: 40px; }
 }
+
+/* A Docs section's description, as plain text under the section bar (owner moved the New button onto the bar) */
+#main .docs-sec-note { margin: 14px var(--gutter) 4px; color: var(--gray-400); font-size: var(--fs-sm); }

@@ -44,6 +44,8 @@ function domainGroup(t, g, rows, title, kind) {
       <h3 class="work-group-title">${ic(g ? "folder" : KIND_ICON[kind] || "files", "ic16")}${esc(title)}<span class="cnt">${rows.length}</span><code class="proc-key doc-sec-path">docs/${esc(t.section)}/${g ? esc(g) + "/" : ""}</code></h3>
       <ul class="rows plan-rows" role="list">${rows.map((e) => docRow(e)).join("")}</ul></section>`;
 }
+let docsTabAction = "";
+const takeDocsTabAction = () => { const a = docsTabAction; docsTabAction = ""; return a; };
 function documentsTab(pid, t) {
   const sec = projectSections(pid).find((s) => s.path === t.section) || {};
   const list = tabDocs(pid, t), kind = t.kinds?.[0] || (sec.kinds || [])[0] || "", name = sec.title || t.title;
@@ -51,8 +53,9 @@ function documentsTab(pid, t) {
   const body = list.length ? [...byDomain(list, t.section)].map(([g, rows]) => domainGroup(t, g, rows, domainTitle(g, name), kind)).join("")
     : `<p class="plan-empty doc-sec-empty">Nothing in ${esc(name)} yet.</p>`;
   const versioned = isVersioned(pid, kind) ? " Documents here are issued in versions; agents build from the latest issued version." : "";
-  return `<div class="work-subbar-header proc-subbar"><div class="work-toolbar queue-toolbar proc-toolbar">
-      <p class="plan-toolbar-note">${esc(sec.summary || "")}${versioned}</p><div class="proc-toolbar-end">${newBtn}</div></div></div>
+  /* The New button sits on the Docs section bar (owner); the section's description is plain text above its list */
+  docsTabAction = newBtn;
+  return `<p class="plan-toolbar-note docs-sec-note">${esc(sec.summary || "")}${versioned}</p>
     <div class="plan-results proc-results">${body}</div>`;
 }
 
@@ -74,4 +77,4 @@ function processTabBody(pid, key) {
 }
 const processTabView = (pid, key) => processTabs(pid).find((x) => x.key === key)?.view || null;
 
-export { processTabBody, processTabView, processTabs, tabCount };
+export { processTabBody, processTabView, processTabs, tabCount, takeDocsTabAction };

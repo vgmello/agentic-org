@@ -8,7 +8,7 @@ import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { pageFeature, pageFeatures } from "./project-plan-features.js";
 import { pageRelease, pageReleases } from "./project-plan-releases.js";
 import { docCrumbs, docsCount, docsSectionBar, pageDocs, setDocsExtra } from "./docs.js";
-import { processTabBody, processTabs, tabCount } from "./project-tabs.js";
+import { takeDocsTabAction, processTabBody, processTabs, tabCount } from "./project-tabs.js";
 import { featureRef, getFeature, getRelease, projectFeatures, projectReleases, releaseRef } from "../plan-data.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
@@ -107,7 +107,7 @@ function projectBody(id, tab, sub) {
   if (tab === "releases") return sub ? pageRelease(id, sub) : pageReleases(id);
   if (tab === "docs") return pageDocs(id, sub);
   const processTab = processTabBody(id, tab);
-  if (processTab != null) return (processTabs(id).some((t) => t.key === tab && inDocs(t)) ? docsSectionBar(id) : "") + processTab;
+  if (processTab != null) return (processTabs(id).some((t) => t.key === tab && inDocs(t)) ? docsSectionBar(id, takeDocsTabAction()) : "") + processTab;
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
   return notFound();
 }

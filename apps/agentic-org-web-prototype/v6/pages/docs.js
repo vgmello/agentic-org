@@ -73,10 +73,10 @@ function docsTabs(pid, cur) {
   return { documents: tab("", "Documents", treeEntries(pid).length) + docsExtra, rest: tab("processes", "Processes and standards", n("process") + n("standard")) };
 }
 /* The same section bar above a section that lives under Docs (Product, Technical, Features) */
-function docsSectionBar(pid) {
+function docsSectionBar(pid, action = "") {
   const t = docsTabs(pid, null);
   return `<div class="work-subbar-header proc-subbar docs-section-bar"><div class="work-toolbar queue-toolbar proc-toolbar">
-      <div class="primary-tab-row"><nav class="queue-tabs" aria-label="Documentation">${t.documents}${t.rest}</nav></div></div></div>`;
+      <div class="primary-tab-row"><nav class="queue-tabs" aria-label="Documentation">${t.documents}${t.rest}</nav></div>${action ? `<div class="proc-toolbar-end">${action}</div>` : ""}</div></div>`;
 }
 
 function devLine(pid) {
