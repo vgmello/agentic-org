@@ -10,6 +10,15 @@ use crate::credentials::rfc3339_now;
 use super::SessionManager;
 
 impl SessionManager {
+    /// Recognizes the organization owner on both HQ (host-authoritative owner) and satellites
+    /// (HQ-replicated owner via `provenance::is_verified_owner`), while never treating a
+    /// satellite's own local `office_id` as the organization owner.
+    pub(crate) fn is_owner_actor(&self, member_id: &str) -> bool {
+        crate::provenance::is_verified_owner(&self.office, member_id)
+            || (self.office.info().role == org_office::OfficeRole::Hq
+                && member_id == self.office.owner_member_id())
+    }
+
     pub(super) fn authorize_owner_only(&self, member_id: &str) -> Result<(), ApiError> {
         self.authorize_owner_only_inner(member_id, false)
     }
@@ -19,7 +28,7 @@ impl SessionManager {
         member_id: &str,
         hq_attested_owner: bool,
     ) -> Result<(), ApiError> {
-        if hq_attested_owner || member_id == self.office.owner_member_id() {
+        if hq_attested_owner || self.is_owner_actor(member_id) {
             return Ok(());
         }
         Err(ApiError::new(
@@ -33,7 +42,7 @@ impl SessionManager {
         member_id: &str,
         hq_attested_owner: bool,
     ) -> Result<(), ApiError> {
-        if hq_attested_owner || member_id == self.office.owner_member_id() {
+        if hq_attested_owner || self.is_owner_actor(member_id) {
             return Ok(());
         }
         let found = self

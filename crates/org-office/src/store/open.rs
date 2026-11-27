@@ -67,7 +67,8 @@ pub use operations::{
     OfficesCount, OfficesList, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
     ProviderConnectionById, ProviderConnectionsList, ReceiptById, RegisterRepositoryOp,
     RegisterSatelliteOfficeOp, RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList,
-    Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
+    Standing, StructureOp, TeamLimitRequestsList, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    WatchingModelRead,
 };
 
 #[cfg(any(test, feature = "testkit"))]

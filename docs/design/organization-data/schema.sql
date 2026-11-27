@@ -728,6 +728,34 @@ CREATE TABLE hire_requests (
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
+CREATE TABLE team_limit_requests (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'approved', 'denied')),
+  team_id TEXT NOT NULL,
+  requested_by_employee_id TEXT NOT NULL,
+  approver_employee_id TEXT NOT NULL,
+  current_max_members INTEGER NOT NULL CHECK (current_max_members BETWEEN 1 AND 100),
+  requested_max_members INTEGER NOT NULL CHECK (requested_max_members BETWEEN 1 AND 100),
+  reason TEXT NOT NULL CHECK (length(reason) > 0),
+  decision_reason TEXT,
+  decided_by_employee_id TEXT,
+  decided_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id),
+  CHECK (requested_max_members > current_max_members),
+  CHECK ((state = 'pending') = (decided_by_employee_id IS NULL)),
+  CHECK ((state = 'pending') = (decided_at IS NULL)),
+  CHECK (state <> 'pending' OR decision_reason IS NULL),
+  FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, requested_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, approver_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, decided_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
 CREATE TABLE watchers (
   organization_id TEXT NOT NULL,
   target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
@@ -2679,6 +2707,15 @@ CREATE TRIGGER hire_request_terminal_immutable BEFORE UPDATE ON hire_requests
 WHEN OLD.state IN ('hired', 'withdrawn', 'failed')
 BEGIN
   SELECT RAISE(ABORT, 'terminal hire request is immutable');
+END;
+
+CREATE INDEX team_limit_requests_by_team_state ON team_limit_requests(organization_id, team_id, state);
+CREATE INDEX team_limit_requests_by_approver ON team_limit_requests(organization_id, approver_employee_id, state);
+
+CREATE TRIGGER team_limit_request_terminal_immutable BEFORE UPDATE ON team_limit_requests
+WHEN OLD.state IN ('approved', 'denied')
+BEGIN
+  SELECT RAISE(ABORT, 'terminal team limit request is immutable');
 END;
 
 CREATE TRIGGER office_codes_immutable BEFORE UPDATE ON office_codes

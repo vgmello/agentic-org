@@ -54,58 +54,31 @@ fn to_project(p: Project) -> ReviewProjectInfo {
 
 struct ReviewView<'a, S: ?Sized>(&'a S);
 
-impl<S: ReviewsRead + ?Sized> ReviewsRead for ReviewView<'_, S> {
-    fn review(&self, id: &Id) -> Result<Option<ReviewRecord>, EngineError> {
-        self.0.review(id)
-    }
-    fn review_by_key(&self, c: &str, n: u64) -> Result<Option<ReviewRecord>, EngineError> {
-        self.0.review_by_key(c, n)
-    }
-    fn list_reviews(&self, q: &ReviewListQuery) -> Result<Vec<ReviewRecord>, EngineError> {
-        self.0.list_reviews(q)
-    }
-    fn max_review_number(&self, c: &str) -> Result<u64, EngineError> {
-        self.0.max_review_number(c)
-    }
-    fn office_review_counter(
-        &self,
-        c: &str,
-    ) -> Result<Option<OfficeReviewCounterRecord>, EngineError> {
-        self.0.office_review_counter(c)
-    }
-    fn office_review_counters(&self) -> Result<Vec<OfficeReviewCounterRecord>, EngineError> {
-        self.0.office_review_counters()
-    }
-    fn review_rounds(&self, id: &Id) -> Result<Vec<ReviewRoundRecord>, EngineError> {
-        self.0.review_rounds(id)
-    }
-    fn review_reviewers(&self, id: &Id) -> Result<Vec<ReviewReviewerRecord>, EngineError> {
-        self.0.review_reviewers(id)
-    }
-    fn review_findings(&self, id: &Id) -> Result<Vec<ReviewFindingRecord>, EngineError> {
-        self.0.review_findings(id)
-    }
-    fn review_finding_by_id(&self, id: &Id) -> Result<Option<ReviewFindingRecord>, EngineError> {
-        self.0.review_finding_by_id(id)
-    }
-    fn review_finding_replies(
-        &self,
-        id: &Id,
-    ) -> Result<Vec<ReviewFindingReplyRecord>, EngineError> {
-        self.0.review_finding_replies(id)
-    }
-    fn review_finding_reply_by_id(
-        &self,
-        id: &Id,
-    ) -> Result<Option<ReviewFindingReplyRecord>, EngineError> {
-        self.0.review_finding_reply_by_id(id)
-    }
-    fn review_events(&self, id: &Id) -> Result<Vec<ReviewEventRecord>, EngineError> {
-        self.0.review_events(id)
-    }
-    fn review_child_parent_ids(&self) -> Result<Vec<Id>, EngineError> {
-        self.0.review_child_parent_ids()
-    }
+macro_rules! fwd_reviews_read {
+    ($($name:ident($($arg:ident: $ty:ty),*) -> $ret:ty;)+) => {
+        impl<S: ReviewsRead + ?Sized> ReviewsRead for ReviewView<'_, S> {
+            $(fn $name(&self $(, $arg: $ty)*) -> Result<$ret, EngineError> {
+                self.0.$name($($arg),*)
+            })+
+        }
+    };
+}
+
+fwd_reviews_read! {
+    review(id: &Id) -> Option<ReviewRecord>;
+    review_by_key(c: &str, n: u64) -> Option<ReviewRecord>;
+    list_reviews(q: &ReviewListQuery) -> Vec<ReviewRecord>;
+    max_review_number(c: &str) -> u64;
+    office_review_counter(c: &str) -> Option<OfficeReviewCounterRecord>;
+    office_review_counters() -> Vec<OfficeReviewCounterRecord>;
+    review_rounds(id: &Id) -> Vec<ReviewRoundRecord>;
+    review_reviewers(id: &Id) -> Vec<ReviewReviewerRecord>;
+    review_findings(id: &Id) -> Vec<ReviewFindingRecord>;
+    review_finding_by_id(id: &Id) -> Option<ReviewFindingRecord>;
+    review_finding_replies(id: &Id) -> Vec<ReviewFindingReplyRecord>;
+    review_finding_reply_by_id(id: &Id) -> Option<ReviewFindingReplyRecord>;
+    review_events(id: &Id) -> Vec<ReviewEventRecord>;
+    review_child_parent_ids() -> Vec<Id>;
 }
 
 impl<S: TasksRead + ?Sized> ReviewContextRead for ReviewView<'_, S> {

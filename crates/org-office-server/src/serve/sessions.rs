@@ -45,10 +45,14 @@ fn is_agent_lifecycle_method(request: &Request) -> bool {
 
 fn is_hiring_policy_method(request: &Request) -> bool {
     use org_proto::hiring::{
-        MemberSetMayHire, ModelProfileList, ProviderConnectionCreate, TeamSetMaxMembers,
+        MemberSetMayHire, ModelProfileList, ProviderConnectionCreate, TeamLimitRequestCreate,
+        TeamLimitRequestDecide, TeamLimitRequestList, TeamSetMaxMembers,
     };
     request.is::<MemberSetMayHire>()
         || request.is::<TeamSetMaxMembers>()
+        || request.is::<TeamLimitRequestCreate>()
+        || request.is::<TeamLimitRequestDecide>()
+        || request.is::<TeamLimitRequestList>()
         || request.is::<ProviderConnectionCreate>()
         || request.is::<ModelProfileList>()
 }
@@ -136,12 +140,14 @@ fn sessions_rpc(
     };
     let actor =
         super::delegation::delegated_owner_read_actor(request, delegation).unwrap_or(member);
+    let resolved = resolve_session_target_handle(request, shared);
+    let effective = resolved.as_ref().unwrap_or(request);
     if let Some(sessions) = &shared.ports.sessions {
-        if let Some(response) = sessions(Some(actor), request) {
+        if let Some(response) = sessions(Some(actor), effective) {
             if matches!(response.outcome, org_proto::Outcome::Result(_))
-                && request.is::<org_proto::sessions::MemberSessionStop>()
+                && effective.is::<org_proto::sessions::MemberSessionStop>()
             {
-                if let Ok(params) = request.params::<org_proto::sessions::MemberSessionStop>() {
+                if let Ok(params) = effective.params::<org_proto::sessions::MemberSessionStop>() {
                     revoke_bound_member(shared, &params.employee_id);
                 }
             }
@@ -155,6 +161,29 @@ fn sessions_rpc(
             format!("this office does not know `{}`", request.method),
         ),
     ))
+}
+
+/// Resolves an `@handle` or handle `employee_id` on session read RPCs (`member.session_list`,
+/// `member.session_inspect`, `member.session_grants`) to its canonical employee UUIDv7.
+fn resolve_session_target_handle(request: &Request, shared: &Shared) -> Option<Request> {
+    if !matches!(
+        request.method.as_str(),
+        "member.session_list" | "member.session_inspect" | "member.session_grants"
+    ) {
+        return None;
+    }
+    let raw = request.params.get("employee_id")?.as_str()?;
+    let trimmed = org_office::directory::trim_address(raw);
+    let reference = trimmed.strip_prefix('@').unwrap_or(trimmed);
+    if org_proto::is_uuid_v7(reference) {
+        return None;
+    }
+    let (member, _) = shared.ports.directory.resolve_member(reference).ok()??;
+    let mut rewritten = request.clone();
+    if let Some(obj) = rewritten.params.as_object_mut() {
+        obj.insert("employee_id".into(), serde_json::Value::String(member.id));
+    }
+    Some(rewritten)
 }
 
 fn hiring_rpc(

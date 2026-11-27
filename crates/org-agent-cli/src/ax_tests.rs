@@ -860,3 +860,26 @@ fn agent_os_format_env_precedence_and_json_switch_before_and_after_subcommand() 
     let env: Value = serde_json::from_str(&both.stdout).unwrap();
     assert_eq!(env["ok"], true);
 }
+
+#[test]
+fn unbound_agent_os_hint_directs_local_operators_to_agentic_org_and_external_agents_to_login() {
+    use crate::runtime::binding::Binding;
+
+    for cmd in [&["who"][..], &["task", "list"]] {
+        let args: Vec<String> = cmd.iter().map(|s| (*s).to_owned()).collect();
+        let out = crate::execute(&args, Binding::default());
+        assert_eq!(out.exit_code, 1, "{cmd:?}: {}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["ok"], false, "{cmd:?}");
+        assert_eq!(env["error"]["code"], "not_authorized", "{cmd:?}");
+        let hint = env["error"]["hint"].as_str().expect("error hint");
+        assert!(
+            hint.contains("agentic-org"),
+            "unbound hint must direct local human operators to agentic-org: {hint}"
+        );
+        assert!(
+            hint.contains("agent-os login --as @<handle>"),
+            "unbound hint must mention `agent-os login --as @<handle>`: {hint}"
+        );
+    }
+}

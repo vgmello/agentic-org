@@ -46,6 +46,40 @@ impl OfficeTransport for Stub {
             "team.set_max_members" | "member.set_may_hire" => {
                 json!({"id": ADA, "revision": 4, "generation": 9})
             }
+            "team.limit_request.create" => json!({
+                "request_id": "0193a5c0-0000-7000-8000-000000000099",
+                "team_id": CORE,
+                "state": "pending",
+                "approver_employee_id": ADA,
+                "requested_max_members": 12,
+                "revision": 1,
+                "generation": 10
+            }),
+            "team.limit_request.list" => json!({
+                "requests": [{
+                    "id": "0193a5c0-0000-7000-8000-000000000099",
+                    "team_id": CORE,
+                    "state": "pending",
+                    "requested_by_employee_id": ADA,
+                    "approver_employee_id": ADA,
+                    "current_max_members": 7,
+                    "requested_max_members": 12,
+                    "reason": "Expanding backend team",
+                    "revision": 1,
+                    "created_at": "2026-11-27T00:00:00Z",
+                    "updated_at": "2026-11-27T00:00:00Z"
+                }]
+            }),
+            "team.limit_request.decide" => json!({
+                "request_id": "0193a5c0-0000-7000-8000-000000000099",
+                "team_id": CORE,
+                "state": "approved",
+                "approver_employee_id": ADA,
+                "requested_max_members": 12,
+                "revision": 2,
+                "team_revision": 8,
+                "generation": 11
+            }),
             _ => json!({"status": "committed", "position": {"epoch": 1, "seq": 3}}),
         })
     }
@@ -154,4 +188,58 @@ fn a_dry_run_team_create_is_sent_as_one_without_a_command_id() {
     assert_eq!(method, "team.create");
     assert_eq!(params["dry_run"], true);
     assert!(params.get("command_id").is_none(), "{params}");
+}
+
+#[test]
+fn team_limit_request_list_and_decide_commands_encode_params_and_validate_flags() {
+    let mut stub = Stub::new();
+    let req_id = "0193a5c0-0000-7000-8000-000000000099";
+    let line = format!(
+        "team request-limit --team {CORE} --max-members 12 --reason Expanding --request-id {req_id} --idempotency-key lr-1"
+    );
+    let (env, code) = run(&mut stub, &line);
+    assert_eq!(code, 0, "{env}");
+    assert_eq!(env["data"]["state"], "pending");
+    assert_eq!(env["meta"]["revision"], 1);
+    assert_eq!(stub.calls[0].0, "team.limit_request.create");
+    assert_eq!(stub.calls[0].1["team_id"], CORE);
+    assert_eq!(stub.calls[0].1["requested_max_members"], 12);
+    assert_eq!(stub.calls[0].1["reason"], "Expanding");
+
+    let (env, code) = run(
+        &mut stub,
+        &format!("team limit-requests --team {CORE} --state pending"),
+    );
+    assert_eq!(code, 0, "{env}");
+    assert_eq!(env["data"][0]["id"], req_id);
+    assert_eq!(stub.calls[1].0, "team.limit_request.list");
+    assert_eq!(stub.calls[1].1["team_id"], CORE);
+    assert_eq!(stub.calls[1].1["state"], "pending");
+
+    // Mutually exclusive or missing --approve / --deny is refused locally before transport.
+    for bad in [
+        format!("team decide-limit --request {req_id} --approve --deny --if-match 1"),
+        format!("team decide-limit --request {req_id} --if-match 1"),
+    ] {
+        let (env, code) = run(&mut stub, &bad);
+        assert_eq!(code, 1, "{bad}: {env}");
+        assert_eq!(env["error"]["code"], "invalid_request");
+    }
+    assert_eq!(
+        stub.calls.len(),
+        2,
+        "invalid decide flags must send nothing"
+    );
+
+    let (env, code) = run(
+        &mut stub,
+        &format!("team decide-limit --request {req_id} --approve --reason Approved --if-match 1"),
+    );
+    assert_eq!(code, 0, "{env}");
+    assert_eq!(env["data"]["state"], "approved");
+    assert_eq!(env["data"]["team_revision"], 8);
+    assert_eq!(stub.calls[2].0, "team.limit_request.decide");
+    assert_eq!(stub.calls[2].1["approve"], true);
+    assert_eq!(stub.calls[2].1["expected_version"], 1);
+    assert_eq!(stub.calls[2].1["reason"], "Approved");
 }

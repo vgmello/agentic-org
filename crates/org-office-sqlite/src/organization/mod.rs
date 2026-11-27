@@ -165,6 +165,10 @@ const EMPLOYEE: &str = "id, handle, kind, name, home_team_id, role_id, reports_t
 const HIRE_REQUEST: &str = "id, revision, state, requested_by_employee_id, home_team_id, role_id, \
                             proposal_json, reason, confirmed_at, closed_reason, employee_id, \
                             failed_step, created_at, updated_at";
+const TEAM_LIMIT_REQUEST: &str = "id, revision, state, team_id, requested_by_employee_id, \
+                                  approver_employee_id, current_max_members, \
+                                  requested_max_members, reason, decision_reason, \
+                                  decided_by_employee_id, decided_at, created_at, updated_at";
 const AGENT_EXEC: &str = "employee_id, model_profile_id, model_id, system_prompt_markdown, \
                           tools_config_json, permission_preset, enabled, effort";
 const PROVIDER_CONN: &str = "id, key, name, provider_type, auth_mode, subscription_identity, \

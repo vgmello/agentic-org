@@ -1782,3 +1782,218 @@ fn external_renew_and_pending_enforce_human_only_auth_masking_and_familiarity() 
     assert_eq!(rotated.last_approved_by.as_deref(), Some(w.owner.as_str()));
     assert!(rotated.last_approved_at.is_some());
 }
+
+/// TASK-210 AC #4 (+ AC #2 host-channel check): signed-in operator calls
+/// `member.external_sessions` (`--member <id>` and `@handle`), `member.external_pending`, and
+/// `member.session_list` over the real host channel with HMAC-signed grants.
+/// Proves authorized owner & authorized manager/hirer succeed, while unauthorized live persons
+/// and non-person grants receive accurate authorization errors + hints (never opaque
+/// `request refused on host channel`).
+#[test]
+fn task210_host_channel_agent_sessions_end_to_end_authorized_and_accurate_refusal() {
+    use std::io::BufReader;
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let w = world();
+    let team_id = w.office.org_snapshot().unwrap().teams[0].id.clone();
+
+    // Add two live people: Carol (granted may_hire -> authorized operator) and Dave (no hiring/lead
+    // authority -> unauthorized live person).
+    let carol = w.office.next_uuid_v7();
+    let dave = w.office.next_uuid_v7();
+    for (id, name, handle) in [(&carol, "Carol", "carol"), (&dave, "Dave", "dave")] {
+        w.office
+            .submit_org(
+                &w.owner,
+                org_office::rules::OrgCommand::MemberAddPerson(
+                    org_proto::org::MemberAddPersonParams {
+                        command_id: w.office.next_uuid_v7(),
+                        member_id: id.clone(),
+                        name: name.into(),
+                        handle: Some(handle.into()),
+                        home_team_id: Some(team_id.clone()),
+                        contact: None,
+                    },
+                ),
+            )
+            .unwrap()
+            .unwrap();
+    }
+    let revoke_dave_hire = Request::new::<org_proto::hiring::MemberSetMayHire>(
+        1,
+        &org_proto::hiring::MemberSetMayHireParams {
+            command_id: w.office.next_uuid_v7(),
+            member_id: dave.clone(),
+            expected_version: 1,
+            may_hire: false,
+        },
+    )
+    .unwrap();
+    ok_value(
+        w.node
+            .shared
+            .answer_for_test(&revoke_dave_hire, &w.owner, true),
+    );
+
+    // Create one pending external login for Ada so `--pending` returns live data.
+    let (_pkcs8, pending_req) = login(&w, "@ada");
+
+    let (server_stream, client_stream) = UnixStream::pair().unwrap();
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let srv_shared = Arc::clone(&w.node.shared);
+    let srv_stop = Arc::clone(&stop);
+    let srv = std::thread::spawn(move || {
+        crate::serve::serve_host_channel_for_test(
+            server_stream,
+            &srv_shared,
+            "host-ch-210",
+            &srv_stop,
+        );
+    });
+    let mut reader = BufReader::new(client_stream);
+
+    // Negotiate host channel v2 hello.
+    org_proto::frame::write_message(
+        reader.get_mut(),
+        &json!({"id": 1, "method": "hello", "params": {"api": {"min": 2, "max": 2}}}),
+    )
+    .unwrap();
+    let hello: Value = org_proto::frame::read_message(&mut reader)
+        .unwrap()
+        .unwrap();
+    assert_eq!(hello["result"]["api_version"], 2);
+
+    let office = &w.node.shared.hello.office.as_ref().unwrap().office;
+    let mut next_id = 2u64;
+    let mut call_as = |member: &str, method: &str, params: Value| -> Value {
+        let mut grant = json!({
+            "account": "acct-1",
+            "member": member,
+            "org_id": office.organization_id,
+            "office_id": office.id,
+            "channel_id": "host-ch-210",
+            "session_id": "sess-210",
+            "exp": u64::MAX,
+            "mac": "00".repeat(32)
+        });
+        crate::test_support::sign_grant(&mut grant);
+        let id = next_id;
+        next_id += 1;
+        let req = Request {
+            id,
+            method: method.into(),
+            params,
+            principal: Some(json!({"grant": grant})),
+        };
+        org_proto::frame::write_message(reader.get_mut(), &req).unwrap();
+        org_proto::frame::read_message(&mut reader)
+            .unwrap()
+            .unwrap()
+    };
+
+    // 1. Authorized owner succeeds on external_sessions (by UUIDv7 AND @handle), external_pending,
+    //    and member.session_list (by UUIDv7 AND @handle).
+    for emp_ref in [w.ada.as_str(), "@ada"] {
+        let res = call_as(
+            &w.owner,
+            MemberExternalSessions::METHOD,
+            json!({"employee_id": emp_ref}),
+        );
+        assert_eq!(res["result"]["employee_id"], w.ada, "{emp_ref}: {res}");
+
+        let list = call_as(
+            &w.owner,
+            org_proto::sessions::MemberSessionList::METHOD,
+            json!({"employee_id": emp_ref}),
+        );
+        assert_eq!(list["result"]["employee_id"], w.ada, "{emp_ref}: {list}");
+    }
+    let pend = call_as(&w.owner, MemberExternalPending::METHOD, json!({}));
+    assert_eq!(
+        pend["result"]["pending"][0]["request_id"],
+        pending_req.request_id
+    );
+
+    // 2. Authorized non-owner operator (Carol with may_hire) succeeds over the host channel.
+    let carol_sessions = call_as(
+        &carol,
+        MemberExternalSessions::METHOD,
+        json!({"employee_id": w.ada}),
+    );
+    assert_eq!(
+        carol_sessions["result"]["employee_id"], w.ada,
+        "{carol_sessions}"
+    );
+    let carol_pend = call_as(
+        &carol,
+        MemberExternalPending::METHOD,
+        json!({"employee_id": w.ada}),
+    );
+    assert_eq!(
+        carol_pend["result"]["pending"][0]["request_id"],
+        pending_req.request_id
+    );
+
+    // 3. Unauthorized live person (Dave) receives an accurate authorization error + hint on
+    //    `member.external_sessions` and filtered `member.external_pending`, NEVER opaque
+    //    `request refused on host channel`.
+    for (method, params) in [
+        (
+            MemberExternalSessions::METHOD,
+            json!({"employee_id": w.ada}),
+        ),
+        (MemberExternalPending::METHOD, json!({"employee_id": w.ada})),
+    ] {
+        let denied = call_as(&dave, method, params);
+        assert_eq!(
+            denied["error"]["code"], "not_authorized",
+            "{method}: {denied}"
+        );
+        assert_ne!(
+            denied["error"]["message"], "request refused on host channel",
+            "{method}: {denied}"
+        );
+        assert!(
+            denied["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("owner") && m.contains("team lead")),
+            "{method}: {denied}"
+        );
+        assert!(
+            denied["error"]["hint"]
+                .as_str()
+                .is_some_and(|h| !h.is_empty()),
+            "{method} must include hint: {denied}"
+        );
+    }
+
+    // 4. Non-person grant (agent Ada on a host channel) also receives an accurate person-required
+    //    authorization error + hint on agent session reads rather than opaque channel refusal.
+    let agent_denied = call_as(
+        &w.ada,
+        MemberExternalSessions::METHOD,
+        json!({"employee_id": w.ada}),
+    );
+    assert_eq!(
+        agent_denied["error"]["code"], "not_authorized",
+        "{agent_denied}"
+    );
+    assert_ne!(
+        agent_denied["error"]["message"], "request refused on host channel",
+        "{agent_denied}"
+    );
+    assert!(
+        agent_denied["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("active organization person")),
+        "{agent_denied}"
+    );
+
+    stop.store(true, Ordering::SeqCst);
+    drop(reader);
+    srv.join().unwrap();
+}

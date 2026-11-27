@@ -1,6 +1,7 @@
-//! `team list|inspect|create|update|move|archive|set-limit`.
+//! `team list|inspect|create|update|move|archive|set-limit|request-limit|limit-requests|decide-limit`.
 
 use org_command::{Answer, Request};
+use org_proto::hiring::{TeamLimitRequestListResult, TeamLimitRequestOpResult};
 use org_proto::org::{OrgSnapshot, Team};
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
@@ -10,7 +11,8 @@ use super::{send_write, ConflictTarget};
 use crate::runtime::card::{card_value, who};
 use crate::runtime::domain::CommandCue;
 use crate::runtime::input::{
-    entity_id, opt_bool, opt_str, require_if_match, require_str, send_entity_write,
+    copy_opt_str, decode_err, encode, entity_id, hiring_command_id, opt_bool, opt_str,
+    require_if_match, require_str, revised_answer, send_entity_write,
 };
 use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport, Refusal};
 
@@ -28,8 +30,18 @@ pub(super) const CUES: &[CommandCue] = &[
     ),
     (
         "team",
+        "decide-limit",
+        "approving or denying a team lead's `max_members` increase request (`--approve` or `--deny`; requires `--if-match`).",
+    ),
+    (
+        "team",
         "inspect",
         "viewing one team's metadata, lead, and active member directory cards.",
+    ),
+    (
+        "team",
+        "limit-requests",
+        "listing pending or decided team member-cap increase requests visible to you.",
     ),
     (
         "team",
@@ -40,6 +52,11 @@ pub(super) const CUES: &[CommandCue] = &[
         "team",
         "move",
         "re-parenting a team under a different parent team (requires `--if-match`).",
+    ),
+    (
+        "team",
+        "request-limit",
+        "requesting a manager-approved `max_members` increase for a team you lead.",
     ),
     (
         "team",
@@ -66,6 +83,9 @@ pub(super) fn dispatch<T: OfficeTransport + ?Sized>(
         "move" => write_team_move(transport, request),
         "archive" => write_team_archive(transport, request),
         "set-limit" => write_team_set_max_members(transport, request),
+        "request-limit" => write_team_request_limit(transport, request),
+        "limit-requests" => read_team_limit_requests(transport, request),
+        "decide-limit" => write_team_decide_limit(transport, request),
         _ => return None,
     })
 }
@@ -251,4 +271,86 @@ fn write_team_set_max_members<T: OfficeTransport + ?Sized>(
     params.insert("expected_version".into(), json!(expected));
     params.insert("max_members".into(), json!(max_members));
     send_entity_write(transport, request, "team.set_max_members", params)
+}
+
+fn send_team_limit_write<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+    method: &str,
+    mut params: Map<String, Value>,
+) -> Result<Answer, Refusal> {
+    params.insert("command_id".into(), json!(hiring_command_id(request)?));
+    let raw = transport.call_method(method, Value::Object(params))?;
+    let out: TeamLimitRequestOpResult =
+        serde_json::from_value(raw).map_err(|_| decode_err(method))?;
+    Ok(revised_answer(request, encode(&out, method)?, out.revision))
+}
+
+fn write_team_request_limit<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let team_id = require_str(request, "team")?;
+    let max_members = request
+        .input
+        .get("max_members")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            Refusal::new(
+                ErrorCode::InvalidRequest,
+                "Missing required --max-members integer flag.",
+                "Pass --max-members <1..=100>.",
+            )
+        })?;
+    let reason = require_str(request, "reason")?;
+    let request_id = entity_id(request, Some("request_id"), "team.limit_request.create")?;
+    let mut params = Map::new();
+    params.insert("request_id".into(), json!(request_id));
+    params.insert("team_id".into(), json!(team_id));
+    params.insert("requested_max_members".into(), json!(max_members));
+    params.insert("reason".into(), json!(reason));
+    send_team_limit_write(transport, request, "team.limit_request.create", params)
+}
+
+fn read_team_limit_requests<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    parse_cursor(request.cursor.as_deref())?;
+    let mut params = Map::new();
+    copy_opt_str(request, &mut params, "team", "team_id");
+    copy_opt_str(request, &mut params, "state", "state");
+    copy_opt_str(request, &mut params, "approver", "approver_employee_id");
+    let raw = transport.call_method("team.limit_request.list", Value::Object(params))?;
+    let listed: TeamLimitRequestListResult =
+        serde_json::from_value(raw).map_err(|_| decode_err("team.limit_request.list"))?;
+    let items = listed
+        .requests
+        .iter()
+        .map(|r| encode(r, "team.limit_request.list"))
+        .collect::<Result<Vec<_>, _>>()?;
+    paginate(request, items)
+}
+
+fn write_team_decide_limit<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let request_id = require_str(request, "request")?;
+    let expected = require_if_match(request)?;
+    let approve = opt_bool(request, "approve").unwrap_or(false);
+    let deny = opt_bool(request, "deny").unwrap_or(false);
+    if approve == deny {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "Pass exactly one of --approve or --deny.",
+            "Run `team decide-limit --request <id> --approve --if-match <rev>` or `--deny`.",
+        ));
+    }
+    let mut params = Map::new();
+    params.insert("request_id".into(), json!(request_id));
+    params.insert("expected_version".into(), json!(expected));
+    params.insert("approve".into(), json!(approve));
+    copy_opt_str(request, &mut params, "reason", "reason");
+    send_team_limit_write(transport, request, "team.limit_request.decide", params)
 }

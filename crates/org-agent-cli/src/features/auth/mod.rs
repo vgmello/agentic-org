@@ -333,7 +333,7 @@ fn not_signed_in() -> Refusal {
     Refusal::new(
         ErrorCode::NotAuthorized,
         "This workspace is not signed in.",
-        "Run `agent-os login --as @<handle>` in the workspace.",
+        "Run `agent-os login --as @<handle>` in the workspace, or use `agentic-org <command>` (or `agentic-org sign-in`) if you are a local human operator.",
     )
 }
 

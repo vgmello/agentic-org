@@ -962,5 +962,137 @@ fn task80_host_channel_blocking_tess_turn_events_avoids_hol_blocking_and_enforce
     srv.join().unwrap();
 }
 
+#[test]
+fn task210_host_channel_agent_sessions_authorizes_persons_and_gives_accurate_refusals() {
+    let mut shared = shared();
+    let office_id = shared.hello.office.as_ref().unwrap().office.id.clone();
+    shared.ports.sessions = Some(Box::new(|actor, req| {
+        if !req.is::<org_proto::sessions::MemberSessionList>() {
+            return None;
+        }
+        let params = req
+            .params::<org_proto::sessions::MemberSessionList>()
+            .unwrap();
+        Some(
+            Response::ok::<org_proto::sessions::MemberSessionList>(
+                req.id,
+                &org_proto::sessions::SessionListResult {
+                    employee_id: params
+                        .employee_id
+                        .unwrap_or_else(|| actor.unwrap().to_owned()),
+                    sessions: Vec::new(),
+                    live_session_id: None,
+                },
+            )
+            .unwrap(),
+        )
+    }));
+
+    // 1. Authorized owner succeeds on `member.session_list` over the host channel.
+    let ctx = context();
+    let ok_resp = answer(
+        &shared,
+        &ctx,
+        &signed(
+            &shared,
+            "member.session_list",
+            json!({"employee_id": org_mailbox::testkit::fixture::PAT_ID}),
+        ),
+    );
+    assert!(
+        ok_resp.get("result").is_some(),
+        "owner must succeed on member.session_list over host channel: {ok_resp}"
+    );
+
+    // 2. Valid grant whose member is NOT an active person (e.g., an agent or offboarded member)
+    //    gets an accurate authorization error + hint on agent session read methods rather than
+    //    opaque `request refused on host channel`.
+    let make_grant_req = |shared: &Shared, member: &str, method: &str, params: Value| {
+        let office = &shared.hello.office.as_ref().unwrap().office;
+        let mut grant = json!({
+            "account": "account",
+            "member": member,
+            "org_id": office.organization_id,
+            "office_id": office.id,
+            "channel_id": "opaque-channel",
+            "session_id": "session",
+            "exp": u64::MAX,
+            "mac": "00".repeat(32)
+        });
+        sign(&mut grant);
+        Request {
+            id: 71,
+            method: method.into(),
+            params,
+            principal: Some(json!({"grant": grant})),
+        }
+    };
+
+    let agent_id = org_mailbox::testkit::fixture::members()
+        .into_iter()
+        .find(|m| m.kind == MemberKind::Agent)
+        .expect("fixture agent")
+        .id;
+    for (method, params) in [
+        ("member.external_sessions", json!({"employee_id": "@ada"})),
+        ("member.external_pending", json!({})),
+        ("member.session_list", json!({"employee_id": "@ada"})),
+    ] {
+        let resp = answer(
+            &shared,
+            &ctx,
+            &make_grant_req(&shared, &agent_id, method, params.clone()),
+        );
+        assert_eq!(resp["error"]["code"], "not_authorized", "{method}: {resp}");
+        assert_ne!(
+            resp["error"]["message"], "request refused on host channel",
+            "{method} must return accurate authorization error, not opaque refusal: {resp}"
+        );
+        assert!(
+            resp["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("active organization person")),
+            "{method}: {resp}"
+        );
+        assert!(
+            resp["error"]["hint"]
+                .as_str()
+                .is_some_and(|h| !h.is_empty()),
+            "{method} must carry an actionable hint: {resp}"
+        );
+
+        // Unauthenticated / tampered MAC / expired grants STILL return opaque refusal!
+        let mut bad_mac = make_grant_req(&shared, OWNER_ID, method, params.clone());
+        bad_mac.principal.as_mut().unwrap()["grant"]["mac"] = json!("ff".repeat(32));
+        refused(answer(&shared, &ctx, &bad_mac), "not_authorized");
+    }
+
+    // 3. Unlinked satellite operator grant (`office.role = Satellite`, `claims.member == office.id`)
+    //    calling agent session reads receives an accurate unlinked-account authorization error.
+    shared.hello.office.as_mut().unwrap().office.role = org_proto::OfficeRole::Satellite;
+    for (method, params) in [
+        ("member.external_sessions", json!({"employee_id": "@ada"})),
+        ("member.external_pending", json!({})),
+        ("member.session_list", json!({"employee_id": "@ada"})),
+    ] {
+        let resp = answer(
+            &shared,
+            &ctx,
+            &make_grant_req(&shared, &office_id, method, params),
+        );
+        assert_eq!(resp["error"]["code"], "not_authorized", "{method}: {resp}");
+        assert_ne!(
+            resp["error"]["message"], "request refused on host channel",
+            "{method} on satellite must return accurate refusal: {resp}"
+        );
+        assert!(
+            resp["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("not linked to an active organization person")),
+            "{method}: {resp}"
+        );
+    }
+}
+
 #[path = "inventory.rs"]
 mod inventory;

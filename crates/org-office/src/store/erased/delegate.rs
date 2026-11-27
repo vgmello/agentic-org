@@ -21,7 +21,7 @@ use crate::organization::{
     records::{
         AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode,
         Organization, ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter,
-        WatchingModelSetting,
+        TeamLimitRequest, WatchingModelSetting,
     },
 };
 use crate::processes::{
@@ -116,6 +116,8 @@ fwd_read!(OrganizationRead for BoxedTx, BoxedSnapshot {
     handle_in_use(handle: &str) -> bool;
     hire_request(id: &Id) -> Option<HireRequest>;
     hire_requests() -> Vec<HireRequest>;
+    team_limit_request(id: &Id) -> Option<TeamLimitRequest>;
+    team_limit_requests() -> Vec<TeamLimitRequest>;
     agent_execution(employee_id: &Id) -> Option<AgentExecutionConfig>;
     agent_executions() -> Vec<AgentExecutionConfig>;
     provider_connection(id: &Id) -> Option<ProviderConnection>;
@@ -246,6 +248,8 @@ fwd_write!(OrganizationWrite {
     remove_employee(id: &Id) -> ();
     put_hire_request(record: &HireRequest) -> ();
     remove_hire_request(id: &Id) -> ();
+    put_team_limit_request(record: &TeamLimitRequest) -> ();
+    remove_team_limit_request(id: &Id) -> ();
     put_agent_execution(record: &AgentExecutionConfig) -> ();
     remove_agent_execution(employee_id: &Id) -> ();
     put_provider_connection(record: &ProviderConnection) -> ();

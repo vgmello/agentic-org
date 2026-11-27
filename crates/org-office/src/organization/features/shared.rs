@@ -4,8 +4,8 @@
 use org_store::{DurablePath, Id, Refusal, StoreError};
 
 pub(crate) use super::super::ops::{
-    admit, check_revision, checked_dod_items, id_in_use, reject, sibling_named, team_file, touched,
-    RejectCode, TOO_DEEP,
+    admit, check_revision, checked_dod_items, id_in_use, reject, reject_with_hint, sibling_named,
+    team_file, touched, RejectCode, TOO_DEEP,
 };
 use super::invalid;
 use crate::organization::{
@@ -89,6 +89,17 @@ pub(super) fn relocate(
             to: records::hire_request_path(to, &req.id)
                 .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
             bytes: records::encode_hire_request(&req),
+        });
+    }
+    for req in view.team_limit_requests()? {
+        let Some((from, to)) = chains.get(&req.team_id) else {
+            continue;
+        };
+        moved.push(Moved {
+            from: records::team_limit_request_path(from, &req.id)?,
+            to: records::team_limit_request_path(to, &req.id)
+                .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+            bytes: records::encode_team_limit_request(&req),
         });
     }
     for homed in view.team_homed_moves(&chains)? {

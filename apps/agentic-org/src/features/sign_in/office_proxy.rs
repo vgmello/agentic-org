@@ -213,7 +213,7 @@ pub(super) fn sign_in_and_execute(
 ) -> Result<(), CliError> {
     if matches!(
         resource_and_verb(&forwarded),
-        Some(("agent", "bind" | "renew"))
+        Some(("agent", "bind" | "renew" | "sessions"))
     ) {
         let verb = forwarded.get(1).map_or("bind", String::as_str);
         return Err(CliError::usage(format!(

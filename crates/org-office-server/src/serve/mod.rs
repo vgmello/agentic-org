@@ -57,6 +57,8 @@ pub(super) use host::HostChannel;
 
 #[cfg(test)]
 pub(crate) use self::connection::serve_grant_bound_stream_for_test;
+#[cfg(test)]
+pub(crate) use self::host::serve_host_channel_for_test;
 
 /// Most `msg.wait` calls held at once on one connection; more get `unavailable`.
 pub(crate) const MAX_HELD: usize = org_proto::msg::MAX_HELD_CALLS_PER_CONNECTION;

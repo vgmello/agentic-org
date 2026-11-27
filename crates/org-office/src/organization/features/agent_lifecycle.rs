@@ -12,7 +12,7 @@ use serde::Serialize;
 use super::{
     authority::{
         admit_active_employee, check_team_capacity, is_owner, is_person_ancestor_lead,
-        may_manage_employee,
+        may_manage_employee, CapacityOp,
     },
     changed, invalid,
     shared::{
@@ -287,7 +287,7 @@ impl Feature for MoveAgent {
                     ),
                 );
             }
-            check_team_capacity(view, &team)?;
+            check_team_capacity(view, owner, &admitted.actor, &team, CapacityOp::Move)?;
         }
         check_revision(agent.meta.revision, self.expected_revision)?;
         if team.id == agent.home_team_id {

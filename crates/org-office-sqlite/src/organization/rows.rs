@@ -10,7 +10,8 @@ use org_office::organization_family::{
         AgentExecutionConfig, BuiltinKey, Employee, EmployeeKind, EmployeeStatus, HireProposal,
         HireRequest, HireState, ModelProfile, Office, OfficeCode, OfficeRole, Organization,
         PermissionPreset, ProviderAuthMode, ProviderConnection, ReasoningEffort, Repository,
-        RepositoryKind, Role, Team, TeamAllocation, TeamCounter, TeamStatus, WatchingModelSetting,
+        RepositoryKind, Role, Team, TeamAllocation, TeamCounter, TeamLimitRequest,
+        TeamLimitRequestState, TeamStatus, WatchingModelSetting,
     },
 };
 
@@ -173,6 +174,28 @@ pub(super) fn hire_request_row(row: &Row<'_>) -> rusqlite::Result<HireRequest> {
         closed_reason: row.get(9)?,
         employee_id: optional_id(row, 10)?,
         failed_step: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+    })
+}
+
+pub(super) fn team_limit_request_row(row: &Row<'_>) -> rusqlite::Result<TeamLimitRequest> {
+    let state_text: String = row.get(2)?;
+    let state = TeamLimitRequestState::parse(&state_text)
+        .ok_or_else(|| foreign(2, "not a team limit request state"))?;
+    Ok(TeamLimitRequest {
+        id: id(row, 0)?,
+        revision: number(row, 1)?,
+        state,
+        team_id: id(row, 3)?,
+        requested_by_employee_id: id(row, 4)?,
+        approver_employee_id: id(row, 5)?,
+        current_max_members: number(row, 6)?,
+        requested_max_members: number(row, 7)?,
+        reason: row.get(8)?,
+        decision_reason: row.get(9)?,
+        decided_by_employee_id: optional_id(row, 10)?,
+        decided_at: row.get(11)?,
         created_at: row.get(12)?,
         updated_at: row.get(13)?,
     })

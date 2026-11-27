@@ -126,6 +126,13 @@ where
                 tx.put_hire_request(&record)?;
             }
             (Kind::HireRequest(_, id), None) => tx.remove_hire_request(&id)?,
+            (Kind::TeamLimitRequest(chain, id), Some(bytes)) => {
+                let record = decoded(path, records::decode_team_limit_request(bytes))?;
+                agree(path, record.id == id, "id")?;
+                agree(path, Some(&record.team_id) == chain.last(), "team_id")?;
+                tx.put_team_limit_request(&record)?;
+            }
+            (Kind::TeamLimitRequest(_, id), None) => tx.remove_team_limit_request(&id)?,
             (Kind::ProviderConnection(id), Some(bytes)) => {
                 let record = decoded(path, records::decode_provider_connection(bytes))?;
                 agree(path, record.id == id, "id")?;
@@ -421,6 +428,7 @@ fn verify_team_folders<'a>(
 
 fn hiring_records_empty(tx: &impl OrganizationWrite) -> Result<bool, ProjectionError> {
     Ok(tx.hire_requests()?.is_empty()
+        && tx.team_limit_requests()?.is_empty()
         && tx.agent_executions()?.is_empty()
         && tx.provider_connections()?.is_empty()
         && tx.model_profiles()?.is_empty()
@@ -437,6 +445,7 @@ fn validate_hiring_and_collect_paths(
     expected: &mut BTreeSet<DurablePath>,
 ) -> Result<(), ProjectionError> {
     let hire_requests = tx.hire_requests()?;
+    let limit_requests = tx.team_limit_requests()?;
     let agent_executions = tx.agent_executions()?;
     let provider_connections = tx.provider_connections()?;
     let model_profiles = tx.model_profiles()?;
@@ -468,6 +477,47 @@ fn validate_hiring_and_collect_paths(
         let chain = chains.get(&req.home_team_id)?;
         records::hire_request_path(chain, &req.id).ok()
     }));
+    validate_team_limit_requests(
+        organization_path,
+        chains,
+        home_of,
+        &limit_requests,
+        expected,
+    )?;
+    Ok(())
+}
+
+fn validate_team_limit_requests(
+    organization_path: &DurablePath,
+    chains: &BTreeMap<&Id, Vec<Id>>,
+    home_of: &BTreeMap<&Id, &Id>,
+    requests: &[records::TeamLimitRequest],
+    expected: &mut BTreeSet<DurablePath>,
+) -> Result<(), ProjectionError> {
+    for req in requests {
+        let Some(chain) = chains.get(&req.team_id) else {
+            return Err(refuse(
+                organization_path,
+                "team limit request names no team",
+            ));
+        };
+        let p = records::team_limit_request_path(chain, &req.id)
+            .unwrap_or_else(|_| organization_path.clone());
+        if !home_of.contains_key(&req.requested_by_employee_id) {
+            return Err(refuse(&p, "requested_by_employee_id names no employee"));
+        }
+        if !home_of.contains_key(&req.approver_employee_id) {
+            return Err(refuse(&p, "approver_employee_id names no employee"));
+        }
+        if let Some(decided_by) = &req.decided_by_employee_id {
+            if !home_of.contains_key(decided_by) {
+                return Err(refuse(&p, "decided_by_employee_id names no employee"));
+            }
+        }
+        if let Ok(path) = records::team_limit_request_path(chain, &req.id) {
+            expected.insert(path);
+        }
+    }
     Ok(())
 }
 
