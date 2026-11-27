@@ -75,8 +75,10 @@
 	// Once the host is gone (the person navigated away while a dialog was closing), nothing is reported: the caller is
 	// gone too, and moving focus or reloading then would act on the next page.
 	let disposed = false;
+	let settleRaf: number | undefined;
 	$effect(() => () => {
 		disposed = true;
+		if (settleRaf !== undefined) cancelAnimationFrame(settleRaf);
 	});
 
 	/**
@@ -153,12 +155,14 @@
 		const holder = document.activeElement;
 		const until = performance.now() + 1000;
 		const settle = () => {
+			settleRaf = undefined;
 			if (disposed) return;
 			if (holder?.isConnected && document.activeElement === holder && performance.now() < until)
-				requestAnimationFrame(settle);
+				settleRaf = requestAnimationFrame(settle);
 			else onsettled(person.id, ended, opener);
 		};
-		requestAnimationFrame(settle);
+		if (settleRaf !== undefined) cancelAnimationFrame(settleRaf);
+		settleRaf = requestAnimationFrame(settle);
 	}
 </script>
 

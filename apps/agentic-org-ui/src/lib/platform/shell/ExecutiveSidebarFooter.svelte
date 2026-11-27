@@ -248,6 +248,11 @@
 			color 0.14s ease,
 			box-shadow 0.14s ease;
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.exec-tess-contact {
+			transition: none;
+		}
+	}
 	.exec-tess-contact:hover {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);

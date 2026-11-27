@@ -14,6 +14,7 @@
 	import type { ConversationView, Sidebar } from '$lib/modules/messaging/model';
 	import type { ChatState } from '$lib/modules/messaging/types';
 	import { dayChanged } from '../../helpers';
+	import { trackFeedScroll, type FeedScrollState } from './chat-scroll';
 
 	const SEARCH_FILTERS = [
 		'from:@name',
@@ -47,7 +48,8 @@
 		channelRowLive,
 		rowFor,
 		undelivered,
-		onopenthread
+		onopenthread,
+		onScrollStateChange
 	}: {
 		listEl?: HTMLElement;
 		searching: boolean;
@@ -68,11 +70,21 @@
 		rowFor: Snippet<[ChatMessage, { where?: string; open?: boolean }?]>;
 		undelivered: Snippet;
 		onopenthread: (message: ChatMessage, opener: HTMLElement) => void;
+		onScrollStateChange?: (state: FeedScrollState) => void;
 	} = $props();
+
+	const feedVersion = $derived(
+		`${conversation?.id ?? ''}:${convView?.shown.length ?? 0}:${convView?.shown[convView.shown.length - 1]?.id ?? ''}:${highlight ?? ''}`
+	);
 </script>
 
 <div
 	bind:this={listEl}
+	use:trackFeedScroll={{
+		active: Boolean(conversation && convView && !searching && view.type === 'conversation'),
+		version: feedVersion,
+		onState: (state) => onScrollStateChange?.(state)
+	}}
 	data-focus-scope
 	class="chat-msgs-canvas min-h-16 flex-1 overflow-y-auto px-3 py-3 max-[640px]:px-[8px]"
 	data-testid="message-list"
@@ -153,14 +165,20 @@
 				{/if}
 				{#each convView.shown as m, i (m.id)}
 					{#if dayChanged(convView.shown, i, now)}
-						<div
-							class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-fg-muted"
-							aria-live="off"
-						>
-							<span class="h-px flex-1 bg-surface-overlay"></span>{dayLabel(m.created_at, now)}<span
-								class="h-px flex-1 bg-surface-overlay"
-							></span>
-						</div>
+						{@const label = dayLabel(m.created_at, now)}
+						{#if label === 'Today'}
+							{#if i > 0}
+								<div
+									class="chat-day is-today"
+									aria-hidden="true"
+									data-testid="chat-day-today"
+								></div>
+							{/if}
+						{:else}
+							<div class="chat-day" aria-live="off" data-testid="chat-day-divider">
+								<span class="chat-day-text">{label}</span>
+							</div>
+						{/if}
 					{/if}
 					{#if m.id === newAt}
 						<div
@@ -243,3 +261,46 @@
 		{@render undelivered()}
 	{/if}
 </div>
+
+<style>
+	.chat-day {
+		position: sticky;
+		top: -12px;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin: 8px -8px 4px;
+		padding: 4px 12px;
+		font-size: 0.75rem;
+		line-height: 1.25rem;
+		font-weight: 600;
+		color: var(--exec-muted, var(--fg-muted));
+	}
+	.chat-day::before,
+	.chat-day::after {
+		content: '';
+		flex: 1 1 auto;
+		border-block-start: 1px solid var(--exec-border, var(--line-subtle));
+	}
+	.chat-day.is-today {
+		position: relative;
+		top: auto;
+		gap: 0;
+	}
+	.chat-day.is-today::after {
+		display: none;
+	}
+	:global(.chat-day.is-stuck) {
+		background: color-mix(in srgb, var(--exec-panel-bg, var(--surface)) 92%, transparent);
+		-webkit-backdrop-filter: blur(8px);
+		backdrop-filter: blur(8px);
+		box-shadow: 0 1px 0 var(--exec-border, var(--line-subtle));
+	}
+	:global(.chat-day.is-past) {
+		visibility: hidden;
+	}
+	.chat-day-text {
+		flex: none;
+	}
+</style>

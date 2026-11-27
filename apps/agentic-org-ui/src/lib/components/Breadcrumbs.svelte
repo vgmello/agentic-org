@@ -91,4 +91,9 @@
 	:global(.ao-crumb-sep) {
 		color: var(--exec-dim, var(--fg-subtle));
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.ao-crumb-link {
+			transition: none;
+		}
+	}
 </style>

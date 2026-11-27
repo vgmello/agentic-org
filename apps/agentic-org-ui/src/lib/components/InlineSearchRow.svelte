@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Search from '@lucide/svelte/icons/search';
 	import X from '@lucide/svelte/icons/x';
+	import { mergeProps } from 'bits-ui';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 
 	let {
 		id,
@@ -53,21 +55,46 @@
 		class="inline-search-input"
 	/>
 	{#if value}
-		<button
-			type="button"
-			onclick={() => {
-				onValueChange('');
-				inputEl?.focus();
-			}}
-			aria-label="Clear search"
-			class="inline-search-clear"
-		>
-			<X class="size-3.5" aria-hidden="true" />
-		</button>
+		<Tooltip.Provider delayDuration={150}>
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<button
+							{...mergeProps(props, {
+								onclick: () => {
+									onValueChange('');
+									inputEl?.focus();
+								}
+							})}
+							type="button"
+							aria-label="Clear search"
+							class="inline-search-clear"
+						>
+							<X class="size-3.5" aria-hidden="true" />
+						</button>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Content>Clear search</Tooltip.Content>
+			</Tooltip.Root>
+		</Tooltip.Provider>
 	{:else if onClose}
-		<button type="button" onclick={onClose} aria-label="Close search" class="inline-search-clear">
-			<X class="size-3.5" aria-hidden="true" />
-		</button>
+		<Tooltip.Provider delayDuration={150}>
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<button
+							{...mergeProps(props, { onclick: onClose })}
+							type="button"
+							aria-label="Close search"
+							class="inline-search-clear"
+						>
+							<X class="size-3.5" aria-hidden="true" />
+						</button>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Content>Close search</Tooltip.Content>
+			</Tooltip.Root>
+		</Tooltip.Provider>
 	{/if}
 </div>
 

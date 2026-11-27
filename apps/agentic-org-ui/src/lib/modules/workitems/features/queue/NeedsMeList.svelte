@@ -175,4 +175,9 @@
 			min-height: 44px;
 		}
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.needs-me-btn {
+			transition: none;
+		}
+	}
 </style>

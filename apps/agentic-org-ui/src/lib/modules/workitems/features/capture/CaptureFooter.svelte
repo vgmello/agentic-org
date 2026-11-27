@@ -133,4 +133,10 @@
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.work-composer-switch,
+		.work-composer-switch::after {
+			transition: none;
+		}
+	}
 </style>

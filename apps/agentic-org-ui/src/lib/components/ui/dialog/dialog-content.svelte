@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Dialog as DialogPrimitive, Tooltip, mergeProps } from 'bits-ui';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import XIcon from '@lucide/svelte/icons/x';
 	import { returnFocus } from '$lib/components/focus';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -53,36 +53,28 @@
 	>
 		{@render children?.()}
 		{#if showCloseButton}
-			<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
-				<Tooltip.Root ignoreNonKeyboardFocus>
-					<DialogPrimitive.Close data-slot="dialog-close">
-						{#snippet child({ props: closeProps })}
-							<Tooltip.Trigger>
-								{#snippet child({ props: tipProps })}
-									<Button
-										variant="ghost"
-										class="absolute top-3 right-3 size-9 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
-										size="icon-sm"
-										aria-label="Close"
-										{...mergeProps(closeProps, tipProps)}
-									>
-										<XIcon aria-hidden="true" />
-									</Button>
-								{/snippet}
-							</Tooltip.Trigger>
-						{/snippet}
-					</DialogPrimitive.Close>
-					<Tooltip.Portal>
-						<Tooltip.Content
-							side="bottom"
-							sideOffset={6}
-							escapeKeydownBehavior="defer-otherwise-close"
-							class="z-[60] rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-							>Close</Tooltip.Content
+			<!-- Avoid Bits UI Tooltip inside DialogContent: PopperLayer mounts a FocusScope that pauses the modal focus trap. -->
+			<span class="absolute top-3 right-3 inline-flex">
+				<DialogPrimitive.Close data-slot="dialog-close">
+					{#snippet child({ props: closeProps })}
+						<Button
+							variant="ghost"
+							class="peer size-9 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+							size="icon-sm"
+							aria-label="Close"
+							{...closeProps}
 						>
-					</Tooltip.Portal>
-				</Tooltip.Root>
-			</Tooltip.Provider>
+							<XIcon aria-hidden="true" />
+						</Button>
+					{/snippet}
+				</DialogPrimitive.Close>
+				<span
+					role="tooltip"
+					data-tooltip-content=""
+					class="pointer-events-none invisible absolute top-full right-0 z-[60] mt-1.5 whitespace-nowrap rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg opacity-0 shadow-md ring-1 ring-line transition-opacity delay-150 peer-hover:visible peer-hover:opacity-100 peer-focus-visible:visible peer-focus-visible:opacity-100 motion-reduce:transition-none"
+					>Close</span
+				>
+			</span>
 		{/if}
 	</DialogPrimitive.Content>
 </DialogPortal>

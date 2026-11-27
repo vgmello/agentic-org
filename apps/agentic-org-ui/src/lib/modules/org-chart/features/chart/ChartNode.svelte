@@ -14,8 +14,10 @@
 
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { mergeProps } from 'bits-ui';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import {
 		DropdownMenu,
 		DropdownMenuContent,
@@ -130,24 +132,33 @@
 			</p>
 		</div>
 		<DropdownMenu>
-			<DropdownMenuTrigger>
-				{#snippet child({ props })}
-					<Button
-						{...props}
-						variant="ghost"
-						size="icon"
-						data-node-menu={e.id}
-						class="col-start-4 row-start-1 ml-3 -my-0.5 size-7 shrink-0 text-fg-muted hover:text-fg max-[639px]:-my-2.5 max-[639px]:size-11"
-						aria-label="Actions for {e.name}"
-					>
-						<svg viewBox="0 0 20 20" fill="currentColor" class="size-5" aria-hidden="true"
-							><path
-								d="M3 10a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM8.5 10a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM15.5 8.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"
-							/></svg
-						>
-					</Button>
-				{/snippet}
-			</DropdownMenuTrigger>
+			<Tooltip.Provider delayDuration={150}>
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						{#snippet child({ props: tipProps })}
+							<DropdownMenuTrigger>
+								{#snippet child({ props: menuProps })}
+									<Button
+										{...mergeProps(tipProps, menuProps)}
+										variant="ghost"
+										size="icon"
+										data-node-menu={e.id}
+										class="col-start-4 row-start-1 ml-3 -my-0.5 size-7 shrink-0 text-fg-muted hover:text-fg max-[639px]:-my-2.5 max-[639px]:size-11"
+										aria-label="Actions for {e.name}"
+									>
+										<svg viewBox="0 0 20 20" fill="currentColor" class="size-5" aria-hidden="true"
+											><path
+												d="M3 10a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM8.5 10a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0ZM15.5 8.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"
+											/></svg
+										>
+									</Button>
+								{/snippet}
+							</DropdownMenuTrigger>
+						{/snippet}
+					</Tooltip.Trigger>
+					<Tooltip.Content>Actions for {e.name}</Tooltip.Content>
+				</Tooltip.Root>
+			</Tooltip.Provider>
 			<DropdownMenuContent align="end">
 				<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => onaction('manager', e)}
 					>Change manager…</DropdownMenuItem

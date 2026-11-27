@@ -45,7 +45,8 @@
 		onRenameChannel,
 		onAddPeople,
 		onShowPinned,
-		onRemovePending
+		onRemovePending,
+		onMessageMember
 	}: {
 		root: ChatMessage | undefined;
 		threadConversation: Conversation | undefined;
@@ -73,6 +74,7 @@
 		onAddPeople: () => void;
 		onShowPinned: (m: ChatMessage) => void;
 		onRemovePending: (key: number) => void;
+		onMessageMember?: (memberId: string) => void;
 	} = $props();
 
 	let activePanel = $state<{ focusClose: () => void } | undefined>();
@@ -141,6 +143,7 @@
 		onaddpeople={onAddPeople}
 		onremove={(id) => actions.removeMember(conversation.id, id)}
 		onarchive={() => actions.archiveChannel(conversation)}
+		onmessage={onMessageMember}
 	/>
 {:else if showPins && conversation}
 	<PinsPanel

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import X from '@lucide/svelte/icons/x';
+	import { mergeProps } from 'bits-ui';
 	import { Button } from '$lib/components/ui/button';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import Rich from '$lib/modules/messaging/components/Rich.svelte';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { clockTime, dayLabel, nameOf, titleOf } from '$lib/modules/messaging/model';
@@ -50,15 +52,24 @@
 				>in {titleOf(conversation, ctx, ctx.owner)}</span
 			>
 		</h2>
-		<Button
-			type="button"
-			variant="ghost"
-			size="icon-sm"
-			class="scroll-mt-16"
-			aria-label="Close pinned"
-			bind:ref={closeButton}
-			onclick={onclose}><X aria-hidden="true" /></Button
-		>
+		<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...mergeProps(props, { onclick: onclose })}
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							class="scroll-mt-16"
+							aria-label="Close pinned"
+							bind:ref={closeButton}><X aria-hidden="true" /></Button
+						>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Content side="bottom">Close pinned</Tooltip.Content>
+			</Tooltip.Root>
+		</Tooltip.Provider>
 	</div>
 	<ul role="list" class="min-h-0 flex-1 divide-y divide-line-subtle overflow-y-auto">
 		{#each pins as m (m.id)}

@@ -224,18 +224,12 @@
 				lastSearch = page.url.search;
 				started = true;
 				shellApi.navigation(organizationId).then(
-					(n) => {
-						if (mounted) inboxCount = n.inboxOpen ?? undefined;
-					},
-					() => {
-						if (mounted) inboxCount = undefined;
-					}
+					(n) => (mounted ? (inboxCount = n.inboxOpen ?? undefined) : undefined),
+					() => (mounted ? (inboxCount = undefined) : undefined)
 				);
 			}
 		},
-		onError: (msg) => {
-			loadError = msg;
-		}
+		onError: (msg) => (loadError = msg)
 	});
 	const load = async (): Promise<void> => {
 		await loader.load();
@@ -252,6 +246,7 @@
 		const timer = setInterval(() => void load(), 30_000);
 		return () => {
 			mounted = false;
+			ui.dispose();
 			loader.dispose();
 			stop();
 			clearInterval(timer);
@@ -281,7 +276,7 @@
 		query = resolved.query;
 		if (resolved.threadRoot) ui.threadRoot = resolved.threadRoot;
 		ui.highlight = resolved.highlight;
-		scrollMessageIntoView(resolved.highlight);
+		scrollMessageIntoView(resolved.highlight, listEl);
 	}
 
 	function select(next: ChatView, navigate = true) {
@@ -333,7 +328,7 @@
 		if (compactPanels) ui.showPins = false;
 		if (view.type === 'conversation' && view.id === m.conversation_id) {
 			ui.highlight = m.id;
-			return scrollMessageIntoView(m.id);
+			return scrollMessageIntoView(m.id, listEl);
 		}
 		openMessage(m);
 	}
@@ -343,15 +338,14 @@
 		writePlace(m.id);
 	};
 
-	const removePending = (key: number) => {
-		pending = pending.filter((x) => x.key !== key);
-	};
+	const removePending = (key: number) => (pending = pending.filter((x) => x.key !== key));
 
 	const actions = createChatMessageActions({
 		chatApi,
 		getOrganizationId: () => organizationId,
 		getSend: () => send,
 		getCtx: () => ctx,
+		getChatState: () => chatState,
 		getEnv: () => env,
 		getOfficeRunning: () => officeRunning,
 		getListEl: () => listEl,
@@ -374,7 +368,8 @@
 		onTurnHeld: (messageId, opener) => {
 			ui.rowActivity.hold(messageId, opener, 'dialog');
 			ui.commandOpener = opener;
-		}
+		},
+		onSelectConversation: (id) => select({ type: 'conversation', id })
 	});
 
 	$effect(() => {
@@ -452,6 +447,7 @@
 			onnewchannel={(opener) => ui.startSidebarDialog('channel', opener)}
 			onnewmessage={(opener) => ui.startSidebarDialog('dm', opener)}
 			onbrowse={ui.openBrowse}
+			onopendm={actions.openDm}
 		/>
 
 		<ChatConversationColumn
@@ -533,6 +529,7 @@
 			onAddPeople={() => ui.openChannelDialog('members')}
 			onShowPinned={showPinnedMessage}
 			onRemovePending={removePending}
+			onMessageMember={actions.openDm}
 		/>
 	{/if}
 </div>

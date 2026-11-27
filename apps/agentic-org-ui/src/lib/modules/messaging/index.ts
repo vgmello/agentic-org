@@ -64,7 +64,7 @@ export type {
 	QuestionAnswer,
 	Reaction
 } from './types';
-export { provideDraftStore, useDraftStore } from './drafts/context';
+export { provideDraftStore, useDraftStore, useOptionalDraftStore } from './drafts/context';
 
 export { messageRows, type MessageRows } from './row-data';
 

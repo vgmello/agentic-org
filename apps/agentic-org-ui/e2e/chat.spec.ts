@@ -634,3 +634,48 @@ for (const fail of [false, true]) {
 		await shot(page, fail ? 'chat-snapshot-error' : 'chat-snapshot-loaded');
 	});
 }
+
+test('CHAT Wave 4B: inline find + quick DM, Members quick-DM, Back closes Members, and Today has no label banner', async ({
+	page
+}) => {
+	await open(page);
+	await expect(title(page)).toHaveText('#general');
+
+	// Today messages never render a "Today" label pill (unlabelled hairline only).
+	await expect(page.getByTestId('chat-day-divider').filter({ hasText: /^Today$/ })).toHaveCount(0);
+
+	// Inline Find a conversation filters live and Escape clears.
+	const find = side(page).getByTestId('chat-find');
+	await find.fill('release-v1');
+	await expect(side(page).getByTestId('channels').getByTestId('conversation-link')).toHaveCount(1);
+	await expect(side(page).getByTestId('channels')).toContainText('release-v1');
+	await find.press('Escape');
+	await expect(find).toHaveValue('');
+	await expect(side(page).getByTestId('channels')).toContainText('general');
+
+	// Searching an organization member with no existing conversation offers a quick-DM button.
+	await find.fill('Leo');
+	const quickDm = side(page).getByTestId('chat-quick-dm').first();
+	await expect(quickDm).toBeVisible();
+	await quickDm.click();
+	await expect(title(page)).toContainText('Leo');
+
+	// Return to #general, open Members, confirm browser Back closes Members without leaving Chat.
+	await go(page, 'general');
+	await expect(title(page)).toHaveText('#general');
+	await page.getByRole('button', { name: 'Members', exact: true }).click();
+	const membersPanel = page.getByTestId('members-panel');
+	await expect(membersPanel).toBeVisible();
+	await page.goBack();
+	await expect(membersPanel).toBeHidden();
+	await expect(page).toHaveURL(/\/chat/);
+
+	// Open Members again and use its Message quick-DM button.
+	await page.getByRole('button', { name: 'Members', exact: true }).click();
+	await expect(membersPanel).toBeVisible();
+	const dmBtn = membersPanel.getByTestId('member-dm-btn').first();
+	await expect(dmBtn).toBeVisible();
+	await dmBtn.click();
+	await expect(membersPanel).toBeHidden();
+	await expect(title(page)).not.toHaveText('#general');
+});

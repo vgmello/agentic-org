@@ -9,7 +9,9 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { tick } from 'svelte';
+	import { mergeProps } from 'bits-ui';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { shellApi } from '$lib/modules/shell/api';
 	import type { SearchGroup, SearchHit, SearchResults } from '$lib/modules/shell/types';
 	import { focusDestinationHeading } from './focus-destination';
@@ -147,16 +149,25 @@
 	}
 </script>
 
-<button
-	bind:this={opener}
-	type="button"
-	aria-label="Search"
-	aria-keyshortcuts={shortcutHint ? '/' : undefined}
-	onclick={openNarrow}
-	class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
->
-	<MiniIcon name="search" class="size-5" />
-</button>
+<Tooltip.Provider delayDuration={150}>
+	<Tooltip.Root>
+		<Tooltip.Trigger>
+			{#snippet child({ props })}
+				<button
+					bind:this={opener}
+					{...mergeProps(props, { onclick: openNarrow })}
+					type="button"
+					aria-label="Search"
+					aria-keyshortcuts={shortcutHint ? '/' : undefined}
+					class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
+				>
+					<MiniIcon name="search" class="size-5" />
+				</button>
+			{/snippet}
+		</Tooltip.Trigger>
+		<Tooltip.Content>Search</Tooltip.Content>
+	</Tooltip.Root>
+</Tooltip.Provider>
 
 <div
 	bind:this={container}
@@ -199,14 +210,23 @@
 		{/if}
 	</form>
 	{#if narrowOpen}
-		<button
-			type="button"
-			aria-label="Close search"
-			onclick={closeNarrow}
-			class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
-		>
-			<MiniIcon name="xMark" class="size-5" />
-		</button>
+		<Tooltip.Provider delayDuration={150}>
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<button
+							{...mergeProps(props, { onclick: closeNarrow })}
+							type="button"
+							aria-label="Close search"
+							class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
+						>
+							<MiniIcon name="xMark" class="size-5" />
+						</button>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Content>Close search</Tooltip.Content>
+			</Tooltip.Root>
+		</Tooltip.Provider>
 	{/if}
 
 	<div

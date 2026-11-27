@@ -1,18 +1,6 @@
-<!--
-  @component
-  The role editor (roles-ux §1): a side sheet for a new role, the HR lead's draft, an edit or a fix. Name, optional
-  key and the Markdown body. Openers call `start(mode)`. An edit sends the revision the person saw; a conflict keeps
-  every input, shows the newer version and names the effect of saving again ("Save over rev N"). A key that a
-  development process in use names is read-only, with the reason (decision 7). Refusals show on their field and
-  focus it. Saving with nothing changed says so and adds no revision.
-  Back with the sheet open closes the sheet only (app-shell-ux §6) and, like Escape, Close or leaving the page,
-  keeps the typed text for when the same editor opens again (§6a keep input). Cancel discards it.
-  Layout: from 640 px the fields scroll between a fixed header and footer; below 640 px the whole sheet scrolls as
-  one, so at large text the footer never sits over a field (§6a, §2).
--->
+<!-- @component Role editor side sheet (roles-ux §1, app-shell-ux §6). -->
 <script lang="ts" module>
 	import type { Role, RoleDraft } from '../../types';
-
 	export type EditorMode =
 		| { kind: 'new'; draft?: RoleDraft; fromHr?: boolean }
 		| { kind: 'edit'; role: Role; employeeCount: number };
@@ -374,25 +362,30 @@
 		onOpenAutoFocus={openFocus}
 	>
 		<SheetHeader class="shrink-0 border-b border-line">
-			<!-- When Close doesn't fit beside the title (narrow, large text) it wraps above it, and the title
-				 keeps the full width. -->
 			<div class="flex flex-wrap-reverse items-start justify-end gap-x-3 gap-y-2">
 				<SheetTitle
 					class="min-w-0 flex-1 basis-[200px] text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
 					>{title}</SheetTitle
 				>
-				<SheetClose>
-					{#snippet child({ props })}
-						<Button
-							variant="ghost"
-							size="icon"
-							class="-my-1 -mr-1.5 shrink-0 text-fg-muted hover:text-fg max-[639px]:size-11"
-							title="Close"
-							{...props}
-							><MiniIcon name="xMark" class="size-5" /><span class="sr-only">Close</span></Button
-						>
-					{/snippet}
-				</SheetClose>
+				<span class="relative -my-1 -mr-1.5 inline-flex shrink-0">
+					<SheetClose>
+						{#snippet child({ props })}
+							<Button
+								variant="ghost"
+								size="icon"
+								class="peer text-fg-muted hover:text-fg max-[639px]:size-11"
+								{...props}
+								><MiniIcon name="xMark" class="size-5" /><span class="sr-only">Close</span></Button
+							>
+						{/snippet}
+					</SheetClose>
+					<span
+						role="tooltip"
+						data-tooltip-content=""
+						class="pointer-events-none invisible absolute top-1/2 right-full z-[60] mr-1.5 -translate-y-1/2 whitespace-nowrap rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg opacity-0 shadow-md ring-1 ring-line transition-opacity delay-150 peer-hover:visible peer-hover:opacity-100 peer-focus-visible:visible peer-focus-visible:opacity-100 motion-reduce:transition-none"
+						>Close</span
+					>
+				</span>
 			</div>
 			<SheetDescription class="text-sm/6 text-fg-muted">
 				A role describes an employee's work for teammates. It grants no tools, budgets or authority.

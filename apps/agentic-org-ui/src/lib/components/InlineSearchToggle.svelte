@@ -63,4 +63,9 @@
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.inline-search-toggle {
+			transition: none;
+		}
+	}
 </style>

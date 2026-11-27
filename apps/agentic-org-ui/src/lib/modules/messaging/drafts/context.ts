@@ -12,3 +12,7 @@ export function useDraftStore(): DraftStore {
 	if (!store) throw new Error('Chat drafts require a store from the app shell.');
 	return store;
 }
+
+export function useOptionalDraftStore(): DraftStore | undefined {
+	return getContext<DraftStore | undefined>(draftStoreKey);
+}

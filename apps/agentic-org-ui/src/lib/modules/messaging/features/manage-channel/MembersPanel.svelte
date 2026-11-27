@@ -25,7 +25,8 @@
 		onrename,
 		onaddpeople,
 		onremove,
-		onarchive
+		onarchive,
+		onmessage
 	}: {
 		conversation: Conversation;
 		ctx: ChatContext;
@@ -41,6 +42,7 @@
 		onaddpeople: () => void;
 		onremove: (memberId: string) => void;
 		onarchive: () => void;
+		onmessage?: (memberId: string) => void;
 	} = $props();
 
 	const members = $derived(
@@ -139,6 +141,18 @@
 						>
 							{#each MODES as o (o.id)}<option value={o.id}>{o.label}</option>{/each}
 						</select>
+					{/if}
+					{#if onmessage && !m.owner && !m.former && conversation.kind !== 'dm'}
+						<Button
+							type="button"
+							variant="ghost"
+							size="xs"
+							class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+							disabled={!officeRunning}
+							data-testid="member-dm-btn"
+							aria-label="Message {m.name}"
+							onclick={() => onmessage(m.id)}>Message</Button
+						>
 					{/if}
 					{#if editable && !m.owner}
 						<Button

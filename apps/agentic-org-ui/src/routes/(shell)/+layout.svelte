@@ -169,19 +169,25 @@
 			navKeys.mode !== 'sidebar'
 	);
 
+	let sidebarFocusRaf: number | undefined;
 	function handleSidebarMenuOpenChange(open: boolean) {
 		clearTimeout(sidebarFocusTimer);
+		if (sidebarFocusRaf !== undefined) {
+			cancelAnimationFrame(sidebarFocusRaf);
+			sidebarFocusRaf = undefined;
+		}
 		sidebarMenuOpen = open;
 		if (!open) {
 			// Recompute focus containment after Bits UI focus restoration or outside click settles
 			// without cancelling any pending pointer-leave collapse timer.
 			const syncFocus = () => {
+				sidebarFocusRaf = undefined;
 				if (sidebarMenuOpen) return;
 				const active = document.activeElement;
 				sidebarFocused = Boolean(active instanceof Node && desktopNavigation?.contains(active));
 			};
 			queueMicrotask(syncFocus);
-			requestAnimationFrame(syncFocus);
+			sidebarFocusRaf = requestAnimationFrame(syncFocus);
 		}
 	}
 
@@ -223,6 +229,7 @@
 	onDestroy(() => {
 		clearTimeout(sidebarHoverTimer);
 		clearTimeout(sidebarFocusTimer);
+		if (sidebarFocusRaf !== undefined) cancelAnimationFrame(sidebarFocusRaf);
 	});
 
 	const shellData = provideShellData({

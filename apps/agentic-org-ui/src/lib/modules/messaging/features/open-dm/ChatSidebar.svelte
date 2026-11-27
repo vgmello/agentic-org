@@ -9,6 +9,7 @@
 		SheetDescription
 	} from '$lib/components/ui/sheet';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Search from '@lucide/svelte/icons/search';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import { icons } from '$lib/components/icons';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
@@ -24,6 +25,7 @@
 		nextSidebarIndex,
 		sidebarNavAction
 	} from '$lib/modules/messaging/sidebar-nav';
+	import { filterChatSidebar } from './chat-sidebar-filter';
 
 	/**
 	 * The left column (CHAT-1): Inbox (a link, with the common owner-waiting count: Chat keeps no second queue), Mentions,
@@ -43,7 +45,8 @@
 		onselect,
 		onnewchannel,
 		onnewmessage,
-		onbrowse
+		onbrowse,
+		onopendm
 	}: {
 		bar: Sidebar;
 		/** The Inbox count the navigation shows; undefined while unknown. */
@@ -60,6 +63,7 @@
 		onnewchannel: (opener: HTMLElement) => void;
 		onnewmessage: (opener: HTMLElement) => void;
 		onbrowse: (opener: HTMLElement) => void;
+		onopendm?: (memberId: string) => void;
 	} = $props();
 
 	const item =
@@ -69,6 +73,27 @@
 		view.type === v.type &&
 		(v.type !== 'conversation' || (view.type === 'conversation' && view.id === conversationId));
 	const unreadThreads = $derived(bar.threads.reduce((n, t) => n + t.new_replies, 0));
+	let findQuery = $state('');
+	const trimmedFind = $derived(findQuery.trim().toLowerCase());
+	const filtered = $derived(filterChatSidebar(bar, ctx.members, findQuery));
+	function handleFindKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape' && findQuery) {
+			event.preventDefault();
+			event.stopPropagation();
+			findQuery = '';
+		} else if (event.key === 'Enter' && trimmedFind) {
+			event.preventDefault();
+			const first = filtered.channels[0] ?? filtered.dms[0] ?? filtered.asOwner[0];
+			if (first) {
+				findQuery = '';
+				onselect({ type: 'conversation', id: first.conversation.id });
+			} else if (filtered.quickDmCandidates[0] && onopendm) {
+				const target = filtered.quickDmCandidates[0].id;
+				findQuery = '';
+				onopendm(target);
+			}
+		}
+	}
 	let nav = $state<HTMLElement | undefined>();
 	let bounds = $state({ left: 0, top: 0, width: 0, height: 0 });
 	function placeSheet(rect: DOMRect) {
@@ -202,7 +227,7 @@
 	<nav
 		bind:this={nav}
 		onkeydown={handleNavKeydown}
-		class="chat-rail flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-line p-[min(.75rem,12px)]"
+		class="chat-rail flex h-full w-full min-w-0 shrink-0 flex-col gap-y-4 overflow-y-auto border-r border-line p-[min(.75rem,12px)]"
 		aria-label="Chat"
 	>
 		<ul class="flex flex-col gap-0.5">
@@ -291,61 +316,123 @@
 			</li>
 		</ul>
 
-		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wider text-fg-muted uppercase">Channels</h2>
-			<ul class="mt-1 flex flex-col gap-0.5" data-testid="channels">
-				{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
-			</ul>
-			<button
-				type="button"
-				class="{item} {off} mt-1"
-				data-testid="browse-channels"
-				onclick={(event) => onbrowse(event.currentTarget)}
-				><HeroIcon
-					class="size-[min(1.5rem,32px)] text-current"
-					variant="outline"
-					name="hashtag"
-				/><span class="min-w-0 flex-1 whitespace-normal">Browse channels</span></button
-			>
-			<button
-				type="button"
-				class="{item} {off} disabled:opacity-50 disabled:hover:bg-transparent"
-				disabled={!officeRunning}
-				onclick={(event) => onnewchannel(event.currentTarget)}
-				><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span
-					class="min-w-0 flex-1 whitespace-normal">Add channel</span
-				></button
-			>
+		<div class="relative">
+			<label class="sr-only" for="{id}-find">Find a conversation</label>
+			<Search
+				class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-fg-muted"
+				aria-hidden="true"
+			/>
+			<input
+				id="{id}-find"
+				data-testid="chat-find"
+				type="search"
+				bind:value={findQuery}
+				onkeydown={handleFindKeydown}
+				placeholder="Find a conversation"
+				autocomplete="off"
+				aria-describedby="{id}-find-status"
+				class="block h-9 w-full rounded-md bg-surface-raised pr-2.5 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-muted focus:outline-2 focus:-outline-offset-2 focus:outline-focus"
+			/>
+			<p class="sr-only" id="{id}-find-status" role="status">
+				{#if trimmedFind}{filtered.total}
+					{filtered.total === 1 ? 'conversation' : 'conversations'} matching {findQuery.trim()}{/if}
+			</p>
 		</div>
 
-		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wider text-fg-muted uppercase">
-				Direct messages
-			</h2>
-			<ul class="mt-1 flex flex-col gap-0.5" data-testid="dms">
-				{#each bar.dms as r (r.conversation.id)}{@render row(r)}{/each}
-			</ul>
-			<button
-				type="button"
-				class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent"
-				disabled={!officeRunning}
-				onclick={(event) => onnewmessage(event.currentTarget)}
-				><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span
-					class="min-w-0 flex-1 whitespace-normal">New message</span
-				></button
-			>
-		</div>
-
-		{#if bar.asOwner.length}
-			<div data-testid="as-owner">
-				<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
-					Between agents
-				</h2>
-				<p class="px-2 text-xs/5 text-fg-muted">You read these as the owner.</p>
-				<ul class="mt-1 flex flex-col gap-0.5">
-					{#each bar.asOwner as r (r.conversation.id)}{@render row(r)}{/each}
-				</ul>
+		{#if trimmedFind && filtered.total === 0}
+			<div class="space-y-2 px-1" data-testid="chat-find-empty">
+				<p class="px-1 text-xs/5 text-fg-muted">No conversations match “{findQuery.trim()}”.</p>
+				{#if filtered.quickDmCandidates.length && onopendm}
+					<h2 class="px-1 text-xs/6 font-semibold tracking-wider text-fg-muted uppercase">
+						Start a conversation
+					</h2>
+					<ul class="flex flex-col gap-0.5">
+						{#each filtered.quickDmCandidates as m (m.id)}
+							<li>
+								<button
+									type="button"
+									class="{item} {off}"
+									disabled={!officeRunning}
+									data-testid="chat-quick-dm"
+									onclick={() => {
+										findQuery = '';
+										onopendm(m.id);
+									}}
+								>
+									<Avatar name={m.name} kind={m.kind} size="sm" />
+									<span class="min-w-0 flex-1 truncate">{m.name}</span>
+									<span class="shrink-0 text-xs/5 text-fg-muted"
+										>{m.kind === 'agent' ? 'Agent' : 'Person'}</span
+									>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			</div>
+		{:else}
+			<div>
+				<h2 class="px-2 text-xs/6 font-semibold tracking-wider text-fg-muted uppercase">
+					Channels
+				</h2>
+				<ul class="mt-1 flex flex-col gap-0.5" data-testid="channels">
+					{#each filtered.channels as r (r.conversation.id)}{@render row(r)}{/each}
+				</ul>
+				{#if !trimmedFind}
+					<button
+						type="button"
+						class="{item} {off} mt-1"
+						data-testid="browse-channels"
+						onclick={(event) => onbrowse(event.currentTarget)}
+						><HeroIcon
+							class="size-[min(1.5rem,32px)] text-current"
+							variant="outline"
+							name="hashtag"
+						/><span class="min-w-0 flex-1 whitespace-normal">Browse channels</span></button
+					>
+					<button
+						type="button"
+						class="{item} {off} disabled:opacity-50 disabled:hover:bg-transparent"
+						disabled={!officeRunning}
+						onclick={(event) => onnewchannel(event.currentTarget)}
+						><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span
+							class="min-w-0 flex-1 whitespace-normal">Add channel</span
+						></button
+					>
+				{/if}
+			</div>
+
+			<div>
+				<h2 class="px-2 text-xs/6 font-semibold tracking-wider text-fg-muted uppercase">
+					Direct messages
+				</h2>
+				<ul class="mt-1 flex flex-col gap-0.5" data-testid="dms">
+					{#each filtered.dms as r (r.conversation.id)}{@render row(r)}{/each}
+				</ul>
+				{#if !trimmedFind}
+					<button
+						type="button"
+						class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent"
+						disabled={!officeRunning}
+						onclick={(event) => onnewmessage(event.currentTarget)}
+						><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span
+							class="min-w-0 flex-1 whitespace-normal">New message</span
+						></button
+					>
+				{/if}
+			</div>
+
+			{#if filtered.asOwner.length}
+				<div data-testid="as-owner">
+					<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
+						Between agents
+					</h2>
+					<p class="px-2 text-xs/5 text-fg-muted">You read these as the owner.</p>
+					<ul class="mt-1 flex flex-col gap-0.5">
+						{#each filtered.asOwner as r (r.conversation.id)}{@render row(r)}{/each}
+					</ul>
+				</div>
+			{/if}
 		{/if}
 	</nav>
 {/snippet}

@@ -290,4 +290,9 @@
 		background: var(--exec-btn-outline-bg-hover);
 		color: var(--exec-btn-outline-ink-hover);
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.pj-att-open-btn {
+			transition: none;
+		}
+	}
 </style>

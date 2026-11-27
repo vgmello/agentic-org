@@ -29,11 +29,6 @@
       "count": 1
     }
   },
-  "src/lib/modules/messaging/features/open-dm/ChatSidebar.svelte": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "src/lib/modules/messaging/features/open-dm/NewMessageDialog.svelte": {
     "svelte/no-useless-mustaches": {
       "count": 1

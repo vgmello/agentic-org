@@ -11,6 +11,7 @@ import {
 } from '$lib/modules/messaging';
 import type { ChatApi } from '../../api';
 import type { ChatLocation, PendingMessage } from '../../types';
+import { scrollMessageBelowStickyHeader } from './chat-scroll';
 
 export function buildChatPlaceUrl(
 	baseUrl: URL,
@@ -72,13 +73,8 @@ export function resolveChatLocation(
 	};
 }
 
-export function scrollMessageIntoView(messageId: string | undefined): void {
-	if (!messageId) return;
-	void tick().then(() =>
-		document
-			.querySelector(`[data-id="${CSS.escape(messageId)}"]`)
-			?.scrollIntoView({ block: 'center' })
-	);
+export function scrollMessageIntoView(messageId: string | undefined, listEl?: HTMLElement): void {
+	scrollMessageBelowStickyHeader(listEl, messageId);
 }
 
 export function computeQueryNavigation(
