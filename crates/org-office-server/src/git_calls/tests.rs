@@ -51,6 +51,7 @@ fn seed_bare_origin(dir: &Path) -> PathBuf {
 
 #[test]
 fn real_office_register_attach_prepare_commit_and_push_end_to_end() {
+    org_office_sqlite::install();
     let office = Arc::new(Office::for_test(TestOffice {
         engine: EngineChoice::Sqlite,
     }));
@@ -680,7 +681,7 @@ fn git_stderr_redaction_and_strict_ssh_host_validation() {
         truncated.len()
     );
 
-    // Adversarial redaction checks via org_office_sessions::redact choke-point + Git env scrubbing:
+    // Adversarial redaction checks via `org_redact` choke-point + Git env scrubbing:
     // multi-byte UTF-8 straddling the truncation cut, mixed-case headers/env vars, multiple
     // secrets on one line, and unterminated PEM blocks failing closed.
     let utf8_cut = format!("{}é{}", "a".repeat(497), "b".repeat(30));

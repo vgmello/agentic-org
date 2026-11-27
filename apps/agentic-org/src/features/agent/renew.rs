@@ -17,7 +17,7 @@ use super::common::{
     merge_inner_modes, merge_selector, open_channel, parse_verb_args, refusal_to_cli,
     validate_member, InnerModes,
 };
-use crate::args::InstanceArgs;
+use crate::args::{FormatArg, InstanceArgs};
 use crate::completers;
 use crate::error::CliError;
 use crate::selection;
@@ -64,6 +64,9 @@ pub(crate) struct RenewArgs {
     /// Print only the session ID
     #[arg(short, long, conflicts_with = "json")]
     pub(crate) quiet: bool,
+    /// Output format (overrides AGENT_OS_FORMAT): json, compact, yaml, tsv or table
+    #[arg(long, value_enum, value_name = "FORMAT", conflicts_with = "quiet")]
+    pub(crate) format: Option<FormatArg>,
     /// Never prompt; fail instead when a value or confirmation is missing
     #[arg(long)]
     pub(crate) no_input: bool,
@@ -101,6 +104,7 @@ fn parse_renew_args(
         &InnerModes {
             json: args.json,
             quiet: args.quiet,
+            format: args.format.map(FormatArg::into_shell),
             dry_run: args.dry_run,
             no_input: args.no_input,
             no_color: args.no_color,

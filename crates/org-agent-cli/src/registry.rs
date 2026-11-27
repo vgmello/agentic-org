@@ -87,15 +87,36 @@ pub(crate) fn run_command(
     keys: &mut dyn KeySource,
     office: &mut dyn Office,
 ) -> Output {
+    run_command_with_env(program, effective_args, sources, keys, office, None)
+}
+
+/// Like [`run_command`], applying `env_format` (`AGENT_OS_FORMAT`) when neither `--json` nor
+/// `--format` is passed on the command line.
+pub(crate) fn run_command_with_env(
+    program: &str,
+    effective_args: &[String],
+    sources: &mut dyn Sources,
+    keys: &mut dyn KeySource,
+    office: &mut dyn Office,
+    env_format: Option<&str>,
+) -> Output {
     let table = runtime_table();
     let mut observer = OfflineSkillObserver {
         inner: office,
         captured: None,
     };
-    let output = org_command::run(table, program, effective_args, sources, keys, &mut observer);
+    let output = org_command::run_with_env_format(
+        table,
+        program,
+        effective_args,
+        sources,
+        keys,
+        &mut observer,
+        env_format,
+    );
     if output.exit_code == 0 {
         if let Some(captured) = observer.captured {
-            let format = requested_format(captured.command, effective_args);
+            let format = requested_format(captured.command, effective_args, env_format);
             return format_offline_skill(&captured, format);
         }
     }
@@ -153,7 +174,7 @@ impl Office for OfflineSkillObserver<'_> {
     }
 }
 
-fn requested_format(command: &Command, args: &[String]) -> OutputFormat {
+fn requested_format(command: &Command, args: &[String], env_format: Option<&str>) -> OutputFormat {
     let rest = args.get(2..).unwrap_or_default();
     let mut at = 0;
     while let Some(arg) = rest.get(at) {
@@ -165,6 +186,9 @@ fn requested_format(command: &Command, args: &[String]) -> OutputFormat {
             Some((name, value)) => (name, Some(value)),
             None => (body, None),
         };
+        if name == "json" && inline.is_none() {
+            return OutputFormat::Json;
+        }
         let value = match (command.flag_takes_value(name), inline) {
             (Some(true), Some(value)) => Some(value),
             (Some(true), None) => {
@@ -182,7 +206,11 @@ fn requested_format(command: &Command, args: &[String]) -> OutputFormat {
             };
         }
     }
-    OutputFormat::Json
+    match env_format.and_then(|raw| org_command::parse_env_format(raw).ok().flatten()) {
+        Some(org_command::Format::Yaml) => OutputFormat::Yaml,
+        Some(org_command::Format::Compact) => OutputFormat::Compact,
+        Some(org_command::Format::Json) | None => OutputFormat::Json,
+    }
 }
 
 const OFFLINE_SCOPE_FIELDS: [&str; 3] = ["mode", "org_skills_included", "caveat"];

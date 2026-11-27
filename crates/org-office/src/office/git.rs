@@ -426,8 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_and_sqlite_project_and_task_repository_parity() {
+    fn memory_project_and_task_repository_parity() {
         run_parity_suite(EngineChoice::Memory);
-        run_parity_suite(EngineChoice::Sqlite);
     }
 }

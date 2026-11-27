@@ -19,6 +19,7 @@ const FORBIDDEN: &[&str] = &[
     "org-host-setup",
     "org-host-sqlite",
     "org-office",
+    "org-office-sqlite",
     "org-client",
     "rusqlite",
     "libsqlite3-sys",

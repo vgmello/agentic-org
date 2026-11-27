@@ -399,6 +399,7 @@ fn adapter_declared_auth_and_exact_agent_os_context_and_probe_config_dir_switche
         .with_context(&[
             ("AGENT_OS_SOCKET".into(), "/tmp/s.sock".into()),
             ("AGENT_OS_SESSION_TOKEN".into(), "sess-tok".into()),
+            ("AGENT_OS_FORMAT".into(), "json".into()),
             ("AGENT_OS_ORG".into(), "org-1".into()),
             ("AGENT_OS_OFFICE".into(), "off-1".into()),
             ("AGENT_OS_AGENT_ID".into(), "emp-1".into()),

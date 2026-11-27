@@ -13,10 +13,10 @@
 //!   [`org_command::check`]: every flag must exist, every required input and every required
 //!   option such as `--if-match` must be given, and every literal value must fit its type.
 //!   A placeholder value (`<task>`, `@<handle>`) becomes a harmless value of the flag's type
-//!   first. In `--json` (and a `session attach` line's `input`) only placeholder leaves are
+//!   first. In `--input-json` (and a `session attach` line's `input`) only placeholder leaves are
 //!   filled, each with a value of the type its field declares; every key and the structure are
-//!   kept, so an unknown field or a literal of the wrong type still fails. Only a `--json` that
-//!   is a bare placeholder (`'<json>'`) becomes `{}`.
+//!   kept, so an unknown field or a literal of the wrong type still fails. Only an `--input-json`
+//!   that is a bare placeholder (`'<json>'`) becomes `{}`.
 //! - a `session attach` line is first held to the rules `agent-os session attach` applies before
 //!   the table (`command` is words, `options` is an object of strings, numbers and booleans).
 //!
@@ -241,7 +241,7 @@ fn is_shell_operator(word: &str) -> bool {
 }
 
 /// The arguments `agent-os session attach` builds for one JSON line, by the same rules as
-/// `org-agent-cli`'s `attach`: the command's words, `input` as `--json`, and `options` as flags
+/// `org-agent-cli`'s `attach`: the command's words, `input` as `--input-json`, and `options` as flags
 /// with string and number values inline (`--name=value`) and `true` bare for a yes-or-no flag of
 /// the command only; a key other than `command`, `input` and `options`, a flag in `command`, an
 /// option key with `=`, a space or another leading `-`, `true` for a flag that takes a value or
@@ -280,7 +280,7 @@ fn attach_line_args(line: &str, table: &CommandTable) -> Option<Result<Vec<Strin
     }
     let row = table.command_for(&args);
     if let Some(input) = object.get("input").filter(|v| !v.is_null()) {
-        args.push("--json".to_owned());
+        args.push("--input-json".to_owned());
         args.push(input.to_string());
     }
     match object.get("options").filter(|v| !v.is_null()) {
@@ -416,7 +416,7 @@ fn fill_json_leaves(value: &mut Value, ty: Option<&Type>) {
     }
 }
 
-/// The `--json` text to check for `text` as cited: `{}` for a bare placeholder, the object
+/// The `--input-json` text to check for `text` as cited: `{}` for a bare placeholder, the object
 /// with its placeholder leaves filled when it is JSON, and otherwise the text itself (which the
 /// check then refuses).
 fn fill_json_option(command: &Command, text: &str) -> String {
@@ -457,10 +457,10 @@ fn fill_placeholders(command: &Command, args: &[String]) -> Vec<String> {
             Some((name, value)) => (name, Some(value)),
             None => (flag, None),
         };
-        if name == "json" {
+        if name == "input-json" {
             match (inline, args.get(at)) {
                 (Some(value), _) => {
-                    out.push(format!("--json={}", fill_json_option(command, value)))
+                    out.push(format!("--input-json={}", fill_json_option(command, value)))
                 }
                 (None, Some(value)) => {
                     at += 1;

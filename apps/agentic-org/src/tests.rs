@@ -249,3 +249,187 @@ fn the_host_and_the_shell_name_the_same_config_variable() {
         org_cli_shell::paths::CONFIG_DIR_ENV
     );
 }
+
+#[test]
+fn office_flag_hoisting_handles_json_before_and_after_subcommand_and_preserves_values() {
+    let owned = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+
+    // Bare `--json` after an office subcommand is hoisted cleanly.
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["member", "list", "--json"])).unwrap();
+    assert_eq!(cleaned, owned(&["member", "list"]));
+    assert!(hoisted.json);
+
+    // `--json` as the value of a value-taking flag stays untouched (never hoisted).
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["msg", "send", "--to", "ada", "--body", "--json"]))
+            .unwrap();
+    assert_eq!(
+        cleaned,
+        owned(&["msg", "send", "--to", "ada", "--body", "--json"])
+    );
+    assert!(!hoisted.json);
+
+    // `--json` after `--` stays untouched.
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--", "--json"])).unwrap();
+    assert_eq!(cleaned, owned(&["task", "list", "--", "--json"]));
+    assert!(!hoisted.json);
+
+    // `--input-json <object>` stays attached while trailing `--json` is hoisted.
+    let (cleaned, hoisted) = crate::hoist_office_words(&owned(&[
+        "task",
+        "list",
+        "--input-json",
+        r#"{"status":"open"}"#,
+        "--json",
+    ]))
+    .unwrap();
+    assert_eq!(
+        cleaned,
+        owned(&["task", "list", "--input-json", r#"{"status":"open"}"#])
+    );
+    assert!(hoisted.json);
+
+    // `--json=<object>` is refused with guidance pointing to `--input-json`.
+    let err = crate::hoist_office_words(&owned(&["task", "list", "--json={}"]))
+        .err()
+        .expect("refused");
+    assert!(err.to_string().contains("--input-json"), "{err}");
+
+    // `--format table` and `--format=tsv` hoist to shell OutputFormat; `--format yaml` passes through.
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--format", "table"])).unwrap();
+    assert_eq!(cleaned, owned(&["task", "list"]));
+    assert_eq!(
+        hoisted.format,
+        Some(org_cli_shell::context::OutputFormat::Table)
+    );
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--format=yaml"])).unwrap();
+    assert_eq!(cleaned, owned(&["task", "list", "--format=yaml"]));
+    assert!(hoisted.table_format);
+
+    // Repeated shell-only `--format` flags: idempotent is allowed, conflicting is refused.
+    let (cleaned, hoisted) = crate::hoist_office_words(&owned(&[
+        "task", "list", "--format", "table", "--format", "table",
+    ]))
+    .unwrap();
+    assert_eq!(cleaned, owned(&["task", "list"]));
+    assert_eq!(
+        hoisted.format,
+        Some(org_cli_shell::context::OutputFormat::Table)
+    );
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--format=tsv", "--format", "tsv"]))
+            .unwrap();
+    assert_eq!(cleaned, owned(&["task", "list"]));
+    assert_eq!(
+        hoisted.format,
+        Some(org_cli_shell::context::OutputFormat::Tsv)
+    );
+    for conflict in [
+        &["task", "list", "--format", "table", "--format", "tsv"][..],
+        &["task", "list", "--format=tsv", "--format=table"],
+        &["task", "list", "--format", "table", "--format=tsv"],
+    ] {
+        let err = crate::hoist_office_words(&owned(conflict))
+            .err()
+            .expect("conflicting repeated shell --format refused");
+        assert!(
+            err.to_string().contains("conflicting values"),
+            "{conflict:?}: {err}"
+        );
+    }
+}
+
+#[test]
+fn sign_in_prepare_modes_strips_hoisted_flags_and_applies_office_output_format() {
+    use clap::FromArgMatches;
+    use org_cli_shell::context::testing::{captured, tty};
+    use org_cli_shell::context::{OutputFormat, OUTPUT_FORMAT_ENV};
+
+    let prepare = |argv: &[&str]| {
+        let mut cmd = cli::command();
+        let matches = cmd.try_get_matches_from_mut(words(argv)).unwrap();
+        let parsed = cli::Cli::from_arg_matches(&matches).unwrap();
+        let explicit = crate::ExplicitOutput {
+            json: parsed.global.json,
+            quiet: parsed.global.quiet,
+            format: parsed.global.format.map(crate::args::FormatArg::into_shell),
+            table_format: false,
+            table_format_kind: None,
+            dry_run: parsed.global.dry_run,
+        };
+        let mut modes = parsed.modes();
+        let (top, explicit, passthrough) =
+            crate::prepare_modes(parsed.command.unwrap(), explicit, &mut modes).unwrap();
+        (top, explicit, modes, passthrough)
+    };
+
+    // `sign-in -- task list --format table` strips `--format table` and sets `OutputFormat::Table`.
+    let (top, explicit, modes, passthrough) =
+        prepare(&["sign-in", "--", "task", "list", "--format", "table"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    assert_eq!(args.command(), ["task", "list"]);
+    assert_eq!(modes.format, Some(OutputFormat::Table));
+    assert!(!passthrough);
+    let (ctx, _) = captured(modes, org_cli_shell::terminal::Terminal::piped(), &[]);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list"]
+    );
+
+    // `sign-in -- task list -q` strips `-q` and sets `modes.quiet`.
+    let (top, explicit, modes, passthrough) = prepare(&["sign-in", "--", "task", "list", "-q"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    assert_eq!(args.command(), ["task", "list"]);
+    assert!(modes.quiet);
+    let (ctx, _) = captured(modes, tty(Some(80)), &[]);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list"]
+    );
+
+    // `AGENT_OS_FORMAT=yaml sign-in -- task list` injects `--format yaml` after `task list`.
+    let (top, explicit, modes, passthrough) = prepare(&["sign-in", "--", "task", "list"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    let (ctx, _) = captured(modes, tty(Some(80)), &[(OUTPUT_FORMAT_ENV, "yaml")]);
+    assert_eq!(ctx.output_format(), OutputFormat::Yaml);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list", "--format", "yaml"]
+    );
+
+    // `--format yaml sign-in -- task list` injects `--format yaml` after `task list`.
+    let (top, explicit, modes, passthrough) =
+        prepare(&["--format", "yaml", "sign-in", "--", "task", "list"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    let (ctx, _) = captured(modes, tty(Some(80)), &[]);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list", "--format", "yaml"]
+    );
+
+    // `sign-in -- agent sessions --member @ada --format yaml` keeps flags intact for clap and
+    // sets `OutputFormat::Yaml`.
+    let (top, _, modes, _) = prepare(&[
+        "sign-in", "--", "agent", "sessions", "--member", "@ada", "--format", "yaml",
+    ]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    assert_eq!(
+        args.command(),
+        ["agent", "sessions", "--member", "@ada", "--format", "yaml"]
+    );
+    assert_eq!(modes.format, Some(OutputFormat::Yaml));
+}

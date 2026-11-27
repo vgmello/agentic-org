@@ -21,6 +21,13 @@ pub use filters::{
 };
 pub(crate) use identity::{
     check_replicated_hq_owner, read_active_identity_binding, read_ca_digest_for_open, read_intent,
+};
+#[cfg(any(test, feature = "testkit"))]
+pub use identity::{
+    read_replicated_hq_owner, remove_replicated_hq_owner, write_replicated_hq_owner,
+};
+#[cfg(not(any(test, feature = "testkit")))]
+pub(crate) use identity::{
     read_replicated_hq_owner, remove_replicated_hq_owner, write_replicated_hq_owner,
 };
 pub use identity::{SatelliteFederationConfig, SatelliteTlsIdentity};
@@ -56,5 +63,3 @@ pub fn is_immutable_state_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod replicated_kind_tests;
-#[cfg(test)]
-mod snapshot_resync_tests;

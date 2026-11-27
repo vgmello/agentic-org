@@ -43,6 +43,7 @@ impl Instance {
             .unwrap()
             .port();
         let account = registered_account(&base, None, port).unwrap();
+        org_office_sqlite::install();
         let (office, roots, _, _) = Office::for_test_with_real_ca_in(
             &root.join("t"),
             TestOffice {

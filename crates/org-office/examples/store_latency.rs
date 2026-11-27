@@ -341,6 +341,7 @@ fn check_thresholds(args: &Args, report: &Report) -> Result<(), String> {
 }
 
 fn main() {
+    org_office_sqlite::install();
     let args = parse_args().unwrap_or_else(|e| {
         eprintln!("store_latency: {e}");
         std::process::exit(2);

@@ -98,6 +98,7 @@ impl Sink {
 
 /// Backs up the durable root of `request`'s office into `request.out`.
 pub fn backup(request: &BackupRequest<'_>) -> Result<BackupReport, BackupError> {
+    org_office_sqlite::install();
     if let Some(passphrase) = request.passphrase {
         passphrase.check_strength()?;
     }

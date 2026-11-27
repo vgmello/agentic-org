@@ -15,12 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use org_federation::{
+    enroll_satellite_with_hq, HqFederationServer, RelayedWake, SatelliteSyncSession,
+};
 use org_office::{
     CreateInvitationParams, Custody, DataRoots, Key, NewOffice, Office, OfficeRole,
     SatelliteProvisionSpec, SatelliteReEnrollSpec, TestOffice,
-};
-use org_office_server::federation::{
-    enroll_satellite_with_hq, HqFederationServer, RelayedWake, SatelliteSyncSession,
 };
 use org_pki::{invitation::InvitationToken, SigningKey, Zeroizing};
 use org_store::{testkit::FakeCustody, Id, OfficeIdentity, WriterAuthority};
@@ -53,6 +53,7 @@ fn sat_custody(org_id: &str, sat_office_id: &str) -> Custody {
 
 #[test]
 fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_and_d25_reenroll() {
+    org_office_sqlite::install();
     let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
         engine: org_office::EngineChoice::Sqlite,
     }));
@@ -655,6 +656,7 @@ fn create_hq_task(hq: &Office, owner: &str, team_id: &str, title: &str) -> Strin
 /// her during `import_hq` itself (not only at the next open), with the same derived ID, once.
 #[test]
 fn an_organization_imported_without_its_chief_of_staff_gets_her_at_import() {
+    org_office_sqlite::install();
     let hq = Office::for_test_with_real_ca(TestOffice {
         engine: org_office::EngineChoice::Sqlite,
     });

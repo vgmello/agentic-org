@@ -159,7 +159,7 @@ pub(crate) fn command(program: &str, command: &Command) -> String {
         .collect();
     if !structured.is_empty() {
         out.push_str(
-            "\nInput with structure, given in --json or with --input-format json or yaml:\n",
+            "\nInput with structure, given in --input-json or with --input-format json or yaml:\n",
         );
         push_lines(&mut out, &structured);
     }
@@ -191,9 +191,9 @@ pub(crate) fn command(program: &str, command: &Command) -> String {
 
 /// The command line of the row's example (AX-7), as the words a shell hands the program: each
 /// input field a flag can carry as that flag, in the row's field order, and every other field
-/// in one `--json` object. A text that holds a character that does not print goes in `--json`
-/// too, where it is an escape, so the example is always one line a caller can copy. A write
-/// that requires `--if-match` gets revision 1.
+/// in one `--input-json` object. A text that holds a character that does not print goes in
+/// `--input-json` too, where it is an escape, so the example is always one line a caller can copy.
+/// A write that requires `--if-match` gets revision 1.
 pub(crate) fn example_args(command: &Command) -> Vec<String> {
     let mut args = vec![command.resource.to_owned(), command.verb.to_owned()];
     let input = match serde_json::from_str::<Value>(command.example.input) {
@@ -218,7 +218,7 @@ pub(crate) fn example_args(command: &Command) -> Vec<String> {
         }
     }
     if !rest.is_empty() {
-        args.push("--json".to_owned());
+        args.push("--input-json".to_owned());
         args.push(Node::from_value(&Value::Object(rest)).to_one_line());
     }
     if command.if_match() == IfMatch::Required {
@@ -315,7 +315,7 @@ pub(crate) fn flags_hint(program: &str, command: &Command) -> String {
     } else {
         flags.join(", ")
     };
-    // A field with structure has no flag: name it, so a caller knows to give it in `--json`.
+    // A field with structure has no flag: name it, so a caller knows to give it in `--input-json`.
     let structured: Vec<String> = command
         .input
         .iter()
@@ -331,7 +331,7 @@ pub(crate) fn flags_hint(program: &str, command: &Command) -> String {
     let structured = if structured.is_empty() {
         String::new()
     } else {
-        format!(" Fields given in --json: {}.", structured.join(", "))
+        format!(" Fields given in --input-json: {}.", structured.join(", "))
     };
     format!(
         "Flags of `{}`: {flags}.{structured} Options: {}. `{program} {} --help` says what each does.",

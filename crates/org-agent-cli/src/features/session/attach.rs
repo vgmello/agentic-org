@@ -170,7 +170,7 @@ fn parse_line_args(table: &CommandTable, raw: &str) -> Result<Vec<String>, Strin
     if let Some(input) = obj.get("input").filter(|v| !v.is_null()) {
         let json = serde_json::to_string(input)
             .map_err(|_| "Could not serialize `input` as JSON.".to_owned())?;
-        args.push("--json".into());
+        args.push("--input-json".into());
         args.push(json);
     }
     if let Some(opt_val) = obj.get("options").filter(|v| !v.is_null()) {
@@ -292,19 +292,42 @@ pub(crate) fn wants_help(args: &[String]) -> bool {
         .any(|arg| arg == "--help" || arg == "-h")
 }
 
-/// The refusal of `session attach` written with anything after it but `--help`: it reads its
-/// commands from standard input and takes no flag of its own.
-pub(crate) fn usage_refusal(args: &[String]) -> Option<Refusal> {
+/// The refusal of `session attach` written with anything after it besides `--help` or a single
+/// bare `--json` output switch: it reads its commands from standard input and always answers in
+/// JSON.
+pub(crate) fn usage_refusal(args: &[String], leading_json: bool) -> Option<Refusal> {
     let extra = args.get(2..).unwrap_or_default();
-    if extra.is_empty() {
-        return None;
+    let mut json_seen = usize::from(leading_json);
+    let mut rejected = Vec::new();
+    for arg in extra {
+        if arg == "--json" {
+            json_seen += 1;
+        } else if arg.starts_with("--json=") {
+            return Some(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "--json is a yes-or-no flag for JSON output and takes no value.",
+                "Run `agent-os session attach` (or `agent-os --json session attach`) and send one JSON line per command on standard input.",
+            ));
+        } else {
+            rejected.push(arg.as_str());
+        }
     }
-    let named = extra.join(" ");
-    Some(Refusal::new(
-        ErrorCode::InvalidRequest,
-        format!("`session attach` takes no flags, and `{named}` was given."),
-        "Run `agent-os session attach` alone and send one JSON line per command on standard input; `agent-os session attach --help` shows the line format.",
-    ))
+    if !rejected.is_empty() {
+        let named = rejected.join(" ");
+        return Some(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("`session attach` takes no flags, and `{named}` was given."),
+            "Run `agent-os session attach` alone and send one JSON line per command on standard input; `agent-os session attach --help` shows the line format.",
+        ));
+    }
+    if json_seen > 1 {
+        return Some(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "--json is given twice.",
+            "Pass --json at most once on `agent-os session attach`.",
+        ));
+    }
+    None
 }
 
 #[cfg(test)]

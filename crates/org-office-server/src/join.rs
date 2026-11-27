@@ -203,6 +203,7 @@ fn open_or_provision_joined_satellite(
     local_key: &org_pki::SigningKey,
     admitted: transfer::Admitted,
 ) -> Result<Office, OfficeError> {
+    org_office_sqlite::install();
     if join.re_enroll {
         let opened = Office::open_as_owner(
             folder,

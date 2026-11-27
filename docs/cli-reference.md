@@ -94,11 +94,19 @@ agentic-org office list --name hq --json
 
 Every command takes these flags (before or after the command):
 
-- `--json` — the result as JSON on `stdout` (indented on a terminal, one compact line in a pipe); an error as `{"error": {"code", "message", "help", "exit_code"}}` on `stderr`, with an empty `stdout`. Implies no color and no prompts.
-- `-q, --quiet` — only the primary IDs, one per line (nothing for an empty list or a `--dry-run`). Cannot be combined with `--json` (exit `2`).
+- `--json` — bare switch (no value), accepted before or after any command (including office commands such as `agentic-org directory list --json` and `agentic-org --json directory list`). Prints the result as JSON on `stdout` (indented on a human terminal, one compact line in a pipe or agent-harness PTY); an error as `{"error": {"code", "message", "help", "exit_code"}}` on `stderr`, with an empty `stdout`. Implies no color and no prompts.
+- `--format json|compact|yaml|tsv|table` — explicit output format override (before or after any command; conflicts with `--json` and `-q`).
+- `-q, --quiet` — only the primary IDs, one per line (nothing for an empty list or a `--dry-run`). Cannot be combined with `--json` or `--format` (exit `2`).
 - `--no-input` (or `AGENTIC_ORG_NO_INPUT=1`) — never prompt; a missing value or confirmation fails instead.
 - `--dry-run` — show what would change (`[DRY-RUN] ...` on `stderr`, or `{"dry_run": true, ...}` under `--json`) and change nothing. Office commands (`task`, `msg`, ...) always receive it: a write is previewed, and a command that changes nothing refuses it (exit `2`) instead of running as if it were not given. A `--dry-run` that is a flag's value (`--body --dry-run`) or follows `--` is text, not the flag.
 - `--color auto|always|never` — `auto` honours `NO_COLOR`, `FORCE_COLOR`/`CLICOLOR_FORCE`, `CLICOLOR=0`, `TERM=dumb` and whether the stream is a terminal.
+
+Shared output-format environment override & precedence (applies across both `agentic-org` and `agent-os`):
+
+- `AGENT_OS_FORMAT` — sets the default output format when no explicit CLI output flag is passed (`json`, `compact`, `yaml`, `tsv`, `table` for `agentic-org`; `json`, `compact`, `yaml` for `agent-os`; case-insensitive and trimmed; invalid values fail closed with exit `2`). Managed agent runtimes automatically receive `AGENT_OS_FORMAT=json`.
+- Precedence order: explicit CLI flags (`--json`, `-q`, `--format <fmt>`) > `AGENT_OS_FORMAT` > agent-harness PTY / non-TTY pipe > human TTY.
+- When `AGENT_OS_FORMAT` is unset on a TTY inside a known agent harness (`AGENT_OS_SESSION_TOKEN`, `ANTIGRAVITY_AGENT`, `CLAUDECODE`, `CODEX_CI`), `agentic-org` emits untruncated compact JSON instead of a narrow human table; piped non-TTY stdout preserves headerless TSV for shell scripts.
+- On narrow human terminals (such as 80-column TTYs), borderless tables protect high-signal distinguishing columns (`HANDLE`, `NAME`, `KEY`, `SLUG`, `EMAIL`, `TITLE`, `STATUS`, `ROLE`) by shrinking and eliding low-priority metadata columns (`ID`, `*_ID`, timestamps, `NOTES`, `OFFICE`) first so identifiers such as `@backend` and `@backend-2` stay distinguishable.
 
 Directories (each an absolute path; an empty variable is unset; a relative one is refused with exit `1`, `cli::config::invalid`, and never read against the working directory):
 
@@ -109,7 +117,7 @@ Output is shaped for the reader: on a terminal, lists are borderless tables and 
 
 Exit codes: `0` success (also when the reader of `stdout` went away, e.g. `| head -1`); `1` a refusal or failure; `2` a command line that cannot be used, or a destructive command without `--yes` where no one can be asked; `4` not signed in or not allowed; `130` cancelled (Ctrl+C at a prompt, or a declined confirmation). Office commands (`task`, `msg`, ...) keep their own `0`/`1`/`2`.
 
-Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`, `service stop`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q` and `--dry-run` (exit `2`; `setup` also when they follow its own flags), and `sign-in` refuses `--dry-run`, instead of ignoring them. `setup` asks for its port only when someone can be asked: never under `--no-input` or `AGENTIC_ORG_NO_INPUT=1`, even on a terminal.
+Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`, `service stop`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q`, `--format` and `--dry-run` (exit `2`; `setup` also when they follow its own flags), and `sign-in` refuses `--dry-run`, instead of ignoring them. `setup` asks for its port only when someone can be asked: never under `--no-input` or `AGENTIC_ORG_NO_INPUT=1`, even on a terminal.
 
 ### Selecting the Instance and Office
 
@@ -336,7 +344,7 @@ Any other key, a control character or an over-long value makes it invalid (exit 
   The remaining office resources, over the same approved office channel as `task` and `msg`.
   **Use when:** browsing the directory, people and membership, sessions and grants, organization, team and project processes and standards, agent skills or budgets from the terminal.
 
-Office commands (`msg`, `task`, `who`, `team`, ...) run the same command table as `agent-os`. On a terminal their answers are shown as tables and cards; in a pipe as the table's `compact` form; `--json` (before the command) prints the table's JSON envelope; `--format json|yaml|compact` prints exactly that format; `-q` prints IDs. `<resource> <verb> --help` (or `-h`) ends with a copy-paste `Example:`.
+Office commands (`msg`, `task`, `who`, `team`, ...) run the same command table as `agent-os`. On a terminal their answers are shown as tables and cards (or untruncated JSON inside an agent-harness PTY); in a pipe as headerless tab-separated lines (`tsv`); `--json` (before or after the command) prints the table's JSON envelope; `--format json|yaml|compact|tsv|table` prints exactly that format (and overrides `AGENT_OS_FORMAT`); `-q` prints IDs; structured JSON request bodies use `--input-json <object>`. `<resource> <verb> --help` (or `-h`) ends with a copy-paste `Example:`.
 
 ---
 
@@ -350,6 +358,7 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
 
 Contract rules every command follows:
 
+- **Output format & structured JSON input.** `--json` (bare switch, before or after the command) selects JSON output; `--format json|yaml|compact` picks an explicit format; `AGENT_OS_FORMAT` sets the default when neither flag is given (managed agent runtimes receive `AGENT_OS_FORMAT=json`). Structured JSON request bodies use `--input-json <object>` (or `--input-file` / `--stdin` with `--input-format json|yaml`).
 - **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` reports no total, and `msg list` reports one only for a `--since-read` or `--after-id` read, whose `meta.next_cursor` is the message the next page starts after).
 - **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
 - **Retries are safe.** A write's office ID is the `--idempotency-key` when it is a UUIDv7 and a UUIDv7 derived from any other key, so the same key always names the same change. `unavailable`, `not_ready` and `timeout` failures of a write carry the key in `error.retry_with`.
@@ -365,7 +374,7 @@ Contract rules every command follows:
 - `agent-os msg send|ask|reply|accept|withdraw|inbox|read|list|done|defer|unsnooze|wait`
   Direct messages (DMs), channel messages, handoffs, inbox triage, and structured asks. Send a DM with `agent-os msg send --to <handle|employee_id|owner>` or browse a DM with `agent-os msg list --participant <handle>`.
   **Use when:** sending a DM or `#channel` post (`msg send`), asking typed questions/approvals with bounded wait (`msg ask`), replying in a thread or answering an ask (`msg reply`), accepting a handoff (`msg accept`), triaging your inbox (`msg inbox|read|done|defer|unsnooze`), or waiting up to 90s for a reply (`msg wait`).
-  `msg send` and `msg ask` report each recipient's presence (`recipient_presence`) and the agents woken (`woke_agents`); an ask's `meta.status` matches its `data.status` (`waiting`, `timed_out`, `suspended` for `required_pending`, `withdrawn`). Ask one question with `--prompt`, `--question-type choice|yes_no|free_text`, repeated `--option <id>[=<label>]` and `--default-value`, or several with a `questions` array in `--json` (never both).
+  `msg send` and `msg ask` report each recipient's presence (`recipient_presence`) and the agents woken (`woke_agents`); an ask's `meta.status` matches its `data.status` (`waiting`, `timed_out`, `suspended` for `required_pending`, `withdrawn`). Ask one question with `--prompt`, `--question-type choice|yes_no|free_text`, repeated `--option <id>[=<label>]` and `--default-value`, or several with a `questions` array in `--input-json` (never both).
 - `agent-os channel list|join|leave|mark-read|summarize`
   Discover channels and what is new in them, manage manual channel membership, keep a per-channel read marker, and summarize channel Q&A.
   **Use when:** finding available `#channels` (`--unread-only`: `new_message_count` after your read marker, `unread_count` inbox items), joining/leaving manual channels, catching up (`msg list --since-read --top-level-only --headers-only`, `channel summarize --since-read` digesting up to 200 new messages per call with `through_message_id` and `remaining_unread`), recording what you have read (`channel mark-read [--up-to <message-id>]`, forward only, never touching your inbox), or asking for a factual summary of recent channel messages.

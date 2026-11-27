@@ -9,10 +9,15 @@ use crate::error::{render_diagnostic, CliDiagnostic, ShellError};
 use crate::escape::sanitize;
 use crate::terminal::{write_out, Terminal};
 
+mod format;
 mod prescan;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub use format::{
+    is_agent_harness, parse_env_format, resolve_output_format, OutputFormat,
+    AGENT_HARNESS_ENV_VARS, OUTPUT_FORMAT_ENV,
+};
 pub use prescan::{prescan, Prescan};
 
 /// A non-empty value other than `0` forces `--no-input` (CI, agents, wrappers).
@@ -46,6 +51,8 @@ pub struct Modes {
     pub json: bool,
     /// `-q`/`--quiet`: IDs only on stdout, no notes.
     pub quiet: bool,
+    /// `--format <json|compact|yaml|tsv|table>`: explicit output format override.
+    pub format: Option<OutputFormat>,
     /// `--dry-run`: preview, mutate nothing.
     pub dry_run: bool,
     /// `--no-input`: never prompt.
@@ -55,13 +62,16 @@ pub struct Modes {
     pub color: ColorMode,
     /// `--no-color`.
     pub no_color: bool,
+    /// Skip consulting `AGENT_OS_FORMAT` (e.g. help/version output or explicit post-subcommand
+    /// `--format` handled by the office command table).
+    pub ignore_env_format: bool,
 }
 
-fn set(env: &dyn Fn(&str) -> Option<OsString>, name: &str) -> Option<OsString> {
+pub(crate) fn set(env: &dyn Fn(&str) -> Option<OsString>, name: &str) -> Option<OsString> {
     env(name).filter(|value| !value.is_empty())
 }
 
-fn forced(env: &dyn Fn(&str) -> Option<OsString>, name: &str) -> bool {
+pub(crate) fn forced(env: &dyn Fn(&str) -> Option<OsString>, name: &str) -> bool {
     set(env, name).is_some_and(|value| value != "0")
 }
 
@@ -95,6 +105,8 @@ pub fn resolve_color(modes: &Modes, is_tty: bool, env: &dyn Fn(&str) -> Option<O
 pub struct ExecutionContext {
     modes: Modes,
     terminal: Terminal,
+    output_format: OutputFormat,
+    agent_harness: bool,
     stdout_color: bool,
     stderr_color: bool,
     out: Box<dyn Write>,
@@ -113,8 +125,8 @@ impl ExecutionContext {
         )
     }
 
-    /// A context over given streams; `env` reads `AGENTIC_ORG_NO_INPUT` and the color
-    /// variables. See [`testing::captured`] for tests.
+    /// A context over given streams; `env` reads `AGENTIC_ORG_NO_INPUT`, `AGENT_OS_FORMAT`,
+    /// agent-harness markers, and the color variables. See [`testing::captured`] for tests.
     pub fn with_streams(
         mut modes: Modes,
         terminal: Terminal,
@@ -125,11 +137,18 @@ impl ExecutionContext {
         if forced(env, NO_INPUT_ENV) {
             modes.no_input = true;
         }
+        let agent_harness = is_agent_harness(env);
+        let output_format = format::resolve_output_format(&modes, &terminal, env);
+        if !modes.quiet && output_format == OutputFormat::Json {
+            modes.json = true;
+        }
         let stdout_color = resolve_color(&modes, terminal.stdout_tty, env);
         let stderr_color = resolve_color(&modes, terminal.stderr_tty, env);
         Self {
             modes,
             terminal,
+            output_format,
+            agent_harness,
             stdout_color,
             stderr_color,
             out,
@@ -143,6 +162,14 @@ impl ExecutionContext {
 
     pub fn terminal(&self) -> &Terminal {
         &self.terminal
+    }
+
+    pub fn output_format(&self) -> OutputFormat {
+        self.output_format
+    }
+
+    pub fn is_agent_harness(&self) -> bool {
+        self.agent_harness
     }
 
     pub fn is_tty_stdout(&self) -> bool {
@@ -162,13 +189,16 @@ impl ExecutionContext {
     }
 
     /// True when someone can be asked: standard input and standard error are terminals and
-    /// none of `--no-input` (or its variable), `--json` or `--quiet` is on.
+    /// none of `--no-input` (or its variable), `--json`, `--quiet`, an explicit non-table
+    /// machine format, or an agent harness PTY is active.
     pub fn can_prompt(&self) -> bool {
         self.terminal.stdin_tty
             && self.terminal.stderr_tty
             && !self.modes.no_input
             && !self.modes.json
             && !self.modes.quiet
+            && !self.agent_harness
+            && self.modes.format.is_none_or(|f| f == OutputFormat::Table)
     }
 
     pub fn term_width(&self) -> Option<usize> {

@@ -49,8 +49,8 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(10);
 /// How often the wrapper looks at its child and at the signals it received.
 const CHILD_POLL: Duration = Duration::from_millis(50);
 
-pub(super) fn exec(args: &[String]) -> Printed {
-    print(run_exec(args))
+pub(super) fn exec(args: &[String], leading_json: bool) -> Printed {
+    print(run_exec(args, leading_json))
 }
 
 fn operator_binary() -> PathBuf {
@@ -280,12 +280,13 @@ fn plan(flags: &Flags) -> Result<Plan<'_>, LifecycleError> {
     })
 }
 
-fn run_exec(args: &[String]) -> Result<Printed, LifecycleError> {
+fn run_exec(args: &[String], leading_json: bool) -> Result<Printed, LifecycleError> {
+    const USAGE: &str = "agent-os exec --as @<handle> [--ttl 24h] [--takeover] -- <command...>";
     let flags = Flags::parse(
         args,
         &["as", "ttl", "office", "socket"],
-        &["takeover"],
-        "agent-os exec --as @<handle> [--ttl 24h] [--takeover] -- <command...>",
+        &["takeover", "json"],
+        USAGE,
     )?;
     if flags.help {
         return Ok(Printed {
@@ -293,6 +294,7 @@ fn run_exec(args: &[String]) -> Result<Printed, LifecycleError> {
             exit_code: 0,
         });
     }
+    flags.check_leading_json(leading_json, USAGE)?;
     let plan = plan(&flags)?;
     // Held from before the lease exists until it is ended (module documentation).
     let signals = WrapperSignals::install().map_err(|e| {

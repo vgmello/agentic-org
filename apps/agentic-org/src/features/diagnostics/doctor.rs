@@ -1,7 +1,6 @@
 //! `agentic-org doctor`: read-only host, runtime, security, platform, and organization-state
 //! integrity diagnostics with actionable remediation hints and non-zero exit on failure.
 
-use std::fs;
 use std::path::Path;
 
 use org_cli_shell::context::ExecutionContext;
@@ -9,6 +8,7 @@ use org_cli_shell::output::{Cell, ListView, Row, Table};
 use org_cli_shell::terminal::sanitize;
 use serde::Serialize;
 
+use super::doctor_apparmor::check_linux_apparmor_userns;
 use super::doctor_host::{
     check_credentials_dir, check_instance_layout, check_permissions, check_registry_consistency,
     check_release_pin, check_sockets,
@@ -19,8 +19,6 @@ use super::paths::{discover_offices, resolve_instance, DiscoveredOffice};
 use super::DoctorArgs;
 use crate::error::CliError;
 use crate::selection;
-
-const APPARMOR_USERNS_SYSCTL: &str = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct DoctorSummary {
@@ -118,41 +116,6 @@ fn check_discovered_offices(offices: &[DiscoveredOffice], checks: &mut Vec<Docto
             office.office_db.as_deref(),
             &scope,
         ));
-    }
-}
-
-/// Safe read-only Linux AppArmor/userns diagnostic with zero platform `#[cfg]`.
-fn check_linux_apparmor_userns() -> Option<DoctorCheck> {
-    match fs::read_to_string(APPARMOR_USERNS_SYSCTL) {
-        Ok(raw) => {
-            let value = raw.trim();
-            if value == "1" {
-                Some(DoctorCheck::warn(
-                    "platform.apparmor_userns",
-                    "platform",
-                    "AppArmor restricts unprivileged user namespaces (apparmor_restrict_unprivileged_userns=1)",
-                    Some("Install an AppArmor profile permitting user namespaces for the agent sandbox, or relax kernel.apparmor_restrict_unprivileged_userns.".to_owned()),
-                    Some(APPARMOR_USERNS_SYSCTL.to_owned()),
-                ))
-            } else {
-                Some(DoctorCheck::pass(
-                    "platform.apparmor_userns",
-                    "platform",
-                    format!(
-                        "unprivileged user namespaces permitted (apparmor_restrict_unprivileged_userns={value})"
-                    ),
-                    Some(APPARMOR_USERNS_SYSCTL.to_owned()),
-                ))
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => Some(DoctorCheck::warn(
-            "platform.apparmor_userns",
-            "platform",
-            format!("could not read AppArmor userns sysctl: {e}"),
-            None,
-            Some(APPARMOR_USERNS_SYSCTL.to_owned()),
-        )),
     }
 }
 

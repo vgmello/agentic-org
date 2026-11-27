@@ -5,6 +5,7 @@
 //! - `agentic-org uninstall`: clean instance teardown clearing `host-registry.created`
 
 mod doctor;
+mod doctor_apparmor;
 mod doctor_host;
 mod doctor_types;
 mod logs;

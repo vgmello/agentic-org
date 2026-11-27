@@ -22,7 +22,7 @@ use super::endpoint::{
     is_valid_bearer_token, resolve_expected_origin, transport_error_msg,
     validate_usage_endpoint_url,
 };
-use super::oauth::parse_usage_oauth_credential;
+use super::oauth::parse_oauth_envelope;
 use super::transport::{attempt_schedule_map, record_scheduling_attempt};
 use super::{
     SubscriptionUsageCollectOutcome, SubscriptionUsageCollectRequest, SubscriptionUsageCollector,
@@ -479,7 +479,7 @@ pub(super) fn load_active_credential(
             if is_expired(cred.expires_at.as_deref(), now_ms) {
                 return Err(expired_err());
             }
-            let Some(oauth) = parse_usage_oauth_credential(&cred.secret) else {
+            let Ok(oauth) = parse_oauth_envelope(&cred.secret) else {
                 return Err((
                     SubscriptionUsageAuthSource::EnrolledSubscriptionCredential,
                     SubscriptionUsageCollectOutcome::AuthRequired {

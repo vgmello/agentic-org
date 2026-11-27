@@ -57,4 +57,8 @@ impl SignInArgs {
     pub(crate) fn command(&self) -> &[String] {
         &self.command
     }
+
+    pub(crate) fn command_mut(&mut self) -> &mut Vec<String> {
+        &mut self.command
+    }
 }

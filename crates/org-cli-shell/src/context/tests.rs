@@ -246,3 +246,153 @@ fn shared_buffers_share() {
     clone.write_all("é".as_bytes()).unwrap();
     assert_eq!(buffer.text(), "é");
 }
+
+#[test]
+fn output_format_precedence_ladder_and_harness_detection() {
+    // Tier 4: human TTY defaults to borderless table.
+    let (ctx, _) = captured(Modes::default(), tty(Some(80)), &[]);
+    assert_eq!(ctx.output_format(), OutputFormat::Table);
+    assert!(!ctx.modes().json);
+    assert!(!ctx.is_agent_harness());
+
+    // Tier 3a: non-TTY piped stdout defaults to TSV, even inside an agent harness env.
+    for marker in AGENT_HARNESS_ENV_VARS {
+        let (ctx, _) = captured(Modes::default(), Terminal::piped(), &[(marker, "1")]);
+        assert_eq!(ctx.output_format(), OutputFormat::Tsv, "piped {marker}");
+        assert!(!ctx.modes().json, "piped {marker}");
+        assert!(ctx.is_agent_harness(), "{marker}");
+    }
+
+    // Tier 3b: agent harness on 80-col PTY avoids truncated tables in favor of JSON.
+    for marker in AGENT_HARNESS_ENV_VARS {
+        let (ctx, _) = captured(Modes::default(), tty(Some(80)), &[(marker, "1")]);
+        assert_eq!(ctx.output_format(), OutputFormat::Json, "pty {marker}");
+        assert!(ctx.modes().json, "pty {marker}");
+        assert!(!ctx.can_prompt(), "pty {marker} never prompts");
+        assert!(!ctx.stdout_color(), "pty {marker} has no ANSI color");
+    }
+
+    // Marker set to "0" or "" does not activate agent-harness mode.
+    for val in ["0", ""] {
+        let (ctx, _) = captured(Modes::default(), tty(Some(80)), &[("CLAUDECODE", val)]);
+        assert_eq!(ctx.output_format(), OutputFormat::Table, "val={val:?}");
+        assert!(!ctx.is_agent_harness(), "val={val:?}");
+    }
+
+    // Tier 2: AGENT_OS_FORMAT (case-insensitive, trimmed) beats agent-harness PTY and non-TTY.
+    for (raw, expected) in [
+        ("json", OutputFormat::Json),
+        (" JSON ", OutputFormat::Json),
+        ("Compact", OutputFormat::Compact),
+        ("YAML", OutputFormat::Yaml),
+        ("tsv", OutputFormat::Tsv),
+        ("table", OutputFormat::Table),
+    ] {
+        let (ctx, _) = captured(
+            Modes::default(),
+            tty(Some(80)),
+            &[("CLAUDECODE", "1"), (OUTPUT_FORMAT_ENV, raw)],
+        );
+        assert_eq!(ctx.output_format(), expected, "pty env={raw:?}");
+        let (piped, _) = captured(
+            Modes::default(),
+            Terminal::piped(),
+            &[(OUTPUT_FORMAT_ENV, raw)],
+        );
+        assert_eq!(piped.output_format(), expected, "piped env={raw:?}");
+    }
+
+    // Empty / whitespace AGENT_OS_FORMAT is treated as unset.
+    for empty in ["", "   "] {
+        let (ctx, _) = captured(
+            Modes::default(),
+            tty(Some(80)),
+            &[(OUTPUT_FORMAT_ENV, empty)],
+        );
+        assert_eq!(ctx.output_format(), OutputFormat::Table);
+    }
+
+    // Tier 1: explicit CLI flags (--json, -q, --format) beat AGENT_OS_FORMAT and harness PTY.
+    let explicit_json = Modes {
+        json: true,
+        ..Modes::default()
+    };
+    let (ctx, streams) = captured(
+        explicit_json,
+        tty(Some(80)),
+        &[(OUTPUT_FORMAT_ENV, "bogus")],
+    );
+    assert_eq!(ctx.output_format(), OutputFormat::Json);
+    assert!(
+        streams.stderr.text().is_empty(),
+        "explicit --json skips invalid env warning"
+    );
+
+    let explicit_table = Modes {
+        format: Some(OutputFormat::Table),
+        ..Modes::default()
+    };
+    let (ctx, _) = captured(
+        explicit_table,
+        tty(Some(80)),
+        &[("CLAUDECODE", "1"), (OUTPUT_FORMAT_ENV, "json")],
+    );
+    assert_eq!(ctx.output_format(), OutputFormat::Table);
+    assert!(!ctx.modes().json);
+
+    let explicit_quiet = Modes {
+        quiet: true,
+        ..Modes::default()
+    };
+    let (ctx, _) = captured(
+        explicit_quiet,
+        tty(Some(80)),
+        &[("CLAUDECODE", "1"), (OUTPUT_FORMAT_ENV, "json")],
+    );
+    assert!(ctx.modes().quiet);
+    assert!(!ctx.modes().json, "explicit -q must not set modes.json");
+
+    // Invalid AGENT_OS_FORMAT never writes prose warnings from ExecutionContext::with_streams
+    // (callers validate strictly via `parse_env_format` and fail closed via `ctx.report`), so
+    // JSON error envelopes on agent-harness PTYs stay pure JSON on stderr.
+    let (ctx, streams) = captured(
+        Modes::default(),
+        tty(Some(80)),
+        &[(OUTPUT_FORMAT_ENV, "xml")],
+    );
+    assert_eq!(ctx.output_format(), OutputFormat::Table);
+    assert!(
+        streams.stderr.text().is_empty(),
+        "with_streams must not emit stderr warnings: {:?}",
+        streams.stderr.text()
+    );
+
+    let (mut ctx, streams) = captured(
+        Modes::default(),
+        tty(Some(80)),
+        &[("CLAUDECODE", "1"), (OUTPUT_FORMAT_ENV, "xml")],
+    );
+    assert_eq!(ctx.output_format(), OutputFormat::Json);
+    assert!(ctx.modes().json);
+    assert!(streams.stderr.text().is_empty());
+    let usage = ShellError::InvalidArguments {
+        message: "AGENT_OS_FORMAT invalid".into(),
+    };
+    assert_eq!(ctx.report(&usage), 2);
+    let err_text = streams.stderr.text();
+    assert!(!err_text.starts_with('!'), "{err_text:?}");
+    let parsed: serde_json::Value = serde_json::from_str(&err_text)
+        .unwrap_or_else(|e| panic!("stderr must be pure JSON envelope: {e}: {err_text:?}"));
+    assert_eq!(parsed["error"]["exit_code"], 2);
+
+    // `ignore_env_format` skips consulting `AGENT_OS_FORMAT` altogether (e.g. help or
+    // post-subcommand `--format`).
+    let ignore = Modes {
+        ignore_env_format: true,
+        ..Modes::default()
+    };
+    let (ctx, streams) = captured(ignore, tty(Some(80)), &[(OUTPUT_FORMAT_ENV, "json")]);
+    assert_eq!(ctx.output_format(), OutputFormat::Table);
+    assert!(!ctx.modes().json);
+    assert!(streams.stderr.text().is_empty());
+}

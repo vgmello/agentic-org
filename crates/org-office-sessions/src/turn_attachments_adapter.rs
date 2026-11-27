@@ -25,19 +25,6 @@ pub fn to_office_delivery_scope(scope: &TurnDeliveryScope) -> DeliveryScope {
     }
 }
 
-/// Maps `org-office`'s [`DeliveryScope`] onto the decoupled [`TurnDeliveryScope`].
-pub fn from_office_delivery_scope(scope: &DeliveryScope) -> TurnDeliveryScope {
-    match scope {
-        DeliveryScope::None => TurnDeliveryScope::None,
-        DeliveryScope::ActingForPerson(caller_id) => {
-            TurnDeliveryScope::ActingForPerson(caller_id.clone())
-        }
-        DeliveryScope::DirectSender(sender_id) => {
-            TurnDeliveryScope::DirectSender(sender_id.clone())
-        }
-    }
-}
-
 /// Projects an `org-office` [`AttachmentRecord`] into [`TurnAttachmentMeta`].
 pub fn from_office_attachment_record(record: AttachmentRecord) -> TurnAttachmentMeta {
     TurnAttachmentMeta {

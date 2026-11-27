@@ -1,4 +1,4 @@
-//! The questions of `msg ask`: the full `questions` array (given in `--json`), or one question
+//! The questions of `msg ask`: the full `questions` array (given in `--input-json`), or one question
 //! written with the scalar flags `--prompt`, `--question-type`, `--option` and
 //! `--default-value` (`doc-28` §3.3). The two forms never mix, and neither is guessed: a line
 //! that gives both, or neither, is refused before anything is sent.
@@ -30,11 +30,11 @@ pub(super) fn questions(request: &Request) -> Result<Value, Refusal> {
                 "{} cannot be combined with a `questions` array.",
                 given.join(", ")
             ),
-            "Ask one question with --prompt (and --question-type, --option, --default-value), or several with --json '{\"questions\":[...]}', not both.",
+            "Ask one question with --prompt (and --question-type, --option, --default-value), or several with --input-json '{\"questions\":[...]}', not both.",
         )),
         (Some(questions), true) => Ok(questions.clone()),
         (None, true) => Err(invalid(
-            "`msg ask` needs a question: --prompt, or a `questions` array in --json.",
+            "`msg ask` needs a question: --prompt, or a `questions` array in --input-json.",
             "Example: agent-os msg ask --to owner --prompt 'Deploy to prod?' --question-type yes_no",
         )),
         (None, false) => single_question(&request.input),

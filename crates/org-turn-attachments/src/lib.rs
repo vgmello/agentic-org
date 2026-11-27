@@ -165,7 +165,7 @@ impl std::error::Error for TurnAttachmentResolveError {}
 /// Consumer-owned port resolving policy-authorized attachment payloads for a managed turn
 /// (`TASK-98.3`, `AGENTS.md` Rule 1).
 ///
-/// HQ uses `org_office_sessions::LocalOfficeAttachmentResolver`; satellites wire a
+/// HQ uses `org-office-sessions`'s internal `LocalOfficeAttachmentResolver`; satellites wire a
 /// federation-backed implementation in `org-office-server` that pulls missing shared blobs from
 /// HQ via `BlobPull` after the office's `AuthorizationPolicy` approves the read.
 pub trait TurnAttachmentResolver: Send + Sync {
