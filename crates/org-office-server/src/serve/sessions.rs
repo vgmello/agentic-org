@@ -5,7 +5,8 @@ use org_proto::{ApiError, ErrorCode, Request, Response};
 use super::auth::Binding;
 use super::org::{notify_agent_stop_on_lifecycle, project_read, revoke_bound_member};
 use super::rpc::{
-    attachments_rpc, costs_rpc, federation_rpc, git_rpc, processes_rpc, providers_rpc, tasks_rpc,
+    attachments_rpc, costs_rpc, docs_rpc, federation_rpc, git_rpc, processes_rpc, providers_rpc,
+    tasks_rpc,
 };
 use super::shared::Shared;
 
@@ -59,14 +60,18 @@ fn is_hiring_method(request: &Request) -> bool {
         || is_hiring_policy_method(request)
 }
 
+/// A person's live turn controls (`TASK-103`) are session controls too; unlike a stop, they
+/// keep the warm process, so they never revoke the agent's binding.
 fn is_session_control_method(request: &Request) -> bool {
     use org_proto::sessions::{
         MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-        MemberSessionInspect, MemberSessionList, MemberSessionStart, MemberSessionStop,
-        MemberSessionTranscript,
+        MemberSessionInspect, MemberSessionInterrupt, MemberSessionList, MemberSessionStart,
+        MemberSessionSteer, MemberSessionStop, MemberSessionTranscript,
     };
     request.is::<MemberSessionStart>()
         || request.is::<MemberSessionStop>()
+        || request.is::<MemberSessionInterrupt>()
+        || request.is::<MemberSessionSteer>()
         || request.is::<MemberSessionInspect>()
         || request.is::<MemberSessionList>()
         || request.is::<MemberSessionTranscript>()
@@ -104,6 +109,7 @@ pub(super) fn project_or_hiring(
         .or_else(|| attachments_rpc(request, shared, binding))
         .or_else(|| git_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
+        .or_else(|| docs_rpc(request, shared, binding))
         .or_else(|| costs_rpc(request, shared, binding))
         .or_else(|| providers_rpc(request, shared, binding))
         .or_else(|| federation_rpc(request, shared, binding))

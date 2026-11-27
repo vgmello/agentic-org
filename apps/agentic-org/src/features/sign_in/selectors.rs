@@ -55,7 +55,7 @@ fn flag_takes_value(forwarded: &[String], flag_name: &str) -> bool {
     let Some((resource, verb)) = resource_and_verb(forwarded) else {
         return false;
     };
-    org_agent_cli::table::runtime_table()
+    org_agent_cli::runtime_table()
         .find(resource, verb)
         .is_some_and(|cmd| {
             cmd.input
@@ -96,7 +96,7 @@ fn command_accepts_flag(forwarded: &[String], flag_name: &str) -> bool {
     let Some((resource, verb)) = resource_and_verb(forwarded) else {
         return false;
     };
-    org_agent_cli::table::runtime_table()
+    org_agent_cli::runtime_table()
         .find(resource, verb)
         .is_some_and(|cmd| {
             cmd.input

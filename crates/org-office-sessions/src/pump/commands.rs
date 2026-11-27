@@ -9,6 +9,7 @@ use org_proto::sessions::SessionState;
 use crate::instructions::{compose_turn_objective, TurnTrigger};
 
 use super::approval::{apply_approval_resolution, record_stop_note};
+use super::controls::{request_interrupt, steer};
 use super::events::apply_outputs;
 use super::{FailoverRequest, PumpCommand, PumpContext, PumpLoopState};
 
@@ -67,6 +68,8 @@ pub(super) fn drain_commands(
     while let Ok(cmd) = commands.try_recv() {
         match cmd {
             PumpCommand::SendTurn(text) => loop_state.pending_turns.push(text),
+            PumpCommand::InterruptTurn => request_interrupt(stdin, ctx, loop_state, session),
+            PumpCommand::SteerTurn(request) => steer(stdin, ctx, loop_state, session, request),
             PumpCommand::NotifyPendingWakes => {
                 loop_state.mid_turn_dirty = true;
                 loop_state.mid_turn_next_check = None;
@@ -134,7 +137,7 @@ pub(super) fn finalize_drained_stop(
     loop_state: &mut PumpLoopState,
 ) {
     match stop_preserve {
-        Some(true) if !loop_state.pending_turns.is_empty() => {
+        Some(true) if loop_state.has_queued_turns() => {
             let objective = take_pending_turns(ctx, loop_state).join("\n\n");
             loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
         }
@@ -148,7 +151,7 @@ pub(super) fn finalize_drained_stop(
 /// Takes every queued turn out of the pump's queue and forgets it in
 /// [`SessionRuntimeState::queued_turns`](super::SessionRuntimeState::queued_turns).
 pub(super) fn take_pending_turns(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> Vec<String> {
-    let taken = std::mem::take(&mut loop_state.pending_turns);
+    let taken = loop_state.take_queued_turns();
     ctx.state
         .lock()
         .unwrap_or_else(|p| p.into_inner())

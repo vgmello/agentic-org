@@ -10,11 +10,17 @@
 //! employee may hold at most [`MAX_STAGED_FILES`] uploads and [`MAX_STAGED_BYTES`] bytes, and
 //! an upload expires [`STAGED_TTL_MS`] after it began; expired uploads are swept on every
 //! `begin` and on [`StagingArea::gc`].
+//!
+//! The Chief of Staff's run acts for one member at a time (`TASK-80.1`), so an upload she makes
+//! also names that member (`acting_for_caller_id`, read through [`ActingFor`] when it begins),
+//! and is hers only while her run acts for that same member ([`StagingArea::made_for_now`],
+//! `TASK-240`): one member's staged file never reaches another's turn or a wake. Every other
+//! uploader's runs act for nobody, so their uploads name nobody and nothing changes for them.
 
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 use org_proto::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
@@ -77,6 +83,10 @@ pub struct StagedUpload {
     pub expires_at_ms: u64,
     #[serde(default)]
     pub committed: Option<CommittedUpload>,
+    /// The member the uploader's run acted for when the upload began: set only for the Chief
+    /// of Staff's runs (`TASK-240`), `None` for every other upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_for_caller_id: Option<String>,
 }
 
 impl StagedUpload {
@@ -96,13 +106,19 @@ pub struct NewUpload<'a> {
     pub media: MediaType,
     pub declared_bytes: u64,
     pub now_ms: u64,
+    pub require_acting_for: bool,
 }
+
+/// Who a member's live run acts for (`TASK-80.1`): the member the Chief of Staff's run acts
+/// for; `None` for every other member's run, a wake, and a member with no run.
+pub type ActingFor = dyn Fn(&str) -> Option<String> + Send + Sync;
 
 /// The staging companion store of one office.
 pub struct StagingArea {
     durable: PathBuf,
     root: PathBuf,
     lock: Mutex<()>,
+    acting_for: RwLock<Option<Box<ActingFor>>>,
 }
 
 fn not_found() -> ApiError {
@@ -122,12 +138,31 @@ impl StagingArea {
                 .join(office_id)
                 .join(STAGING_DIR),
             lock: Mutex::new(()),
+            acting_for: RwLock::new(None),
         }
     }
 
     /// The companion folder (tests and diagnostics).
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Reads who each uploader's live run acts for from now on (set when the office composes
+    /// its sessions; replaces any earlier reader).
+    pub fn set_acting_for(&self, reader: Box<ActingFor>) {
+        *self.acting_for.write().unwrap_or_else(|p| p.into_inner()) = Some(reader);
+    }
+
+    /// Who `member`'s live run acts for now; `None` while no reader is set.
+    fn acting_for(&self, member: &str) -> Option<String> {
+        let reader = self.acting_for.read().unwrap_or_else(|p| p.into_inner());
+        reader.as_ref().and_then(|read| read(member))
+    }
+
+    /// Whether `upload` was made for the member its uploader's run acts for now: always for
+    /// an upload that names nobody made by a run that acts for nobody; never across members.
+    pub fn made_for_now(&self, upload: &StagedUpload) -> bool {
+        upload.acting_for_caller_id == self.acting_for(&upload.uploaded_by)
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -273,6 +308,14 @@ impl StagingArea {
         &self,
         new: &NewUpload<'_>,
     ) -> Result<Result<StagedUpload, ApiError>, OfficeError> {
+        // Read before the lock: the reader takes the session registry's.
+        let acting_for_caller_id = self.acting_for(new.uploaded_by);
+        if new.require_acting_for && acting_for_caller_id.is_none() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "this member may stage files only while acting for a member",
+            )));
+        }
         let _guard = self.guard();
         self.gc_locked(new.now_ms)?;
         let mine: Vec<StagedUpload> = self
@@ -317,6 +360,7 @@ impl StagingArea {
             created_at_ms: new.now_ms,
             expires_at_ms: new.now_ms.saturating_add(STAGED_TTL_MS),
             committed: None,
+            acting_for_caller_id,
         };
         drop(private_file(&folder.join(DATA)).map_err(OfficeError::storage)?);
         self.write_meta(&upload)?;

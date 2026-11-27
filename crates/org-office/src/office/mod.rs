@@ -24,6 +24,7 @@ mod budgets;
 mod chief_of_staff;
 mod companions;
 mod creation;
+mod dod;
 mod folder;
 mod git;
 mod hiring;
@@ -38,6 +39,9 @@ mod private_notes;
 #[cfg(test)]
 mod private_notes_tests;
 mod processes;
+mod project_docs;
+#[cfg(test)]
+mod project_docs_tests;
 #[cfg(test)]
 mod provider_pool_tests;
 mod providers;

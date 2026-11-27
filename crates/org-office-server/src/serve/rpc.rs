@@ -1,4 +1,5 @@
-//! Office service ports: federation, providers, costs, processes, Git, tasks and attachments.
+//! Office service ports: federation, providers, costs, processes, documentation, Git, tasks and
+//! attachments.
 
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
@@ -113,6 +114,30 @@ pub(super) fn processes_rpc(
     ))
 }
 
+pub(super) fn docs_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::doc_calls::is_doc_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(docs) = &shared.ports.docs {
+        if let Some(response) = docs(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
 pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if !crate::git_calls::is_git_method(request) {
         return None;
@@ -158,6 +183,18 @@ pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    if (request.is::<org_proto::tasks::OrganizationDefaultDodSet>()
+        || request.is::<org_proto::tasks::ProjectDefaultDodSet>())
+        && !binding.via_grant()
+    {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "setting default definitions of done requires a verified person grant",
+            ),
+        ));
+    }
     if let Some(tasks) = &shared.ports.tasks {
         if let Some(response) = tasks(Some(member), request) {
             return Some(response);

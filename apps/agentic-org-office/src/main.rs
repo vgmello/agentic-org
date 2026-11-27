@@ -68,7 +68,7 @@ fn main() {
     org_office_server::install_panic_hook();
     // Composition root: agents' standing instructions list the live `agent-os` commands, from
     // the unchecked runtime rows (the contract tests check them; a session start does not).
-    org_office_sessions::install_command_catalogue(org_agent_cli::table::catalogue_table);
+    org_office_sessions::install_command_catalogue(org_agent_cli::catalogue_table);
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(org_office_server::run(&args, control));
 }

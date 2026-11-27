@@ -244,6 +244,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
             modified_files: Vec::new(),
             depends_on: Vec::new(),
             details: None,
+            dod: None,
         },
     )
     .unwrap()
@@ -568,6 +569,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
             modified_files: Vec::new(),
             depends_on: Vec::new(),
             details: None,
+            dod: None,
         },
     )
     .unwrap()
@@ -636,6 +638,7 @@ fn create_hq_task(hq: &Office, owner: &str, team_id: &str, title: &str) -> Strin
             modified_files: Vec::new(),
             depends_on: Vec::new(),
             details: None,
+            dod: None,
         },
     )
     .unwrap()

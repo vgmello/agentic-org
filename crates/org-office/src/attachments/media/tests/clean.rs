@@ -44,20 +44,20 @@ fn png_of(image: DynamicImage) -> Vec<u8> {
     out
 }
 
-fn refused(media: MediaType, raw: &[u8]) -> String {
+pub(super) fn refused(media: MediaType, raw: &[u8]) -> String {
     let error = check_clean(media, raw).expect_err("refused");
     assert_eq!(error.code, ErrorCode::InvalidRequest, "{}", error.message);
     error.message
 }
 
-fn kept(media: MediaType, raw: Vec<u8>) -> Vec<u8> {
+pub(super) fn kept(media: MediaType, raw: Vec<u8>) -> Vec<u8> {
     let kept = validate(media, raw).unwrap();
     assert_eq!(kept.media, media);
     kept.bytes
 }
 
 /// `bytes` with `inserted` spliced in at `at`.
-fn spliced(bytes: &[u8], at: usize, inserted: &[u8]) -> Vec<u8> {
+pub(super) fn spliced(bytes: &[u8], at: usize, inserted: &[u8]) -> Vec<u8> {
     let mut out = bytes.to_vec();
     out.splice(at..at, inserted.iter().copied());
     out
@@ -336,4 +336,57 @@ fn a_gif_graphic_control_block_comes_right_before_its_frame() {
         .expect("a graphic control block");
     let doubled = spliced(&clean, first, &control);
     assert!(refused(MediaType::Gif, &doubled).contains("without its frame"));
+}
+
+/// Where each chunk of a PNG starts, and how many data bytes it holds.
+fn png_chunks(png: &[u8]) -> Vec<(usize, usize)> {
+    let mut chunks = Vec::new();
+    let mut at = 8;
+    while at < png.len() {
+        let len = u32::from_be_bytes(png[at..at + 4].try_into().unwrap()) as usize;
+        chunks.push((at, len));
+        at += 12 + len;
+    }
+    chunks
+}
+
+#[test]
+fn a_png_chunk_whose_crc_does_not_match_its_type_and_data_is_refused() {
+    // `IHDR`, `IDAT` and `IEND` as the sanitizer writes them, and a palette image's `PLTE`
+    // and `tRNS`.
+    let palette = assembled(&[
+        &ihdr(1, 1, 8, 3, 0),
+        &chunk(b"PLTE", &[255, 0, 0]),
+        &chunk(b"tRNS", &[128]),
+        &chunk(b"IDAT", &zlib(&[0, 0])),
+        &chunk(b"IEND", &[]),
+    ]);
+    for clean in [kept(MediaType::Png, png(9, 5)), palette] {
+        check_clean(MediaType::Png, &clean).unwrap();
+        let chunks = png_chunks(&clean);
+        assert!(chunks.len() >= 3);
+        for (at, len) in chunks {
+            let crc = at + 8 + len;
+            // One bit of the CRC itself, of the chunk's type, or of its data.
+            let mut flips = vec![crc, crc + 3, at + 4];
+            if len > 0 {
+                flips.push(at + 8 + len - 1);
+            }
+            for byte in flips {
+                for bit in [0x01, 0x80] {
+                    let mut forged = clean.clone();
+                    forged[byte] ^= bit;
+                    let message = refused(MediaType::Png, &forged);
+                    assert!(message.contains("damaged"), "{byte}/{bit}: {message}");
+                }
+            }
+        }
+    }
+    // A data block with a valid CRC is still checked as before: the CRC alone admits nothing.
+    let stuffed = spliced(
+        &kept(MediaType::Png, png(4, 4)),
+        33,
+        &chunk(b"tEXt", b"a\0b"),
+    );
+    assert!(refused(MediaType::Png, &stuffed).contains("tEXt"));
 }

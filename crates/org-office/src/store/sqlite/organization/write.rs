@@ -19,6 +19,13 @@ use crate::organization::{
     },
 };
 
+/// `default_dod_json`: the items as a canonical JSON array, or null (`TASK-88`).
+pub(in crate::store::sqlite) fn default_dod_value(items: Option<&Vec<String>>) -> Value {
+    items.map_or(Value::Null, |items| {
+        text(&canonical_json(&serde_json::json!(items)))
+    })
+}
+
 impl OrganizationWrite for SqliteTx {
     fn put_organization(&mut self, record: &Organization) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
@@ -28,6 +35,7 @@ impl OrganizationWrite for SqliteTx {
             text(&record.name),
             text(record.organization_repository_id.as_str()),
             text(&record.state_branch),
+            default_dod_value(record.default_dod.as_ref()),
         ];
         meta_values(&record.meta, &mut values)?;
         let columns = format!("{ORGANIZATION}, schema_version, {META}");

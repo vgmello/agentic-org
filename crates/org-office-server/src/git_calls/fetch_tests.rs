@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
-use org_agent_cli::dispatch::{hint_for, OfficeTransport, Refusal, TransportOffice};
+use org_agent_cli::{hint_for, OfficeTransport, Refusal, TransportOffice};
 use org_office::{EngineChoice, Office, TestOffice};
 use org_proto::git::{
     CacheStateWire, RepoAttachParams, RepoFetchParams, RepoRegisterParams, RepoStatusParams,
@@ -206,6 +206,7 @@ impl Fixture {
                     modified_files: vec![],
                     depends_on: vec![],
                     details: None,
+                    dod: None,
                 },
             )
             .unwrap()

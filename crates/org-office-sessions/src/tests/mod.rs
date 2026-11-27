@@ -600,6 +600,7 @@ fn seed_project_task_wake_fixture(
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -706,6 +707,7 @@ fn spawn_stub_bwrap_handle(
         pending_wake_count: 0,
         pending_wake_reason: None,
         queued_turns: 0,
+        activity: Default::default(),
     }));
     (
         crate::manager::LiveSessionHandle {

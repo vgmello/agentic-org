@@ -15,12 +15,14 @@
 
 pub(crate) mod attachment_ops;
 mod companions;
+pub(crate) mod dod_ops;
 pub(crate) mod git_ops;
 mod import_validation;
 pub(crate) mod messaging_ops;
 mod office_store;
 mod operations;
 pub(crate) mod process_ops;
+pub(crate) mod project_doc_ops;
 pub(crate) mod task_ops;
 #[cfg(test)]
 mod tests;
@@ -32,6 +34,9 @@ use org_store::{Clock, OfficeIdentity, Opening, Store, StoreError, WriterAuthori
 pub(crate) use companions::{
     open_accounting, open_attachments, open_budgets, open_private_notes, open_providers,
     open_replication, ReplicationOpenSpec,
+};
+pub use dod_ops::{
+    OrganizationDefaultDodRead, SetOrganizationDefaultDodOp, SetProjectDefaultDodOp,
 };
 pub use git_ops::{
     AttachProjectRepositoryOp, RecordTaskRepoBranchOp, RegisterRepositoryOp, RepositoriesList,
@@ -62,6 +67,7 @@ pub use operations::{
 };
 
 use crate::attachments::ports::{AttachmentsEngine, AttachmentsRead};
+use crate::project_docs::ports::{ProjectDocsEngine, ProjectDocsRead};
 use crate::tasks::ports::{TasksEngine, TasksRead};
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
@@ -154,9 +160,9 @@ impl StoreConfig {
 }
 
 /// An engine every family of the office runs on. It grows by one bound per family.
-pub trait OfficeEngine: TasksEngine + AttachmentsEngine {}
+pub trait OfficeEngine: TasksEngine + AttachmentsEngine + ProjectDocsEngine {}
 
-impl<E: TasksEngine + AttachmentsEngine> OfficeEngine for E {}
+impl<E: TasksEngine + AttachmentsEngine + ProjectDocsEngine> OfficeEngine for E {}
 
 /// One operation on the store, whichever engine holds the projection.
 pub trait StoreOp {
@@ -167,5 +173,8 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: TasksRead + AttachmentsRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
+    fn read<S: TasksRead + AttachmentsRead + ProjectDocsRead>(
+        self,
+        snapshot: &S,
+    ) -> Result<Self::Out, StoreError>;
 }

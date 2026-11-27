@@ -18,8 +18,14 @@
 //!
 //! [`model_derivative`] makes the bounded copy a model reads: at most
 //! [`DERIVATIVE_MAX_EDGE`] pixels on its longest side and [`DERIVATIVE_MAX_BYTES`] bytes.
+//!
+//! One decode may allocate up to 600 MiB, so the whole process decodes at most
+//! `MAX_CONCURRENT_IMAGE_DECODES` images at once (`TASK-241`): [`sanitize`] and
+//! [`model_derivative`] each hold a permit of one gate from before the first decode until the
+//! last encoding is done, and a caller past the bound waits for a permit to be returned.
 
 use std::io::{self, Cursor, Write};
+use std::sync::{Condvar, Mutex, PoisonError};
 
 use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
 use image::codecs::jpeg::JpegEncoder;
@@ -55,6 +61,72 @@ const MIN_ANIMATION_ALLOC: u64 = 1024 * 1024;
 /// GIF palette quantization effort (1 best and slowest, 30 fastest).
 const GIF_SPEED: i32 = 10;
 const JPEG_QUALITY: u8 = 90;
+/// How many images the process decodes (and encodes again) at once: each may allocate
+/// [`MAX_ALLOC`], so the decodes together stay within this many times that.
+pub(crate) const MAX_CONCURRENT_IMAGE_DECODES: usize = 2;
+
+/// The process's one gate for image decodes.
+pub(crate) static DECODES: DecodeGate = DecodeGate::new(MAX_CONCURRENT_IMAGE_DECODES);
+
+/// A counting gate: at most `limit` permits are out at once, and a caller past the limit waits
+/// until one is returned.
+pub(crate) struct DecodeGate {
+    /// How many permits are out.
+    held: Mutex<usize>,
+    returned: Condvar,
+    limit: usize,
+}
+
+impl DecodeGate {
+    pub(crate) const fn new(limit: usize) -> Self {
+        assert!(limit > 0, "a decode gate lets at least one decode through");
+        Self {
+            held: Mutex::new(0),
+            returned: Condvar::new(),
+            limit,
+        }
+    }
+
+    /// Waits for a permit. The count is only changed whole under the lock, so a lock poisoned
+    /// by a panicking holder elsewhere still holds a true count and is used as is.
+    pub(crate) fn acquire(&self) -> DecodePermit<'_> {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        while *held >= self.limit {
+            held = self
+                .returned
+                .wait(held)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *held += 1;
+        DecodePermit { gate: self }
+    }
+
+    /// How many permits are out.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> usize {
+        *self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One decode's place at a [`DecodeGate`], returned when it is dropped: on every return path,
+/// an early `?` and a panic's unwind alike.
+#[must_use = "a decode holds its permit until it is done"]
+pub(crate) struct DecodePermit<'a> {
+    gate: &'a DecodeGate,
+}
+
+impl Drop for DecodePermit<'_> {
+    fn drop(&mut self) {
+        let mut held = self
+            .gate
+            .held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *held = held.saturating_sub(1);
+        drop(held);
+        self.gate.returned.notify_one();
+    }
+}
 
 /// A model's copy of an image.
 #[derive(Clone, PartialEq, Eq)]
@@ -207,8 +279,10 @@ fn format_of(media: MediaType) -> Result<ImageFormat, ApiError> {
     }
 }
 
-/// Decodes and re-encodes `raw`, declared (and sniffed) as `media`.
+/// Decodes and re-encodes `raw`, declared (and sniffed) as `media`, holding a decode permit
+/// throughout.
 pub fn sanitize(media: MediaType, raw: &[u8]) -> Result<ValidatedFile, ApiError> {
+    let _permit = DECODES.acquire();
     match media {
         MediaType::Gif => {
             let decoder = GifDecoder::new(Cursor::new(raw)).map_err(decode_error)?;
@@ -379,11 +453,12 @@ fn reencode_frames(
 
 /// The copy of a kept image a model reads: its first frame, scaled down to at most
 /// [`DERIVATIVE_MAX_EDGE`] pixels on its longest side and [`DERIVATIVE_MAX_BYTES`] bytes,
-/// as JPEG (or PNG when it has transparency).
+/// as JPEG (or PNG when it has transparency). It holds a decode permit throughout.
 pub fn model_derivative(media: MediaType, kept: &[u8]) -> Result<ModelDerivative, ApiError> {
     if !media.is_image() {
         return Err(unsupported("only images have a model derivative"));
     }
+    let _permit = DECODES.acquire();
     let image = decode_still(kept, media)?;
     let alpha = image.color().has_alpha();
     let mut edge = DERIVATIVE_MAX_EDGE;

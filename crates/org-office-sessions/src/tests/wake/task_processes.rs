@@ -129,6 +129,7 @@ fn project_task(fx: &WakeFixture, name: &str) -> ProjectTask {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

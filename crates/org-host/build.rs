@@ -10,6 +10,8 @@
 //! compiler decides with every flag applied. `ORG_BUNDLE=1` (set by the app's bundling) marks
 //! `bundle_build` the same way for any profile. Documentation and doctests are exempt.
 
+#![forbid(unsafe_code)]
+
 fn main() {
     embed_release_trust();
     println!("cargo::rerun-if-changed=build.rs");

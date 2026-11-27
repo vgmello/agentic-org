@@ -148,3 +148,160 @@ fn a_reader_that_fell_behind_the_ring_is_told_it_lost_events() {
     let caught_up = live.since(head.messages, head.messages);
     assert!(!caught_up.lost && caught_up.events.is_empty());
 }
+
+fn activity(
+    member: &str,
+    phase: Option<org_proto::sessions::ActivityPhase>,
+    tool: Option<&str>,
+) -> MemberActivityChangedData {
+    MemberActivityChangedData {
+        member_id: member.to_owned(),
+        phase,
+        active_tool_name: tool.map(str::to_owned),
+        active_tool_started_at: tool.map(|_| "2026-11-27T10:00:00Z".to_owned()),
+        supports_steer: true,
+        changed_at: "2026-11-27T10:00:00Z".to_owned(),
+    }
+}
+
+/// A flood of agents' activity keeps one slot per member and never pushes message events out
+/// of the ring (`TASK-103`).
+#[test]
+fn activity_is_coalesced_per_member_and_never_evicts_message_events() {
+    use org_proto::sessions::ActivityPhase;
+
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&wakes);
+    let live = LiveEvents::new(Box::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    }));
+    let start = live.head();
+    for n in 0..3 {
+        live.publish_live(state(&format!("M{n}")));
+    }
+    for n in 0..(CAPACITY * 3) {
+        let phase = if n % 2 == 0 {
+            ActivityPhase::Thinking
+        } else {
+            ActivityPhase::RunningTool
+        };
+        let tool = (phase == ActivityPhase::RunningTool).then_some("Bash");
+        live.publish_activity(
+            activity(&format!("agent-{}", n % 3), Some(phase), tool),
+            false,
+        );
+    }
+    live.publish_activity(activity("agent-0", None, None), false);
+    let head = live.head();
+    let batch = live.since(start.messages, head.messages);
+    assert_eq!(batch.events.len(), 3, "every message event is still there");
+    assert!(!batch.lost);
+    let latest = live.activity_since(start.presence, head.presence, false);
+    assert_eq!(latest.len(), 3, "one slot per member");
+    assert_eq!(latest.last().unwrap().member_id, "agent-0");
+    assert_eq!(latest.last().unwrap().phase, None, "idle is the latest");
+    assert!(live
+        .presence_since(start.presence, head.presence)
+        .0
+        .is_empty());
+
+    // A repeat of the latest publishes (and wakes) nothing.
+    let before = wakes.load(Ordering::SeqCst);
+    live.publish_activity(activity("agent-0", None, None), false);
+    assert_eq!(wakes.load(Ordering::SeqCst), before);
+    assert_eq!(live.head(), head);
+}
+
+/// The Chief of Staff's turns serve one caller's private partition: only the owner gets her
+/// tool detail; ordinary agents' coarse tool names are for everyone.
+#[test]
+fn a_private_activity_reaches_non_owners_without_its_tool_detail() {
+    use org_proto::sessions::ActivityPhase;
+
+    let live = LiveEvents::new(Box::new(|| {}));
+    let start = live.head();
+    live.publish_activity(
+        activity("tess", Some(ActivityPhase::RunningTool), Some("Bash")),
+        true,
+    );
+    live.publish_activity(
+        activity("ada", Some(ActivityPhase::RunningTool), Some("Read")),
+        false,
+    );
+    let head = live.head();
+    let owner = live.activity_since(start.presence, head.presence, true);
+    assert_eq!(owner[0].active_tool_name.as_deref(), Some("Bash"));
+    let other = live.activity_since(start.presence, head.presence, false);
+    assert_eq!(other[0].member_id, "tess");
+    assert_eq!(other[0].phase, Some(ActivityPhase::RunningTool));
+    assert_eq!(other[0].active_tool_name, None);
+    assert_eq!(other[0].active_tool_started_at, None);
+    assert_eq!(other[1].active_tool_name.as_deref(), Some("Read"));
+}
+
+/// The session stream's coalesced activity joins presence; reply text and turn ends do not,
+/// and the bridge lets go on the first frame after the live feed is gone.
+#[test]
+fn the_session_stream_feeds_activity_only_and_lets_go_of_a_dropped_feed() {
+    use org_office_sessions::{SessionActivity, SessionStreamFrame, SessionStreamKey, TurnEnd};
+    use org_proto::sessions::ActivityPhase;
+
+    let hub = SessionStreamHub::new();
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    assert!(follow_session_activity(&live, &hub));
+    let start = live.head();
+    let frame = |partition: Option<&str>, event| SessionStreamFrame {
+        key: SessionStreamKey {
+            org_id: "org".into(),
+            employee_id: if partition.is_some() { "tess" } else { "ada" }.into(),
+            partition: partition.map(str::to_owned),
+        },
+        at: "2026-11-27T10:00:01Z".into(),
+        event,
+    };
+    let busy = SessionActivity {
+        phase: Some(ActivityPhase::RunningTool),
+        active_tool_name: Some("Bash".into()),
+        active_tool_started_at: Some("2026-11-27T10:00:00Z".into()),
+        supports_steer: true,
+    };
+    hub.publish(&frame(None, SessionStreamEvent::Activity(busy.clone())));
+    hub.publish(&frame(
+        None,
+        SessionStreamEvent::Delta {
+            text: "private reply text".into(),
+        },
+    ));
+    hub.publish(&frame(
+        None,
+        SessionStreamEvent::TurnEnded {
+            outcome: TurnEnd::Completed,
+        },
+    ));
+    hub.publish(&frame(
+        Some("tess:ask:owner"),
+        SessionStreamEvent::Activity(busy),
+    ));
+    let head = live.head();
+    let seen = live.activity_since(start.presence, head.presence, false);
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].member_id, "ada");
+    assert_eq!(seen[0].active_tool_name.as_deref(), Some("Bash"));
+    assert_eq!(seen[0].changed_at, "2026-11-27T10:00:01Z");
+    assert_eq!(seen[1].member_id, "tess");
+    assert_eq!(seen[1].active_tool_name, None, "Tess's detail is private");
+    let wire = serde_json::to_string(&seen).unwrap();
+    assert!(!wire.contains("private reply text"));
+
+    assert_eq!(hub.subscriber_count(), 1);
+    drop(live);
+    hub.publish(&frame(
+        None,
+        SessionStreamEvent::Activity(SessionActivity::default()),
+    ));
+    assert_eq!(
+        hub.subscriber_count(),
+        0,
+        "the bridge let go of the dropped feed"
+    );
+}

@@ -97,6 +97,19 @@ impl AskWaiters {
 }
 
 impl ChatService {
+    /// Whether `member` gets an ask answered at once, never held for its answer: the Chief of
+    /// Staff (`TASK-240`), whose run acts for one member while the answer may be for another
+    /// (`chat.wait_ask` is never hers either). Fail closed: also when the office cannot say.
+    fn never_holds(&self, member: &str) -> bool {
+        match self.office.chief_of_staff() {
+            Ok(tess) => tess.is_some_and(|tess| tess.id.as_str() == member),
+            Err(error) => {
+                crate::logged("chat.ask.chief_of_staff", &error);
+                true
+            }
+        }
+    }
+
     fn hold_for_ask(
         &self,
         member: &str,
@@ -150,7 +163,11 @@ impl ChatService {
         let Ok(params) = request.params::<ChatAsk>() else {
             return invalid_params(request.id, ChatAsk::METHOD);
         };
-        let hold_ms = if via_grant { Some(0) } else { params.hold_ms };
+        let hold_ms = if via_grant || self.never_holds(member) {
+            Some(0)
+        } else {
+            params.hold_ms
+        };
         match self.office.msg_ask(member, params) {
             Ok(Ok(committed)) => {
                 if committed.inserted {

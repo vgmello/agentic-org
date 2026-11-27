@@ -23,6 +23,10 @@ pub struct ProjectRecord {
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// The project's default definition of done (`TASK-88`): absent inherits the
+    /// organization's, `[]` opts out, a list overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_dod: Option<Vec<String>>,
 }
 
 /// `project.list`: lists projects visible in this organization, ordered by number.

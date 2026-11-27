@@ -192,6 +192,11 @@ pub enum ControlError {
     Closed,
     /// This runtime can't do it (or doesn't know the command).
     Unsupported,
+    /// The input can reach the running turn only by interrupting it: send
+    /// [`Control::Interrupt`], then send the input as the next turn once the interrupted turn
+    /// ends (a person's explicit steer on a runtime without native steering, see
+    /// [`crate::Capabilities::steer_route`]).
+    NeedsInterrupt,
 }
 
 impl fmt::Display for ControlError {
@@ -203,7 +208,37 @@ impl fmt::Display for ControlError {
             ControlError::UnknownApproval => "no pending approval has this id",
             ControlError::Closed => "the session is closed",
             ControlError::Unsupported => "not supported by this runtime",
+            ControlError::NeedsInterrupt => "the running turn must be interrupted first",
         })
+    }
+}
+
+impl crate::Capabilities {
+    /// How a person's explicit steer reaches a running turn (`TASK-103`).
+    ///
+    /// - `Ok(())`: the runtime steers natively and immediately, without interrupting the turn
+    ///   ([`crate::MidTurnDelivery::NativeSteer`]: send it with [`Control::DeliverMidTurn`]).
+    /// - [`ControlError::NeedsInterrupt`]: the runtime can only take it promptly by interrupting
+    ///   the turn in-band ([`Self::interrupt_in_band`]) and sending it as the next turn. A
+    ///   [`crate::MidTurnDelivery::StepHook`] runtime counts here: its hook waits for the next
+    ///   tool boundary, which a person redirecting the agent can't wait for.
+    /// - [`ControlError::Unsupported`]: neither; the steer can only queue behind the turn.
+    pub const fn steer_route(&self) -> Result<(), ControlError> {
+        match (self.mid_turn_delivery, self.interrupt_in_band) {
+            (crate::MidTurnDelivery::NativeSteer, _) => Ok(()),
+            (crate::MidTurnDelivery::StepHook | crate::MidTurnDelivery::None, true) => {
+                Err(ControlError::NeedsInterrupt)
+            }
+            (crate::MidTurnDelivery::StepHook | crate::MidTurnDelivery::None, false) => {
+                Err(ControlError::Unsupported)
+            }
+        }
+    }
+
+    /// Whether a person's steer reaches a running turn natively, without interrupting it
+    /// ([`Self::steer_route`] is `Ok`).
+    pub const fn supports_native_steer(&self) -> bool {
+        self.steer_route().is_ok()
     }
 }
 

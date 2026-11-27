@@ -87,6 +87,11 @@ impl ChiefOfStaffPort for FakePort {
             .map(|(_, conversation)| conversation.clone()))
     }
 
+    fn attachment_conversation(&self, _attachment_id: &str) -> Result<Option<String>, ApiError> {
+        self.fails()?;
+        Ok(None)
+    }
+
     fn resolve_member(&self, reference: &str) -> Result<Option<String>, ApiError> {
         self.fails()?;
         Ok(Some(reference.to_owned()))

@@ -724,7 +724,8 @@ pub struct ChatEventsPollParams {
     /// Last observed live message/inbox ring cursor; `None` starts from the current head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_live_seq: Option<u64>,
-    /// Last observed presence ring cursor; `None` starts from the current head.
+    /// Last observed presence cursor (member presence and agent live activity share it);
+    /// `None` starts from the current head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_presence_seq: Option<u64>,
     /// Optional server-side condvar wait (milliseconds, clamped to [`MAX_EVENTS_POLL_WAIT_MS`])
@@ -750,6 +751,9 @@ pub struct ChatEventsPollResult {
     pub message_states: Vec<MessageStateChangedData>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub presence_changes: Vec<MemberPresenceChangedData>,
+    /// Coalesced coarse live activity of agents, the latest per member (`TASK-103`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activity_changes: Vec<crate::sessions::MemberActivityChangedData>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbox_changes: Vec<InboxChangedData>,
 }

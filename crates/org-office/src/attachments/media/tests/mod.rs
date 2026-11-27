@@ -1,6 +1,8 @@
 //! The media allowlist, image sanitization and document validation (`TASK-98.1` AC #2).
 
 mod clean;
+mod clean_streams;
+mod decode_gate;
 pub(crate) mod fixtures;
 
 use org_proto::ErrorCode;

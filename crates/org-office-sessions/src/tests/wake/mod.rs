@@ -37,6 +37,7 @@ mod mid_turn;
 mod queue;
 mod suspend;
 mod task_processes;
+mod turn_controls;
 
 #[derive(Default)]
 struct RecordedLaunches {

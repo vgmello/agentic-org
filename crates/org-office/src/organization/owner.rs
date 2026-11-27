@@ -257,6 +257,7 @@ mod tests {
             name: "Acme".into(),
             organization_repository_id: id(51),
             state_branch: "org/state".into(),
+            default_dod: None,
             meta: meta(By::Employee(id(2)), By::Employee(id(2))),
         })
         .unwrap();

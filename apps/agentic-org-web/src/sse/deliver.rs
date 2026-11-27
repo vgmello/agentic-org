@@ -86,6 +86,22 @@ pub(super) async fn deliver_hub_event(
         )
         .await
         .is_ok(),
+        HubEvent::ActivityChanged {
+            org_id,
+            cursor,
+            data,
+        } => deliver_scoped_event(
+            tx,
+            subs,
+            instance_id,
+            &org_id,
+            Feed::Presence,
+            &cursor,
+            "member.activity_changed",
+            &data,
+        )
+        .await
+        .is_ok(),
         HubEvent::OrgResync {
             org_id,
             feed,
