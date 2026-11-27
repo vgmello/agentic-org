@@ -24,6 +24,7 @@ fn add(body: &str) -> PrivateNoteAddParams {
         alternatives: None,
         tags: Vec::new(),
         body_markdown: body.into(),
+        checkpoint: false,
     }
 }
 

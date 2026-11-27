@@ -416,6 +416,27 @@ fn unsafe_homes_hardlinks_and_loose_modes() {
     let alias = home.path().join("alias");
     symlink(home.path(), &alias).unwrap();
     assert!(matches!(HostDb::open(&alias, &secrets), Err(Error::Unsafe)));
+    // Trailing `/` and `/.` must NEVER bypass `lstat` on a symlinked home directory.
+    for suffixed in [
+        PathBuf::from(format!("{}/", alias.display())),
+        PathBuf::from(format!("{}///", alias.display())),
+        PathBuf::from(format!("{}/.", alias.display())),
+        PathBuf::from(format!("{}/./", alias.display())),
+    ] {
+        assert!(
+            matches!(HostDb::open(&suffixed, &secrets), Err(Error::Unsafe)),
+            "HostDb::open must reject symlinked home `{}`",
+            suffixed.display()
+        );
+        assert!(
+            matches!(
+                HostDb::create(&suffixed, &secrets, &init()),
+                Err(Error::Unsafe)
+            ),
+            "HostDb::create must reject symlinked home `{}`",
+            suffixed.display()
+        );
+    }
     assert!(matches!(
         HostDb::open(Path::new("relative"), &secrets),
         Err(Error::Unsafe)

@@ -105,7 +105,7 @@ mod tests {
                 use org_platform_host::admission::ImageIdentity;
                 assert_eq!(
                     peer.uid,
-                    match crate::test_programs::image_identity() {
+                    match crate::test_programs_tests::image_identity() {
                         ImageIdentity::VerifiedBytes => Some(org_socket::effective_uid()),
                         ImageIdentity::CodeSignature => None,
                     }

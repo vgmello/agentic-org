@@ -1,20 +1,32 @@
 //! A privately constructed complete pin held for one host lifetime. This is a
 //! publisher/image check; account and organization authorization remain separate.
-use super::{files::Directory, store::ReleaseStore, Error, ReleasePin};
-use crate::server_check::Pin;
+
+use super::{files::Directory, signing, store::ReleaseStore, Error, ReleasePin};
 use org_platform_host::admission::{own_image, ExpectedImage, OwnImageError};
 use org_release::{Platform, VerifiedManifest};
 use std::{path::PathBuf, sync::Arc};
+
+/// The exact image the selected release names for one program: plain data from the verified,
+/// signed release manifest. Each system's admission reads its own field: the SHA-256 of the
+/// program's bytes where the verified bytes are executed, the CodeDirectory hash where the
+/// loaded image is checked. A manifest carries the second only for a system that has one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pin {
+    pub sha256: [u8; 32],
+    pub macos_cdhash: Option<[u8; 20]>,
+}
 
 struct Admitted {
     store: ReleaseStore,
     manifest: VerifiedManifest,
     _tree: Directory,
 }
+
 /// Immutable runtime release with a retained protected store lock. No wire,
 /// runtime-key constructor or mutable trusted manifest is exposed.
 #[derive(Clone)]
 pub struct RuntimeRelease(Arc<Admitted>);
+
 impl std::fmt::Debug for RuntimeRelease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RuntimeRelease")
@@ -22,6 +34,7 @@ impl std::fmt::Debug for RuntimeRelease {
             .finish_non_exhaustive()
     }
 }
+
 impl ReleaseStore {
     /// Verify the current complete pin and this actual loaded host image before
     /// custody. The consumed store lock remains held until every clone drops.
@@ -41,6 +54,7 @@ impl ReleaseStore {
         Ok(result)
     }
 }
+
 impl RuntimeRelease {
     pub fn pin(&self) -> &ReleasePin {
         self.0
@@ -48,20 +62,16 @@ impl RuntimeRelease {
             .pin()
             .expect("private constructor requires a recovered pin")
     }
-    pub(crate) fn check_self(&self) -> Result<(), Error> {
+
+    pub fn check_self(&self) -> Result<(), Error> {
         self.0.store.verify_root()?;
-        // The loaded image is read before the manifest's hash is required, so a build
-        // target without a loaded-image query is refused as that, whatever the manifest.
-        // Both identities are the signed manifest's entry for the host: the system compares
-        // the one it has (the kernel's CodeDirectory hash of the loaded image, or the
-        // SHA-256 of this process's executable), and an image with neither is a mismatch.
         let pin = self.image_pin("agentic-org").ok();
         let expected = ExpectedImage {
             program: self.cli_program(),
             sha256: pin.map(|pin| pin.sha256),
             macos_cdhash: pin.and_then(|pin| pin.macos_cdhash),
             macos_requirement: None,
-            macos_signing: crate::code_signing::HARDENED,
+            macos_signing: signing::HARDENED,
             development: false,
         };
         own_image(&expected).map_err(|error| match error {
@@ -70,15 +80,19 @@ impl RuntimeRelease {
             OwnImageError::Mismatch => Error::PlatformAdmission,
         })
     }
+
     pub fn office_program(&self) -> PathBuf {
         self.path("agentic-org-office")
     }
+
     pub fn web_program(&self) -> PathBuf {
         self.path("agentic-org-web")
     }
+
     pub fn cli_program(&self) -> PathBuf {
         self.path("agentic-org")
     }
+
     fn path(&self, name: &str) -> PathBuf {
         self.0
             .store
@@ -87,13 +101,15 @@ impl RuntimeRelease {
             .join(&self.pin().release_id)
             .join(name)
     }
+
     /// The exact image this release names for the executable `name`: the identities of its
     /// entry in the verified manifest, as plain data for the platform's admission.
-    pub(crate) fn image_pin(&self, name: &str) -> Result<Pin, Error> {
+    pub fn image_pin(&self, name: &str) -> Result<Pin, Error> {
         pin_of(&self.0.manifest, name)
     }
+
     /// Release identity the host binds into the web process's first line.
-    pub(crate) fn web_binding(&self) -> org_host_control::web::WebRelease {
+    pub fn web_binding(&self) -> org_host_control::web::WebRelease {
         let pin = self.pin();
         org_host_control::web::WebRelease {
             release_id: pin.release_id.clone(),
@@ -103,11 +119,7 @@ impl RuntimeRelease {
     }
 }
 
-/// The pin `manifest` gives the executable `name`. The SHA-256 of the file's bytes is in
-/// every entry. A release for macOS also names the CodeDirectory hash of each executable,
-/// which that system's admission requires: an entry without it pins nothing there and is
-/// refused here, whatever the manifest's own validation allowed. A release for Linux has no
-/// such hash.
+/// The pin `manifest` gives the executable `name`.
 pub(super) fn pin_of(manifest: &VerifiedManifest, name: &str) -> Result<Pin, Error> {
     let entry = manifest
         .file(name)

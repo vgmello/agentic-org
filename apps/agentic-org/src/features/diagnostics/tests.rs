@@ -857,6 +857,14 @@ fn redaction_fixes_cover_short_pem_orphan_tail_same_line_aws_and_escaped_quotes(
     let esc_red = redact_text(escaped);
     assert!(!esc_red.text.contains("secret_val_99"), "{}", esc_red.text);
     assert!(esc_red.text.contains("keep_me"), "{}", esc_red.text);
+
+    // 6. Layer-0 `org-redact` composition scrubs shared header/prefix/auth patterns automatically.
+    let token_val = format!("token-{}", "a".repeat(20));
+    let x_amz = format!("X-Amz-Security-Token: {token_val}");
+    let x_amz_red = redact_text(&x_amz);
+    assert!(!x_amz_red.text.contains(&token_val));
+    assert_eq!(x_amz_red.text, org_redact::redact_text(&x_amz, &[]));
+    assert!(x_amz_red.count >= 1);
 }
 
 #[test]

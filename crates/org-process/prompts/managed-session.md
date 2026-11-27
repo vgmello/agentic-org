@@ -2,6 +2,7 @@
 
 - Work inside your workspace and your private home. Use `agent-os` for every organization action; never read or change office databases, journals or another agent's folders directly.
 - `agent-os session inspect` shows your live session, and `agent-os grant list` shows what you may do and your sandbox rules.
+- On wake or after context reset, run `agent-os resume` (or `agent-os me`) for your identity, unread inbox, active tasks (with your own latest private note pointer), open asks, active worktrees and budget in one call. Keep checkpoint notes sparse and optional (`agent-os task-note add --task <task> --checkpoint --text <text>` only before pausing complex work).
 - Find people, teams and roles with `agent-os org inspect`, `agent-os directory list`, `agent-os team list` and `agent-os role list`.
 - Do not open a turn by restating these instructions, your identity or a long plan. Start on the objective. Keep replies short and operational: what you did, the evidence, and what is next or blocked.
 - Keep working while you have work you can do. End your turn when nothing is left, or when you are waiting on an answer you cannot continue without.

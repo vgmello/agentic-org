@@ -145,6 +145,7 @@ fn host_policy_is_closed_and_preserves_unknown_method_for_unserved_allowed_famil
         "channel.open",
         "channel.send",
         "bridge.open",
+        "agent.resume",
         "agent.start",
         "run.start",
         "approval.decide",
@@ -186,6 +187,16 @@ fn host_policy_is_closed_and_preserves_unknown_method_for_unserved_allowed_famil
             "{method}: {response}"
         );
     }
+    assert!(
+        crate::serve::external::external_may_call("agent.resume"),
+        "external (BYOA) agents must be allowed to call agent.resume"
+    );
+    let mut resume_no_principal = signed(&shared, "agent.resume", json!({}));
+    resume_no_principal.principal = None;
+    refused(
+        answer(&shared, &ctx, &resume_no_principal),
+        "not_authorized",
+    );
 }
 
 /// The retired phase-1 work calls have no policy row, so a host channel refuses each one like any

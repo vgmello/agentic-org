@@ -3,8 +3,6 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 use std::{fs, os::unix::fs::PermissionsExt};
 mod process;
 
-// Generated keys authenticate private synthetic payloads for journal mechanics
-// only. No test injects these keys or this platform callback into production.
 struct Fixture {
     temp: tempfile::TempDir,
     input: PathBuf,
@@ -14,6 +12,7 @@ struct Fixture {
     keys: TrustedKeys,
     policy: TrustedPolicy,
 }
+
 impl Fixture {
     fn new() -> Self {
         let temp =
@@ -50,6 +49,7 @@ impl Fixture {
             policy,
         }
     }
+
     fn bundle(&self, id: &str, sequence: u64) -> DirectoryBundle {
         let files=org_release::EXECUTABLE_PATHS.into_iter().chain(["ui/index.html"]).map(|path|serde_json::json!({"path":path,"size":3,"sha256":hex(&Sha256::digest(b"abc")),"role":if path.starts_with("ui/"){"data"}else{"executable"},"macos_cdhash":null})).collect::<Vec<_>>();
         let bytes=serde_json::to_vec_pretty(&serde_json::json!({"format":org_release::FORMAT,"release_id":id,"sequence":sequence,"platform":"linux","architecture":"x86_64","installer_contract":1,"key_id":self.key_id,"files":files})).unwrap();
@@ -61,10 +61,12 @@ impl Fixture {
         .unwrap();
         DirectoryBundle::with_policy(&self.input, &self.policy, &self.keys).unwrap()
     }
+
     fn open(&self) -> ReleaseStore {
         ReleaseStore::with_policy(&self.store, self.policy.clone(), self.keys.clone()).unwrap()
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         fn private_cleanup(path: &Path) {
@@ -78,9 +80,11 @@ impl Drop for Fixture {
         private_cleanup(self.temp.path());
     }
 }
+
 fn synthetic_platform(_: &Directory, _: &VerifiedManifest) -> Result<(), Error> {
     Ok(())
 }
+
 fn install(store: &mut ReleaseStore, bundle: &DirectoryBundle) -> ReleasePin {
     store
         .install_directory_with(bundle, synthetic_platform, |_| Ok(()))
@@ -89,7 +93,7 @@ fn install(store: &mut ReleaseStore, bundle: &DirectoryBundle) -> ReleasePin {
 
 #[test]
 fn durable_pin_reopens_exact_retry_keeps_bytes_and_refuses_conflicts_downgrades() {
-    super::super::files::take_flush_counts();
+    crate::files::take_flush_counts();
     let f = Fixture::new();
     let first = f.bundle("first", 1);
     let mut store = f.open();
@@ -120,16 +124,11 @@ fn durable_pin_reopens_exact_retry_keeps_bytes_and_refuses_conflicts_downgrades(
         original
     );
     assert_eq!(records(&store.pins).unwrap(), 2);
-    // Public production platform checks cannot accept the synthetic payloads.
     assert!(store.recover().is_err());
-    let counts = super::super::files::take_flush_counts();
+    let counts = crate::files::take_flush_counts();
     assert!(counts[0] > 0 && counts[2] > 0);
-    // Every file flush of the publication reached the device: exactly as many device
-    // flushes as this system makes per flush (the platform's fixed fact: one on macOS, so
-    // the two counts are equal there; none on GNU/Linux, where `fsync` is the device flush).
     let per_flush = org_platform::fs::testing::device_flushes_per_full_sync().unwrap();
     assert_eq!(counts[1] as u64, counts[0] as u64 * per_flush, "{counts:?}");
-    println!("generated release store actual successful flush calls: file_fsync={}, macOS_F_FULLFSYNC={}, directory_fsync={}; process/reopen evidence, not physical power-loss proof",counts[0],counts[1],counts[2]);
 }
 
 #[test]
@@ -146,7 +145,6 @@ fn each_frozen_crash_boundary_reconciles_only_original_intent_without_recopying_
                 Ok(())
             })
             .is_err());
-        // Recovery must consume only the frozen private bytes, not source input.
         fs::write(
             f.input.join("ui/index.html"),
             b"changed after frozen transaction",

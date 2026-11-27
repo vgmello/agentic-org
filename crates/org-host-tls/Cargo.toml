@@ -1,0 +1,31 @@
+[package]
+name = "org-host-tls"
+description = "Host browser-listener TLS certificate generation, X.509/rustls pair verification, PEM file reading, and background renewal."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Exposes synthetic test certificate generation helpers to org-host and integration suites.
+test-support = []
+
+[dependencies]
+base64.workspace = true
+libc.workspace = true
+org-host-control = { path = "../org-host-control" }
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring", "pem"] }
+ring = "=0.17.14"
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
+serde_json.workspace = true
+sha2.workspace = true
+time = { version = "=0.3.55", default-features = false, features = ["std"] }
+x509-parser = { version = "=0.18.1", default-features = false }
+zeroize = "=1.9.1"
+
+[dev-dependencies]
+org-platform = { path = "../org-platform" }
+tempfile.workspace = true
+
+[lints]
+workspace = true

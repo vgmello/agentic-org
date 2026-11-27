@@ -11,10 +11,14 @@
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+
+static ATOMIC_TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// One channel question watch (`ADR-0024` d2, d14, d16).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,7 +152,9 @@ impl WatcherStore {
             .join("offices")
             .join(office_id)
             .join("watcher");
-        let _ = fs::create_dir_all(&dir);
+        if org_platform::fs::create_owner_only_dir_all(&dir).is_ok() {
+            let _ = org_platform::fs::set_owner_only_dir(&dir);
+        }
         Self {
             dir,
             io_lock: Mutex::new(()),
@@ -235,13 +241,26 @@ impl WatcherStore {
 
     pub fn append_usage(&self, entry: &UsageLedgerEntry) -> std::io::Result<()> {
         let _g = self.io_lock.lock().unwrap_or_else(|p| p.into_inner());
-        fs::create_dir_all(&self.dir)?;
+        org_platform::fs::create_owner_only_dir_all(&self.dir)?;
         let line = serde_json::to_string(entry)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
+            .custom_flags(
+                org_platform::fs::O_NOFOLLOW
+                    | org_platform::fs::O_CLOEXEC
+                    | org_platform::fs::O_NONBLOCK,
+            )
             .open(self.usage_path())?;
+        if !file.metadata()?.file_type().is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "watcher usage ledger path is not a regular file",
+            ));
+        }
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
         writeln!(file, "{line}")?;
         file.sync_all()
     }
@@ -269,19 +288,40 @@ fn read_json_or_default<T: for<'de> Deserialize<'de>>(
 }
 
 fn write_atomic_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?;
+    org_platform::fs::create_owner_only_dir_all(parent)?;
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let tmp = path.with_extension("tmp");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&tmp)?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("watcher");
+    let seq = ATOMIC_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = parent.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+    let write_res = (|| -> std::io::Result<()> {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(
+                org_platform::fs::O_NOFOLLOW
+                    | org_platform::fs::O_CLOEXEC
+                    | org_platform::fs::O_NONBLOCK,
+            )
+            .open(&tmp)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(&bytes)?;
+        file.sync_all()
+    })();
+    if let Err(err) = write_res {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    if let Err(err) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    Ok(())
 }

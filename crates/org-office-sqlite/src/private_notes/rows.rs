@@ -1,11 +1,30 @@
 //! Rows of the private notes database: notes with their tags, and command receipts.
 
+use std::path::{Path, PathBuf};
+
 use org_proto::private_notes::PrivateNoteKind;
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use org_office::private_fs::full_sync;
 use org_office::private_notes::PrivateNoteRecord;
 use org_office::OfficeError;
+
+/// Explicitly runs `org_platform::fs::full_sync` (`F_FULLFSYNC` on macOS, never downgraded)
+/// on the WAL file (when present) and main DB file so an acknowledged private-note mutation
+/// never relies on SQLite's VFS fallback to plain `fsync` (`TASK-97` / Pass 2 Finding #6).
+pub(super) fn flush_authoritative_db(db_path: &Path) -> Result<(), OfficeError> {
+    let mut wal = db_path.as_os_str().to_os_string();
+    wal.push("-wal");
+    let wal_path = PathBuf::from(wal);
+    match std::fs::File::open(&wal_path) {
+        Ok(f) => full_sync(&f).map_err(OfficeError::storage)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(OfficeError::storage(err)),
+    }
+    let db_file = std::fs::File::open(db_path).map_err(OfficeError::storage)?;
+    full_sync(&db_file).map_err(OfficeError::storage)
+}
 
 /// The `private_notes` columns [`note_row`] reads, in order.
 pub(super) const NOTE_COLUMNS: &str = "organization_id, id, schema_version, revision, task_id, \
@@ -300,4 +319,28 @@ pub(super) fn has_pending_publish(
         |row| row.get(0),
     )
     .map_err(OfficeError::storage)
+}
+
+pub(super) fn begin(conn: &mut Connection) -> Result<rusqlite::Transaction<'_>, OfficeError> {
+    conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(OfficeError::storage)
+}
+
+/// Validates an author mutation of the stored note inside `tx`.
+pub(super) fn author_mutation(
+    tx: &rusqlite::Transaction<'_>,
+    org_id: &str,
+    note_id: &str,
+    caller: (&str, bool),
+    expected_revision: u64,
+    pending_msg: &str,
+) -> Result<Result<PrivateNoteRecord, org_proto::ApiError>, OfficeError> {
+    org_office::private_notes::check_author_mutation(
+        load_note(tx, org_id, note_id)?,
+        caller.0,
+        caller.1,
+        expected_revision,
+        || has_pending_publish(tx, org_id, note_id),
+        pending_msg,
+    )
 }

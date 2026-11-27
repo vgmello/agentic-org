@@ -87,6 +87,7 @@ fn note(
             alternatives: None,
             tags: vec!["db".into()],
             body_markdown: body.into(),
+            checkpoint: false,
         },
     ));
     note_id

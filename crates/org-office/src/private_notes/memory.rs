@@ -1,10 +1,9 @@
-//! In-memory [`PrivateNotesStore`] adapter enforcing the exact `private-notes-schema.sql`
-//! state machine, tags, receipt idempotency, tombstones, and `ADR-0031` boundaries for tests
-//! (`ENG-2`).
+//! In-memory [`PrivateNotesStore`] adapter enforcing `private-notes-schema.sql` and `ADR-0031`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard};
 
+use org_proto::private_notes::PRIVATE_NOTE_CHECKPOINT_TAG;
 use org_proto::{ApiError, ErrorCode};
 
 use crate::error::OfficeError;
@@ -13,33 +12,47 @@ use super::query::newest_first;
 use super::{
     check_author_mutation, check_receipt_reuse, monotonic_ts, next_revision,
     parse_receipt_error_code, replayed_note, require_publishable, Accepted, BeginPublishCmd,
-    CreateNoteCmd, DeleteNoteCmd, EditNoteCmd, NotePage, NoteQuery, PrivateNoteRecord,
+    CreateNoteCmd, DeleteNoteCmd, EditNoteCmd, NotePage, NoteQuery, NoteResult, PrivateNoteRecord,
     PrivateNotesStore, PublishAttempt,
 };
 
+type ReceiptKey = (String, String, String);
+type NoteMap = Result<BTreeMap<String, PrivateNoteRecord>, OfficeError>;
+type PubRes = Result<Result<PublishAttempt, ApiError>, OfficeError>;
+type OptNote = Result<Option<PrivateNoteRecord>, OfficeError>;
+type UnitRes = Result<(), OfficeError>;
+
+fn err(code: ErrorCode, msg: impl Into<String>) -> ApiError {
+    ApiError::new(code, msg)
+}
+
+fn rkey(org: &str, author: &str, op: &str) -> ReceiptKey {
+    (org.to_owned(), author.to_owned(), op.to_owned())
+}
+
 #[derive(Debug, Clone)]
 struct ReceiptRow {
-    request_sha256: String,
-    command: &'static str,
+    sha: String,
+    cmd: &'static str,
     note_id: String,
-    result_revision: u64,
+    rev: u64,
     state: ReceiptState,
-    shared_comment_id: Option<String>,
-    error_code: Option<String>,
+    comment_id: Option<String>,
+    err_code: Option<String>,
     created_at: String,
     finished_at: Option<String>,
 }
 
 impl ReceiptRow {
-    fn completed(cmd: (&'static str, &str), note_id: &str, result_revision: u64, at: &str) -> Self {
+    fn done(cmd: (&'static str, &str), note_id: &str, rev: u64, at: &str) -> Self {
         Self {
-            request_sha256: cmd.1.to_owned(),
-            command: cmd.0,
+            sha: cmd.1.to_owned(),
+            cmd: cmd.0,
             note_id: note_id.to_owned(),
-            result_revision,
+            rev,
             state: ReceiptState::Completed,
-            shared_comment_id: None,
-            error_code: None,
+            comment_id: None,
+            err_code: None,
             created_at: at.to_owned(),
             finished_at: Some(at.to_owned()),
         }
@@ -57,8 +70,6 @@ enum ReceiptState {
     Rejected,
 }
 
-type ReceiptKey = (String, String, String);
-
 #[derive(Default)]
 struct State {
     authors: BTreeSet<(String, String)>,
@@ -68,8 +79,8 @@ struct State {
 }
 
 impl State {
-    fn note(&self, org_id: &str, note_id: &str) -> Option<&PrivateNoteRecord> {
-        self.notes.get(&(org_id.to_owned(), note_id.to_owned()))
+    fn note(&self, org: &str, id: &str) -> Option<&PrivateNoteRecord> {
+        self.notes.get(&(org.to_owned(), id.to_owned()))
     }
 
     fn put(&mut self, note: PrivateNoteRecord) {
@@ -77,49 +88,131 @@ impl State {
             .insert((note.organization_id.clone(), note.id.clone()), note);
     }
 
-    fn has_pending_publish(&self, org_id: &str, note_id: &str) -> bool {
-        self.receipts.iter().any(|((o, _, _), r)| {
-            o == org_id && r.note_id == note_id && r.state == ReceiptState::Pending
-        })
+    fn has_pending_publish(&self, org: &str, id: &str) -> bool {
+        self.receipts
+            .iter()
+            .any(|((o, _, _), r)| o == org && r.note_id == id && r.state == ReceiptState::Pending)
     }
 
-    /// The note an exact replay of `existing` answers, or the refusal of a reused command.
     fn replay(
         &self,
-        org_id: &str,
-        existing: &ReceiptRow,
+        org: &str,
+        ex: &ReceiptRow,
         cmd: (&str, &str),
-        accepted: Accepted<'_>,
+        acc: Accepted<'_>,
     ) -> Result<PrivateNoteRecord, ApiError> {
-        check_receipt_reuse(existing.command, &existing.request_sha256, cmd.0, cmd.1)?;
-        let current = self
-            .note(org_id, &existing.note_id)
-            .ok_or_else(|| ApiError::new(ErrorCode::StorageError, "replayed note missing"))?;
-        Ok(replayed_note(
-            current,
-            existing.result_revision,
-            existing.time(),
-            accepted,
-        ))
+        check_receipt_reuse(ex.cmd, &ex.sha, cmd.0, cmd.1)?;
+        let cur = self
+            .note(org, &ex.note_id)
+            .ok_or_else(|| err(ErrorCode::StorageError, "replayed note missing"))?;
+        Ok(replayed_note(cur, ex.rev, ex.time(), acc))
     }
 
-    /// Validates an author mutation against the stored note.
-    fn author_mutation(
+    fn auth_mut(
         &self,
-        org_id: &str,
-        note_id: &str,
+        org: &str,
+        id: &str,
         caller: (&str, bool),
-        expected_revision: u64,
-        pending_msg: &str,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        rev: u64,
+        msg: &str,
+    ) -> NoteResult {
         check_author_mutation(
-            self.note(org_id, note_id).cloned(),
+            self.note(org, id).cloned(),
             caller.0,
             caller.1,
-            expected_revision,
-            || Ok(self.has_pending_publish(org_id, note_id)),
-            pending_msg,
+            rev,
+            || Ok(self.has_pending_publish(org, id)),
+            msg,
         )
+    }
+
+    fn commit(
+        &mut self,
+        key: ReceiptKey,
+        cmd: (&'static str, &str),
+        rec: PrivateNoteRecord,
+        at: &str,
+    ) -> PrivateNoteRecord {
+        let row = ReceiptRow::done(cmd, &rec.id, rec.revision, at);
+        self.put(rec.clone());
+        self.receipts.insert(key, row);
+        rec
+    }
+
+    fn insert_new(
+        &mut self,
+        key: ReceiptKey,
+        cmd: &CreateNoteCmd<'_>,
+    ) -> Result<PrivateNoteRecord, ApiError> {
+        if self.note(cmd.org_id, cmd.note_id).is_some() {
+            let msg = format!("private note `{}` already exists", cmd.note_id);
+            return Err(err(ErrorCode::AlreadyExists, msg));
+        }
+        self.authors
+            .insert((cmd.org_id.to_owned(), cmd.author_id.to_owned()));
+        if let Some(tid) = cmd.task_id {
+            self.tasks
+                .entry((cmd.org_id.to_owned(), tid.to_owned()))
+                .or_insert(false);
+        }
+        let rec = PrivateNoteRecord::new_active(cmd);
+        Ok(self.commit(key, ("create", cmd.request_sha256), rec, cmd.now))
+    }
+
+    fn mutate(
+        &mut self,
+        key: ReceiptKey,
+        meta: (&'static str, &str, &str),
+        ex: &PrivateNoteRecord,
+        f: impl FnOnce(&PrivateNoteRecord, u64, &str) -> Result<PrivateNoteRecord, OfficeError>,
+    ) -> NoteResult {
+        let rev = match next_revision(ex.revision) {
+            Ok(rev) => rev,
+            Err(e) => return Ok(Err(e)),
+        };
+        let at = monotonic_ts(meta.2, &ex.updated_at);
+        let rec = f(ex, rev, &at)?;
+        Ok(Ok(self.commit(key, (meta.0, meta.1), rec, &at)))
+    }
+
+    fn find_checkpoint(&self, org: &str, author: &str, tid: &str) -> Option<PrivateNoteRecord> {
+        self.notes
+            .values()
+            .filter(|n| {
+                n.organization_id == org
+                    && n.author_id == author
+                    && n.task_id.as_deref() == Some(tid)
+                    && n.deleted_at.is_none()
+                    && n.tags.iter().any(|t| t == PRIVATE_NOTE_CHECKPOINT_TAG)
+            })
+            .min_by(|a, b| newest_first(a, b))
+            .cloned()
+    }
+
+    fn replay_publish(&self, org: &str, ex: &ReceiptRow, sha: &str) -> PubRes {
+        if let Err(e) = check_receipt_reuse(ex.cmd, &ex.sha, "publish", sha) {
+            return Ok(Err(e));
+        }
+        let cid = ex.comment_id.clone().unwrap_or_default();
+        let note = self
+            .note(org, &ex.note_id)
+            .cloned()
+            .ok_or(OfficeError::Invalid("replayed publish note missing"))?;
+        match ex.state {
+            ReceiptState::Completed => Ok(Ok(PublishAttempt::AlreadyCompleted {
+                note,
+                result_revision: ex.rev,
+                shared_comment_id: cid,
+            })),
+            ReceiptState::Pending => Ok(Ok(PublishAttempt::Pending {
+                note,
+                shared_comment_id: cid,
+            })),
+            ReceiptState::Rejected => Ok(Err(err(
+                parse_receipt_error_code(ex.err_code.as_deref()),
+                "private note publish was rejected",
+            ))),
+        }
     }
 }
 
@@ -134,11 +227,9 @@ impl MemoryPrivateNotesStore {
         Self::default()
     }
 
-    /// Every active note of `org_id`, every author's: what the memory search index reads,
-    /// which applies `ADR-0031` itself before it scores anything.
     pub fn active_notes(&self, org_id: &str) -> Result<Vec<PrivateNoteRecord>, OfficeError> {
-        Ok(self
-            .lock()?
+        let st = self.lock()?;
+        Ok(st
             .notes
             .values()
             .filter(|n| n.organization_id == org_id && n.deleted_at.is_none())
@@ -153,228 +244,170 @@ impl MemoryPrivateNotesStore {
     }
 }
 
-fn receipt_key(org_id: &str, author_id: &str, operation_id: &str) -> ReceiptKey {
-    (
-        org_id.to_owned(),
-        author_id.to_owned(),
-        operation_id.to_owned(),
-    )
-}
-
 impl PrivateNotesStore for MemoryPrivateNotesStore {
-    fn create_note(
-        &self,
-        cmd: CreateNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+    fn create_note(&self, cmd: CreateNoteCmd<'_>) -> NoteResult {
         let mut st = self.lock()?;
-        let rkey = receipt_key(cmd.org_id, cmd.author_id, cmd.operation_id);
-        if let Some(existing) = st.receipts.get(&rkey) {
-            let request = ("create", cmd.request_sha256);
-            return Ok(st.replay(
-                cmd.org_id,
-                existing,
-                request,
-                Accepted::Created(cmd.content),
-            ));
+        let key = rkey(cmd.org_id, cmd.author_id, cmd.operation_id);
+        if let Some(ex) = st.receipts.get(&key) {
+            let req = ("create", cmd.request_sha256);
+            return Ok(st.replay(cmd.org_id, ex, req, Accepted::Created(cmd.content)));
         }
-        if st.note(cmd.org_id, cmd.note_id).is_some() {
-            return Ok(Err(ApiError::new(
-                ErrorCode::AlreadyExists,
-                format!("private note `{}` already exists", cmd.note_id),
+        Ok(st.insert_new(key, &cmd))
+    }
+
+    fn upsert_checkpoint_note(&self, cmd: CreateNoteCmd<'_>) -> NoteResult {
+        let mut st = self.lock()?;
+        let key = rkey(cmd.org_id, cmd.author_id, cmd.operation_id);
+        if let Some(ex) = st.receipts.get(&key) {
+            if !matches!(ex.cmd, "create" | "edit") {
+                return Ok(Err(err(
+                    ErrorCode::OperationReused,
+                    "command_id reused with different private note request",
+                )));
+            }
+            let req = (ex.cmd, cmd.request_sha256);
+            return Ok(st.replay(cmd.org_id, ex, req, Accepted::Created(cmd.content)));
+        }
+        let Some(tid) = cmd.task_id else {
+            return Ok(Err(err(
+                ErrorCode::InvalidRequest,
+                "a checkpoint note must belong to a task",
+            )));
+        };
+        let Some(ex) = st.find_checkpoint(cmd.org_id, cmd.author_id, tid) else {
+            return Ok(st.insert_new(key, &cmd));
+        };
+        if st.has_pending_publish(cmd.org_id, &ex.id) {
+            return Ok(Err(err(
+                ErrorCode::Conflict,
+                "resolve pending publication before updating checkpoint note",
             )));
         }
-        st.authors
-            .insert((cmd.org_id.to_owned(), cmd.author_id.to_owned()));
-        if let Some(task_id) = cmd.task_id {
-            st.tasks
-                .entry((cmd.org_id.to_owned(), task_id.to_owned()))
-                .or_insert(false);
-        }
-        let record = PrivateNoteRecord::new_active(&cmd);
-        st.put(record.clone());
-        let receipt =
-            ReceiptRow::completed(("create", cmd.request_sha256), cmd.note_id, 1, cmd.now);
-        st.receipts.insert(rkey, receipt);
-        Ok(Ok(record))
+        let meta = ("edit", cmd.request_sha256, cmd.now);
+        st.mutate(key, meta, &ex, |n, rev, at| {
+            Ok(n.with_content(cmd.content, rev, at))
+        })
     }
 
-    fn edit_note(
-        &self,
-        cmd: EditNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+    fn edit_note(&self, cmd: EditNoteCmd<'_>) -> NoteResult {
         let mut st = self.lock()?;
-        let rkey = receipt_key(cmd.org_id, cmd.caller_id, cmd.operation_id);
-        if let Some(existing) = st.receipts.get(&rkey) {
-            let request = ("edit", cmd.request_sha256);
-            return Ok(st.replay(cmd.org_id, existing, request, Accepted::Edited(cmd.patch)));
+        let key = rkey(cmd.org_id, cmd.caller_id, cmd.operation_id);
+        if let Some(ex) = st.receipts.get(&key) {
+            let req = ("edit", cmd.request_sha256);
+            return Ok(st.replay(cmd.org_id, ex, req, Accepted::Edited(cmd.patch)));
         }
-        let existing = match st.author_mutation(
-            cmd.org_id,
-            cmd.note_id,
-            (cmd.caller_id, cmd.caller_is_person),
-            cmd.expected_revision,
-            "resolve pending publication before editing private note",
-        )? {
-            Ok(note) => note,
+        let who = (cmd.caller_id, cmd.caller_is_person);
+        let msg = "resolve pending publication before editing private note";
+        let ex = match st.auth_mut(cmd.org_id, cmd.note_id, who, cmd.expected_revision, msg)? {
+            Ok(n) => n,
             Err(e) => return Ok(Err(e)),
         };
-        let next_rev = match next_revision(existing.revision) {
-            Ok(rev) => rev,
-            Err(e) => return Ok(Err(e)),
-        };
-        let Some(content) = cmd.patch.apply(&existing) else {
-            return Err(OfficeError::Invalid("active private note without a body"));
-        };
-        let updated_at = monotonic_ts(cmd.now, &existing.updated_at);
-        let updated = existing.with_content(&content, next_rev, &updated_at);
-        st.put(updated.clone());
-        let receipt = ReceiptRow::completed(
-            ("edit", cmd.request_sha256),
-            cmd.note_id,
-            next_rev,
-            &updated_at,
-        );
-        st.receipts.insert(rkey, receipt);
-        Ok(Ok(updated))
+        let meta = ("edit", cmd.request_sha256, cmd.now);
+        st.mutate(key, meta, &ex, |n, rev, at| {
+            let body = cmd
+                .patch
+                .apply(n)
+                .ok_or(OfficeError::Invalid("active private note without a body"))?;
+            Ok(n.with_content(&body, rev, at))
+        })
     }
 
-    fn delete_note(
-        &self,
-        cmd: DeleteNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+    fn delete_note(&self, cmd: DeleteNoteCmd<'_>) -> NoteResult {
         let mut st = self.lock()?;
-        let rkey = receipt_key(cmd.org_id, cmd.caller_id, cmd.operation_id);
-        if let Some(existing) = st.receipts.get(&rkey) {
-            let request = ("delete", cmd.request_sha256);
-            return Ok(st.replay(cmd.org_id, existing, request, Accepted::Deleted));
+        let key = rkey(cmd.org_id, cmd.caller_id, cmd.operation_id);
+        if let Some(ex) = st.receipts.get(&key) {
+            let req = ("delete", cmd.request_sha256);
+            return Ok(st.replay(cmd.org_id, ex, req, Accepted::Deleted));
         }
-        let existing = match st.author_mutation(
-            cmd.org_id,
-            cmd.note_id,
-            (cmd.caller_id, cmd.caller_is_person),
-            cmd.expected_revision,
-            "resolve pending publication before deleting private note",
-        )? {
-            Ok(note) => note,
+        let who = (cmd.caller_id, cmd.caller_is_person);
+        let msg = "resolve pending publication before deleting private note";
+        let ex = match st.auth_mut(cmd.org_id, cmd.note_id, who, cmd.expected_revision, msg)? {
+            Ok(n) => n,
             Err(e) => return Ok(Err(e)),
         };
-        let next_rev = match next_revision(existing.revision) {
-            Ok(rev) => rev,
-            Err(e) => return Ok(Err(e)),
-        };
-        let deleted_at = monotonic_ts(cmd.now, &existing.updated_at);
-        let tombstone = existing.tombstone(next_rev, &deleted_at);
-        st.put(tombstone.clone());
-        let receipt = ReceiptRow::completed(
-            ("delete", cmd.request_sha256),
-            cmd.note_id,
-            next_rev,
-            &deleted_at,
-        );
-        st.receipts.insert(rkey, receipt);
-        Ok(Ok(tombstone))
+        let meta = ("delete", cmd.request_sha256, cmd.now);
+        st.mutate(key, meta, &ex, |n, rev, at| Ok(n.tombstone(rev, at)))
     }
 
-    fn get_note(
-        &self,
-        org_id: &str,
-        caller_id: &str,
-        caller_is_person: bool,
-        note_id: &str,
-    ) -> Result<Option<PrivateNoteRecord>, OfficeError> {
+    fn get_note(&self, org: &str, caller: &str, is_person: bool, id: &str) -> OptNote {
         let st = self.lock()?;
         Ok(st
-            .note(org_id, note_id)
-            .filter(|n| n.deleted_at.is_none())
-            .filter(|n| caller_is_person || n.author_id == caller_id)
+            .note(org, id)
+            .filter(|n| n.deleted_at.is_none() && (is_person || n.author_id == caller))
             .cloned())
     }
 
     fn list_notes(&self, query: &NoteQuery<'_>) -> Result<NotePage, OfficeError> {
         let st = self.lock()?;
-        let mut matched: Vec<&PrivateNoteRecord> =
-            st.notes.values().filter(|n| query.matches(n)).collect();
+        let mut matched: Vec<_> = st.notes.values().filter(|n| query.matches(n)).collect();
         matched.sort_by(|a, b| newest_first(a, b));
         let total = matched.len() as u64;
-        let candidates = matched
+        let items = matched
             .into_iter()
             .filter(|n| query.is_after_cursor(n))
             .take(query.limit.saturating_add(1))
             .cloned()
             .collect();
-        Ok(NotePage::from_candidates(candidates, total, query.limit))
+        Ok(NotePage::from_candidates(items, total, query.limit))
     }
 
-    fn begin_publish(
-        &self,
-        cmd: BeginPublishCmd<'_>,
-    ) -> Result<Result<PublishAttempt, ApiError>, OfficeError> {
-        let mut st = self.lock()?;
-        let rkey = receipt_key(cmd.org_id, cmd.caller_id, cmd.operation_id);
-        if let Some(existing) = st.receipts.get(&rkey).cloned() {
-            if let Err(e) = check_receipt_reuse(
-                existing.command,
-                &existing.request_sha256,
-                "publish",
-                cmd.request_sha256,
-            ) {
-                return Ok(Err(e));
-            }
-            let shared_comment_id = existing.shared_comment_id.unwrap_or_default();
-            let note = st
-                .note(cmd.org_id, &existing.note_id)
-                .cloned()
-                .ok_or(OfficeError::Invalid("replayed publish note missing"))?;
-            return match existing.state {
-                ReceiptState::Completed => Ok(Ok(PublishAttempt::AlreadyCompleted {
-                    note,
-                    result_revision: existing.result_revision,
-                    shared_comment_id,
-                })),
-                ReceiptState::Pending => Ok(Ok(PublishAttempt::Pending {
-                    note,
-                    shared_comment_id,
-                })),
-                ReceiptState::Rejected => Ok(Err(ApiError::new(
-                    parse_receipt_error_code(existing.error_code.as_deref()),
-                    "private note publish was rejected",
-                ))),
-            };
+    fn latest_author_notes_for_tasks(&self, org: &str, author: &str, tids: &[String]) -> NoteMap {
+        let wanted: BTreeSet<&str> = tids.iter().map(String::as_str).collect();
+        if wanted.is_empty() {
+            return Ok(BTreeMap::new());
         }
+        let st = self.lock()?;
+        let mut latest: BTreeMap<String, &PrivateNoteRecord> = BTreeMap::new();
+        for n in st.notes.values() {
+            if n.organization_id != org || n.author_id != author || n.deleted_at.is_some() {
+                continue;
+            }
+            if let Some(tid) = n.task_id.as_deref().filter(|t| wanted.contains(*t)) {
+                latest
+                    .entry(tid.to_owned())
+                    .and_modify(|c| {
+                        if newest_first(n, c).is_lt() {
+                            *c = n;
+                        }
+                    })
+                    .or_insert(n);
+            }
+        }
+        Ok(latest.into_iter().map(|(k, v)| (k, v.clone())).collect())
+    }
 
-        let note = match st.author_mutation(
-            cmd.org_id,
-            cmd.note_id,
-            (cmd.caller_id, cmd.caller_is_person),
-            cmd.expected_revision,
-            "another publication of this private note is already pending",
-        )? {
-            Ok(note) => note,
+    fn begin_publish(&self, cmd: BeginPublishCmd<'_>) -> PubRes {
+        let mut st = self.lock()?;
+        let key = rkey(cmd.org_id, cmd.caller_id, cmd.operation_id);
+        if let Some(ex) = st.receipts.get(&key).cloned() {
+            return st.replay_publish(cmd.org_id, &ex, cmd.request_sha256);
+        }
+        let who = (cmd.caller_id, cmd.caller_is_person);
+        let msg = "another publication of this private note is already pending";
+        let note = match st.auth_mut(cmd.org_id, cmd.note_id, who, cmd.expected_revision, msg)? {
+            Ok(n) => n,
             Err(e) => return Ok(Err(e)),
         };
         if let Err(e) = require_publishable(&note) {
             return Ok(Err(e));
         }
-        let comment_used = st.receipts.iter().any(|((o, _, _), r)| {
-            o == cmd.org_id && r.shared_comment_id.as_deref() == Some(cmd.comment_id)
+        let used = st.receipts.iter().any(|((o, _, _), r)| {
+            o == cmd.org_id && r.comment_id.as_deref() == Some(cmd.comment_id)
         });
-        if comment_used {
-            return Ok(Err(ApiError::new(
-                ErrorCode::AlreadyExists,
-                format!("comment_id `{}` is already reserved", cmd.comment_id),
-            )));
+        if used {
+            let m = format!("comment_id `{}` is already reserved", cmd.comment_id);
+            return Ok(Err(err(ErrorCode::AlreadyExists, m)));
         }
-
         st.receipts.insert(
-            rkey,
+            key,
             ReceiptRow {
-                request_sha256: cmd.request_sha256.to_owned(),
-                command: "publish",
+                sha: cmd.request_sha256.to_owned(),
+                cmd: "publish",
                 note_id: cmd.note_id.to_owned(),
-                result_revision: note.revision,
+                rev: note.revision,
                 state: ReceiptState::Pending,
-                shared_comment_id: Some(cmd.comment_id.to_owned()),
-                error_code: None,
+                comment_id: Some(cmd.comment_id.to_owned()),
+                err_code: None,
                 created_at: cmd.now.to_owned(),
                 finished_at: None,
             },
@@ -387,31 +420,32 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
 
     fn finish_publish(
         &self,
-        org_id: &str,
-        author_id: &str,
-        operation_id: &str,
-        error_code: Option<&str>,
+        org: &str,
+        author: &str,
+        op: &str,
+        code: Option<&str>,
         now: &str,
-    ) -> Result<(), OfficeError> {
+    ) -> UnitRes {
         let mut st = self.lock()?;
-        let rkey = receipt_key(org_id, author_id, operation_id);
-        if let Some(row) = st.receipts.get_mut(&rkey) {
-            if row.state == ReceiptState::Pending {
-                row.state = if error_code.is_some() {
-                    ReceiptState::Rejected
-                } else {
-                    ReceiptState::Completed
-                };
-                row.error_code = error_code.map(str::to_owned);
-                row.finished_at = Some(monotonic_ts(now, &row.created_at));
-            }
+        if let Some(row) = st
+            .receipts
+            .get_mut(&rkey(org, author, op))
+            .filter(|r| r.state == ReceiptState::Pending)
+        {
+            row.state = if code.is_some() {
+                ReceiptState::Rejected
+            } else {
+                ReceiptState::Completed
+            };
+            row.err_code = code.map(str::to_owned);
+            row.finished_at = Some(monotonic_ts(now, &row.created_at));
         }
         Ok(())
     }
 
     fn mark_task_deleted(&self, org_id: &str, task_id: &str) -> Result<(), OfficeError> {
-        let mut st = self.lock()?;
-        st.tasks
+        self.lock()?
+            .tasks
             .insert((org_id.to_owned(), task_id.to_owned()), true);
         Ok(())
     }

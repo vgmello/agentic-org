@@ -57,6 +57,21 @@ agent-os team create --name <name> --parent-team-id <team-id> --dry-run
 
 `agent-os session attach` runs many commands over one connection, one JSON line each. See the `batch-and-attach` guide.
 
+## Wake and resume
+
+On a fresh wake or after context compaction, fetch your working snapshot in one call:
+
+```bash
+agent-os resume --format compact
+agent-os me --fields identity,unread_inbox,active_tasks
+```
+
+Both are shorthands for `agent-os session resume` and return your identity, unread inbox summary, open assigned tasks (each with an optional pointer to your own latest private note), open asks, active worktrees and budget status. Keep private checkpoint notes sparse and optional: update one pinned checkpoint before a pause only when context would otherwise be lost:
+
+```bash
+agent-os task-note add --task <task> --checkpoint --text <text>
+```
+
 ## Know yourself
 
 - `agent-os session inspect` shows your live session.

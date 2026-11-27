@@ -183,6 +183,16 @@ pub struct RuntimeLaunch {
     pub lifecycle: Lifecycle,
 }
 
+/// Atomically writes one planned file beneath `runtime_dir` using fd-relative `openat`
+/// (`O_NOFOLLOW | O_EXCL`, mode `0600`) and `renameat`, never following symlinks (`TASK-160`).
+pub fn write_runtime_planned_file(
+    runtime_dir: &Path,
+    rel_path: &Path,
+    contents: &[u8],
+) -> io::Result<()> {
+    files::write_file(runtime_dir, rel_path, contents)
+}
+
 /// Validate a piped launch, install planned files, and retain every lifecycle field.
 /// `git_exclude` needs the caller's repository capability (X-09), so it fails closed here.
 /// PTYs are unavailable until slice 4. Neither rejection writes any planned file.

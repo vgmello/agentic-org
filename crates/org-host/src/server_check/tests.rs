@@ -17,7 +17,7 @@ fn the_requirement_names_the_server_and_the_team() {
 /// What this system's admission identifies an image by: the platform's own fact. Every
 /// test below that differs by system expects exactly the outcome this names.
 fn identity() -> ImageIdentity {
-    crate::test_programs::image_identity()
+    crate::test_programs_tests::image_identity()
 }
 
 /// The office check as a pure decision over the build, the team id and what the system's
@@ -656,7 +656,7 @@ fn a_by_path_check_names_a_development_image_and_reads_nothing() {
 /// no digest and nothing more to log.
 #[test]
 fn a_development_admission_reports_the_digest_of_the_bytes_it_read() {
-    let me = crate::test_programs::recording_worker();
+    let me = crate::test_programs_tests::recording_worker();
     let check = ServerCheck::Skip;
     let admission = check.admission(&me).unwrap_or_else(|none| panic!("{none}"));
     let line = check.describe_admitted(&me, &admission);
@@ -695,7 +695,7 @@ fn a_development_admission_reports_the_digest_of_the_bytes_it_read() {
 #[test]
 fn a_pinned_check_never_starts_an_image_that_is_not_the_pinned_one() {
     use org_platform_host::admission::{ChildEnv, SpawnRefused};
-    let me = crate::test_programs::recording_worker();
+    let me = crate::test_programs_tests::recording_worker();
     let mut other = sha256_of(&me);
     other[0] ^= 1;
     let check = ServerCheck::Skip.pinned(Pin {
@@ -740,7 +740,7 @@ fn a_pinned_check_never_starts_an_image_that_is_not_the_pinned_one() {
 /// bytes are checked there is no admission, in words that say what is missing.
 #[test]
 fn a_release_check_without_a_selected_release_is_worded_where_it_refuses() {
-    let me = crate::test_programs::recording_worker();
+    let me = crate::test_programs_tests::recording_worker();
     let check = ServerCheck::Requirement(server_requirement(TEAM).unwrap());
     match (identity(), check.admission(&me)) {
         (ImageIdentity::CodeSignature, Ok(admission)) => {
@@ -770,7 +770,7 @@ fn a_release_check_without_a_selected_release_is_worded_where_it_refuses() {
 fn a_release_build_without_a_team_admits_only_the_image_the_release_pins() {
     use org_platform_host::admission::{ChildEnv, SpawnRefused};
     use std::io::Read;
-    let me = crate::test_programs::recording_worker();
+    let me = crate::test_programs_tests::recording_worker();
     let digest = sha256_of(&me);
     let mut other = digest;
     other[31] ^= 1;
@@ -800,7 +800,7 @@ fn a_release_build_without_a_team_admits_only_the_image_the_release_pins() {
             drop(started.stdin);
             let mut rest = Vec::new();
             started.stdout.read_to_end(&mut rest).unwrap();
-            assert_eq!(crate::test_programs::recorded_starts(home.path()), 1);
+            assert_eq!(crate::test_programs_tests::recorded_starts(home.path()), 1);
             started.child.kill();
             match mismatching.admission(&me) {
                 Err(NoAdmission::Refused(why)) => {
@@ -833,7 +833,7 @@ fn a_release_build_without_a_team_admits_only_the_image_the_release_pins() {
                 );
                 assert!(SpawnRefused::of(&error).is_none(), "{check:?}: {error}");
                 assert_eq!(
-                    crate::test_programs::recorded_starts(home.path()),
+                    crate::test_programs_tests::recorded_starts(home.path()),
                     0,
                     "{check:?}"
                 );
@@ -842,7 +842,7 @@ fn a_release_build_without_a_team_admits_only_the_image_the_release_pins() {
     }
     // Nothing but the one admitted child ever ran.
     assert_eq!(
-        crate::test_programs::recorded_starts(home.path()),
+        crate::test_programs_tests::recorded_starts(home.path()),
         match identity() {
             ImageIdentity::VerifiedBytes => 1,
             ImageIdentity::CodeSignature => 0,
