@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { chromium, type Page } from "../agentic-org-ui/node_modules/playwright";
 import { servePrototype } from "./server";
+import { checkPersonPanel } from "./smoke-person";
 
 const ALL_SUITE: Array<[string, string]> = [
   ["inbox", "ocean"],
@@ -11,6 +12,7 @@ const ALL_SUITE: Array<[string, string]> = [
   ["projects/agency-v1/insights", "report-dark"],
   ["chat", "classic"],
   ["projects/agency-v1", "graphite-light"],
+  ["home", "report-dark"],
 ];
 
 const SWEEP_ROUTES = [
@@ -2836,6 +2838,7 @@ const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => 
   "projects/agency-v1/insights": (page) => checkProjectInsights(page),
   chat: (page) => checkChat(page),
   "projects/agency-v1": (page) => checkTaskContextFromPage(page),
+  home: (page, href) => checkPersonPanel(page, href),
 };
 
 async function runRouteCheck(browser: Awaited<ReturnType<typeof chromium.launch>>, baseUrl: URL, pageRoute: string, theme: string) {
