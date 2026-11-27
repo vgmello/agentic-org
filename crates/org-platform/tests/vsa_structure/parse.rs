@@ -183,6 +183,15 @@ fn cfg_requires(attrs: &[syn::Attribute], features: &[&str]) -> bool {
     })
 }
 
+/// Whether the attributes make an item conditional: a `cfg` (in a `cfg_attr` too) may leave it
+/// out, so it never hides a name bound around it.
+pub fn conditional(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| match &attr.meta {
+        syn::Meta::List(list) if named(&list.path, "cfg_attr") => wraps(list.tokens.clone(), "cfg"),
+        meta => named(meta.path(), "cfg"),
+    })
+}
+
 /// Whether the attributes make an item test-only (`#[cfg(test)]`, `#![cfg(test)]`).
 pub fn test_only(attrs: &[syn::Attribute]) -> bool {
     cfg_requires(attrs, &[])
@@ -235,22 +244,22 @@ pub fn path_attrs(attrs: &[syn::Attribute]) -> PathAttrs {
             });
         } else if let syn::Meta::List(list) = &attr.meta {
             if named(&list.path, "cfg_attr") {
-                out.wrapped |= wraps_path(list.tokens.clone());
+                out.wrapped |= wraps(list.tokens.clone(), "path");
             }
         }
     }
     out
 }
 
-/// Whether the attributes of `cfg_attr(predicate, attribute, ..)` hold a `path`, nested
-/// `cfg_attr`s included.
-fn wraps_path(tokens: TokenStream) -> bool {
+/// Whether the attributes of `cfg_attr(predicate, attribute, ..)` hold a `name` (`path`,
+/// `cfg`), nested `cfg_attr`s included.
+fn wraps(tokens: TokenStream, name: &str) -> bool {
     split_commas(tokens).into_iter().skip(1).any(|attr| {
         let attr: Vec<TokenTree> = attr.into_iter().collect();
         match attr.as_slice() {
-            [TokenTree::Ident(word), ..] if unraw(word) == "path" => true,
+            [TokenTree::Ident(word), ..] if unraw(word) == name => true,
             [TokenTree::Ident(word), TokenTree::Group(inner)] if unraw(word) == "cfg_attr" => {
-                wraps_path(inner.stream())
+                wraps(inner.stream(), name)
             }
             _ => false,
         }
@@ -279,24 +288,26 @@ pub fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
     }
 }
 
-/// The name an item defines in its scope's namespace (child modules included).
-pub fn item_name(item: &syn::Item) -> Option<String> {
+/// The name an item defines in its scope (child modules included), and whether it is in the
+/// type namespace (a module, a type, a trait), the only one a path's `name::` prefix resolves
+/// in: a function, constant, static or macro of that name never hides it.
+pub fn item_name(item: &syn::Item) -> Option<(String, bool)> {
     use syn::Item;
-    let ident = match item {
-        Item::Const(i) => &i.ident,
-        Item::Enum(i) => &i.ident,
-        Item::Fn(i) => &i.sig.ident,
-        Item::Macro(i) => i.ident.as_ref()?,
-        Item::Mod(i) => &i.ident,
-        Item::Static(i) => &i.ident,
-        Item::Struct(i) => &i.ident,
-        Item::Trait(i) => &i.ident,
-        Item::TraitAlias(i) => &i.ident,
-        Item::Type(i) => &i.ident,
-        Item::Union(i) => &i.ident,
+    let (ident, ty) = match item {
+        Item::Const(i) => (&i.ident, false),
+        Item::Enum(i) => (&i.ident, true),
+        Item::Fn(i) => (&i.sig.ident, false),
+        Item::Macro(i) => (i.ident.as_ref()?, false),
+        Item::Mod(i) => (&i.ident, true),
+        Item::Static(i) => (&i.ident, false),
+        Item::Struct(i) => (&i.ident, true),
+        Item::Trait(i) => (&i.ident, true),
+        Item::TraitAlias(i) => (&i.ident, true),
+        Item::Type(i) => (&i.ident, true),
+        Item::Union(i) => (&i.ident, true),
         _ => return None,
     };
-    Some(unraw(ident))
+    Some((unraw(ident), ty))
 }
 
 /// Where an item ends: the end of its closing brace or semicolon.

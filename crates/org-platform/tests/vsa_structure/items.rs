@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::{LineColumn, TokenTree};
 
-use super::parse::{self, is_marker, unraw, Building, Written};
+use super::parse::{self, unraw, Building, Written};
 use super::scan;
 
 /// A `use` in a scope: what it binds or glob-imports.
@@ -18,13 +18,19 @@ pub struct Use {
     pub path: Written,
     pub public: bool,
     pub at: LineColumn,
+    /// Under a `cfg` or in a macro call: it may not exist, so it never hides a name around it.
+    pub conditional: bool,
 }
 
 /// What one scope of a file defines and binds.
 #[derive(Debug, Default)]
 pub struct Names {
-    /// Names of the items it defines, modules included.
-    pub items: BTreeSet<String>,
+    /// Names of the modules, types and traits it defines, each `true` when one of them is not
+    /// [`parse::conditional`].
+    pub items: BTreeMap<String, bool>,
+    /// Names of its functions, constants, statics and macros: a path ends at one, never passes
+    /// it.
+    pub values: BTreeSet<String>,
     /// `use` bindings by the name they bind: more than one for `cfg` alternatives
     /// (`#[cfg(..)] use linux as native;`), each a path the name may stand for.
     pub uses: BTreeMap<String, Vec<Use>>,
@@ -152,8 +158,14 @@ impl FileItems {
             }
             return self.test_item(attrs, parse::item_end(item));
         }
-        if let Some(name) = parse::item_name(item) {
-            self.names_mut(scope).items.insert(name);
+        let conditional = parse::conditional(attrs);
+        if let Some((name, ty)) = parse::item_name(item) {
+            let names = self.names_mut(scope);
+            if ty {
+                *names.items.entry(name).or_default() |= !conditional;
+            } else {
+                names.values.insert(name);
+            }
         }
         match item {
             Item::Mod(m) => self.module(m, scope),
@@ -194,7 +206,7 @@ impl FileItems {
                 let public = matches!(u.vis, syn::Visibility::Public(_));
                 let mut found = Vec::new();
                 self.use_tree(&u.tree, Building::of_use(u), public, at, &mut found);
-                self.bind(scope, found);
+                self.bind(scope, found, conditional);
                 Ok(())
             }
             Item::ExternCrate(e) if e.ident == "self" => {
@@ -461,7 +473,15 @@ impl FileItems {
     ) {
         let mut bind = |name: Option<String>, path: Building| {
             if let Some(path) = path.done() {
-                out.push((name, Use { path, public, at }));
+                // `bind` says whether it is conditional.
+                let conditional = false;
+                let found = Use {
+                    path,
+                    public,
+                    at,
+                    conditional,
+                };
+                out.push((name, found));
             }
         };
         let mut include = false;
@@ -509,43 +529,28 @@ impl FileItems {
 
     /// Binds a `use` item's names in `scope`. A name bound again in one scope (`cfg`
     /// alternatives) keeps every path: a later binding never hides an earlier one.
-    fn bind(&mut self, scope: &[String], found: Bindings) {
+    fn bind(&mut self, scope: &[String], found: Bindings, conditional: bool) {
         let names = self.names_mut(scope);
-        for (name, found) in found {
+        for (name, mut found) in found {
+            found.conditional = conditional;
             match name {
                 None => names.globs.push(found),
                 Some(name) => {
                     let bound = names.uses.entry(name).or_default();
-                    if bound.iter().all(|bound| bound.path != found.path) {
-                        bound.push(found);
+                    match bound.iter_mut().find(|bound| bound.path == found.path) {
+                        Some(bound) => bound.conditional &= conditional,
+                        None => bound.push(found),
                     }
                 }
             }
         }
     }
 
-    /// The scope that binds `name` for a path in `scope`: `scope` or a block around it, within
-    /// its module.
-    fn binder(&self, scope: &[String], name: &str) -> Option<Vec<String>> {
-        let mut key = scope.to_vec();
-        loop {
-            if let Some(names) = self.names.get(&key) {
-                if names.uses.contains_key(name) || names.items.contains(name) {
-                    return Some(key);
-                }
-            }
-            match key.last() {
-                Some(last) if is_marker(last) => key.pop(),
-                _ => return None,
-            };
-        }
-    }
-
     /// Binds the `use` items `syn` did not read: those in macro bodies and calls, and in the
     /// expressions the walk skips. One in a macro call binds where the call expands (the scope
-    /// around the outermost call); when a scope there or around it already binds the name, it
-    /// binds there as one more alternative, so that neither hides the other. Any other binds in
-    /// the group it is written in.
+    /// around the outermost call), as a conditional binding: what the macro makes of it is
+    /// unknown, so it never hides a name bound there or around it. Any other binds in the group
+    /// it is written in.
     fn macro_uses(&mut self, tokens: &[TokenTree]) {
         let (mut found, mut aliases) = (Vec::new(), BTreeSet::new());
         let skip = |at: LineColumn| self.placed_uses.contains(&at) || self.in_test(at);
@@ -571,17 +576,15 @@ impl FileItems {
             let public = matches!(found.item.vis, syn::Visibility::Public(_));
             let path = Building::of_use(&found.item);
             self.use_tree(&found.item.tree, path, public, found.at, &mut bindings);
-            let Some(call) = found.call else {
-                let group = self.blocks.iter().find(|(_, s, _)| *s == found.group.0);
-                let key = group.map(|(key, _, _)| key.clone()).unwrap_or_default();
-                self.bind(&key, bindings);
-                continue;
+            let conditional = found.call.is_some() || found.conditional;
+            let key = match found.call {
+                Some(call) => self.scope_at(call).to_vec(),
+                None => {
+                    let group = self.blocks.iter().find(|(_, s, _)| *s == found.group.0);
+                    group.map(|(key, _, _)| key.clone()).unwrap_or_default()
+                }
             };
-            let key = self.scope_at(call).to_vec();
-            for (name, binding) in bindings {
-                let binder = name.as_deref().and_then(|name| self.binder(&key, name));
-                self.bind(binder.as_deref().unwrap_or(&key), vec![(name, binding)]);
-            }
+            self.bind(&key, bindings, conditional);
         }
     }
 }

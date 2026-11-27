@@ -40,12 +40,17 @@ pub struct Binding {
     pub public: bool,
     pub file: PathBuf,
     pub at: LineColumn,
+    /// It may not exist (see [`Use::conditional`]).
+    pub conditional: bool,
 }
 
 /// What one module or block defines and binds.
 #[derive(Debug, Default)]
 pub struct Scope {
-    pub items: BTreeSet<String>,
+    /// Its modules, types and traits, each `true` when one is not conditional (a `cfg`).
+    pub items: BTreeMap<String, bool>,
+    /// Its functions, constants, statics and macros.
+    pub values: BTreeSet<String>,
     /// Its loaded child modules (a block's are the modules declared in it).
     pub children: BTreeSet<String>,
     /// The children declared `pub`.
@@ -278,10 +283,14 @@ impl Target {
             public: found.public,
             file: file.to_path_buf(),
             at: found.at,
+            conditional: found.conditional,
         };
         for (inner, names) in &items.names {
             let scope = self.scopes.entry(key(inner)).or_default();
-            scope.items.extend(names.items.iter().cloned());
+            for (name, always) in &names.items {
+                *scope.items.entry(name.clone()).or_default() |= always;
+            }
+            scope.values.extend(names.values.iter().cloned());
             for (name, found) in &names.uses {
                 let bound = scope.uses.entry(name.clone()).or_default();
                 bound.extend(found.iter().map(binding));
@@ -401,9 +410,11 @@ impl Target {
         }
     }
 
-    /// What a plain `name` may stand for in `scope`: what the scope binds, else what each block
-    /// around it binds out to its module (a module never sees the blocks around it), else the
-    /// crate itself (`extern crate self as name`).
+    /// What a plain `name` (a path's first segment, in the type namespace) may stand for in
+    /// `scope`: what the scope binds, what each block around it binds out to its module (a
+    /// module never sees the blocks around it), then the crate itself (`extern crate self as
+    /// name`), up to the first scope that binds it for certain: a conditional binding hides
+    /// nothing around it.
     fn lookup(
         &self,
         scope: &[String],
@@ -414,9 +425,11 @@ impl Target {
         if depth > BINDING_DEPTH {
             return Ok(Vec::new());
         }
-        let mut key = scope.to_vec();
+        let (mut key, mut found) = (scope.to_vec(), Vec::new());
         loop {
-            if let Some(found) = self.lookup_in(&key, name, depth, globs)? {
+            let (more, certain) = self.lookup_in(&key, name, depth, globs, false)?;
+            found.extend(more);
+            if certain {
                 return Ok(found);
             }
             match key.last() {
@@ -424,61 +437,64 @@ impl Target {
                 _ => break,
             };
         }
-        Ok(if self.aliases.contains(name) {
-            vec![Vec::new()]
-        } else {
-            Vec::new()
-        })
+        if self.aliases.contains(name) {
+            found.push(Vec::new());
+        }
+        Ok(found)
     }
 
     /// `name` in the one scope `key`: its `use` bindings and its own item or child module (a
-    /// type and a value may share a name), else a name its globs import. `None` when the scope
-    /// does not bind it; an empty list when it binds it only to something outside the crate.
+    /// type and a value may share a name), else what its globs import; and whether the scope
+    /// binds it for certain (an empty list then binds it only to something outside the crate).
+    /// `values` counts its functions, constants, statics and macros, which end a path but
+    /// never start one.
     fn lookup_in(
         &self,
         key: &[String],
         name: &str,
         depth: usize,
         globs: bool,
-    ) -> Result<Option<Vec<Vec<String>>>, String> {
+        values: bool,
+    ) -> Result<(Vec<Vec<String>>, bool), String> {
         let Some(scope) = self.scopes.get(key) else {
-            return Ok(None);
+            return Ok((Vec::new(), false));
         };
         let around = key.split_last().filter(|(last, _)| is_marker(last));
-        let (mut found, mut bound) = (Vec::new(), false);
+        let (mut found, mut certain) = (Vec::new(), false);
         for binding in scope.uses.get(name).into_iter().flatten() {
             let path = &binding.path;
             let first = path.segments.first().map(String::as_str);
             if path.head != Head::Local || first != Some(name) {
-                bound = true;
                 found.extend(self.absolute_at(key, path, depth + 1, globs)?);
             } else if let Some((_, around)) = around {
                 // `use x;` (or `use x::y as x;`) never resolves through itself: in a block it
                 // names the `x` around the block; in a module, another crate.
-                bound = true;
                 let outer = self.lookup(around, name, depth + 1, globs)?;
                 found.extend(extend(outer, &path.segments[1..]));
+            } else {
+                continue;
             }
+            certain |= !binding.conditional;
         }
-        if scope.items.contains(name) || scope.children.contains(name) {
-            bound = true;
+        let item = scope.items.get(name);
+        let value = values && scope.values.contains(name);
+        if item.is_some() || scope.children.contains(name) || value {
+            certain |= item == Some(&true);
             found.push(key.iter().cloned().chain([name.to_owned()]).collect());
         }
-        if bound {
-            return Ok(Some(found));
+        if certain {
+            return Ok((found, true));
         }
         for glob in scope.globs.iter().filter(|_| globs) {
+            let before = found.len();
             for source in self.absolute_at(key, &glob.path, depth + 1, false)? {
                 for source in self.resolve_at(&source, depth + 1, false)? {
-                    found.extend(
-                        self.lookup_in(&source, name, depth + 1, false)?
-                            .into_iter()
-                            .flatten(),
-                    );
+                    found.extend(self.lookup_in(&source, name, depth + 1, false, values)?.0);
                 }
             }
+            certain |= !glob.conditional && found.len() > before;
         }
-        Ok((!found.is_empty()).then_some(found))
+        Ok((found, certain))
     }
 
     fn resolve_at(
@@ -510,8 +526,9 @@ impl Target {
                         && found.starts_with(&module)
                         && found.last() == Some(segment)
                 };
+                // A member of `module` only: never a name around it or an alias.
                 let found = if expansions < BINDING_DEPTH {
-                    self.lookup(&module, segment, depth + 1, globs)?
+                    self.lookup_in(&module, segment, depth + 1, globs, true)?.0
                 } else {
                     Vec::new()
                 };

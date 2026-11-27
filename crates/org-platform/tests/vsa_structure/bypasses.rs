@@ -1,4 +1,4 @@
-//! Each way around the checks found in review is closed (`TASK-213` passes 2 and 3): synthetic
+//! Each way around the checks found in review is closed (`TASK-213` passes 2 to 4): synthetic
 //! crates that try it and fail.
 
 use proc_macro2::{TokenStream, TokenTree};
@@ -307,8 +307,8 @@ fn only_the_crate_root_glob_imports_a_crate_module() {
 // Pass 3
 
 /// The `org-office` families `tasks` and `messaging`, with `extra` files added.
-fn office(extra: &[(&'static str, &'static str)]) -> Vec<String> {
-    let mut files = vec![
+fn office<'a>(extra: &[(&'a str, &'a str)]) -> Vec<String> {
+    let mut files: Vec<(&'a str, &'a str)> = vec![
         ("o/src/tasks/mod.rs", "pub mod features;"),
         (
             "o/src/tasks/features.rs",
@@ -617,4 +617,102 @@ fn a_whole_tier_re_export_from_any_public_module_is_caught() {
             "cli/src/hidden.rs:1:5: `pub use` re-exports all of `crate::features`",
         ],
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pass 4
+
+#[test]
+fn a_brace_group_after_a_path_is_a_use_tree_only_in_a_use_item() {
+    let tokens: TokenStream = "use ::{me::a, b::{c}}; m!(::{ me::d }); m!(use $crate::e::{f};);
+         m!(use g::{ h }); use {i::{j}, crate::k};"
+        .parse()
+        .unwrap();
+    let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut named = Vec::new();
+    scan(&tokens, &mut named);
+    let found: Vec<(Head, String)> = named
+        .into_iter()
+        .map(|n| (n.path.head, n.path.segments.join("::")))
+        .collect();
+    let expected = [
+        (Head::Extern, "me::a"),
+        (Head::Extern, "b::c"),
+        (Head::Local, "me::d"),
+        (Head::Root, "e::f"),
+        (Head::Local, "g"),
+        (Head::Local, "i::j"),
+        (Head::Root, "k"),
+    ];
+    assert_eq!(found, expected.map(|(head, path)| (head, path.to_owned())));
+}
+
+#[test]
+fn a_value_a_conditional_binding_or_a_macro_group_never_hides_a_module_name() {
+    for source in [
+        // A path's `name::` is in the type namespace: no function, constant, static or macro.
+        "fn f() { fn t() {} t::features::helper(); }",
+        "fn f() { const t: u8 = 0; t::features::N; }",
+        "fn f() { static t: u8 = 0; t::features::N; }",
+        "fn f() { macro_rules! t { () => {} } t::features::N; }",
+        "fn t() {} fn f() { t::features::helper(); }",
+        // A `cfg` or a macro call may leave it out.
+        "fn f() { #[cfg(any())] use crate::messaging as t; t::features::helper(); }",
+        "fn f() { #[cfg(any())] mod t {} t::features::helper(); }",
+        "fn f() { #[cfg_attr(all(), cfg(any()))] mod t {} t::features::helper(); }",
+        "fn f() { noop!(use crate::messaging as t;); t::features::helper(); }",
+        "macro_rules! m { () => {{ #[cfg(any())] use crate::messaging as t; t::features::N }} }",
+        "macro_rules! m { ($a:meta) => {{ #[$a] use crate::messaging as t; t::features::N }} }",
+        "macro_rules! m { ($a:meta) => {{ #[$a] use crate::tasks as u; u::features::N }} }",
+        // `x::{..}` is a `use` tree only in a `use` item.
+        "fn f() { m!(x::{ t::features::helper }); }",
+        "fn f() { m!(use x::{ t::features::helper }); }",
+        "use {t::{features::helper}};",
+    ] {
+        let source = format!("use crate::tasks as t; {source}");
+        let found = office(&[
+            ("o/src/lib.rs", "mod tasks; mod messaging;"),
+            ("o/src/messaging/mod.rs", "pub mod features; mod case;"),
+            ("o/src/messaging/case.rs", &source),
+        ]);
+        assert_eq!(found, ["o/src/messaging/case.rs -> tasks"], "{source}");
+    }
+}
+
+#[test]
+fn a_value_a_conditional_binding_or_a_local_name_never_hides_the_crate_alias() {
+    for source in [
+        "fn me() {} fn f() { me::features::work::go(); }",
+        "fn f() { fn me() {} me::features::work::go(); }",
+        "#[cfg(any())] use crate::runtime as me; fn f() { me::features::work::go(); }",
+        "#[cfg(any())] mod me {} fn f() { me::features::work::go(); }",
+        "fn f() { #[cfg(any())] use crate::runtime as me; me::features::work::go(); }",
+        "noop!(use crate::runtime as me;); fn f() { me::features::work::go(); }",
+        "fn f() { noop!(use crate::runtime as me;); me::features::work::go(); }",
+        "mod me {} use ::{me::features::work::go};",
+        "fn f() { use crate::runtime as me; use ::{me::features::work::go}; }",
+        "fn f() { m!(x::{ me::features::work::go }); }",
+    ] {
+        let found = agent_with(&[
+            (
+                "cli/src/lib.rs",
+                "extern crate self as me; mod features; mod registry; mod runtime;",
+            ),
+            ("cli/src/features/auth/mod.rs", source),
+        ]);
+        assert_names(&found, &["crate::features::work::go"]);
+    }
+    // A test-only alias is no alias, and a module's unknown member is never one.
+    let found = agent_with(&[
+        (
+            "cli/src/lib.rs",
+            "#[cfg(test)] extern crate self as me; extern crate self as also;
+             mod features; mod registry; mod runtime;",
+        ),
+        (
+            "cli/src/features/auth/mod.rs",
+            "fn f() { me::features::work::go(); crate::runtime::also::features::work::go(); }",
+        ),
+    ]);
+    assert!(found.is_empty(), "{found:#?}");
 }

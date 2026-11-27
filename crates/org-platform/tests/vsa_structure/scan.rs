@@ -52,12 +52,20 @@ fn path_start(tokens: &[TokenTree], at: usize) -> bool {
     punct(before, '$').is_none() || word == "crate"
 }
 
-/// Whether the `::` at `at` starts a path from the extern prelude (`::name::..`): it does not
-/// follow a name. After anything else (`(`, `,`, `=`, `->`, `=>`, `>`, a block, a keyword such
-/// as `use`, `return` or `in`, a lifetime) it starts one: a `::name` read after a generic `>`
-/// names the crate only when `name` is an `extern crate self` alias, never another path.
+/// Whether the `::` at `at` starts a path from the extern prelude (`::name::..`, or the
+/// `use ::{..};` group): it does not follow a name. After anything else (`(`, `,`, `=`, `->`,
+/// `=>`, `>`, a block, a keyword such as `use`, `return` or `in`, a lifetime) it starts one: a
+/// `::name` read after a generic `>` names the crate only when `name` is an `extern crate self`
+/// alias, never another path.
 fn extern_start(tokens: &[TokenTree], at: usize) -> bool {
-    if !colons(tokens, at) || !matches!(tokens.get(at + 2), Some(TokenTree::Ident(_))) {
+    let next = match tokens.get(at + 2) {
+        Some(TokenTree::Ident(_)) => true,
+        Some(TokenTree::Group(group)) => {
+            group.delimiter() == Delimiter::Brace && after_use(tokens, at)
+        }
+        _ => false,
+    };
+    if !colons(tokens, at) || !next {
         return false;
     }
     match at.checked_sub(1).and_then(|i| tokens.get(i)) {
@@ -107,8 +115,31 @@ fn simple_path(tokens: &[TokenTree]) -> Option<Vec<Written>> {
         }
         at += 2;
     }
-    let (paths, end) = read_path(tokens, start, path);
+    let (paths, end) = read_path(tokens, start, path, Tree::No);
     (end == tokens.len()).then_some(paths)
+}
+
+/// Whether the path at `at` is the tree of a `use` item: right after `use` (`use $crate::..` in
+/// a macro too).
+fn after_use(tokens: &[TokenTree], at: usize) -> bool {
+    let before = |back: usize| at.checked_sub(back).and_then(|i| tokens.get(i));
+    let back = if punct(before(1), '$').is_some() {
+        2
+    } else {
+        1
+    };
+    matches!(before(back), Some(TokenTree::Ident(word)) if word == "use")
+}
+
+/// What a path is read as, which says whether a `{..}` after its `name::` belongs to it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tree {
+    /// Any path: `name::{..}` is no Rust path, so the group is left to the scan.
+    No,
+    /// The tree of a `use` item: a group of `use` trees right before its `;` ends it.
+    Use,
+    /// A tree in such a group, which [`use_group`] checked whole.
+    Part,
 }
 
 /// Whether every part of the `{..}` after `path::` is a `use` tree (names, `*`, a nested group,
@@ -120,8 +151,8 @@ fn use_group(group: &Group, path: &Building) -> bool {
     })
 }
 
-/// Whether `tokens` are one `use` tree after `path::`: `crate` never follows a prefix, `super`
-/// only climbs, `self` only climbs or ends the tree.
+/// Whether `tokens` are one `use` tree after `path::` (or a whole one when `path` is empty):
+/// `crate` never follows a prefix, `super` only climbs, `self` only climbs or ends the tree.
 fn use_tree(tokens: &[TokenTree], mut path: Building) -> bool {
     let mut at = 0;
     loop {
@@ -131,11 +162,11 @@ fn use_tree(tokens: &[TokenTree], mut path: Building) -> bool {
                 return at + 1 == tokens.len() && use_group(group, &path);
             }
             Some(TokenTree::Ident(word)) => {
-                let last = !colons(tokens, at + 1);
+                let (first, last) = (path.head.is_none(), !colons(tokens, at + 1));
                 let valid = match word.to_string().as_str() {
-                    "crate" => false,
-                    "super" => path.climbing(),
-                    "self" => path.climbing() || last,
+                    "crate" => first,
+                    "super" => first || path.climbing(),
+                    "self" => first || path.climbing() || last,
                     _ => !is_keyword(word),
                 };
                 if !valid {
@@ -159,10 +190,15 @@ fn use_tree(tokens: &[TokenTree], mut path: Building) -> bool {
     }
 }
 
-/// The paths a path or `use` tree starting at `at` names, and the index after it: a `{..}`
-/// group of `use` trees is read here with the prefix (and its `super`s) it extends, never on
-/// its own; any other group after `name::` is left to the scan.
-fn read_path(tokens: &[TokenTree], mut at: usize, mut path: Building) -> (Vec<Written>, usize) {
+/// The paths a path or `use` tree starting at `at` names, and the index after it: in a `use`
+/// item, a `{..}` group of `use` trees is read here with the prefix (and its `super`s) it
+/// extends, never on its own; any other group after `name::` is left to the scan.
+fn read_path(
+    tokens: &[TokenTree],
+    mut at: usize,
+    mut path: Building,
+    tree: Tree,
+) -> (Vec<Written>, usize) {
     loop {
         match tokens.get(at) {
             Some(TokenTree::Ident(word)) => {
@@ -174,13 +210,17 @@ fn read_path(tokens: &[TokenTree], mut at: usize, mut path: Building) -> (Vec<Wr
             }
             Some(TokenTree::Group(group))
                 if group.delimiter() == Delimiter::Brace
-                    && path.head.is_some()
+                    && match tree {
+                        Tree::No => false,
+                        Tree::Use => punct(tokens.get(at + 1), ';').is_some(),
+                        Tree::Part => true,
+                    }
                     && use_group(group, &path) =>
             {
                 let mut out = Vec::new();
                 for part in split_commas(group.stream()) {
                     let part: Vec<TokenTree> = part.into_iter().collect();
-                    out.extend(read_path(&part, 0, path.clone()).0);
+                    out.extend(read_path(&part, 0, path.clone(), Tree::Part).0);
                 }
                 return (out, at + 1);
             }
@@ -193,11 +233,25 @@ fn read_path(tokens: &[TokenTree], mut at: usize, mut path: Building) -> (Vec<Wr
 pub fn scan(tokens: &[TokenTree], out: &mut Vec<Named>) {
     let mut at = 0;
     while at < tokens.len() {
+        let tree = if after_use(tokens, at) {
+            Tree::Use
+        } else {
+            Tree::No
+        };
         let (start, read) = match &tokens[at] {
             TokenTree::Group(group) => {
-                let inner: Vec<TokenTree> = group.stream().into_iter().collect();
-                scan(&inner, out);
-                (None, None)
+                // `use {..};`, a group of whole `use` trees.
+                let (paths, end) = match tree {
+                    Tree::Use => read_path(tokens, at, Building::default(), tree),
+                    _ => (Vec::new(), at),
+                };
+                if end > at {
+                    (Some(group.span_open().start()), Some((paths, end, false)))
+                } else {
+                    let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+                    scan(&inner, out);
+                    (None, None)
+                }
             }
             TokenTree::Ident(word) if word == "pub" => {
                 let restricted = match tokens.get(at + 1) {
@@ -208,11 +262,11 @@ pub fn scan(tokens: &[TokenTree], out: &mut Vec<Named>) {
                 (Some(start), restricted.map(|paths| (paths, at + 2, true)))
             }
             TokenTree::Ident(word) if path_start(tokens, at) => {
-                let (paths, end) = read_path(tokens, at, Building::default());
+                let (paths, end) = read_path(tokens, at, Building::default(), tree);
                 (Some(word.span().start()), Some((paths, end, false)))
             }
             TokenTree::Punct(colon) if extern_start(tokens, at) => {
-                let (paths, end) = read_path(tokens, at + 2, Building::extern_prelude());
+                let (paths, end) = read_path(tokens, at + 2, Building::extern_prelude(), tree);
                 (Some(colon.span().start()), Some((paths, end, false)))
             }
             _ => (None, None),
@@ -263,6 +317,8 @@ pub struct FoundUse {
     /// Where the outermost macro call it is an argument of starts; `None` outside any call and
     /// in a `macro_rules!` definition (which expands wherever it is called).
     pub call: Option<LineColumn>,
+    /// An attribute before it may leave it out: a `cfg`, a `cfg_attr` or a macro variable.
+    pub conditional: bool,
 }
 
 /// Where a walk is: the group it is in, the outermost macro call around it, and whether it is in
@@ -317,16 +373,19 @@ fn walk_uses(
             TokenTree::Ident(word) if word == "use" => {
                 let at = word.span().start();
                 let item = use_item(tokens, index);
-                if let (Some(group), Some(item), false) = (within.group, item, skip(at)) {
+                if let (Some(group), Some((item, conditional)), false) =
+                    (within.group, item, skip(at))
+                {
                     uses.push(FoundUse {
                         at,
                         item,
                         group,
                         call: within.call,
+                        conditional,
                     });
                 }
             }
-            TokenTree::Ident(word) if word == "extern" => {
+            TokenTree::Ident(word) if word == "extern" && !skip(word.span().start()) => {
                 if let [TokenTree::Ident(krate), TokenTree::Ident(this), TokenTree::Ident(r#as), TokenTree::Ident(name), ..] =
                     &tokens[index + 1..]
                 {
@@ -365,10 +424,11 @@ fn macro_body(tokens: &[TokenTree], index: usize) -> Option<Macro> {
     }
 }
 
-/// The `use` item whose `use` keyword is at `index` (with a `pub` or `pub(..)` before it), or
-/// `None` when the tokens to its `;` are no `use` item (a macro variable in its path). `$crate`
-/// reads as `crate`.
-fn use_item(tokens: &[TokenTree], index: usize) -> Option<syn::ItemUse> {
+/// The `use` item whose `use` keyword is at `index` (with a `pub` or `pub(..)` before it), and
+/// whether an outer attribute before it may leave it out (a `cfg`, a `cfg_attr`, a macro
+/// variable); `None` when the tokens to its `;` are no `use` item (a macro variable in its
+/// path). `$crate` reads as `crate`.
+fn use_item(tokens: &[TokenTree], index: usize) -> Option<(syn::ItemUse, bool)> {
     let before = |back: usize| index.checked_sub(back).and_then(|i| tokens.get(i));
     let start = match (before(2), before(1)) {
         (Some(TokenTree::Ident(public)), Some(TokenTree::Group(scope)))
@@ -379,6 +439,21 @@ fn use_item(tokens: &[TokenTree], index: usize) -> Option<syn::ItemUse> {
         (_, Some(TokenTree::Ident(public))) if public == "pub" => index - 1,
         _ => index,
     };
+    let (mut attr, mut conditional) = (start, false);
+    while let (Some(_), Some(TokenTree::Group(group))) = (
+        punct(attr.checked_sub(2).and_then(|i| tokens.get(i)), '#'),
+        attr.checked_sub(1).and_then(|i| tokens.get(i)),
+    ) {
+        if group.delimiter() != Delimiter::Bracket {
+            break;
+        }
+        conditional |= match group.stream().into_iter().next() {
+            Some(TokenTree::Ident(word)) => ["cfg", "cfg_attr"].contains(&unraw(&word).as_str()),
+            Some(TokenTree::Punct(dollar)) => dollar.as_char() == '$',
+            _ => false,
+        };
+        attr -= 2;
+    }
     let end = index
         + tokens[index..]
             .iter()
@@ -387,5 +462,6 @@ fn use_item(tokens: &[TokenTree], index: usize) -> Option<syn::ItemUse> {
         let dollar = punct(Some(token), '$').is_some();
         !(dollar && matches!(tokens.get(start + i + 1), Some(TokenTree::Ident(w)) if w == "crate"))
     });
-    syn::parse2(item.map(|(_, token)| token.clone()).collect()).ok()
+    let item = syn::parse2(item.map(|(_, token)| token.clone()).collect()).ok()?;
+    Some((item, conditional))
 }
