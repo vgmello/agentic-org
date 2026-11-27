@@ -2,12 +2,14 @@
 //! `TASK-166`, rules §2): stop, crash, timeout, pre-pump abort, sibling refresh, recovery clear,
 //! pool failover and shutdown all reap through [`reap_live_handle`].
 
+use std::sync::{Arc, Mutex};
+
 use org_proto::sessions::SessionState;
 use org_proto::{ApiError, ErrorCode};
 
 use crate::pump::PumpCommand;
 
-use super::{LiveSessionHandle, SessionManager};
+use super::{spawn_bg_worker_reserved, LiveSessionHandle, SessionManager, StartSlotGuard};
 
 pub(crate) struct ReapedHandle {
     pub(crate) view: org_proto::sessions::SessionView,
@@ -116,4 +118,121 @@ pub(crate) fn reap_live_handle(
         view,
         permit_released,
     })
+}
+
+fn take_recyclable_idle_handle(
+    mgr: &SessionManager,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+    reserve_bg_spawn: bool,
+) -> Option<LiveSessionHandle> {
+    let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+    if reg.draining || reg.shutting_down || reg.starting.contains(employee_id) {
+        return None;
+    }
+    let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
+        let permit_free = handle
+            .active_permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none();
+        let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        st.run_id.as_deref() == Some(expected_run_id)
+            && st.state == SessionState::Idle
+            && !st.recovery_required
+            && permit_free
+    });
+    if !still_recyclable {
+        return None;
+    }
+    let handle = reg.live.remove(employee_id)?;
+    reg.starting.insert(employee_id.to_owned());
+    if reserve_bg_spawn {
+        reg.bg_workers.retain(|h| !h.is_finished());
+        reg.bg_spawning += 1;
+    }
+    let _ = handle.tx.send(PumpCommand::Stop {
+        reason: reason.to_owned(),
+    });
+    Some(handle)
+}
+
+/// Synchronously removes and reaps an idle, permit-free, matching-`run_id` warm handle under
+/// `StartSlotGuard` so `reg.starting` is clear before returning (used during auto-pre-prepare
+/// right before the assignee's synchronous launch so `enforce_sibling_isolation` never races).
+pub(crate) fn recycle_stale_warm_handle_sync(
+    mgr: &SessionManager,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+) -> bool {
+    let Some(old) = take_recyclable_idle_handle(mgr, employee_id, expected_run_id, reason, false)
+    else {
+        return false;
+    };
+    let _start_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
+    reap_live_handle(
+        mgr,
+        employee_id,
+        old,
+        None,
+        ReapMode::FailClosedRestore {
+            conflict_message: format!(
+                "could not verify teardown of recycled warm session `{employee_id}`; resolve recovery first"
+            ),
+        },
+    )
+    .is_ok()
+}
+
+/// Removes an idle, permit-free, matching-`run_id` warm handle from `mgr.registry`, stops its
+/// pump, reaps it fail-closed on a tracked background worker, and retries due wakes once
+/// teardown is verified (`TASK-166`, `TASK-160`).
+pub(crate) fn recycle_stale_warm_handle_in(
+    mgr: &Arc<SessionManager>,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+) -> bool {
+    let Some(removed) =
+        take_recyclable_idle_handle(mgr, employee_id, expected_run_id, reason, true)
+    else {
+        return false;
+    };
+    let emp = employee_id.to_owned();
+    let slot = Arc::new(Mutex::new(Some(removed)));
+    let worker_slot = Arc::clone(&slot);
+    let spawned = spawn_bg_worker_reserved(mgr, "org-warm-recycle", move |m| {
+        let mut reaped_cleanly = true;
+        {
+            let _start_guard = StartSlotGuard::new(&m.registry, emp.clone());
+            if let Some(old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                reaped_cleanly = reap_live_handle(
+                    &m,
+                    &emp,
+                    old,
+                    None,
+                    ReapMode::FailClosedRestore {
+                        conflict_message: format!(
+                            "could not verify teardown of recycled warm session `{emp}`; resolve recovery first"
+                        ),
+                    },
+                )
+                .is_ok();
+            }
+        }
+        if reaped_cleanly && !super::is_admissions_closed(&m) {
+            m.process_due_wakes();
+        }
+    });
+    if !spawned {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(old) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            reg.live.insert(employee_id.to_owned(), old);
+        }
+        reg.starting.remove(employee_id);
+        return false;
+    }
+    true
 }

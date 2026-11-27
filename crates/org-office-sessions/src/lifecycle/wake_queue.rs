@@ -210,7 +210,9 @@ impl SessionManager {
             "waited_ms": held_since.map(|s| ts.saturating_sub(s)),
             "at": rfc3339_now(),
         });
-        let task_ref = assigned_task_refs(&matching).first().copied();
+        let task_refs = assigned_task_refs(&matching);
+        self.preprepare_task_worktrees(emp_id, &task_refs);
+        let task_ref = task_refs.first().copied();
         let attachment_ids = crate::wake::collect_wake_attachment_ids(&matching);
         match self.spawn_or_send_autonomous_with_attachments(
             employee,
@@ -323,10 +325,12 @@ impl SessionManager {
         };
         let waited_ms = queue.held_since_ms.map(|since| ts.saturating_sub(since));
         let first = &queue.items[0];
-        let wants_resume = queue
-            .items
-            .iter()
-            .any(|i| matches!(i.kind, WakeKind::AskAnswer | WakeKind::WatcherAnswer));
+        let wants_resume = queue.items.iter().any(|i| {
+            matches!(
+                i.kind,
+                WakeKind::AskAnswer | WakeKind::WatcherAnswer | WakeKind::SandboxRefresh
+            )
+        });
         let resume_rsid = wants_resume
             .then(|| {
                 self.store
@@ -346,7 +350,9 @@ impl SessionManager {
             "waited_ms": waited_ms,
             "at": rfc3339_now(),
         });
-        let task_ref = assigned_task_refs(&queue.items).first().copied();
+        let task_refs = assigned_task_refs(&queue.items);
+        self.preprepare_task_worktrees(emp_id, &task_refs);
+        let task_ref = task_refs.first().copied();
         let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
         match self.spawn_or_send_autonomous_with_attachments(
             employee,

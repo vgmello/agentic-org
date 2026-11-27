@@ -53,6 +53,7 @@ fn test_pump_ctx(
         private_home: dir.display().to_string(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
+        allow_host_auth: false,
         spec_hash: "h".into(),
         watchdog: StallWatchdog::new(Duration::from_secs(60), Instant::now()),
         recovery_required: false,

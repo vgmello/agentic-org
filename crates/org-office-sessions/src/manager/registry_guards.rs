@@ -73,3 +73,52 @@ pub(super) fn ensure_live_handle_not_recovery_required(
     }
     Ok(())
 }
+
+pub(super) struct BgSpawnGuard<'a> {
+    pub(super) registry: &'a Mutex<SessionRegistry>,
+}
+
+impl Drop for BgSpawnGuard<'_> {
+    fn drop(&mut self) {
+        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.bg_spawning = reg.bg_spawning.saturating_sub(1);
+    }
+}
+
+pub(crate) struct StartSlotGuard<'a> {
+    registry: &'a Mutex<SessionRegistry>,
+    employee_id: String,
+    armed: bool,
+}
+
+impl<'a> StartSlotGuard<'a> {
+    pub(crate) fn new(registry: &'a Mutex<SessionRegistry>, employee_id: String) -> Self {
+        Self {
+            registry,
+            employee_id,
+            armed: true,
+        }
+    }
+
+    /// Releases the slot inside the `registry` critical section the caller already holds, so
+    /// registering a handle and releasing its start slot are one atomic step (`TASK-190`).
+    pub(crate) fn release_locked(mut self, reg: &mut SessionRegistry) {
+        reg.starting.remove(&self.employee_id);
+        self.armed = false;
+    }
+
+    /// Keeps the slot reserved for the next owner (a warm send handing over to a cold start).
+    pub(crate) fn keep_reserved(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StartSlotGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.starting.remove(&self.employee_id);
+    }
+}

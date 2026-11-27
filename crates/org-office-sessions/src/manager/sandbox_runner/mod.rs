@@ -57,6 +57,7 @@ pub struct SandboxPlan {
     mode: SandboxConfinementMode,
     masked_siblings: Option<BTreeSet<String>>,
     office_masks_digest: Option<String>,
+    worktree_sandbox_digest: Option<String>,
     prune_absent_denies: bool,
 }
 
@@ -70,6 +71,7 @@ impl SandboxPlan {
             mode,
             masked_siblings,
             office_masks_digest: None,
+            worktree_sandbox_digest: None,
             prune_absent_denies,
         }
     }
@@ -103,6 +105,15 @@ impl SandboxPlan {
         self
     }
 
+    /// Attaches a launch-time worktree & bare-cache sandbox digest (`TASK-160`) so warm-session
+    /// reuse detects newly prepared self/peer worktrees or newly cloned repositories on BOTH
+    /// mount-mask (`LinuxBwrap`) and native (`HostNative`) sandboxes, regardless of whether a
+    /// provider connection pool is configured.
+    pub fn with_worktree_sandbox_digest(mut self, digest: Option<String>) -> Self {
+        self.worktree_sandbox_digest = digest;
+        self
+    }
+
     /// Sets whether [`SandboxRunner::adapt_session_spec`] should prune absent deny paths.
     pub fn with_prune_absent_denies(mut self, prune: bool) -> Self {
         self.prune_absent_denies = prune;
@@ -122,6 +133,11 @@ impl SandboxPlan {
     /// Launch-time office-masks topology digest, when tracked for warm-session staleness checks.
     pub fn office_masks_digest(&self) -> Option<&str> {
         self.office_masks_digest.as_deref()
+    }
+
+    /// Launch-time worktree & bare-cache sandbox digest, when tracked for warm-session staleness.
+    pub fn worktree_sandbox_digest(&self) -> Option<&str> {
+        self.worktree_sandbox_digest.as_deref()
     }
 
     /// Whether absent concrete deny paths should be pruned when adapting a session spec.
@@ -223,7 +239,16 @@ impl SandboxRunner for LocalOsSandbox {
                     "could not compute sandbox office mask topology",
                 )
             })?;
-        Ok(plan.with_office_masks_digest(Some(digest)))
+        let wt_digest = crate::router::compute_worktree_sandbox_digest(ctx.office, ctx.employee_id);
+        if wt_digest == "err" {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                "could not compute worktree sandbox topology",
+            ));
+        }
+        Ok(plan
+            .with_office_masks_digest(Some(digest))
+            .with_worktree_sandbox_digest(Some(wt_digest)))
     }
 
     fn adapt_session_spec(&self, plan: &SandboxPlan, spec: &mut SessionSpec) {
@@ -237,7 +262,10 @@ impl SandboxRunner for LocalOsSandbox {
         ctx: &SandboxVerifyContext<'_>,
         plan: &SandboxPlan,
     ) -> Result<(), ApiError> {
-        if plan.masked_siblings().is_none() && plan.office_masks_digest().is_none() {
+        if plan.masked_siblings().is_none()
+            && plan.office_masks_digest().is_none()
+            && plan.worktree_sandbox_digest().is_none()
+        {
             return Ok(());
         }
         let sibling_raced = plan.has_unmasked_sibling(
@@ -258,6 +286,12 @@ impl SandboxRunner for LocalOsSandbox {
                 "co-hosted office sandbox topology changed while preparing launch; retry launch",
             ));
         }
+        if is_worktree_sandbox_digest_stale(ctx.office, ctx.employee_id, plan) {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "worktree or repository sandbox topology changed while preparing launch; retry launch",
+            ));
+        }
         Ok(())
     }
 
@@ -265,6 +299,7 @@ impl SandboxRunner for LocalOsSandbox {
         plan.masked_siblings()
             .is_some_and(|masked| has_unmasked_bwrap_sibling_in_office(office, employee_id, masked))
             || is_office_masks_digest_stale(office, plan)
+            || is_worktree_sandbox_digest_stale(office, employee_id, plan)
     }
 
     fn enforce_sibling_isolation(
@@ -274,6 +309,21 @@ impl SandboxRunner for LocalOsSandbox {
     ) -> Result<(), ApiError> {
         enforce_bwrap_sibling_isolation(mgr, starting_emp_id)
     }
+}
+
+fn is_worktree_sandbox_digest_stale(
+    office: &Office,
+    employee_id: &str,
+    plan: &SandboxPlan,
+) -> bool {
+    let Some(expected) = plan.worktree_sandbox_digest() else {
+        return false;
+    };
+    if expected == "err" {
+        return true;
+    }
+    let current = crate::router::compute_worktree_sandbox_digest(office, employee_id);
+    current == "err" || current != expected
 }
 
 fn is_office_masks_digest_stale(office: &Office, plan: &SandboxPlan) -> bool {
