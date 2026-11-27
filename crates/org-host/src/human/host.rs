@@ -170,7 +170,7 @@ mod tests {
         let known = verify_host(&command).unwrap();
         assert_eq!(
             known,
-            match crate::test_programs::image_identity() {
+            match crate::test_programs_tests::image_identity() {
                 ImageIdentity::CodeSignature => VerifiedHost::Image,
                 ImageIdentity::VerifiedBytes => VerifiedHost::UserAlone,
             }

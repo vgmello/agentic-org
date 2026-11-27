@@ -280,15 +280,7 @@ pub fn open_authentication(
 }
 
 pub fn pair_for(names: &[&str], from: i64, to: i64) -> (String, String) {
-    use rcgen::{CertificateParams, KeyPair};
-    let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("generate key");
-    let mut params =
-        CertificateParams::new(names.iter().map(|n| (*n).to_string()).collect::<Vec<_>>())
-            .expect("certificate params");
-    params.not_before = time::OffsetDateTime::from_unix_timestamp(from).expect("not_before");
-    params.not_after = time::OffsetDateTime::from_unix_timestamp(to).expect("not_after");
-    let cert = params.self_signed(&key).expect("self-signed cert");
-    (cert.pem(), key.serialize_pem())
+    org_host_tls::testing::pair_for(names, from, to)
 }
 
 pub fn has_admin(host: &Host) -> bool {

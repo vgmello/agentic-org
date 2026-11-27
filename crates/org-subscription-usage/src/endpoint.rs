@@ -321,6 +321,20 @@ pub(super) fn is_disallowed_ip(ip: IpAddr) -> bool {
     }
 }
 
+fn is_special_use_v4([a, b, c, _]: [u8; 4]) -> bool {
+    matches!(
+        (a, b, c),
+        (0, _, _)
+            | (100, 64..=127, _)
+            | (192, 0, 0)
+            | (192, 0, 2)
+            | (198, 18..=19, _)
+            | (198, 51, 100)
+            | (203, 0, 113)
+            | (240..=255, _, _)
+    )
+}
+
 pub(super) fn is_disallowed_v4(v4: std::net::Ipv4Addr) -> bool {
     v4.is_loopback()
         || v4.is_private()
@@ -328,7 +342,24 @@ pub(super) fn is_disallowed_v4(v4: std::net::Ipv4Addr) -> bool {
         || v4.is_unspecified()
         || v4.is_multicast()
         || v4.is_broadcast()
-        || (v4.octets()[0] == 100 && (v4.octets()[1] & 0b1100_0000) == 64)
+        || is_special_use_v4(v4.octets())
+}
+
+fn is_special_use_v6(segs: [u16; 8]) -> bool {
+    let unique_local = (segs[0] & 0xfe00) == 0xfc00;
+    let link_local = (segs[0] & 0xffc0) == 0xfe80;
+    let deprecated_site_local = (segs[0] & 0xffc0) == 0xfec0;
+    let nat64_well_known = segs[0..6] == [0x0064, 0xff9b, 0, 0, 0, 0];
+    let nat64_local = segs[0..3] == [0x0064, 0xff9b, 0x0001];
+    let discard_prefix = segs[0..4] == [0x0100, 0, 0, 0];
+    let ipv4_translated = segs[0..6] == [0, 0, 0, 0, 0xffff, 0];
+    unique_local
+        || link_local
+        || deprecated_site_local
+        || nat64_well_known
+        || nat64_local
+        || discard_prefix
+        || ipv4_translated
 }
 
 pub(super) fn is_disallowed_v6(v6: std::net::Ipv6Addr) -> bool {
@@ -342,8 +373,7 @@ pub(super) fn is_disallowed_v6(v6: std::net::Ipv6Addr) -> bool {
     v6.is_loopback()
         || v6.is_unspecified()
         || v6.is_multicast()
-        || (segs[0] & 0xfe00) == 0xfc00
-        || (segs[0] & 0xffc0) == 0xfe80
+        || is_special_use_v6(segs)
         || ipv4_compat_disallowed
         || v6.to_ipv4_mapped().is_some_and(is_disallowed_v4)
 }

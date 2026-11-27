@@ -1,4 +1,5 @@
 //! The two PEM files of a supplied pair, as setup's configuration names them.
+
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -6,14 +7,14 @@ use std::path::Path;
 use zeroize::Zeroizing;
 
 /// The most a certificate or key file may hold.
-pub(crate) const FILE_LIMIT: usize = 64 * 1024;
+pub const FILE_LIMIT: usize = 64 * 1024;
 
 /// The text of the file at `path`: opened without following a symbolic link in its last
 /// component, without waiting for a writer (a FIFO) and without taking it as a controlling
 /// terminal; it must be a regular file of at most [`FILE_LIMIT`] bytes of UTF-8. The text is
 /// zeroed when it is dropped, since a key file's is a secret. An error names the path and the
 /// rule, never the contents.
-pub(crate) fn read_pem_file(path: &Path) -> Result<Zeroizing<String>, String> {
+pub fn read_pem_file(path: &Path) -> Result<Zeroizing<String>, String> {
     let shown = path.display();
     let refused = |why: &str| format!("{shown}: {why}");
     let file = std::fs::OpenOptions::new()

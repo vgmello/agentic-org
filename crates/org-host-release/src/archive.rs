@@ -1,5 +1,6 @@
 //! Complete-container archive input. Maintained parsers read entries only;
 //! archive names, modes and metadata never address filesystem output directly.
+
 use super::{files, invalid, policy, Error};
 use flate2::bufread::GzDecoder;
 use org_release::{FileEntry, TrustedKeys, TrustedPolicy, VerifiedManifest};
@@ -29,10 +30,59 @@ pub struct ArchiveBundle {
     manifest: VerifiedManifest,
     signature: [u8; 64],
 }
+
 struct Fact {
     size: u64,
     sha256: [u8; 32],
 }
+
+fn read_bounded_member(reader: &mut dyn Read, size: u64, max: usize) -> Result<Vec<u8>, Error> {
+    if size > max as u64 {
+        return Err(Error::InvalidRelease);
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    reader.take(max as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() != size as usize {
+        return Err(Error::InvalidRelease);
+    }
+    Ok(bytes)
+}
+
+fn hash_payload_member(reader: &mut dyn Read, size: u64) -> Result<Fact, Error> {
+    let mut digest = Sha256::new();
+    let mut count = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        count = count.checked_add(n as u64).ok_or(Error::UnsafeInput)?;
+        digest.update(&buffer[..n]);
+    }
+    if count != size {
+        return Err(Error::InvalidRelease);
+    }
+    Ok(Fact {
+        size,
+        sha256: digest.finalize().into(),
+    })
+}
+
+fn verify_control_bytes(reader: &mut dyn Read, size: u64, expected: &[u8]) -> Result<(), Error> {
+    if size != expected.len() as u64 {
+        return Err(Error::UnsafeInput);
+    }
+    let mut bytes = Vec::with_capacity(expected.len());
+    reader
+        .take(expected.len() as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes != expected {
+        return Err(Error::UnsafeInput);
+    }
+    Ok(())
+}
+
 impl ArchiveBundle {
     /// Freeze a complete local tar.gz under an already-private prepared folder,
     /// then authenticate using embedded build policy only. No trust override.
@@ -46,6 +96,7 @@ impl ArchiveBundle {
             &keys,
         )
     }
+
     pub(super) fn with_policy(
         mut input: File,
         policy: &TrustedPolicy,
@@ -56,47 +107,20 @@ impl ArchiveBundle {
         let mut signature = None;
         let mut inventory = BTreeMap::new();
         visit(&mut input, &mut |name, size, reader| {
-            if matches!(name, "release.v1.json" | "release.v1.sig") {
-                let max = if name == "release.v1.json" {
-                    org_release::MAX_MANIFEST_BYTES
-                } else {
-                    64
-                };
-                if size > max as u64 {
-                    return Err(Error::InvalidRelease);
-                }
-                let mut bytes = Vec::with_capacity(size as usize);
-                reader.take(max as u64 + 1).read_to_end(&mut bytes)?;
-                if bytes.len() != size as usize {
-                    return Err(Error::InvalidRelease);
-                }
-                if name == "release.v1.json" {
-                    manifest_bytes = Some(bytes);
-                } else {
-                    signature = Some(bytes);
-                }
-            } else {
-                let mut digest = Sha256::new();
-                let mut count = 0_u64;
-                let mut buffer = [0_u8; 64 * 1024];
-                loop {
-                    let n = reader.read(&mut buffer)?;
-                    if n == 0 {
-                        break;
-                    }
-                    count = count.checked_add(n as u64).ok_or(Error::UnsafeInput)?;
-                    digest.update(&buffer[..n]);
-                }
-                if count != size {
-                    return Err(Error::InvalidRelease);
-                }
-                inventory.insert(
-                    name.to_owned(),
-                    Fact {
+            match name {
+                "release.v1.json" => {
+                    manifest_bytes = Some(read_bounded_member(
+                        reader,
                         size,
-                        sha256: digest.finalize().into(),
-                    },
-                );
+                        org_release::MAX_MANIFEST_BYTES,
+                    )?);
+                }
+                "release.v1.sig" => {
+                    signature = Some(read_bounded_member(reader, size, 64)?);
+                }
+                _ => {
+                    inventory.insert(name.to_owned(), hash_payload_member(reader, size)?);
+                }
             }
             Ok(())
         })?;
@@ -125,14 +149,17 @@ impl ArchiveBundle {
             signature,
         })
     }
+
     /// Exact authenticated expectations, with no mutable parsed tree.
     pub fn manifest(&self) -> &VerifiedManifest {
         &self.manifest
     }
+
     /// Exact raw64 publisher signature for immutable publication.
     pub fn signature(&self) -> &[u8; 64] {
         &self.signature
     }
+
     /// Reparse the same held private input. A staging sink must consume each
     /// complete authenticated payload; final publication remains the caller's
     /// separate durability/platform/pin responsibility. No unpack API is used.
@@ -143,34 +170,26 @@ impl ArchiveBundle {
         let before = files::identity(&self.input)?;
         let mut seen = Vec::new();
         visit(&mut self.input, &mut |name, size, reader| {
-            if matches!(name, "release.v1.json" | "release.v1.sig") {
-                let expected = if name == "release.v1.json" {
-                    self.manifest.manifest_bytes()
-                } else {
-                    &self.signature
-                };
-                if size != expected.len() as u64 {
-                    return Err(Error::UnsafeInput);
+            match name {
+                "release.v1.json" => {
+                    verify_control_bytes(reader, size, self.manifest.manifest_bytes())?;
                 }
-                let mut bytes = Vec::with_capacity(expected.len());
-                reader
-                    .take(expected.len() as u64 + 1)
-                    .read_to_end(&mut bytes)?;
-                if bytes != expected {
-                    return Err(Error::UnsafeInput);
+                "release.v1.sig" => {
+                    verify_control_bytes(reader, size, &self.signature)?;
                 }
-            } else {
-                let expected = self.manifest.file(name).ok_or(Error::InvalidRelease)?;
-                if expected.size() != size {
-                    return Err(Error::InvalidRelease);
+                _ => {
+                    let expected = self.manifest.file(name).ok_or(Error::InvalidRelease)?;
+                    if expected.size() != size {
+                        return Err(Error::InvalidRelease);
+                    }
+                    let mut checked = Checked {
+                        reader,
+                        verifier: expected.payload_verifier(),
+                    };
+                    sink(expected, &mut checked)?;
+                    checked.verifier.finish().map_err(invalid)?;
+                    seen.push(name.to_owned());
                 }
-                let mut checked = Checked {
-                    reader,
-                    verifier: expected.payload_verifier(),
-                };
-                sink(expected, &mut checked)?;
-                checked.verifier.finish().map_err(invalid)?;
-                seen.push(name.to_owned());
             }
             Ok(())
         })?;
@@ -183,10 +202,12 @@ impl ArchiveBundle {
         Ok(())
     }
 }
+
 struct Checked<'a> {
     reader: &'a mut dyn Read,
     verifier: org_release::PayloadVerifier,
 }
+
 impl Read for Checked<'_> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         let n = self.reader.read(out)?;
@@ -196,11 +217,13 @@ impl Read for Checked<'_> {
         Ok(n)
     }
 }
+
 struct Budget<R> {
     input: R,
     used: u64,
     padding: Rc<Cell<Option<(u64, u64)>>>,
 }
+
 impl<R: Read> Read for Budget<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if out.is_empty() {
@@ -234,7 +257,57 @@ impl<R: Read> Read for Budget<R> {
         Ok(n)
     }
 }
+
 type MemberVisitor<'a> = dyn FnMut(&str, u64, &mut dyn Read) -> Result<(), Error> + 'a;
+
+struct ValidatedTarEntry {
+    name: String,
+    size: u64,
+    padding: Option<(u64, u64)>,
+}
+
+fn validate_tar_entry<R: Read>(
+    entry: &tar::Entry<'_, R>,
+    names: &mut BTreeSet<String>,
+) -> Result<ValidatedTarEntry, Error> {
+    let header = entry.header();
+    let raw = header.as_bytes();
+    if !header.entry_type().is_file()
+        || header.as_ustar().is_none()
+        || &raw[257..263] != b"ustar\0"
+        || &raw[263..265] != b"00"
+        || header.link_name_bytes().is_some()
+    {
+        return Err(Error::InvalidRelease);
+    }
+    let path = entry.path_bytes();
+    if path.len() > org_release::MAX_PATH_BYTES {
+        return Err(Error::InvalidRelease);
+    }
+    let name = std::str::from_utf8(&path)
+        .map_err(|_| Error::InvalidRelease)?
+        .to_owned();
+    if names.len() >= org_release::MAX_FILES + 2 || !names.insert(name.clone()) {
+        return Err(Error::InvalidRelease);
+    }
+    let size = entry.size();
+    if size > org_release::MAX_PAYLOAD_BYTES {
+        return Err(Error::InvalidRelease);
+    }
+    let end = entry
+        .raw_file_position()
+        .checked_add(size)
+        .ok_or(Error::InvalidRelease)?;
+    let stop = end
+        .checked_add((512 - size % 512) % 512)
+        .ok_or(Error::InvalidRelease)?;
+    Ok(ValidatedTarEntry {
+        name,
+        size,
+        padding: (end < stop).then_some((end, stop)),
+    })
+}
+
 fn visit(input: &mut File, visitor: &mut MemberVisitor<'_>) -> Result<(), Error> {
     input.rewind()?;
     let padding = Rc::new(Cell::new(None));
@@ -246,39 +319,9 @@ fn visit(input: &mut File, visitor: &mut MemberVisitor<'_>) -> Result<(), Error>
     let mut names = BTreeSet::new();
     for entry in archive.entries()?.raw(true) {
         let mut entry = entry?;
-        let header = entry.header();
-        let raw = header.as_bytes();
-        if !header.entry_type().is_file()
-            || header.as_ustar().is_none()
-            || &raw[257..263] != b"ustar\0"
-            || &raw[263..265] != b"00"
-            || header.link_name_bytes().is_some()
-        {
-            return Err(Error::InvalidRelease);
-        }
-        let path = entry.path_bytes();
-        if path.len() > org_release::MAX_PATH_BYTES {
-            return Err(Error::InvalidRelease);
-        }
-        let name = std::str::from_utf8(&path)
-            .map_err(|_| Error::InvalidRelease)?
-            .to_owned();
-        if names.len() >= org_release::MAX_FILES + 2 || !names.insert(name.clone()) {
-            return Err(Error::InvalidRelease);
-        }
-        let size = entry.size();
-        if size > org_release::MAX_PAYLOAD_BYTES {
-            return Err(Error::InvalidRelease);
-        }
-        let end = entry
-            .raw_file_position()
-            .checked_add(size)
-            .ok_or(Error::InvalidRelease)?;
-        let stop = end
-            .checked_add((512 - size % 512) % 512)
-            .ok_or(Error::InvalidRelease)?;
-        padding.set((end < stop).then_some((end, stop)));
-        visitor(&name, size, &mut entry)?;
+        let meta = validate_tar_entry(&entry, &mut names)?;
+        padding.set(meta.padding);
+        visitor(&meta.name, meta.size, &mut entry)?;
         // Visitors must consume each entry completely; do not let next() silently
         // skip unverified bytes on behalf of an incomplete staging sink.
         let mut extra = [0; 1];

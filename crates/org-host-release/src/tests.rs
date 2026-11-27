@@ -2,6 +2,29 @@ use super::*;
 use std::os::unix::fs::{symlink, PermissionsExt};
 
 #[test]
+fn compiled_release_floor_is_exact_checked_decimal_with_only_zero_development_sentinel() {
+    assert_eq!(build_floor("0"), 0);
+    assert_eq!(build_floor("1"), 1);
+    assert_eq!(build_floor("18446744073709551615"), u64::MAX);
+    for invalid in [
+        "",
+        "00",
+        "01",
+        "+1",
+        "-1",
+        "1.0",
+        "1e0",
+        " 1",
+        "18446744073709551616",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| build_floor(invalid)).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
 fn absent_build_trust_refuses_before_opening_input() {
     if RELEASE_REGISTRY.is_empty() {
         assert!(matches!(
@@ -40,6 +63,7 @@ struct SignedInput {
     policy: TrustedPolicy,
     bytes: Vec<u8>,
 }
+
 impl SignedInput {
     fn new() -> Self {
         use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -61,8 +85,6 @@ impl SignedInput {
             std::fs::write(root.join(path), b"abc").unwrap();
             files.push(serde_json::json!({"path":path,"size":3,"sha256":hex(&Sha256::digest(b"abc")),"role":if path.starts_with("ui/") {"data"} else {"executable"},"macos_cdhash":null}));
         }
-        // An input-verifier fixture only: these are not executable/platform-
-        // signed images and must never be treated as an activated release.
         let bytes = serde_json::to_vec_pretty(&serde_json::json!({"format":org_release::FORMAT,"release_id":"test-1","sequence":1,"platform":"linux","architecture":"x86_64","installer_contract":1,"key_id":key_id,"files":files})).unwrap();
         std::fs::write(root.join("release.v1.json"), &bytes).unwrap();
         std::fs::write(root.join("release.v1.sig"), key.sign(&bytes).as_ref()).unwrap();
@@ -75,10 +97,12 @@ impl SignedInput {
             bytes,
         }
     }
+
     fn open(&self) -> Result<DirectoryBundle, Error> {
         DirectoryBundle::with_policy(&self.root, &self.policy, &self.keys)
     }
 }
+
 #[test]
 fn signed_directory_is_exact_closed_and_repeatably_verified() {
     let input = SignedInput::new();
@@ -101,6 +125,7 @@ fn signed_directory_is_exact_closed_and_repeatably_verified() {
         .is_err());
     assert!(input.open().is_err());
 }
+
 #[test]
 fn signed_directory_rejects_forgery_truncation_and_missing_payload() {
     let input = SignedInput::new();
@@ -122,6 +147,7 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
     std::io::Write::write_all(&mut encoder, bytes).unwrap();
     encoder.finish().unwrap()
 }
+
 fn tar_input(input: &SignedInput, extra: Option<(&str, tar::EntryType)>) -> Vec<u8> {
     let mut archive = tar::Builder::new(Vec::new());
     for path in org_release::EXECUTABLE_PATHS.into_iter().chain([
@@ -151,6 +177,7 @@ fn tar_input(input: &SignedInput, extra: Option<(&str, tar::EntryType)>) -> Vec<
     }
     archive.into_inner().unwrap()
 }
+
 fn open_compressed(input: &SignedInput, bytes: &[u8]) -> Result<ArchiveBundle, Error> {
     let source = input.root.join("input.gz");
     std::fs::write(&source, bytes).unwrap();
@@ -163,6 +190,7 @@ fn open_compressed(input: &SignedInput, bytes: &[u8]) -> Result<ArchiveBundle, E
     let frozen = folder.freeze_archive(&source, org_release::MAX_PAYLOAD_BYTES)?;
     super::archive::ArchiveBundle::with_policy(frozen, &input.policy, &input.keys)
 }
+
 #[test]
 fn signed_archive_verifies_complete_container_and_copies_only_exact_payloads() {
     let input = SignedInput::new();
@@ -184,8 +212,6 @@ fn signed_archive_verifies_complete_container_and_copies_only_exact_payloads() {
         .unwrap();
     assert_eq!(copied.len(), 5);
     assert!(copied.values().all(|b| b == b"abc"));
-    // Same held private input can be reverified, but an incomplete sink never
-    // claims that all authenticated bytes were copied.
     assert!(archive.copy_payloads(|_, _| Ok(())).is_err());
     archive
         .copy_payloads(|_, reader| {
@@ -194,6 +220,7 @@ fn signed_archive_verifies_complete_container_and_copies_only_exact_payloads() {
         })
         .unwrap();
 }
+
 #[test]
 fn archive_rejects_duplicate_extra_link_extension_and_changed_payload() {
     let input = SignedInput::new();
@@ -212,6 +239,7 @@ fn archive_rejects_duplicate_extra_link_extension_and_changed_payload() {
     padding[515] = b'x';
     assert!(open_compressed(&input, &gzip(&padding)).is_err());
 }
+
 #[test]
 fn archive_rejects_prefix_acceptance_bad_crc_truncation_and_trailing_members() {
     let input = SignedInput::new();
@@ -234,6 +262,7 @@ fn archive_rejects_prefix_acceptance_bad_crc_truncation_and_trailing_members() {
     assert!(open_compressed(&input, &gzip(&hidden)).is_err());
     assert!(open_compressed(&input, &gzip(&tar[..tar.len() - 1024])).is_err());
 }
+
 #[test]
 fn compressed_input_limit_rejects_before_private_copy_without_truncating_source() {
     let input = SignedInput::new();
@@ -254,9 +283,6 @@ fn compressed_input_limit_rejects_before_private_copy_without_truncating_source(
     );
 }
 
-/// A signed release input for `platform` and `architecture` whose executables all hold
-/// `executable`, with `cdhash` as each executable's CodeDirectory hash where the platform
-/// has one. Synthetic bytes: no test treats them as a release that may run.
 fn signed_release(
     platform: &str,
     architecture: &str,
@@ -297,7 +323,6 @@ fn signed_release(
     (temp, bundle)
 }
 
-/// An ELF header for `machine` (62: x86-64, 183: aarch64) followed by some bytes of program.
 fn elf(machine: u16) -> Vec<u8> {
     let mut image = vec![0u8; 96];
     image[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
@@ -306,9 +331,6 @@ fn elf(machine: u16) -> Vec<u8> {
     image
 }
 
-/// The static rule of a release for Linux: an executable is accepted on its ELF header for
-/// the release's architecture, and nothing else is asked of the file, because its bytes are
-/// the ones whose SHA-256 the signed manifest names (the input was verified against it).
 #[test]
 fn a_linux_release_executable_is_accepted_on_its_header_and_its_signed_digest() {
     for (architecture, machine) in [("x86_64", 62u16), ("aarch64", 183)] {
@@ -316,8 +338,6 @@ fn a_linux_release_executable_is_accepted_on_its_header_and_its_signed_digest() 
         platform::verify(&bundle.root, bundle.manifest())
             .unwrap_or_else(|error| panic!("{architecture}: {error}"));
     }
-    // Another machine's executable, a file that is not ELF, and one too short to be a
-    // program are each refused, whatever the manifest says of their digest.
     let (_temp, bundle) = signed_release("linux", "x86_64", &elf(183), None);
     assert!(matches!(
         platform::verify(&bundle.root, bundle.manifest()),
@@ -335,9 +355,6 @@ fn a_linux_release_executable_is_accepted_on_its_header_and_its_signed_digest() 
     ));
 }
 
-/// A release for macOS is signed code: after the header check each executable's signature
-/// must be established, which an unsigned synthetic file never passes, on any system (a
-/// system without a static check is outside that release's profile).
 #[test]
 fn a_macos_release_executable_still_needs_its_code_signature() {
     let mut macho = vec![0u8; 96];
@@ -352,9 +369,6 @@ fn a_macos_release_executable_still_needs_its_code_signature() {
     ));
 }
 
-/// The pin of an executable is its manifest entry: the SHA-256 of its bytes always, and the
-/// CodeDirectory hash exactly in a release for macOS. A data file and an unknown name have
-/// no pin.
 #[test]
 fn a_release_pins_each_executable_with_the_identities_its_manifest_names() {
     use sha2::{Digest, Sha256};
@@ -364,7 +378,7 @@ fn a_release_pins_each_executable_with_the_identities_its_manifest_names() {
     for name in org_release::EXECUTABLE_PATHS {
         assert_eq!(
             runtime::pin_of(linux.manifest(), name).unwrap(),
-            crate::server_check::Pin {
+            Pin {
                 sha256: digest,
                 macos_cdhash: None,
             },
@@ -384,7 +398,7 @@ fn a_release_pins_each_executable_with_the_identities_its_manifest_names() {
     let (_temp, macos) = signed_release("macos", "aarch64", &image, Some(&cdhash));
     assert_eq!(
         runtime::pin_of(macos.manifest(), "agentic-org-office").unwrap(),
-        crate::server_check::Pin {
+        Pin {
             sha256: digest,
             macos_cdhash: Some([0xab; 20]),
         }

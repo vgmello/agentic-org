@@ -8,18 +8,19 @@ publish.workspace = true
 
 [features]
 # Exposes fixtures only to the agentic-org composition integration tests.
-test-support = []
+test-support = ["org-host-tls/test-support"]
 
 [dependencies]
 argon2.workspace = true
 org-host-control = { path = "../../crates/org-host-control" }
+org-host-release = { path = "../org-host-release" }
+org-host-tls = { path = "../org-host-tls" }
 org-pki = { path = "../org-pki" }
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 org-platform = { path = "../org-platform" }
 org-platform-host = { path = "../org-platform-host" }
-org-release = { path = "../org-release" }
 serde.workspace = true
 zeroize = "=1.9.1"
 serde_json.workspace = true
@@ -28,20 +29,10 @@ hmac.workspace = true
 libc.workspace = true
 caseless = "=0.2.2"
 unicode-normalization = "=0.1.26"
-tar = { version = "=0.4.46", default-features = false }
-flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
-# The browser listener's TLS pair (`web_tls`): rcgen writes the instance's own certificate
-# (ring backend, never aws-lc), x509-parser reads a pair, and rustls (the web process's TLS
-# stack, ring provider) loads its key and checks that the key is the leaf's.
-rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring", "pem"] }
-x509-parser = { version = "=0.18.1", default-features = false }
-rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 ring = "=0.17.14"
-base64.workspace = true
-# The certificate's validity bounds, as rcgen and x509-parser both carry them.
-time = { version = "=0.3.55", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+org-host-tls = { path = "../org-host-tls", features = ["test-support"] }
 # Test locations and the flush steps the platform counted (`dirs::testing`, `fs::testing`).
 org-platform = { path = "../org-platform", features = ["test-support"] }
 # The scripted image check and the children a test names itself (`testing::admission`).
@@ -49,9 +40,6 @@ org-platform-host = { path = "../org-platform-host", features = ["test-support"]
 tempfile.workspace = true
 syn = { version = "=2.0.119", features = ["full", "visit"] }
 proc-macro2 = "=1.0.107"
-
-[build-dependencies]
-org-release = { path = "../org-release" }
 
 [lints]
 workspace = true

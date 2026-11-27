@@ -412,30 +412,7 @@ pub mod web_tls {
     use org_host_control::ops::TlsRefusal;
     use org_host_control::HostOpResult;
 
-    /// Who made the stored pair: the instance itself, or the operator (setup's configuration, or
-    /// `tls.set`).
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Source {
-        Made,
-        Supplied,
-    }
-
-    impl Source {
-        pub fn as_str(self) -> &'static str {
-            match self {
-                Source::Made => "made",
-                Source::Supplied => "supplied",
-            }
-        }
-
-        pub fn parse(text: &str) -> Option<Self> {
-            match text {
-                "made" => Some(Source::Made),
-                "supplied" => Some(Source::Supplied),
-                _ => None,
-            }
-        }
-    }
+    pub use org_host_tls::Source;
 
     /// The stored pair, as the registry holds it.
     #[derive(Clone, Debug, PartialEq, Eq)]

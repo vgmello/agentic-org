@@ -1,25 +1,34 @@
 //! Publisher-authenticated input, separate from installation/activation. All
 //! payloads are rehashed while copying through held no-follow source handles.
 //! No credentials, service or instance are opened by these operations.
+
+#![forbid(unsafe_code)]
+
 mod archive;
 mod files;
+mod ids;
 mod platform;
 mod runtime;
-pub use runtime::RuntimeRelease;
+pub mod signing;
 mod store;
+
 pub use archive::ArchiveBundle;
+pub use runtime::{Pin, RuntimeRelease};
+pub use store::{ReleasePin, ReleaseStore};
+
 use org_platform::image::{ReleaseArchitecture, ReleasePlatform};
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, VerifiedManifest};
 use std::{
     io::{self, Read, Write},
     path::Path,
 };
-pub use store::{ReleasePin, ReleaseStore};
+
 // Public policy data only: the reviewed build script validates the registry
 // and always supplies this compile-time floor. No generated Rust is included.
 const RELEASE_REGISTRY: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/release-trust-registry.json"));
 const RELEASE_MIN_SEQUENCE: u64 = build_floor(env!("ORG_EMBEDDED_RELEASE_MIN_SEQUENCE"));
+
 const fn build_floor(raw: &str) -> u64 {
     let bytes = raw.as_bytes();
     assert!(!bytes.is_empty(), "missing compiled release floor");
@@ -47,28 +56,6 @@ const fn build_floor(raw: &str) -> u64 {
     }
     value
 }
-#[test]
-fn compiled_release_floor_is_exact_checked_decimal_with_only_zero_development_sentinel() {
-    assert_eq!(build_floor("0"), 0);
-    assert_eq!(build_floor("1"), 1);
-    assert_eq!(build_floor("18446744073709551615"), u64::MAX);
-    for invalid in [
-        "",
-        "00",
-        "01",
-        "+1",
-        "-1",
-        "1.0",
-        "1e0",
-        " 1",
-        "18446744073709551616",
-    ] {
-        assert!(
-            std::panic::catch_unwind(|| build_floor(invalid)).is_err(),
-            "{invalid}"
-        );
-    }
-}
 
 /// Sanitized release input error. Untrusted filenames/parser excerpts are absent.
 #[derive(Debug)]
@@ -90,20 +77,25 @@ pub enum Error {
     /// Bounded filesystem/copy operation failed; no activation is implied.
     Io(io::ErrorKind),
 }
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "release verification: {self:?}")
     }
 }
+
 impl std::error::Error for Error {}
+
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Self::Io(e.kind())
     }
 }
+
 fn invalid(_: org_release::Error) -> Error {
     Error::InvalidRelease
 }
+
 fn policy() -> Result<(TrustedPolicy, TrustedKeys), Error> {
     if RELEASE_REGISTRY.is_empty() || RELEASE_MIN_SEQUENCE == 0 {
         return Err(Error::MissingBuildTrust);
@@ -133,6 +125,7 @@ pub struct DirectoryBundle {
     manifest: VerifiedManifest,
     signature: [u8; 64],
 }
+
 impl DirectoryBundle {
     /// Verify using only the embedded public registry and target/floor policy.
     /// Runtime environment, bundle keys and configuration cannot supply trust.
@@ -140,6 +133,7 @@ impl DirectoryBundle {
         let (policy, keys) = policy()?;
         Self::with_policy(source, &policy, &keys)
     }
+
     fn with_policy(
         source: &Path,
         policy: &TrustedPolicy,
@@ -173,14 +167,17 @@ impl DirectoryBundle {
         }
         Ok(bundle)
     }
+
     /// Encapsulated authenticated expectations; no mutable parsed tree is exposed.
     pub fn manifest(&self) -> &VerifiedManifest {
         &self.manifest
     }
+
     /// Exact raw Ed25519 sidecar for immutable staging, not a signing key.
     pub fn signature(&self) -> &[u8; 64] {
         &self.signature
     }
+
     fn verify_controls(&self) -> Result<(), Error> {
         self.root.verify_inventory(&self.manifest)?;
         if self
@@ -193,6 +190,7 @@ impl DirectoryBundle {
         }
         Ok(())
     }
+
     /// Copy only a signed payload. Every read checks ownership/type/link/mode,
     /// checked exact byte count/hash and opened descriptor identity afterward.
     /// A failed copy leaves its destination uncommitted; caller owns staging.

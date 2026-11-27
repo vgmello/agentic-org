@@ -7,7 +7,6 @@
 //! [`MessagingRead`]: org_office::messaging::ports::MessagingRead
 //! [`MessagingWrite`]: org_office::messaging::ports::MessagingWrite
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use org_store::{Cursor, EngineError, Sha256};
@@ -153,17 +152,14 @@ fn messaging_schema_matches(db: &Connection) -> Result<bool, EngineError> {
 
 pub(super) fn ensure_protected_dir(msg_path: &Path) -> Result<(), EngineError> {
     let folder = msg_path.parent().expect("messaging.db sits in protected/");
-    fs::create_dir_all(folder)
+    org_platform::fs::create_owner_only_dir_all(folder)
         .and_then(|()| org_platform::fs::set_owner_only_dir(folder))
         .map_err(|e| refused("creating protected messaging directory", e))
 }
 
 pub(super) fn protect_messaging_file(msg_path: &Path) -> Result<(), EngineError> {
-    if msg_path.exists() {
-        org_office::private_fs::private_file(msg_path)
-            .map_err(|e| refused("protecting messaging.db permissions", e))?;
-    }
-    Ok(())
+    org_office::private_fs::tighten_sqlite_sidecars(msg_path)
+        .map_err(|e| refused("protecting messaging.db permissions", e))
 }
 
 /// Opens or recreates `protected/messaging.db`. Returns `(writer_conn, recreated)`.
@@ -187,6 +183,11 @@ pub(super) fn open_messaging_writer(msg_path: &Path) -> Result<(Connection, bool
         }
     }
     remove_database(msg_path)?;
+    // Pre-create with 0o600 before SQLite opens it (no 0o644 creation window).
+    drop(
+        org_office::private_fs::private_file(msg_path)
+            .map_err(|e| refused("pre-creating messaging.db", e))?,
+    );
     let conn = connect_writer(msg_path)?;
     create_messaging_schema(&conn)?;
     protect_messaging_file(msg_path)?;
@@ -195,6 +196,11 @@ pub(super) fn open_messaging_writer(msg_path: &Path) -> Result<(Connection, bool
 
 pub(super) fn open_messaging_replacement(new_path: &Path) -> Result<Connection, EngineError> {
     ensure_protected_dir(new_path)?;
+    // Pre-create with 0o600 before SQLite opens it (no 0o644 creation window).
+    drop(
+        org_office::private_fs::private_file(new_path)
+            .map_err(|e| refused("pre-creating messaging replacement", e))?,
+    );
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
     let db = connect(new_path, flags)?;

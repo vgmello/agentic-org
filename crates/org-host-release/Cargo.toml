@@ -1,0 +1,31 @@
+[package]
+name = "org-host-release"
+description = "Host publisher-authenticated release verification, archive freezing, durable release store, and image admission."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2.workspace = true
+libc.workspace = true
+org-host-control = { path = "../org-host-control" }
+org-platform = { path = "../org-platform" }
+org-platform-host = { path = "../org-platform-host" }
+org-proto = { path = "../org-proto" }
+org-release = { path = "../org-release" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar = { version = "=0.4.46", default-features = false }
+
+[build-dependencies]
+org-release = { path = "../org-release" }
+
+[dev-dependencies]
+org-platform = { path = "../org-platform", features = ["test-support"] }
+ring = "=0.17.14"
+tempfile.workspace = true
+
+[lints]
+workspace = true

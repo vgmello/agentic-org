@@ -1,51 +1,22 @@
 //! Single secret-redaction choke-point for `agentic-org` diagnostics (`logs`, `doctor`, `support`).
 //!
-//! Orchestrates PEM private keys (single-line, multi-line, and truncated), provider/service token
-//! prefixes, auth schemes, JWTs, URL userinfo, invite/reset/registration URL tokens, and delegates
-//! header, quoted-field, env/query, unquoted-field, and recovery-code passes to `redact_fields`.
+//! Composes directly on Layer-0 [`org_redact::redact_text`] for shared secret-pattern scrubbing
+//! (prefixes, AWS keys, Bearer/Basic auth schemes, JWTs, URL userinfo, HTTP headers, JSON/env
+//! secrets) and layers CLI-specific diagnostics helpers on top: multi-line/orphan PEM private-key
+//! scrubbing (`redact_pem`), invite/reset/registration token URLs, unquoted YAML/log fields, extra
+//! diagnostic secret keys, and recovery codes (`redact_fields`).
 
 use serde_json::Value;
 
 pub(crate) use super::redact_fields::REDACTED;
 use super::redact_fields::{
-    find_ascii_ci, is_json_space_escape, is_sensitive_key, redact_env_assignments,
-    redact_header_values, redact_quoted_key_values, redact_recovery_codes,
-    redact_unquoted_key_values, unquoted_token_len,
+    find_ascii_ci, is_sensitive_key, redact_env_assignments, redact_quoted_key_values,
+    redact_recovery_codes, redact_unquoted_key_values, unquoted_token_len,
 };
 use super::redact_pem::{
     has_leading_orphan_pem_end, has_unclosed_pem_begin, redact_pem_blocks,
     scrub_preceding_pem_body, strip_pem_end_line, REDACTED_PRIVATE_KEY,
 };
-
-const SECRET_PREFIXES: &[(&str, usize)] = &[
-    ("sk-ant-", 6),
-    ("sk-proj-", 6),
-    ("sk-svcacct-", 6),
-    ("sk-admin-", 6),
-    ("sk-live-", 6),
-    ("sk-test-", 6),
-    ("sk_live_", 6),
-    ("sk_test_", 6),
-    ("rk_live_", 6),
-    ("github_pat_", 6),
-    ("ghp_", 6),
-    ("gho_", 6),
-    ("ghs_", 6),
-    ("ghu_", 6),
-    ("ghr_", 6),
-    ("glpat-", 6),
-    ("xoxb-", 6),
-    ("xoxp-", 6),
-    ("xoxa-", 6),
-    ("xoxr-", 6),
-    ("xoxs-", 6),
-    ("xapp-", 6),
-    ("AIza", 8),
-    ("ya29.", 8),
-];
-
-const AWS_KEY_ID_PREFIXES: &[&str] = &["AKIA", "ASIA"];
-const AWS_KEY_ID_TAIL: usize = 16;
 
 const TOKEN_URL_MARKERS: &[(&str, usize)] = &[
     ("/register#", 6),
@@ -72,17 +43,26 @@ pub(crate) struct Redaction {
     pub(crate) count: usize,
 }
 
+fn count_redaction_markers(text: &str) -> usize {
+    text.matches(REDACTED).count() + text.matches(REDACTED_PRIVATE_KEY).count()
+}
+
+fn apply_shared_org_redact(input: &str, total: &mut usize) -> String {
+    let before_markers = count_redaction_markers(input);
+    let after = org_redact::redact_text(input, &[]);
+    if after != input {
+        let after_markers = count_redaction_markers(&after);
+        *total += after_markers.saturating_sub(before_markers).max(1);
+    }
+    after
+}
+
 /// Redacts all known secret shapes from `input`, returning `(redacted_text, replacement_count)`.
 pub(crate) fn redact_text(input: &str) -> Redaction {
     let mut total = 0usize;
     let mut out = redact_pem_blocks(input, &mut total);
-    out = redact_all_prefixes(&out, &mut total);
-    out = redact_auth_scheme(&out, "bearer", true, &mut total);
-    out = redact_auth_scheme(&out, "basic", false, &mut total);
-    out = redact_jwts(&out, &mut total);
-    out = redact_url_userinfo(&out, &mut total);
+    out = apply_shared_org_redact(&out, &mut total);
     out = redact_token_urls(&out, &mut total);
-    out = redact_header_values(&out, &mut total);
     out = redact_quoted_key_values(&out, &mut total);
     out = redact_unquoted_key_values(&out, &mut total);
     out = redact_env_assignments(&out, &mut total);
@@ -171,161 +151,6 @@ fn redact_json_inner(value: &Value, total: &mut usize) -> Value {
         }
         other => other.clone(),
     }
-}
-
-pub(super) fn is_token_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')
-}
-
-fn at_word_start(input: &str, idx: usize) -> bool {
-    let bytes = input.as_bytes();
-    idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric() || is_json_space_escape(bytes, idx - 1)
-}
-
-fn redact_all_prefixes(input: &str, total: &mut usize) -> String {
-    let mut out = input.to_owned();
-    for &(prefix, min_tail) in SECRET_PREFIXES {
-        out = redact_prefixed_where(&out, prefix, total, |after| {
-            let tail = after.bytes().take_while(|&b| is_token_byte(b)).count();
-            (tail >= min_tail).then_some(tail)
-        });
-    }
-    out = redact_prefixed_where(&out, "sk-", total, |after| {
-        let tail = after.bytes().take_while(|&b| is_token_byte(b)).count();
-        let slice = &after[..tail];
-        let is_key = tail >= 12 || (tail >= 8 && !slice.bytes().all(|b| b.is_ascii_lowercase()));
-        is_key.then_some(tail)
-    });
-    for prefix in AWS_KEY_ID_PREFIXES {
-        out = redact_prefixed_where(&out, prefix, total, |after| {
-            let tail = after
-                .bytes()
-                .take_while(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-                .count();
-            (tail >= AWS_KEY_ID_TAIL).then_some(tail)
-        });
-    }
-    out
-}
-
-fn redact_prefixed_where(
-    input: &str,
-    prefix: &str,
-    total: &mut usize,
-    tail_len: impl Fn(&str) -> Option<usize>,
-) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut pos = 0;
-    while let Some(rel) = input[pos..].find(prefix) {
-        let idx = pos + rel;
-        let after = idx + prefix.len();
-        out.push_str(&input[pos..idx]);
-        match tail_len(&input[after..]).filter(|_| at_word_start(input, idx)) {
-            Some(tail) => {
-                out.push_str(REDACTED);
-                *total += 1;
-                pos = after + tail;
-            }
-            None => {
-                out.push_str(prefix);
-                pos = after;
-            }
-        }
-    }
-    out.push_str(&input[pos..]);
-    out
-}
-
-fn looks_like_credential(token: &str, allow_lowercase: bool) -> bool {
-    if token.len() < 6 || token == REDACTED {
-        return false;
-    }
-    allow_lowercase || !token.bytes().all(|b| b.is_ascii_lowercase())
-}
-
-fn redact_auth_scheme(
-    input: &str,
-    scheme_lower: &str,
-    allow_lowercase: bool,
-    total: &mut usize,
-) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut pos = 0;
-    while let Some(rel) = find_ascii_ci(&input[pos..], scheme_lower) {
-        let idx = pos + rel;
-        let after = idx + scheme_lower.len();
-        let gap = input[after..].len() - input[after..].trim_start_matches([' ', '\t']).len();
-        if gap == 0 || !at_word_start(input, idx) {
-            out.push_str(&input[pos..after]);
-            pos = after;
-            continue;
-        }
-        let token_start = after + gap;
-        let token_len = unquoted_token_len(&input.as_bytes()[token_start..], b"\"',};)");
-        let token = &input[token_start..token_start + token_len];
-        out.push_str(&input[pos..token_start]);
-        if looks_like_credential(token, allow_lowercase) {
-            out.push_str(REDACTED);
-            *total += 1;
-        } else {
-            out.push_str(token);
-        }
-        pos = token_start + token_len;
-    }
-    out.push_str(&input[pos..]);
-    out
-}
-
-fn redact_jwts(input: &str, total: &mut usize) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(idx) = rest.find("eyJ") {
-        out.push_str(&rest[..idx]);
-        let cand = &rest[idx..];
-        let len = cand.bytes().take_while(|&b| is_token_byte(b)).count();
-        let parts: Vec<&str> = cand[..len].split('.').collect();
-        if parts.len() >= 2 && parts[0].len() >= 10 && parts[1].len() >= 10 {
-            out.push_str(REDACTED);
-            *total += 1;
-            rest = &cand[len..];
-        } else {
-            out.push_str("eyJ");
-            rest = &cand[3..];
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-const MIN_BARE_USERINFO_TOKEN: usize = 16;
-
-fn redact_url_userinfo(input: &str, total: &mut usize) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(idx) = rest.find("://") {
-        out.push_str(&rest[..idx + 3]);
-        let after = &rest[idx + 3..];
-        let end = after
-            .bytes()
-            .position(|b| b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#' | b'"' | b'\''))
-            .unwrap_or(after.len());
-        let authority = &after[..end];
-        match authority.rfind('@') {
-            Some(at)
-                if authority[..at] != *REDACTED
-                    && (authority[..at].contains(':')
-                        || authority[..at].len() >= MIN_BARE_USERINFO_TOKEN) =>
-            {
-                out.push_str(REDACTED);
-                out.push_str(&authority[at..]);
-                *total += 1;
-            }
-            _ => out.push_str(authority),
-        }
-        rest = &after[end..];
-    }
-    out.push_str(rest);
-    out
 }
 
 fn redact_token_urls(input: &str, total: &mut usize) -> String {

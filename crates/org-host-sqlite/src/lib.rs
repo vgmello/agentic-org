@@ -508,11 +508,14 @@ fn checked_home(home: &Path) -> Result<PathBuf, Error> {
     if !home.is_absolute() {
         return Err(Error::Unsafe);
     }
-    let resolved = home.canonicalize()?;
-    let m = fs::symlink_metadata(home)?;
+    // Strip trailing `/` and `/.` components so POSIX `lstat` inspects the final
+    // path component itself rather than dereferencing a symlinked home directory.
+    let norm: PathBuf = home.components().collect();
+    let m = fs::symlink_metadata(&norm)?;
     if !m.is_dir() || m.uid() != org_host::home::euid() || m.mode() & 0o7777 != 0o700 {
         return Err(Error::Unsafe);
     }
+    let resolved = norm.canonicalize()?;
     Ok(resolved)
 }
 fn checked_file(path: &Path, empty_ok: bool) -> Result<Option<File>, Error> {
