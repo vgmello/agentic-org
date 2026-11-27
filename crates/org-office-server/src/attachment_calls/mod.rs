@@ -7,20 +7,27 @@
 //! them from HQ over federation into the office's bounded cache (`TASK-98.6`), after the
 //! policy allowed the read; an unreachable HQ is `unavailable`, worth retrying.
 
+mod render;
+
 use std::sync::Arc;
 
 use org_office::attachments::remote::BlobPull;
 use org_office::{Office, OfficeError, OfficeRole};
 use org_proto::attachments::{
-    AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentUpdateMeta,
-    AttachmentUploadAbort, AttachmentUploadBegin, AttachmentUploadChunk, AttachmentUploadCommit,
+    AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentRender,
+    AttachmentUpdateMeta, AttachmentUploadAbort, AttachmentUploadBegin, AttachmentUploadChunk,
+    AttachmentUploadCommit,
 };
 use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 
 use crate::failure::logged;
 use crate::federation::{blob_cache_max_bytes, HqBlobRemote};
 
-/// Whether `request` is one of the nine attachment calls.
+pub(crate) use render::RenderDelegation;
+#[cfg(test)]
+pub(crate) use render::RenderRuntime;
+
+/// Whether `request` is one of the ten attachment calls.
 pub(crate) fn is_attachment_method(request: &Request) -> bool {
     request.is::<AttachmentUploadBegin>()
         || request.is::<AttachmentUploadChunk>()
@@ -31,12 +38,25 @@ pub(crate) fn is_attachment_method(request: &Request) -> bool {
         || request.is::<AttachmentList>()
         || request.is::<AttachmentUpdateMeta>()
         || request.is::<AttachmentReadChunk>()
+        || request.is::<AttachmentRender>()
 }
 
-/// Whether `response` answers an `attachment.attach` that bound a file. A satellite's new
-/// shared file then waits in its outbox, so the caller wakes the shipper at once.
+/// Whether `response` answers an `attachment.attach` or hosted `attachment.render` that bound
+/// a file. A satellite's new shared file then waits in its outbox, so the caller wakes the
+/// shipper at once.
 pub(crate) fn bound_a_file(request: &Request, response: &Response) -> bool {
-    request.is::<AttachmentAttach>() && matches!(response.outcome, Outcome::Result(_))
+    if request.is::<AttachmentAttach>() && matches!(response.outcome, Outcome::Result(_)) {
+        return true;
+    }
+    if request.is::<AttachmentRender>() {
+        if let Outcome::Result(val) = &response.outcome {
+            return val
+                .get("attachment_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some();
+        }
+    }
+    false
 }
 
 /// Parses `request` as `C`, runs `handler`, and answers: the result, the caller's refusal, or
@@ -71,9 +91,37 @@ fn run<C: Call>(
 }
 
 /// Answers one attachment call for the bound `member`, or `None` for any other method.
+#[cfg(test)]
 pub(crate) fn dispatch_attachment_rpc(
     office: &Arc<Office>,
     member: Option<&str>,
+    request: &Request,
+) -> Option<Response> {
+    dispatch_attachment_rpc_with(office, render::default_runtime(), member, None, request)
+}
+
+/// Answers one attachment call with optional Chief-of-Staff delegation context (`TASK-240`).
+pub(crate) fn dispatch_attachment_rpc_delegated(
+    office: &Arc<Office>,
+    member: Option<&str>,
+    delegation: Option<RenderDelegation<'_>>,
+    request: &Request,
+) -> Option<Response> {
+    dispatch_attachment_rpc_with(
+        office,
+        render::default_runtime(),
+        member,
+        delegation,
+        request,
+    )
+}
+
+/// Answers one attachment call using an explicit [`render::RenderRuntime`].
+pub(crate) fn dispatch_attachment_rpc_with(
+    office: &Arc<Office>,
+    render_runtime: &render::RenderRuntime,
+    member: Option<&str>,
+    delegation: Option<RenderDelegation<'_>>,
     request: &Request,
 ) -> Option<Response> {
     if !is_attachment_method(request) {
@@ -85,7 +133,8 @@ pub(crate) fn dispatch_attachment_rpc(
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
-    dispatch_uploads(office, caller, request).or_else(|| dispatch_files(office, caller, request))
+    dispatch_uploads(office, caller, request)
+        .or_else(|| dispatch_files(office, render_runtime, caller, delegation, request))
 }
 
 fn dispatch_uploads(office: &Office, caller: &str, request: &Request) -> Option<Response> {
@@ -129,7 +178,13 @@ fn read_chunk(
     office.attachment_read_chunk_with(caller, params, Some(pull))
 }
 
-fn dispatch_files(office: &Arc<Office>, caller: &str, request: &Request) -> Option<Response> {
+fn dispatch_files(
+    office: &Arc<Office>,
+    render_runtime: &render::RenderRuntime,
+    caller: &str,
+    delegation: Option<RenderDelegation<'_>>,
+    request: &Request,
+) -> Option<Response> {
     if request.is::<AttachmentAttach>() {
         return Some(run::<AttachmentAttach>(request, |p| {
             office.attachment_attach(caller, p)
@@ -153,6 +208,11 @@ fn dispatch_files(office: &Arc<Office>, caller: &str, request: &Request) -> Opti
     if request.is::<AttachmentReadChunk>() {
         return Some(run::<AttachmentReadChunk>(request, |p| {
             read_chunk(office, caller, p)
+        }));
+    }
+    if request.is::<AttachmentRender>() {
+        return Some(run::<AttachmentRender>(request, |p| {
+            render::handle_render(office, render_runtime, caller, delegation, p)
         }));
     }
     None

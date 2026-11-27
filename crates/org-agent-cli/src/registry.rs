@@ -203,9 +203,11 @@ pub(crate) fn normalize_args(args: &[String]) -> Cow<'_, [String]> {
     runtime_table().expand(args)
 }
 
-/// `agent approve <code>` and the other operator verbs with their bare words read as named flags.
+/// `agent approve <code>` and the other operator verbs with their bare words read as named flags,
+/// plus `file render --format pdf` mapped onto `--to pdf` without colliding with `--format json|yaml|compact`.
 pub(crate) fn rewrite_positional(args: &[String]) -> Option<Vec<String>> {
-    hiring::rewrite_positional(runtime_table(), args)
+    let table = runtime_table();
+    hiring::rewrite_positional(table, args).or_else(|| files::rewrite_render_args(table, args))
 }
 
 /// `org-command`'s plain-text help of `args`, enriched with every slice's `Use when:` guidance.

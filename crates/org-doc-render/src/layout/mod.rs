@@ -1,0 +1,764 @@
+//! Paginated document layout engine: multi-page table header repetition, shaded code blocks,
+//! blockquotes, lists, deduplicated bounded raster images, `@page` headers/footers, recursion
+//! depth guards, and fail-fast `max_pages` + cooperative deadline enforcement.
+
+mod text;
+
+use std::collections::{BTreeMap, HashMap};
+
+use crate::css::{clamp_page_margins, MarginBoxSpec, PageStyle, Rgb, TextAlign};
+use crate::doc::{Block, Document, ImageSource, InlineSpan, TableRow};
+use crate::model::{
+    check_deadline, RenderDeadline, RenderError, ResolvedImage, MAX_EMBEDDED_IMAGES,
+    MAX_NESTING_DEPTH, MAX_TOTAL_IMAGE_DECODED_BYTES,
+};
+
+const MAX_TABLE_COLS: usize = 64;
+const MAX_DRAW_OPS: usize = 250_000;
+
+use text::{
+    decode_bounded_image, heading_size, measure_row, measure_text, wrap_mono, wrap_spans,
+    MeasuredRow, PlacedRun,
+};
+
+pub(crate) use text::{EmbeddedImage, FontKind};
+
+/// One placed drawing primitive on a PDF page (coordinates in PDF points from bottom-left).
+#[derive(Clone, Debug)]
+pub(crate) enum DrawOp {
+    Text {
+        x: f32,
+        y: f32,
+        size: f32,
+        font: FontKind,
+        color: Rgb,
+        text: String,
+    },
+    Rect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        fill: Option<Rgb>,
+        stroke: Option<(Rgb, f32)>,
+    },
+    Line {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Rgb,
+        width: f32,
+    },
+    Image {
+        image_index: usize,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
+}
+
+/// One laid-out page ready for PDF stream emission.
+#[derive(Clone, Debug)]
+pub(crate) struct PagePlan {
+    pub ops: Vec<DrawOp>,
+}
+
+/// Complete paginated plan ready for `pdf-writer`.
+#[derive(Clone, Debug)]
+pub(crate) struct LayoutPlan {
+    pub title: Option<String>,
+    pub page: PageStyle,
+    pub pages: Vec<PagePlan>,
+    pub images: Vec<EmbeddedImage>,
+}
+
+/// Paginates `doc` into pages while enforcing `max_pages`, image budgets, recursion depth, and
+/// cooperative `deadline`.
+pub(crate) fn paginate(
+    doc: Document,
+    attachments: &BTreeMap<String, ResolvedImage>,
+    max_pages: u32,
+    deadline: Option<&RenderDeadline>,
+) -> Result<LayoutPlan, RenderError> {
+    let mut ctx = Paginator::new(doc.page.clone(), attachments, max_pages, deadline);
+    for block in &doc.blocks {
+        ctx.place_block(block, 0.0, 0)?;
+    }
+    if ctx.pages.is_empty() {
+        ctx.pages.push(PagePlan { ops: Vec::new() });
+    }
+    ctx.apply_running_headers_and_footers();
+    Ok(LayoutPlan {
+        title: doc.title,
+        page: ctx.page,
+        pages: ctx.pages,
+        images: ctx.images,
+    })
+}
+
+struct Paginator<'a> {
+    page: PageStyle,
+    attachments: &'a BTreeMap<String, ResolvedImage>,
+    max_pages: u32,
+    deadline: Option<&'a RenderDeadline>,
+    pages: Vec<PagePlan>,
+    images: Vec<EmbeddedImage>,
+    image_cache: HashMap<String, usize>,
+    total_image_decoded_bytes: usize,
+    total_draw_ops: usize,
+    cursor_y: f32,
+}
+
+impl<'a> Paginator<'a> {
+    fn new(
+        mut page: PageStyle,
+        attachments: &'a BTreeMap<String, ResolvedImage>,
+        max_pages: u32,
+        deadline: Option<&'a RenderDeadline>,
+    ) -> Self {
+        clamp_page_margins(&mut page);
+        let start_y = page.height_pt - page.margin_top;
+        Self {
+            page,
+            attachments,
+            max_pages: max_pages.max(1),
+            deadline,
+            pages: vec![PagePlan { ops: Vec::new() }],
+            images: Vec::new(),
+            image_cache: HashMap::new(),
+            total_image_decoded_bytes: 0,
+            total_draw_ops: 0,
+            cursor_y: start_y,
+        }
+    }
+
+    fn content_left(&self) -> f32 {
+        self.page.margin_left
+    }
+
+    fn content_width(&self) -> f32 {
+        (self.page.width_pt - self.page.margin_left - self.page.margin_right).max(72.0)
+    }
+
+    fn printable_height(&self) -> f32 {
+        (self.page.height_pt - self.page.margin_top - self.page.margin_bottom).max(72.0)
+    }
+
+    fn content_bottom(&self) -> f32 {
+        self.page.margin_bottom
+    }
+
+    fn check_deadline(&self) -> Result<(), RenderError> {
+        check_deadline(self.deadline)
+    }
+
+    fn new_page(&mut self) -> Result<(), RenderError> {
+        self.check_deadline()?;
+        let next = self.pages.len() as u32 + 1;
+        if next > self.max_pages {
+            return Err(RenderError::PageLimitExceeded {
+                actual: next,
+                max: self.max_pages,
+            });
+        }
+        self.pages.push(PagePlan { ops: Vec::new() });
+        self.cursor_y = self.page.height_pt - self.page.margin_top;
+        Ok(())
+    }
+
+    fn ensure_space(&mut self, height: f32) -> Result<(), RenderError> {
+        if self.cursor_y - height < self.content_bottom()
+            && self.cursor_y < self.page.height_pt - self.page.margin_top - 1.0
+        {
+            self.new_page()?;
+        }
+        Ok(())
+    }
+
+    fn push_op(&mut self, op: DrawOp) -> Result<(), RenderError> {
+        self.total_draw_ops = self.total_draw_ops.saturating_add(1);
+        if self.total_draw_ops > MAX_DRAW_OPS {
+            return Err(RenderError::ForbiddenContent {
+                reason: "document draw operation count exceeds maximum allowed (250,000)",
+            });
+        }
+        if self.total_draw_ops & 0xff == 0 {
+            self.check_deadline()?;
+        }
+        if let Some(page) = self.pages.last_mut() {
+            page.ops.push(op);
+        }
+        Ok(())
+    }
+
+    fn place_block(&mut self, block: &Block, indent: f32, depth: usize) -> Result<(), RenderError> {
+        if depth > MAX_NESTING_DEPTH {
+            return Err(RenderError::ForbiddenContent {
+                reason: "document layout nesting depth exceeds maximum allowed (64)",
+            });
+        }
+        self.check_deadline()?;
+        match block {
+            Block::Heading {
+                level,
+                spans,
+                style,
+            } => self.place_heading(*level, spans, style, indent)?,
+            Block::Paragraph { spans, style } => self.place_paragraph(spans, style, indent)?,
+            Block::Code { text, style } => self.place_code_block(
+                text,
+                indent,
+                style.font_size.unwrap_or(8.8),
+                style.background.unwrap_or(Rgb::CODE_BG),
+            )?,
+            Block::Quote { blocks } => self.place_blockquote(blocks, indent, depth + 1)?,
+            Block::List {
+                ordered,
+                start,
+                items,
+            } => self.place_list(*ordered, *start, items, indent, depth + 1)?,
+            Block::Table { headers, rows } => self.place_table(headers, rows, indent)?,
+            Block::Image {
+                source,
+                alt,
+                width_pt,
+                height_pt,
+            } => self.place_image(source, alt, *width_pt, *height_pt, indent)?,
+            Block::HorizontalRule => self.place_hr(indent)?,
+            Block::PageBreak => self.new_page()?,
+        }
+        Ok(())
+    }
+
+    fn place_heading(
+        &mut self,
+        level: u8,
+        spans: &[InlineSpan],
+        style: &crate::css::StyleProps,
+        indent: f32,
+    ) -> Result<(), RenderError> {
+        let size = style.font_size.unwrap_or_else(|| heading_size(level));
+        let lead = size * 1.35;
+        self.cursor_y -= style
+            .margin_top
+            .unwrap_or(if level <= 2 { 14.0 } else { 10.0 });
+        self.ensure_space(lead * 1.5)?;
+        let avail = self.content_width() - indent;
+        let lines = wrap_spans(spans, avail, size, true, style.color);
+        self.emit_lines(
+            &lines,
+            self.content_left() + indent,
+            avail,
+            size,
+            lead,
+            style.align.unwrap_or(TextAlign::Left),
+        )?;
+        self.cursor_y -= style.margin_bottom.unwrap_or(6.0);
+        Ok(())
+    }
+
+    fn place_paragraph(
+        &mut self,
+        spans: &[InlineSpan],
+        style: &crate::css::StyleProps,
+        indent: f32,
+    ) -> Result<(), RenderError> {
+        let size = style.font_size.unwrap_or(10.5);
+        let lead = size * 1.42;
+        self.cursor_y -= style.margin_top.unwrap_or(0.0);
+        let avail = self.content_width() - indent;
+        let lines = wrap_spans(spans, avail, size, style.bold.unwrap_or(false), style.color);
+        self.emit_lines(
+            &lines,
+            self.content_left() + indent,
+            avail,
+            size,
+            lead,
+            style.align.unwrap_or(TextAlign::Left),
+        )?;
+        self.cursor_y -= style.margin_bottom.unwrap_or(7.5);
+        Ok(())
+    }
+
+    fn place_hr(&mut self, indent: f32) -> Result<(), RenderError> {
+        self.ensure_space(12.0)?;
+        let y = self.cursor_y - 6.0;
+        self.push_op(DrawOp::Line {
+            x1: self.content_left() + indent,
+            y1: y,
+            x2: self.content_left() + self.content_width(),
+            y2: y,
+            color: Rgb::BORDER,
+            width: 0.75,
+        })?;
+        self.cursor_y -= 12.0;
+        Ok(())
+    }
+
+    fn place_blockquote(
+        &mut self,
+        blocks: &[Block],
+        indent: f32,
+        depth: usize,
+    ) -> Result<(), RenderError> {
+        let bar_x = self.content_left() + indent + 4.0;
+        for inner in blocks {
+            let start_page = self.pages.len() - 1;
+            let start_y = self.cursor_y;
+            self.place_block(inner, indent + 14.0, depth)?;
+            let end_page = self.pages.len() - 1;
+            let end_y = self.cursor_y.max(self.content_bottom());
+            if start_page == end_page && start_y > end_y + 2.0 {
+                self.push_op(DrawOp::Line {
+                    x1: bar_x,
+                    y1: start_y,
+                    x2: bar_x,
+                    y2: end_y + 4.0,
+                    color: Rgb::BORDER,
+                    width: 2.0,
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_lines(
+        &mut self,
+        lines: &[Vec<PlacedRun>],
+        left: f32,
+        avail_w: f32,
+        size: f32,
+        lead: f32,
+        align: TextAlign,
+    ) -> Result<(), RenderError> {
+        for (idx, line) in lines.iter().enumerate() {
+            if idx & 0x3f == 0 {
+                self.check_deadline()?;
+            }
+            self.ensure_space(lead)?;
+            let line_w: f32 = line.iter().map(|r| r.width).sum();
+            let mut x = match align {
+                TextAlign::Left => left,
+                TextAlign::Center => left + ((avail_w - line_w) * 0.5).max(0.0),
+                TextAlign::Right => left + (avail_w - line_w).max(0.0),
+            };
+            let baseline = self.cursor_y - size;
+            for run in line {
+                if !run.text.is_empty() {
+                    self.push_op(DrawOp::Text {
+                        x,
+                        y: baseline,
+                        size,
+                        font: run.font,
+                        color: run.color,
+                        text: run.text.clone(),
+                    })?;
+                }
+                x += run.width;
+            }
+            self.cursor_y -= lead;
+        }
+        Ok(())
+    }
+
+    fn place_code_block(
+        &mut self,
+        text: &str,
+        indent: f32,
+        size: f32,
+        bg: Rgb,
+    ) -> Result<(), RenderError> {
+        let lead = size * 1.35;
+        let pad = 7.0;
+        let left = self.content_left() + indent;
+        let width = (self.content_width() - indent).max(60.0);
+        let max_chars = ((width - pad * 2.0) / (size * 0.60)).floor().max(12.0) as usize;
+        let wrapped = wrap_code_lines(text, max_chars);
+        if wrapped.is_empty() {
+            return Ok(());
+        }
+        let mut idx = 0usize;
+        while idx < wrapped.len() {
+            self.check_deadline()?;
+            let min_h = lead + pad * 2.0;
+            self.ensure_space(min_h)?;
+            let avail_h = (self.cursor_y - self.content_bottom()).max(min_h);
+            let fits = ((avail_h - pad * 2.0) / lead).floor().max(1.0) as usize;
+            let end = (idx + fits).min(wrapped.len());
+            self.draw_code_slice(&wrapped[idx..end], left, width, pad, size, lead, bg)?;
+            idx = end;
+            if idx < wrapped.len() {
+                self.new_page()?;
+            }
+        }
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "draws one page slice of a shaded monospace code box"
+    )]
+    fn draw_code_slice(
+        &mut self,
+        lines: &[String],
+        left: f32,
+        width: f32,
+        pad: f32,
+        size: f32,
+        lead: f32,
+        bg: Rgb,
+    ) -> Result<(), RenderError> {
+        let box_h = lines.len() as f32 * lead + pad * 2.0;
+        let box_y = self.cursor_y - box_h;
+        self.push_op(DrawOp::Rect {
+            x: left,
+            y: box_y,
+            w: width,
+            h: box_h,
+            fill: Some(bg),
+            stroke: Some((Rgb::BORDER, 0.5)),
+        })?;
+        let mut y = self.cursor_y - pad - size;
+        for line in lines {
+            if !line.is_empty() {
+                self.push_op(DrawOp::Text {
+                    x: left + pad,
+                    y,
+                    size,
+                    font: FontKind::Mono,
+                    color: Rgb::BLACK,
+                    text: line.clone(),
+                })?;
+            }
+            y -= lead;
+        }
+        self.cursor_y = box_y - 6.0;
+        Ok(())
+    }
+
+    fn place_list(
+        &mut self,
+        ordered: bool,
+        start: u64,
+        items: &[Vec<Block>],
+        indent: f32,
+        depth: usize,
+    ) -> Result<(), RenderError> {
+        let marker_w = if ordered { 22.0 } else { 14.0 };
+        for (idx, item) in items.iter().enumerate() {
+            self.ensure_space(15.0)?;
+            let marker = if ordered {
+                format!("{}.", start + idx as u64)
+            } else {
+                "\u{2022}".to_owned()
+            };
+            self.push_op(DrawOp::Text {
+                x: self.content_left() + indent + 2.0,
+                y: self.cursor_y - 10.5,
+                size: 10.5,
+                font: FontKind::Bold,
+                color: Rgb::BLACK,
+                text: marker,
+            })?;
+            for block in item {
+                self.place_block(block, indent + marker_w, depth)?;
+            }
+        }
+        self.cursor_y -= 4.0;
+        Ok(())
+    }
+
+    fn place_table(
+        &mut self,
+        headers: &[TableRow],
+        rows: &[TableRow],
+        indent: f32,
+    ) -> Result<(), RenderError> {
+        let cols = headers
+            .iter()
+            .chain(rows.iter())
+            .map(|r| r.cells.len())
+            .max()
+            .unwrap_or(0);
+        if cols == 0 {
+            return Ok(());
+        }
+        if cols > MAX_TABLE_COLS {
+            return Err(RenderError::ForbiddenContent {
+                reason: "table column count exceeds maximum allowed (64)",
+            });
+        }
+        let left = self.content_left() + indent;
+        let table_w = (self.content_width() - indent).max(72.0);
+        let col_w = table_w / cols as f32;
+        let font_size = 9.2;
+        let lead = font_size * 1.35;
+        let pad = 4.5;
+        let max_headers_h = self.printable_height() * 0.85;
+
+        let mut measured_headers = Vec::with_capacity(headers.len());
+        let mut headers_h = 0.0_f32;
+        for r in headers {
+            self.check_deadline()?;
+            let measured = measure_row(r, cols, col_w, pad, font_size, lead, true);
+            headers_h += measured.height;
+            if headers_h > max_headers_h {
+                return Err(RenderError::ForbiddenContent {
+                    reason: "table header exceeds printable page height",
+                });
+            }
+            measured_headers.push(measured);
+        }
+
+        if !measured_headers.is_empty() {
+            self.ensure_space(headers_h + lead + pad * 2.0)?;
+            for hrow in &measured_headers {
+                self.draw_table_row(hrow, left, col_w, pad, font_size, lead)?;
+            }
+        }
+
+        for row in rows {
+            self.check_deadline()?;
+            let measured = measure_row(row, cols, col_w, pad, font_size, lead, false);
+            if self.cursor_y - measured.height < self.content_bottom()
+                && self.cursor_y < self.page.height_pt - self.page.margin_top - 1.0
+            {
+                self.new_page()?;
+                for hrow in &measured_headers {
+                    self.draw_table_row(hrow, left, col_w, pad, font_size, lead)?;
+                }
+            }
+            self.draw_table_row(&measured, left, col_w, pad, font_size, lead)?;
+        }
+        self.cursor_y -= 8.0;
+        Ok(())
+    }
+
+    fn draw_table_row(
+        &mut self,
+        row: &MeasuredRow,
+        left: f32,
+        col_w: f32,
+        pad: f32,
+        font_size: f32,
+        lead: f32,
+    ) -> Result<(), RenderError> {
+        let row_y = self.cursor_y - row.height;
+        for (col_idx, cell_lines) in row.cells.iter().enumerate() {
+            let cx = left + col_idx as f32 * col_w;
+            let fill = row.is_header.then_some(Rgb::HEADER_BG);
+            self.push_op(DrawOp::Rect {
+                x: cx,
+                y: row_y,
+                w: col_w,
+                h: row.height,
+                fill,
+                stroke: Some((Rgb::BORDER, 0.5)),
+            })?;
+            self.draw_cell_lines(
+                cell_lines,
+                cx + pad,
+                self.cursor_y - pad - font_size,
+                font_size,
+                lead,
+            )?;
+        }
+        self.cursor_y = row_y;
+        Ok(())
+    }
+
+    fn draw_cell_lines(
+        &mut self,
+        cell_lines: &[Vec<PlacedRun>],
+        left: f32,
+        mut ty: f32,
+        font_size: f32,
+        lead: f32,
+    ) -> Result<(), RenderError> {
+        for line in cell_lines {
+            let mut rx = left;
+            for run in line {
+                if !run.text.is_empty() {
+                    self.push_op(DrawOp::Text {
+                        x: rx,
+                        y: ty,
+                        size: font_size,
+                        font: run.font,
+                        color: run.color,
+                        text: run.text.clone(),
+                    })?;
+                }
+                rx += run.width;
+            }
+            ty -= lead;
+        }
+        Ok(())
+    }
+
+    fn intern_image(&mut self, source: &ImageSource) -> Result<(usize, u32, u32), RenderError> {
+        let key = source.cache_key();
+        if let Some(&idx) = self.image_cache.get(&key) {
+            let img = &self.images[idx];
+            return Ok((idx, img.width, img.height));
+        }
+        if self.images.len() >= MAX_EMBEDDED_IMAGES {
+            return Err(RenderError::ForbiddenContent {
+                reason: "too many embedded images in one document",
+            });
+        }
+        let raw_bytes: &[u8] = match source {
+            ImageSource::Attachment(id) => self
+                .attachments
+                .get(id)
+                .map(|img| img.bytes.as_slice())
+                .ok_or_else(|| RenderError::ForbiddenResourceUrl {
+                    url: format!("attachment:{id}"),
+                    reason: "referenced attachment is not authorized or not found",
+                })?,
+            ImageSource::Inline { bytes, .. } => bytes.as_slice(),
+        };
+        let decoded = decode_bounded_image(raw_bytes)?;
+        let next_total = self
+            .total_image_decoded_bytes
+            .saturating_add(decoded.decoded_rgba_bytes());
+        if next_total > MAX_TOTAL_IMAGE_DECODED_BYTES {
+            return Err(RenderError::ForbiddenContent {
+                reason: "total decoded image bytes exceed 16 MiB per-document limit",
+            });
+        }
+        let (w, h) = (decoded.width, decoded.height);
+        let idx = self.images.len();
+        self.total_image_decoded_bytes = next_total;
+        self.images.push(decoded);
+        self.image_cache.insert(key, idx);
+        Ok((idx, w, h))
+    }
+
+    fn place_image(
+        &mut self,
+        source: &ImageSource,
+        alt: &str,
+        width_pt: Option<f32>,
+        height_pt: Option<f32>,
+        indent: f32,
+    ) -> Result<(), RenderError> {
+        self.check_deadline()?;
+        let (img_idx, w, h) = self.intern_image(source)?;
+        let nat_w = w as f32;
+        let nat_h = h as f32;
+        let max_w = (self.content_width() - indent).max(48.0);
+        let max_h = (self.printable_height() * 0.65).max(48.0);
+
+        let (mut draw_w, mut draw_h) = match (width_pt, height_pt) {
+            (Some(w), Some(h)) => (w, h),
+            (Some(w), None) => (w, w * (nat_h / nat_w.max(1.0))),
+            (None, Some(h)) => (h * (nat_w / nat_h.max(1.0)), h),
+            (None, None) => (nat_w * 0.75, nat_h * 0.75),
+        };
+        let scale = (max_w / draw_w.max(1.0))
+            .min(max_h / draw_h.max(1.0))
+            .min(1.0);
+        draw_w *= scale;
+        draw_h *= scale;
+
+        self.ensure_space(draw_h + 10.0)?;
+        let y = self.cursor_y - draw_h;
+        self.push_op(DrawOp::Image {
+            image_index: img_idx,
+            x: self.content_left() + indent,
+            y,
+            w: draw_w,
+            h: draw_h,
+        })?;
+        self.cursor_y = y - 8.0;
+        self.place_image_caption(alt, indent, max_w)
+    }
+
+    fn place_image_caption(
+        &mut self,
+        alt: &str,
+        indent: f32,
+        max_w: f32,
+    ) -> Result<(), RenderError> {
+        if alt.trim().is_empty() {
+            return Ok(());
+        }
+        let cap_spans = vec![InlineSpan {
+            text: alt.trim().to_owned(),
+            bold: false,
+            italic: true,
+            code: false,
+            color: Some(Rgb::MUTED),
+        }];
+        let lines = wrap_spans(&cap_spans, max_w, 8.5, false, Some(Rgb::MUTED));
+        self.emit_lines(
+            &lines,
+            self.content_left() + indent,
+            max_w,
+            8.5,
+            11.5,
+            TextAlign::Left,
+        )?;
+        self.cursor_y -= 4.0;
+        Ok(())
+    }
+
+    fn apply_running_headers_and_footers(&mut self) {
+        let total = self.pages.len();
+        let top_y =
+            (self.page.height_pt - (self.page.margin_top * 0.55)).min(self.page.height_pt - 18.0);
+        let bot_y = (self.page.margin_bottom * 0.45).max(16.0);
+        let left = self.page.margin_left;
+        let width = self.content_width();
+
+        for (idx, page) in self.pages.iter_mut().enumerate() {
+            let num = idx + 1;
+            let boxes: [(&Option<MarginBoxSpec>, f32, TextAlign); 6] = [
+                (&self.page.top_left, top_y, TextAlign::Left),
+                (&self.page.top_center, top_y, TextAlign::Center),
+                (&self.page.top_right, top_y, TextAlign::Right),
+                (&self.page.bottom_left, bot_y, TextAlign::Left),
+                (&self.page.bottom_center, bot_y, TextAlign::Center),
+                (&self.page.bottom_right, bot_y, TextAlign::Right),
+            ];
+            for (spec_opt, y, align) in boxes {
+                let Some(spec) = spec_opt else {
+                    continue;
+                };
+                let text = spec
+                    .content
+                    .replace("{page}", &num.to_string())
+                    .replace("{pages}", &total.to_string());
+                let size = spec.font_size.unwrap_or(8.5);
+                let w = measure_text(&text, FontKind::Regular, size);
+                let x = match align {
+                    TextAlign::Left => left,
+                    TextAlign::Center => left + ((width - w) * 0.5).max(0.0),
+                    TextAlign::Right => left + (width - w).max(0.0),
+                };
+                page.ops.push(DrawOp::Text {
+                    x,
+                    y,
+                    size,
+                    font: FontKind::Regular,
+                    color: spec.color.unwrap_or(Rgb::MUTED),
+                    text,
+                });
+            }
+        }
+    }
+}
+
+fn wrap_code_lines(text: &str, max_chars: usize) -> Vec<String> {
+    let mut wrapped = Vec::new();
+    for raw_line in text.trim_end_matches('\n').lines() {
+        if raw_line.is_empty() {
+            wrapped.push(String::new());
+        } else {
+            wrapped.extend(wrap_mono(raw_line, max_chars));
+        }
+    }
+    wrapped
+}

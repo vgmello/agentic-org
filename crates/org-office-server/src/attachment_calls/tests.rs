@@ -405,3 +405,512 @@ fn only_an_attach_that_bound_a_file_wakes_the_outbox_shipper() {
     assert!(matches!(response.outcome, Outcome::Result(_)));
     assert!(!bound_a_file(&list, &response));
 }
+
+fn tiny_png_bytes() -> Vec<u8> {
+    // 1x1 valid PNG (opaque blue pixel)
+    const PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC";
+    STANDARD.decode(PNG_B64).unwrap()
+}
+
+fn create_task_for_test(office: &Arc<Office>, owner: &str) -> (String, String) {
+    let team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let created = office
+        .task_create(
+            owner,
+            org_proto::tasks::TasksCreateParams {
+                command_id: uuid(),
+                task_id: uuid(),
+                team_id: Some(team_id),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: None,
+                work_type: None,
+                title: "PDF delivery task".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                details: None,
+                dod: None,
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    (created.task.id, created.task.key)
+}
+
+#[test]
+fn attachment_render_hosts_markdown_and_html_to_task_and_org_and_returns_valid_pdf() {
+    use org_proto::attachments::{
+        ArtifactStatus, AttachmentRender, AttachmentRenderParams, RenderFormat, RenderSourceKind,
+    };
+
+    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+        let office = Arc::new(Office::for_test(TestOffice { engine }));
+        let owner = office.owner_member_id().to_owned();
+        let agent = hire_agent(&office, &owner);
+        let (task_id, task_key) = create_task_for_test(&office, &owner);
+
+        // 1. Agent renders Markdown -> attaches to task via task_ref, then inspects & fetches it.
+        let md_params = AttachmentRenderParams {
+            command_id: Some(uuid()),
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            source: "# Delivery Summary\n\n| Item | Status |\n| --- | --- |\n| Render | OK |\n"
+                .into(),
+            filename: Some("summary.md".into()),
+            target_kind: Some(AttachmentTargetKind::Task),
+            task_ref: Some(task_key.clone()),
+            title: Some("Delivery Summary".into()),
+            description: Some("Rendered in office".into()),
+            artifact_status: Some(ArtifactStatus::Review),
+            ..Default::default()
+        };
+        let render_req = Request::new::<AttachmentRender>(20, &md_params).unwrap();
+        let render_resp = dispatch_attachment_rpc(&office, Some(&agent), &render_req).unwrap();
+        assert!(
+            bound_a_file(&render_req, &render_resp),
+            "hosted render must wake outbox shipper"
+        );
+        let rendered: org_proto::attachments::AttachmentRenderResult = match render_resp.outcome {
+            Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+            Outcome::Error(e) => panic!("unexpected error: {e:?}"),
+        };
+        let att_id = rendered.attachment_id.clone().expect("attachment_id");
+        assert!(rendered
+            .canonical_url
+            .as_deref()
+            .unwrap()
+            .ends_with(&format!("/attachments/{att_id}")));
+        assert!(rendered.page_count >= 1);
+        assert!(rendered.byte_count > 100);
+
+        // Inspect & fetch rendered PDF bytes via existing attachment RPCs!
+        let inspected = call::<AttachmentInspect>(
+            &office,
+            &owner,
+            &AttachmentInspectParams {
+                attachment_id: att_id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(inspected.attachment.mime_type, "application/pdf");
+        assert_eq!(inspected.attachment.filename, "summary.pdf");
+        assert_eq!(inspected.attachment.target_kind, AttachmentTargetKind::Task);
+        assert_eq!(
+            inspected.attachment.target_id.as_deref(),
+            Some(task_id.as_str())
+        );
+        assert_eq!(inspected.attachment.page_count, Some(rendered.page_count));
+
+        let chunk = call::<AttachmentReadChunk>(
+            &office,
+            &owner,
+            &AttachmentReadChunkParams {
+                attachment_id: att_id,
+                offset: 0,
+                max_bytes: None,
+            },
+        )
+        .unwrap();
+        let pdf_bytes = STANDARD.decode(chunk.data_base64).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF-"));
+
+        // 2. HTML + CSS multi-page table with @page header/footer in local return_bytes mode.
+        let mut rows = String::new();
+        for i in 1..=70 {
+            rows.push_str(&format!(
+                "<tr><td>R{i}</td><td>Multi-page row {i}</td></tr>"
+            ));
+        }
+        let html_params = AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Html,
+            source: format!(
+                "<h1>Matrix</h1><table><thead><tr><th>ID</th><th>Label</th></tr></thead><tbody>{rows}</tbody></table>"
+            ),
+            css: Some(
+                "@page { margin: 54pt; @top-left { content: \"Report\"; } @bottom-right { content: \"Page \" counter(page) \" of \" counter(pages); } }"
+                    .into(),
+            ),
+            return_bytes: true,
+            ..Default::default()
+        };
+        let local_req = Request::new::<AttachmentRender>(21, &html_params).unwrap();
+        let local_resp = dispatch_attachment_rpc(&office, Some(&agent), &local_req).unwrap();
+        assert!(!bound_a_file(&local_req, &local_resp));
+        let local_res: org_proto::attachments::AttachmentRenderResult = match local_resp.outcome {
+            Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+            Outcome::Error(e) => panic!("unexpected html error: {e:?}"),
+        };
+        assert!(local_res.attachment_id.is_none());
+        assert!(local_res.page_count >= 2, "expected multi-page PDF");
+        let local_bytes = STANDARD.decode(local_res.pdf_base64.unwrap()).unwrap();
+        assert!(local_bytes.starts_with(b"%PDF-"));
+        assert_eq!(local_bytes.len() as u64, local_res.byte_count);
+    }
+}
+
+#[test]
+fn attachment_render_enforces_private_space_ssrf_and_attachment_image_authz() {
+    use org_proto::attachments::{
+        AttachmentRender, AttachmentRenderParams, RenderFormat, RenderSourceKind,
+    };
+
+    let office = Arc::new(Office::for_test(TestOffice {
+        engine: EngineChoice::Memory,
+    }));
+    let owner = office.owner_member_id().to_owned();
+    let agent = hire_agent(&office, &owner);
+
+    // 1. Agent requesting UserPrivate fails closed with 1:1 DM hint.
+    let priv_err = call::<AttachmentRender>(
+        &office,
+        &agent,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            source: "# Secret".into(),
+            target_kind: Some(AttachmentTargetKind::UserPrivate),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(priv_err.code, ErrorCode::NotAuthorized);
+    assert!(
+        priv_err.message.contains("1:1 direct message"),
+        "{priv_err:?}"
+    );
+
+    // 2. Owner CAN render to UserPrivate.
+    let owner_priv = call::<AttachmentRender>(
+        &office,
+        &owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            source: "# Owner Private Memo".into(),
+            target_kind: Some(AttachmentTargetKind::UserPrivate),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(owner_priv.attachment_id.is_some());
+
+    // 3. SSRF / local exfil / active script / svg data URI all fail closed via RPC.
+    for (src, css) in [
+        (r#"<img src="file:///etc/passwd">"#, None),
+        (r#"<img src="https://evil.example/a.png">"#, None),
+        (r#"<script>alert(1)</script><p>x</p>"#, None),
+        (r#"<img src="data:image/svg+xml;base64,PHN2Zy8+">"#, None),
+        (
+            "<p>styled</p>",
+            Some("body { background: url(file:///etc/shadow); }"),
+        ),
+    ] {
+        let err = call::<AttachmentRender>(
+            &office,
+            &agent,
+            &AttachmentRenderParams {
+                format: RenderFormat::Pdf,
+                source_kind: RenderSourceKind::Html,
+                source: src.into(),
+                css: css.map(str::to_owned),
+                return_bytes: true,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{src}: {err:?}");
+    }
+
+    // 4. Pre-authorized `attachment:<id>` images obey AuthorizationPolicy::can_read:
+    //    Owner uploads one shared PNG and one UserPrivate PNG.
+    let png = tiny_png_bytes();
+    let upload_png = |member: &str, name: &str| {
+        let begun = call::<AttachmentUploadBegin>(
+            &office,
+            member,
+            &AttachmentUploadBeginParams {
+                filename: name.into(),
+                mime_type: "image/png".into(),
+                byte_count: png.len() as u64,
+            },
+        )
+        .unwrap();
+        let uid = begun.upload.upload_id;
+        call::<AttachmentUploadChunk>(
+            &office,
+            member,
+            &AttachmentUploadChunkParams {
+                upload_id: uid.clone(),
+                offset: 0,
+                data_base64: STANDARD.encode(&png),
+            },
+        )
+        .unwrap();
+        call::<AttachmentUploadCommit>(
+            &office,
+            member,
+            &AttachmentUploadRef {
+                upload_id: uid.clone(),
+            },
+        )
+        .unwrap();
+        uid
+    };
+    let shared_uid = upload_png(&owner, "logo.png");
+    let shared_img = attach(
+        &office,
+        &owner,
+        &shared_uid,
+        AttachmentTargetKind::Organization,
+    )
+    .unwrap();
+    let priv_uid = upload_png(&owner, "secret.png");
+    let priv_img = attach(
+        &office,
+        &owner,
+        &priv_uid,
+        AttachmentTargetKind::UserPrivate,
+    )
+    .unwrap();
+
+    // Agent CAN embed shared org image.
+    let ok = call::<AttachmentRender>(
+        &office,
+        &agent,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Html,
+            source: format!(r#"<h1>Doc</h1><img src="attachment:{shared_img}">"#),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(ok.page_count >= 1);
+
+    // Agent CANNOT embed owner's UserPrivate image (fails closed!).
+    let denied = call::<AttachmentRender>(
+        &office,
+        &agent,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Html,
+            source: format!(r#"<h1>Leak</h1><img src="attachment:{priv_img}">"#),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(denied.code, ErrorCode::NotAuthorized);
+}
+
+#[test]
+fn attachment_render_supports_chunked_large_input_and_chunked_large_pdf_output() {
+    use org_doc_render::{DocumentRenderer, RenderError, RenderRequest, RenderedPdf};
+    use org_proto::attachments::{
+        AttachmentRender, AttachmentRenderParams, RenderFormat, RenderSourceKind,
+    };
+
+    // Mock renderer returning a valid > 512 KiB PDF so multi-chunk output streaming is exercised.
+    struct BigPdfRenderer;
+    impl DocumentRenderer for BigPdfRenderer {
+        fn render_markdown_to_pdf(&self, _: &RenderRequest) -> Result<RenderedPdf, RenderError> {
+            let mut bytes = b"%PDF-1.7\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n3 0 obj<< /Type /Page /Parent 2 0 R >>endobj\n%".to_vec();
+            bytes.resize(700_000, b'A');
+            bytes.extend_from_slice(
+                b"\nxref\n0 1\n0000000000 65535 f \ntrailer<<>>\nstartxref\n10\n%%EOF\n",
+            );
+            Ok(RenderedPdf {
+                byte_count: bytes.len() as u64,
+                page_count: 1,
+                bytes,
+            })
+        }
+        fn render_html_to_pdf(&self, req: &RenderRequest) -> Result<RenderedPdf, RenderError> {
+            self.render_markdown_to_pdf(req)
+        }
+    }
+
+    let office = Arc::new(Office::for_test(TestOffice {
+        engine: EngineChoice::Memory,
+    }));
+    let owner = office.owner_member_id().to_owned();
+    let agent = hire_agent(&office, &owner);
+    let runtime = RenderRuntime::with_renderer(Arc::new(BigPdfRenderer));
+
+    let call_rt = |member: &str, params: &AttachmentRenderParams| {
+        let req = Request::new::<AttachmentRender>(30, params).unwrap();
+        let resp =
+            dispatch_attachment_rpc_with(&office, &runtime, Some(member), None, &req).unwrap();
+        let mut wire = Vec::new();
+        frame::write_message(&mut wire, &resp).expect("every chunk reply fits MAX_FRAME_BYTES");
+        match resp.outcome {
+            Outcome::Result(v) => Ok(serde_json::from_value::<
+                org_proto::attachments::AttachmentRenderResult,
+            >(v)
+            .unwrap()),
+            Outcome::Error(e) => Err(e),
+        }
+    };
+
+    // 1. Stream input across 2 chunks (input_eof=false -> input_eof=true).
+    let step1 = call_rt(
+        &agent,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            source_chunk_base64: Some(STANDARD.encode(b"# Part 1\n")),
+            input_eof: Some(false),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let stage_id = step1.render_id.expect("staged input id");
+
+    let first_out = call_rt(
+        &agent,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            render_id: Some(stage_id),
+            source_chunk_base64: Some(STANDARD.encode(b"Part 2\n")),
+            input_eof: Some(true),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(first_out.eof, Some(false));
+    let out_id = first_out.render_id.clone().expect("chunked output handle");
+    let mut assembled = STANDARD.decode(first_out.pdf_base64.unwrap()).unwrap();
+    assert_eq!(assembled.len(), ATTACHMENT_CHUNK_MAX_BYTES as usize);
+
+    // 2. Another caller MUST NOT be able to read agent's buffered PDF!
+    let stolen = call_rt(
+        &owner,
+        &AttachmentRenderParams {
+            return_bytes: true,
+            render_id: Some(out_id.clone()),
+            chunk_offset: Some(assembled.len() as u64),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(stolen.code, ErrorCode::NotFound);
+
+    // 3. Original caller finishes reading and buffer evicts cleanly on EOF.
+    let second_out = call_rt(
+        &agent,
+        &AttachmentRenderParams {
+            return_bytes: true,
+            render_id: Some(out_id.clone()),
+            chunk_offset: Some(assembled.len() as u64),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(second_out.eof, Some(true));
+    assert!(second_out.render_id.is_none());
+    assembled.extend(STANDARD.decode(second_out.pdf_base64.unwrap()).unwrap());
+    assert_eq!(assembled.len() as u64, first_out.byte_count);
+    assert!(assembled.starts_with(b"%PDF-"));
+
+    // Evicted after EOF.
+    let evicted = call_rt(
+        &agent,
+        &AttachmentRenderParams {
+            return_bytes: true,
+            render_id: Some(out_id),
+            chunk_offset: Some(0),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(evicted.code, ErrorCode::NotFound);
+
+    // 4. Per-caller staged-input cap prevents one caller from starving others for 300s.
+    let mut agent_stages = Vec::new();
+    for i in 0..6 {
+        let s = call_rt(
+            &agent,
+            &AttachmentRenderParams {
+                format: RenderFormat::Pdf,
+                source_kind: RenderSourceKind::Markdown,
+                source_chunk_base64: Some(STANDARD.encode(format!("# Draft {i}\n"))),
+                input_eof: Some(false),
+                return_bytes: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        agent_stages.push(s.render_id.unwrap());
+    }
+    // Owner can still open and finalize a staged input immediately despite agent's 6 drafts.
+    let owner_stage = call_rt(
+        &owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            source_chunk_base64: Some(STANDARD.encode(b"# Owner ok\n")),
+            input_eof: Some(false),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let owner_id = owner_stage.render_id.unwrap();
+    let owner_done = call_rt(
+        &owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            render_id: Some(owner_id),
+            source_chunk_base64: Some(STANDARD.encode(b"done\n")),
+            input_eof: Some(true),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(owner_done.page_count, 1);
+
+    // Agent's oldest staged input was evicted by the per-caller cap.
+    let evicted_stage = call_rt(
+        &agent,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            render_id: Some(agent_stages[0].clone()),
+            source_chunk_base64: Some(STANDARD.encode(b"tail")),
+            input_eof: Some(true),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(evicted_stage.code, ErrorCode::NotFound);
+
+    // 5. Huge u64 chunk_offset fails cleanly with InvalidRequest (never truncates via `as usize`).
+    let bad_offset = call_rt(
+        &owner,
+        &AttachmentRenderParams {
+            return_bytes: true,
+            render_id: Some(owner_done.render_id.unwrap()),
+            chunk_offset: Some(u64::MAX),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(bad_offset.code, ErrorCode::InvalidRequest);
+}

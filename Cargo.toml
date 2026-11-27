@@ -38,6 +38,7 @@ members = [
   "apps/agentic-org-web",
   "crates/org-cli-shell",
   "crates/org-backup",
+  "crates/org-doc-render",
 ]
 # Root checks cover every retained server, CLI and domain member.
 default-members = [
@@ -78,6 +79,7 @@ default-members = [
   "apps/agentic-org-web",
   "crates/org-cli-shell",
   "crates/org-backup",
+  "crates/org-doc-render",
 ]
 
 [workspace.package]
@@ -140,6 +142,13 @@ thiserror = "=2.0.21"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 # Bounded inflate for attachment validation (PDF object streams, OOXML `[Content_Types].xml`).
 flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
+# Pure-Rust Markdown/HTML+CSS -> PDF renderer (`crates/org-doc-render` only; TASK-98.7).
+# Both `ironpress = "=1.7.0"` (`arrayref` BSD-2-Clause via `resvg`/`tiny-skia`) and full
+# `typst = "=0.15.1"` (BSD-2-Clause/0BSD/LLVM-exception + `quick-xml` RUSTSEC-2026-0194/0195)
+# fail unmodified `deny.toml`; we compose Typst's pure-Rust `pdf-writer` (MIT/Apache-2.0) with
+# `pulldown-cmark` (MIT) and workspace `scraper` + `image` behind `DocumentRenderer`.
+pdf-writer = "=0.15.0"
+pulldown-cmark = { version = "=0.13.6", default-features = false }
 toml = { version = "=1.2.3", default-features = false, features = ["std", "serde", "parse"] }
 
 # Debug builds keep line tables only: panics and backtraces still name every function, file

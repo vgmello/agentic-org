@@ -25,6 +25,8 @@ pub(super) const WRITE_ERRORS: &[ErrorCode] = &[
 
 const SCOPES: &[&str] = &["org", "project", "task", "private"];
 const STATUSES: &[&str] = &["draft", "review", "final", "superseded", "archived"];
+const RENDER_FORMATS: &[&str] = &["pdf"];
+const RENDER_STATUSES: &[&str] = &["draft", "review", "final"];
 
 pub(super) const FILE_FIELDS: &[Field] = &[
     Field::required("id", Type::String, "Attachment UUIDv7"),
@@ -132,4 +134,84 @@ pub(super) const FILE_UPDATE_INPUT: &[Field] = &[
     Field::optional("status", Type::Enum(STATUSES), "Updated artifact status"),
 ];
 
+pub(super) const FILE_RENDER_INPUT: &[Field] = &[
+    Field::required(
+        "from",
+        Type::String,
+        "Local .md or .html source path inside an allowed root",
+    ),
+    Field::optional(
+        "to",
+        Type::Enum(RENDER_FORMATS),
+        "Target document format (default: pdf; `--format pdf` also accepted)",
+    ),
+    Field::optional(
+        "css",
+        Type::String,
+        "Optional local .css stylesheet path inside an allowed root",
+    ),
+    Field::optional(
+        "scope",
+        Type::Enum(SCOPES),
+        "Hosted scope: org, project, task, or private (exclusive with --output)",
+    ),
+    Field::optional(
+        "output",
+        Type::String,
+        "Writable local .pdf output path (exclusive with --scope)",
+    ),
+    Field::optional(
+        "project",
+        Type::String,
+        "Project UUIDv7, P-<n>, or slug (with --scope project)",
+    ),
+    Field::optional(
+        "task",
+        Type::String,
+        "Task UUIDv7 or T-<CODE><N> key (with --scope task)",
+    ),
+    Field::optional(
+        "title",
+        Type::String,
+        "Optional document title (1..=160 chars)",
+    ),
+    Field::optional(
+        "description",
+        Type::String,
+        "Optional description (<= 280 chars)",
+    ),
+    Field::optional(
+        "status",
+        Type::Enum(RENDER_STATUSES),
+        "Artifact status for hosted scope (default: final)",
+    ),
+];
+
+pub(super) const FILE_RENDER_OUTPUT: &[Field] = &[
+    Field::optional(
+        "attachment_id",
+        Type::String,
+        "Hosted attachment UUIDv7 (when --scope is set)",
+    ),
+    Field::optional(
+        "canonical_url",
+        Type::String,
+        "Canonical attachment URL (when --scope is set)",
+    ),
+    Field::optional(
+        "output",
+        Type::String,
+        "Canonical local path written (when --output is set)",
+    ),
+    Field::required("page_count", Type::Integer, "Rendered PDF page count"),
+    Field::required("byte_count", Type::Integer, "Rendered PDF size in bytes"),
+    Field::optional(
+        "content_sha256",
+        Type::String,
+        "Verified SHA-256 hex digest",
+    ),
+];
+
 pub(super) const FILE_EXAMPLE_JSON: &str = r#"{"id":"0193a5c0-0000-7000-8000-000000000500","scope":"shared","target_kind":"organization","filename":"spec.md","mime_type":"text/markdown","byte_count":42,"title":"Spec","artifact_status":"final","uploaded_by_employee_id":"0193a5c0-0000-7000-8000-000000000020","created_at":"2026-11-27T00:00:00.000Z","updated_at":"2026-11-27T00:00:00.000Z","content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+
+pub(super) const FILE_RENDER_EXAMPLE_JSON: &str = r#"{"attachment_id":"0193a5c0-0000-7000-8000-000000000500","canonical_url":"/api/v1/organizations/0193a5c0-0000-7000-8000-000000000001/attachments/0193a5c0-0000-7000-8000-000000000500","page_count":2,"byte_count":4096,"content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;

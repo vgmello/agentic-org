@@ -8,6 +8,7 @@
   {"method":"attachment.inspect","policy":"serve"},
   {"method":"attachment.list","policy":"serve"},
   {"method":"attachment.read_chunk","policy":"serve"},
+  {"method":"attachment.render","policy":"serve"},
   {"method":"attachment.update_meta","policy":"serve"},
   {"method":"attachment.upload_abort","policy":"serve"},
   {"method":"attachment.upload_begin","policy":"serve"},

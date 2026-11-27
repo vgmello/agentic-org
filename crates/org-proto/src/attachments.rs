@@ -17,11 +17,16 @@ use serde::{Deserialize, Serialize};
 use crate::Call;
 
 mod meta;
+mod render;
 
 pub use meta::{
     check_attachment_ids, check_attachment_ids_limit, check_task_attachment_ids,
     check_task_comment_attachment_ids, has_content, is_image_mime, AttachmentFilter,
     AttachmentMeta, MESSAGE_ATTACHMENTS_MAX, TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX,
+};
+pub use render::{
+    AttachmentRender, AttachmentRenderParams, AttachmentRenderResult, RenderFormat,
+    RenderSourceKind, ATTACHMENT_RENDER_MAX_PAGES, ATTACHMENT_RENDER_SOURCE_MAX_BYTES,
 };
 
 /// Largest decoded chunk an upload or a read moves in one call (512 KiB).
@@ -431,7 +436,7 @@ impl Call for AttachmentReadChunk {
 }
 
 /// Every attachment method, in the order of the contract.
-pub const ATTACHMENT_METHODS: [&str; 9] = [
+pub const ATTACHMENT_METHODS: [&str; 10] = [
     AttachmentUploadBegin::METHOD,
     AttachmentUploadChunk::METHOD,
     AttachmentUploadCommit::METHOD,
@@ -441,6 +446,7 @@ pub const ATTACHMENT_METHODS: [&str; 9] = [
     AttachmentList::METHOD,
     AttachmentUpdateMeta::METHOD,
     AttachmentReadChunk::METHOD,
+    AttachmentRender::METHOD,
 ];
 
 #[cfg(test)]

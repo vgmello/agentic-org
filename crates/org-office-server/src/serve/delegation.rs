@@ -45,6 +45,8 @@ use super::shared::Shared;
 
 mod scope;
 
+pub(crate) use scope::check_delegated_attachment;
+
 /// The refusal's text: it names the rule, never the caller.
 pub(super) const DELEGATION_DENIED: &str =
     "the Chief of Staff can't do this for the member she is acting for";

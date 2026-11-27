@@ -207,6 +207,46 @@ impl OfficeTransport for FileMockTransport {
                     "eof": eof
                 }))
             }
+            "attachment.render" => {
+                if params.get("input_eof").and_then(Value::as_bool) == Some(false) {
+                    return Ok(json!({
+                        "render_id": "0193a5c0-0000-7000-8000-000000000598",
+                        "page_count": 0,
+                        "byte_count": 0
+                    }));
+                }
+                if params.get("return_bytes").and_then(Value::as_bool) == Some(true) {
+                    let pdf = b"%PDF-1.7\n%mock-rendered-pdf-bytes\n%%EOF\n";
+                    let offset = params
+                        .get("chunk_offset")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+                    let end = (offset + 16).min(pdf.len());
+                    let eof = end >= pdf.len();
+                    let sha = if self.tamper_sha {
+                        "0".repeat(64)
+                    } else {
+                        sha256_hex(pdf)
+                    };
+                    Ok(json!({
+                        "pdf_base64": STANDARD.encode(&pdf[offset..end]),
+                        "render_id": if eof { Value::Null } else { json!("0193a5c0-0000-7000-8000-000000000599") },
+                        "offset": offset,
+                        "eof": eof,
+                        "page_count": 2,
+                        "byte_count": pdf.len(),
+                        "content_sha256": sha
+                    }))
+                } else {
+                    Ok(json!({
+                        "attachment_id": ATT_ID,
+                        "canonical_url": format!("/api/v1/organizations/0193a5c0-0000-7000-8000-000000000001/attachments/{ATT_ID}"),
+                        "page_count": 3,
+                        "byte_count": 4096,
+                        "content_sha256": sha256_hex(b"%PDF-1.7\n%%EOF\n")
+                    }))
+                }
+            }
             other => panic!("unexpected RPC method: {other}"),
         }
     }
@@ -906,6 +946,527 @@ fn linked_git_worktrees_and_case_insensitive_prefix_stripping_work_cleanly() {
             std::path::Path::new("/Users/Alice/Repo/Spec.md"),
             std::path::Path::new("/users/alice/repo"),
             false,
+        ),
+        None
+    );
+}
+
+#[test]
+fn file_render_hosts_to_task_and_writes_local_pdf_with_chunked_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path().join("workspace");
+    fs::create_dir_all(&ws).unwrap();
+    let md_path = ws.join("brief.md");
+    let html_path = ws.join("report.html");
+    let css_path = ws.join("print.css");
+    let out_pdf = ws.join("rendered.pdf");
+    fs::write(&md_path, "# Brief\n\nRendered via office.\n").unwrap();
+    fs::write(&html_path, "<h1>Report</h1><p>Styled</p>").unwrap();
+    fs::write(&css_path, "@page { margin: 54pt; }").unwrap();
+
+    let roots = FileRoots::from_parts(ws.clone(), Some(EMP_ID.into()), None, None);
+
+    // 1. Hosted render to task scope (`--from`, `--format pdf`, `--scope task`, `--task T-A1`).
+    with_test_roots(roots.clone(), || {
+        let mut office = TransportOffice(FileMockTransport::new(Some(EMP_ID)));
+        let args: Vec<String> = [
+            "file",
+            "render",
+            "--from",
+            md_path.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "task",
+            "--task",
+            "T-A1",
+            "--title",
+            "Brief PDF",
+            "--description",
+            "Summary",
+            "--status",
+            "review",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let out = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["ok"], true);
+        assert_eq!(env["data"]["attachment_id"], ATT_ID);
+        assert!(env["data"]["canonical_url"]
+            .as_str()
+            .unwrap()
+            .ends_with(ATT_ID));
+        assert_eq!(env["data"]["page_count"], 3);
+        let render_call = office
+            .0
+            .calls
+            .iter()
+            .find(|(m, _)| m == "attachment.render")
+            .expect("attachment.render called");
+        assert_eq!(render_call.1["source_kind"], "markdown");
+        assert_eq!(render_call.1["target_kind"], "task");
+        assert_eq!(render_call.1["target_id"], TASK_ID);
+        assert_eq!(render_call.1["artifact_status"], "review");
+        assert_eq!(render_call.1["return_bytes"], false);
+    });
+
+    // 2. Local render (`--from`, `--css`, `--output`) fetches chunked PDF & verifies SHA-256.
+    with_test_roots(roots, || {
+        let mut office = TransportOffice(FileMockTransport::new(Some(EMP_ID)));
+        let args: Vec<String> = [
+            "file",
+            "render",
+            "--from",
+            html_path.to_str().unwrap(),
+            "--css",
+            css_path.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--output",
+            out_pdf.to_str().unwrap(),
+            "--title",
+            "Local PDF",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let out = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["ok"], true);
+        assert_eq!(env["data"]["page_count"], 2);
+        let written = fs::read(&out_pdf).unwrap();
+        assert!(written.starts_with(b"%PDF-1.7"));
+        // Verified multi-chunk pull occurred (`16`-byte mock chunks over 39-byte PDF).
+        let render_calls = office
+            .0
+            .calls
+            .iter()
+            .filter(|(m, _)| m == "attachment.render")
+            .count();
+        assert!(
+            render_calls >= 3,
+            "expected chunked reads, got {render_calls}"
+        );
+    });
+}
+
+#[test]
+fn file_render_enforces_two_layer_confinement_on_from_css_and_output_plus_private_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path().join("workspace");
+    let outside = dir.path().join("outside");
+    let blobs = ws.join("durable/blobs");
+    fs::create_dir_all(&blobs).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+
+    let safe_md = ws.join("safe.md");
+    let safe_css = ws.join("safe.css");
+    let outside_md = outside.join("leak.md");
+    let outside_css = outside.join("leak.css");
+    let denied_md = blobs.join("blob.md");
+    let denied_css = blobs.join("blob.css");
+    fs::write(&safe_md, "# Safe\n").unwrap();
+    fs::write(&safe_css, "body { color: black; }").unwrap();
+    fs::write(&outside_md, "# Outside\n").unwrap();
+    fs::write(&outside_css, "body { color: red; }").unwrap();
+    fs::write(&denied_md, "# Denied\n").unwrap();
+    fs::write(&denied_css, "body { color: red; }").unwrap();
+
+    let sym_md = ws.join("sym.md");
+    let sym_css = ws.join("sym.css");
+    let sym_out = ws.join("sym-out.pdf");
+    let out_target = ws.join("real-out.pdf");
+    fs::write(&out_target, b"%PDF-1.7\n").unwrap();
+    let _ = Command::new("ln")
+        .args(["-s", outside_md.to_str().unwrap(), sym_md.to_str().unwrap()])
+        .status();
+    let _ = Command::new("ln")
+        .args([
+            "-s",
+            outside_css.to_str().unwrap(),
+            sym_css.to_str().unwrap(),
+        ])
+        .status();
+    let _ = Command::new("ln")
+        .args([
+            "-s",
+            out_target.to_str().unwrap(),
+            sym_out.to_str().unwrap(),
+        ])
+        .status();
+
+    let roots = FileRoots::from_parts(ws.clone(), Some(EMP_ID.into()), None, None);
+
+    let run_expect_refused = |args: &[&str], expected_code: &str| {
+        with_test_roots(roots.clone(), || {
+            let mut office = TransportOffice(FileMockTransport::new(Some(EMP_ID)));
+            let owned: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+            let out = crate::execute_with_office("agent-os", &owned, &mut office);
+            assert_eq!(out.exit_code, 1, "{args:?}: {}", out.stdout);
+            assert!(
+                office.0.calls.is_empty(),
+                "must fail closed before any RPC for {args:?}: {:?}",
+                office.0.calls
+            );
+            let env: Value = serde_json::from_str(&out.stdout).unwrap();
+            assert_eq!(env["error"]["code"], expected_code, "{args:?}: {env}");
+            env
+        })
+    };
+
+    // 1. --from confinement: outside root, explicit denylist, symlink.
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            outside_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ],
+        "not_authorized",
+    );
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            denied_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ],
+        "not_authorized",
+    );
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            sym_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ],
+        "not_authorized",
+    );
+
+    // 2. --css confinement: outside root, explicit denylist, symlink.
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--css",
+            outside_css.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ],
+        "not_authorized",
+    );
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--css",
+            denied_css.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ],
+        "not_authorized",
+    );
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--css",
+            sym_css.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ],
+        "not_authorized",
+    );
+
+    // 3. --output safety: symlink and outside root fail closed BEFORE any RPC.
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--output",
+            sym_out.to_str().unwrap(),
+        ],
+        "not_authorized",
+    );
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--output",
+            outside.join("escape.pdf").to_str().unwrap(),
+        ],
+        "not_authorized",
+    );
+
+    // 4. --scope private refused for agent callers with 1:1 DM --attach hint.
+    let priv_env = run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "private",
+        ],
+        "not_authorized",
+    );
+    assert!(
+        priv_env["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("--attach"),
+        "{priv_env}"
+    );
+
+    // 5. Mutually exclusive / missing destinations fail closed.
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+        ],
+        "invalid_request",
+    );
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            safe_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+            "--output",
+            ws.join("both.pdf").to_str().unwrap(),
+        ],
+        "invalid_request",
+    );
+
+    // 6. Oversized > 2 MiB local input fails closed BEFORE any RPC.
+    let huge_md = ws.join("huge.md");
+    fs::write(&huge_md, vec![b'a'; 2 * 1024 * 1024 + 1]).unwrap();
+    run_expect_refused(
+        &[
+            "file",
+            "render",
+            "--from",
+            huge_md.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ],
+        "too_large",
+    );
+
+    // 7. `file render` declares NO `content_field` so global `--input-file` 1 MiB rule never collides.
+    let row = crate::registry::runtime_table()
+        .find("file", "render")
+        .expect("file render row");
+    assert_eq!(row.content_field, None);
+    let _ = safe_css;
+}
+
+#[test]
+fn file_render_streams_large_source_and_css_in_separate_bounded_frames() {
+    use org_proto::{Request as WireRequest, MAX_FRAME_BYTES};
+
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path().join("workspace");
+    fs::create_dir_all(&ws).unwrap();
+    let html_path = ws.join("large.html");
+    let css_path = ws.join("large.css");
+    let large_html = format!("<p>{}</p>", "x".repeat(450 * 1024));
+    let large_css = format!("/* {} */ body {{ color: black; }}", "y".repeat(450 * 1024));
+    fs::write(&html_path, &large_html).unwrap();
+    fs::write(&css_path, &large_css).unwrap();
+
+    let roots = FileRoots::from_parts(ws.clone(), Some(EMP_ID.into()), None, None);
+    with_test_roots(roots.clone(), || {
+        let mut office = TransportOffice(FileMockTransport::new(Some(EMP_ID)));
+        let args: Vec<String> = [
+            "file",
+            "render",
+            "--from",
+            html_path.to_str().unwrap(),
+            "--css",
+            css_path.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let out = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+
+        let frames: Vec<&Value> = office
+            .0
+            .calls
+            .iter()
+            .filter(|(m, _)| m == "attachment.render")
+            .map(|(_, p)| p)
+            .collect();
+        assert_eq!(frames.len(), 2, "expected 1 source frame + 1 css frame");
+        let mut reassembled_src = Vec::new();
+        let mut reassembled_css = Vec::new();
+        let mut seen_css = false;
+        for (idx, p) in frames.iter().enumerate() {
+            let wire = WireRequest {
+                id: 1,
+                method: "attachment.render".into(),
+                principal: None,
+                params: (*p).clone(),
+            };
+            let wire_len = serde_json::to_vec(&wire).unwrap().len();
+            assert!(
+                wire_len <= MAX_FRAME_BYTES,
+                "frame {idx} exceeded MAX_FRAME_BYTES ({wire_len} > {MAX_FRAME_BYTES})"
+            );
+            let has_src = p.get("source_chunk_base64").and_then(Value::as_str);
+            let has_css = p.get("css_chunk_base64").and_then(Value::as_str);
+            assert!(
+                !(has_src.is_some() && has_css.is_some()),
+                "frame {idx} must never carry both source_chunk_base64 and css_chunk_base64"
+            );
+            if let Some(b64) = has_src {
+                assert!(!seen_css, "source frames must precede css frames");
+                reassembled_src.extend_from_slice(&STANDARD.decode(b64).unwrap());
+            }
+            if let Some(b64) = has_css {
+                seen_css = true;
+                reassembled_css.extend_from_slice(&STANDARD.decode(b64).unwrap());
+            }
+            assert_eq!(
+                p.get("input_eof").and_then(Value::as_bool),
+                Some(idx + 1 == frames.len())
+            );
+        }
+        assert_eq!(String::from_utf8(reassembled_src).unwrap(), large_html);
+        assert_eq!(String::from_utf8(reassembled_css).unwrap(), large_css);
+    });
+
+    // JSON-escaped payload whose raw UTF-8 is < 512 KiB but serialized JSON > 768 KiB also chunks.
+    let quoted_path = ws.join("escaped.md");
+    let escaped_md = "\"".repeat(420 * 1024);
+    fs::write(&quoted_path, &escaped_md).unwrap();
+    with_test_roots(roots, || {
+        let mut office = TransportOffice(FileMockTransport::new(Some(EMP_ID)));
+        let args: Vec<String> = [
+            "file",
+            "render",
+            "--from",
+            quoted_path.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let out = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let p = &office.0.calls[0].1;
+        assert!(
+            p.get("source_chunk_base64").is_some(),
+            "escaped payload must fall back to chunked framing"
+        );
+    });
+}
+
+#[test]
+fn rewrite_render_args_skips_flag_values_like_title_named_format() {
+    let table = crate::registry::runtime_table();
+    let owned = |slice: &[&str]| -> Vec<String> { slice.iter().map(|s| (*s).to_owned()).collect() };
+
+    // `--title --format` must NOT rewrite `--format` (it is the value of `--title`).
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&["file", "render", "--from", "a.md", "--title", "--format", "--scope", "org"]),
+        ),
+        None
+    );
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&[
+                "file",
+                "render",
+                "--from",
+                "a.md",
+                "--title",
+                "--format=pdf",
+                "--scope",
+                "org"
+            ]),
+        ),
+        None
+    );
+    // When `--title --format` is followed by a real `--format pdf`, ONLY the real flag rewrites!
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&[
+                "file", "render", "--from", "a.md", "--title", "--format", "--format", "pdf",
+                "--scope", "org",
+            ]),
+        ),
+        Some(owned(&[
+            "file", "render", "--from", "a.md", "--title", "--format", "--to", "pdf", "--scope",
+            "org",
+        ]))
+    );
+    // Global stdout envelope formats stay untouched.
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&["file", "render", "--from", "a.md", "--format", "json", "--scope", "org"]),
         ),
         None
     );

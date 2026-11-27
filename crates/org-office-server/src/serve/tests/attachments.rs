@@ -11,7 +11,7 @@ fn harness() -> (Shared, String) {
     let office = Arc::new(org_office::Office::for_test(TestOffice::default()));
     let owner = office.owner_member_id().to_owned();
     let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-    ports.attachments = Some(Box::new(move |member, request| {
+    ports.attachments = Some(Box::new(move |member, _delegation, request| {
         crate::attachment_calls::dispatch_attachment_rpc(&office, member, request)
     }));
     (

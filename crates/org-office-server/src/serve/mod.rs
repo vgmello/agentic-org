@@ -149,8 +149,11 @@ pub type ChatFn = Box<
 /// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
 pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
-/// Dispatches the nine chunked `attachment.*` RPCs (`TASK-98.1`).
-pub type AttachmentsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+/// Dispatches the ten chunked `attachment.*` RPCs (`TASK-98.1`, `TASK-98.7`), carrying any active
+/// Chief-of-Staff delegation context into `attachment.render` for caller-scoped buffers and
+/// post-assembly `caller ∩ tess` attachment checks.
+pub type AttachmentsFn =
+    Box<dyn Fn(Option<&str>, Option<&Delegation>, &Request) -> Option<Response> + Send + Sync>;
 
 /// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
 pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
