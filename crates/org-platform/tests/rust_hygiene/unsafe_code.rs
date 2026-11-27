@@ -1,8 +1,8 @@
 //! 3. Unsafe code stays in the platform crates (`crates/org-platform`,
 //!    `crates/org-platform-host`), behind their audited safe wrappers (`org_platform::posix`,
 //!    the capabilities):
-//!    - every library and binary target of every other package declares
-//!      `#![forbid(unsafe_code)]` at its root (only the roots in [`DENY_ROOTS`] may
+//!    - every library, binary and build-script (`build.rs`) target of every other package
+//!      declares `#![forbid(unsafe_code)]` at its root (only the roots in [`DENY_ROOTS`] may
 //!      `#![deny(unsafe_code)]` instead, for their one allowance below);
 //!    - no other `.rs` file (tests, examples and build scripts included) has an `unsafe`
 //!      keyword, an unsafe attribute (`no_mangle`, `export_name`, `link_section`) or an
@@ -161,8 +161,8 @@ fn in_platform(path: &Path) -> bool {
         .any(|platform| path.starts_with(platform))
 }
 
-/// The root file of every library and binary target of every workspace package outside the
-/// platform crates, relative to the repository.
+/// The root file of every library, binary and build-script (`custom-build`) target of every
+/// workspace package outside the platform crates, relative to the repository.
 fn crate_roots(root: &Path) -> Vec<PathBuf> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let output = Command::new(cargo)
@@ -191,7 +191,16 @@ fn crate_roots(root: &Path) -> Vec<PathBuf> {
             let compiled = kinds.iter().any(|kind| {
                 matches!(
                     kind.as_str(),
-                    Some("lib" | "rlib" | "dylib" | "staticlib" | "cdylib" | "proc-macro" | "bin")
+                    Some(
+                        "lib"
+                            | "rlib"
+                            | "dylib"
+                            | "staticlib"
+                            | "cdylib"
+                            | "proc-macro"
+                            | "bin"
+                            | "custom-build"
+                    )
                 )
             });
             let source = Path::new(target["src_path"].as_str().expect("a source path"));
