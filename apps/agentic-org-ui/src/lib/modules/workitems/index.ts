@@ -3,6 +3,3 @@
 export { workItemsApi, type WorkItemsApi } from './api';
 export { WORK_URL, taskHref, normalizeRef, isRef } from './present';
 export type { TaskRow, TaskDetail, TaskType, WorkScope } from './types';
-export { default as WorkQueueView } from './features/queue/WorkQueueView.svelte';
-export { default as WorkDetailPage } from './features/detail/WorkDetailPage.svelte';
-export { default as CaptureDialog } from './features/capture/CaptureDialog.svelte';

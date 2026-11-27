@@ -1517,6 +1517,7 @@ describe('selector', () => {
 				'e2e/work\\.spec\\.ts$',
 				'e2e/tasks\\.spec\\.ts$',
 				'e2e/dialog-block-title\\.spec\\.ts$',
+				'e2e/dialog-focus-webkit\\.spec\\.ts$',
 				'e2e/bugs\\.spec\\.ts$'
 			].sort()
 		);
@@ -1541,12 +1542,9 @@ describe('selector', () => {
 	});
 
 	it('maps the project components to projects-work and refuses an unknown e2e helper', () => {
-		expect(
-			plan(
-				[ui('src/lib/modules/organization/features/project-teams/ProjectTeams.svelte')],
-				manifest
-			).categories
-		).toEqual(['projects-work']);
+		expect(plan([ui('src/lib/modules/organization/projects.ts')], manifest).categories).toEqual([
+			'projects-work'
+		]);
 		expect(classify(ui('e2e/projects-new-helper.ts'), manifest)).toEqual([
 			expect.objectContaining({ kind: 'unknown' })
 		]);

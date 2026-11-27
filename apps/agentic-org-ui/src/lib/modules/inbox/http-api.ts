@@ -7,6 +7,7 @@ import {
 } from '$lib/platform/http/gateway-errors';
 import type { AppError } from '$lib/proto';
 import type { InboxApi } from './api';
+import { appendSnoozedChatItems } from './http-snoozed';
 import type { InboxAction, InboxItem, InboxKind, InboxPerson, InboxRequest } from './types';
 
 import { asNum, asRec, asStr, type Rec } from '$lib/platform/http/decode';
@@ -28,6 +29,12 @@ export function extractMessageId(reference: string): string | undefined {
 	const match = /^[^:]+:msg:(.+)$/.exec(reference);
 	return match?.[1] || undefined;
 }
+
+const unreachableError = (message: string): AppError => ({
+	source: 'api',
+	code: 'unavailable',
+	message
+});
 
 function unwrapInboxReply(reply: GatewayReply, fallbackMessage: string): Rec {
 	const root = asRec(reply.body);
@@ -401,21 +408,17 @@ export function createHttpInboxApi({
 			return snoozedErrors.get(organizationId);
 		},
 
-		async list(organizationId: string): Promise<InboxItem[]> {
+		async list(organizationId: string, signal?: AbortSignal): Promise<InboxItem[]> {
 			const seq = (listSeqByOrg.get(organizationId) ?? 0) + 1;
 			listSeqByOrg.set(organizationId, seq);
 
 			let reply: GatewayReply;
 			try {
-				reply = await http.read(
-					`/api/v1/organizations/${encodeURIComponent(organizationId)}/inbox`
-				);
-			} catch {
-				throw {
-					source: 'api',
-					code: 'unavailable',
-					message: 'The Inbox could not be reached.'
-				} satisfies AppError;
+				const inboxPath = `/api/v1/organizations/${encodeURIComponent(organizationId)}/inbox`;
+				reply = await (signal ? http.read(inboxPath, signal) : http.read(inboxPath));
+			} catch (err) {
+				if (signal?.aborted) throw err;
+				throw unreachableError('The Inbox could not be reached.');
 			}
 			const result = unwrapInboxReply(reply, 'The Inbox could not be loaded.');
 			const asOf = asStr(result.as_of) ?? now();
@@ -424,67 +427,14 @@ export function createHttpInboxApi({
 				.map((entry) => mapWireInboxItem(entry, asOf))
 				.filter((x): x is { item: InboxItem; rawSource?: string } => x !== undefined);
 
-			// Paginate snoozed chat inbox items (`TASK-81`) using the real gateway `{ result }` envelope.
-			// Keep the active queue usable on transient snoozed-list errors while surfacing a retryable error.
-			const prevCache = cachedItems.get(organizationId);
-			const prevByMsgId = new Map<string, InboxItem>();
-			for (const entry of prevCache?.values() ?? []) {
-				const mid = extractMessageId(entry.item.id);
-				if (mid) prevByMsgId.set(mid, entry.item);
-			}
-			const seenMsgIds = new Set(
-				mapped.map((m) => extractMessageId(m.item.id)).filter((id): id is string => Boolean(id))
+			const nextSnoozedError = await appendSnoozedChatItems(
+				{ http, unwrapInboxReply, extractMessageId, mapSnoozedChatInboxItem },
+				organizationId,
+				asOf,
+				cachedItems.get(organizationId)?.values() ?? [],
+				mapped,
+				signal
 			);
-			const chatInboxPath = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat/inbox`;
-			let cursor: number | undefined;
-			let truncated = false;
-			let nextSnoozedError: string | undefined;
-			const MAX_SNOOZED_PAGES = 20;
-			try {
-				for (let page = 0; page < MAX_SNOOZED_PAGES; page += 1) {
-					const snoozedReply = await http.submit(chatInboxPath, {
-						state: 'snoozed',
-						limit: 100,
-						...(cursor !== undefined ? { cursor } : {})
-					});
-					if (!snoozedReply) break;
-					if (snoozedReply.status === 404 || snoozedReply.status === 501) break;
-					const snoozedResult = unwrapInboxReply(
-						snoozedReply,
-						'Snoozed items could not be loaded.'
-					);
-					const snoozedRaw = Array.isArray(snoozedResult.items) ? snoozedResult.items : [];
-					for (const entry of snoozedRaw) {
-						const rawId = asStr(asRec(entry)?.id);
-						const mappedSnoozed = mapSnoozedChatInboxItem(
-							entry,
-							asOf,
-							rawId ? prevByMsgId.get(rawId) : undefined
-						);
-						if (!mappedSnoozed) continue;
-						const msgId = extractMessageId(mappedSnoozed.item.id);
-						if (msgId && seenMsgIds.has(msgId)) continue;
-						if (msgId) seenMsgIds.add(msgId);
-						mapped.push(mappedSnoozed);
-					}
-					const nextCursor = asNum(snoozedResult.next_cursor);
-					if (nextCursor === undefined || nextCursor === cursor) break;
-					if (page === MAX_SNOOZED_PAGES - 1) {
-						truncated = true;
-						break;
-					}
-					cursor = nextCursor;
-				}
-				if (truncated) {
-					nextSnoozedError = 'Showing the first 2,000 snoozed items; more exist on the server.';
-				}
-			} catch (err) {
-				const appErr = asRec(err);
-				const code = asStr(appErr?.code);
-				if (code !== 'unsupported' && code !== 'not_found') {
-					nextSnoozedError = asStr(appErr?.message) || 'Could not load snoozed items. Try again.';
-				}
-			}
 
 			// Guard cache and snoozedError against stale overlapping list() refreshes.
 			if (listSeqByOrg.get(organizationId) === seq) {
@@ -518,11 +468,7 @@ export function createHttpInboxApi({
 			try {
 				reply = await http.submit(action.path, action.body);
 			} catch {
-				throw {
-					source: 'api',
-					code: 'unavailable',
-					message: 'The Inbox action could not be reached.'
-				} satisfies AppError;
+				throw unreachableError('The Inbox action could not be reached.');
 			}
 			unwrapInboxReply(reply, 'The Inbox action was refused.');
 
@@ -574,11 +520,7 @@ export function createHttpInboxApi({
 					...(trimmedNote ? { note: trimmedNote } : {})
 				});
 			} catch {
-				throw {
-					source: 'api',
-					code: 'unavailable',
-					message: 'The Inbox snooze action could not be reached.'
-				} satisfies AppError;
+				throw unreachableError('The Inbox snooze action could not be reached.');
 			}
 			const result = unwrapInboxReply(reply, 'Could not snooze this inbox item.');
 			const cached = cachedItems.get(organizationId)?.get(itemId);

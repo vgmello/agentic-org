@@ -238,6 +238,52 @@ describe('TessPanelState', () => {
 		expect(panel.turns).toHaveLength(0);
 		expect(panel.runtimeStatus).toBe('offline');
 	});
+	it('refuses client-side applyProposal targeting built-in HR or Tess agents', async () => {
+		const applySpy = vi.fn();
+		const api = createStubApi({
+			ask: vi.fn(async () => ({
+				kind: 'streaming' as const,
+				turnId: 'srv-builtin',
+				streamUrl: '/stream'
+			})),
+			streamTurn: vi.fn(async (_orgId, _turnId, _url, handlers) => {
+				handlers.onEvent({
+					type: 'ui.block',
+					block: {
+						kind: 'action_proposal',
+						proposal: {
+							id: 'sug-builtin',
+							kind: 'member.pause_agent',
+							title: 'Pause HR',
+							risk: 'high',
+							ctaLabel: 'Pause',
+							parameters: [{ label: 'Agent', value: '@hr' }],
+							status: 'pending'
+						}
+					}
+				});
+				handlers.onDone?.();
+			}),
+			applyProposal: applySpy
+		});
+
+		const panel = new TessPanelState(api);
+		panel.ask('Pause hr', {
+			organizationId: 'org-1',
+			snapshot: sampleOrg('hq'),
+			items: [],
+			offices,
+			ownerId: 'you',
+			routeLabel: 'Members'
+		});
+		await new Promise((r) => setTimeout(r, 0));
+
+		const turnId = panel.turns[0].id;
+		await panel.applyProposal(turnId, 'sug-builtin');
+		expect(applySpy).not.toHaveBeenCalled();
+		const block = panel.turns[0].blocks?.[0];
+		expect(block?.kind === 'action_proposal' && block.proposal.status).toBe('error');
+	});
 });
 
 describe('isBuiltInAgent', () => {

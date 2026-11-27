@@ -160,10 +160,13 @@ function decodeMessage(raw: unknown, fallbackConvId: string): WireMessage | unde
 async function readChatFeed(
 	http: GatewayHttpTransport,
 	organizationId: string,
-	viewerId?: string
+	viewerId?: string,
+	signal?: AbortSignal
 ): Promise<{ conversations: WireConversation[]; messages: WireMessage[] }> {
 	const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat`;
-	const convReply: GatewayReply = await http.read(`${base}/conversations`);
+	const convReply: GatewayReply = await (signal
+		? http.read(`${base}/conversations`, signal)
+		: http.read(`${base}/conversations`));
 	const convResult = unwrapGatewayResult(convReply, 'Conversations could not be loaded.');
 	const rawConvs = Array.isArray(convResult.conversations) ? convResult.conversations : [];
 	const conversations = rawConvs
@@ -179,16 +182,17 @@ async function readChatFeed(
 	const lists = await Promise.all(
 		readable.slice(0, 20).map(async (conv) => {
 			try {
-				const reply = await http.submit(`${base}/messages/list`, {
-					conversation: conv.id,
-					limit: 30
-				});
+				const body = { conversation: conv.id, limit: 30 };
+				const reply = await (signal
+					? http.submit(`${base}/messages/list`, body, signal)
+					: http.submit(`${base}/messages/list`, body));
 				const res = unwrapGatewayResult(reply, 'Messages could not be loaded.');
 				const items = Array.isArray(res.messages) ? res.messages : [];
 				return items
 					.map((item) => decodeMessage(item, conv.id))
 					.filter((m): m is WireMessage => m !== undefined);
-			} catch {
+			} catch (err) {
+				if (signal?.aborted) throw err;
 				return [];
 			}
 		})
@@ -305,17 +309,21 @@ function buildChatRows(
 }
 
 export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
-	async function collectRows(organizationId: string): Promise<{
+	async function collectRows(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<{
 		rows: ActivityRow[];
 		messaging: 'connected' | 'not-connected';
 	}> {
-		const { snapshot } = await deps.orgApi.view(organizationId);
+		const { snapshot } = await deps.orgApi.view(organizationId, signal);
 		const viewerId = deps.viewerId?.(organizationId) ?? snapshot.members.find((m) => m.owner)?.id;
 		const [workRes, inboxRes, chatRes] = await Promise.allSettled([
-			deps.workItemsApi.queue(organizationId, { kind: 'organization' }),
-			deps.inboxApi.list(organizationId),
-			readChatFeed(deps.http, organizationId, viewerId)
+			deps.workItemsApi.queue(organizationId, { kind: 'organization' }, signal),
+			deps.inboxApi.list(organizationId, signal),
+			readChatFeed(deps.http, organizationId, viewerId, signal)
 		]);
+		if (signal?.aborted) signal.throwIfAborted();
 
 		const people = actorMap(snapshot);
 		const rows: ActivityRow[] = [];
@@ -331,8 +339,13 @@ export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
 	}
 
 	return Object.freeze<ActivityApi>({
-		async feed(organizationId: string, query: ActivityQuery, limit: number): Promise<ActivityPage> {
-			const { rows, messaging } = await collectRows(organizationId);
+		async feed(
+			organizationId: string,
+			query: ActivityQuery,
+			limit: number,
+			signal?: AbortSignal
+		): Promise<ActivityPage> {
+			const { rows, messaging } = await collectRows(organizationId, signal);
 			const matching = rows.filter((row) => matchesQuery(row, query));
 			return {
 				rows: matching.slice(0, limit),

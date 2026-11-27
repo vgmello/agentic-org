@@ -68,8 +68,7 @@
 	const modeLabel = $derived(current ? 'Change budget' : 'Set budget');
 	const canChangeUnit = $derived(!current || rights.raise);
 
-	$effect(() => {
-		if (!open) return;
+	function resetOnOpen() {
 		if (unknownOpId) return; // Keep unresolved attempt until confirmed or cancelled.
 		unit = current?.unit ?? 'usd';
 		amountText = current
@@ -80,7 +79,7 @@
 		fieldError = undefined;
 		formError = undefined;
 		operationId = newId();
-	});
+	}
 
 	async function focusAmount() {
 		await tick();
@@ -187,7 +186,10 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && (busy || checking) && (open = true)}>
-	<DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+	<DialogContent
+		onOpenAutoFocus={resetOnOpen}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+	>
 		<DialogHeader>
 			<DialogTitle text="{modeLabel} · {taskRef}" />
 			<DialogDescription>

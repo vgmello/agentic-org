@@ -11,8 +11,8 @@
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
-	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import type { TessPanelState } from './tess-panel.svelte';
 
 	interface Props {

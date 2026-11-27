@@ -2,12 +2,12 @@
 	// Organization settings › Costs: the route composes the costs module with the viewer's time zone and the member
 	// profile's Cost tab, where an agent's budgets are set; the module itself depends on neither.
 	import { pageTitle } from '$lib/nav';
-	import { CostsSettingsPage } from '$lib/modules/costs';
+	import CostsSettingsPage from '$lib/modules/costs/features/settings-page/CostsSettingsPage.svelte';
 	import { tabHref } from '$lib/modules/members';
 	import { owner } from '$lib/modules/organization/model';
 	import { accountZone } from '$lib/modules/preferences';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 
 	let { data } = $props();
 	const shellData = useShellData();

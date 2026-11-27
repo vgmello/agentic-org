@@ -19,9 +19,9 @@
 	import ExecutiveSidebarFooter from './ExecutiveSidebarFooter.svelte';
 	import ExecutiveSidebarWorkspaceNav from './ExecutiveSidebarWorkspaceNav.svelte';
 	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
-	import { useNotifications } from './notifications.svelte';
-	import { singleKeyShortcutsOn } from './shortcuts';
-	import { uiPrefs } from './ui-preferences.svelte';
+	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
+	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let {
 		connection,

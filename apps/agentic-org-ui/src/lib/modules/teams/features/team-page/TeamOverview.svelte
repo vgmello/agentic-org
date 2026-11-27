@@ -11,7 +11,7 @@
 	import { resolve } from '$app/paths';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { accountZone, eventTime } from '$lib/modules/preferences';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { teamsApi } from '../../api';
 	import { teamHref } from '../../team-page';
 	import { teamPageContext } from './context';
@@ -29,8 +29,8 @@
 	}
 
 	const work = team.work;
-	const projects = new Resource(() => teamsApi.projects(team.organizationId, team.teamId));
-	const activity = new Resource(() => teamsApi.activity(team.organizationId, team.teamId));
+	const projects = new Resource((s) => teamsApi.projects(team.organizationId, team.teamId, s));
+	const activity = new Resource((s) => teamsApi.activity(team.organizationId, team.teamId, s));
 
 	reloadOnChange(projects, () => team.loads);
 	reloadOnChange(activity, () => team.loads);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectDesktopSection } from './desktop-navigation';
-import { focusDestinationHeading } from './focus-destination';
+import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
 
 const click = (overrides: Partial<MouseEvent> = {}) =>
 	({

@@ -1,8 +1,8 @@
 import type { OrgSnapshot } from '$lib/proto';
-import { areaCapability } from './capabilities';
+import { areaCapability } from '$lib/platform/workspace/capabilities';
 import type { NewMenuAction } from './NewMenu.svelte';
-import type { ShellAiAskOptions } from './shell-ai';
-import { UI_THEMES, type UiTheme } from './ui-preferences.svelte';
+import type { ShellAiAskOptions } from '$lib/platform/workspace/shell-ai';
+import { UI_THEMES, type UiTheme } from '$lib/platform/workspace/ui-preferences.svelte';
 
 export interface PaletteConversation {
 	id: string;

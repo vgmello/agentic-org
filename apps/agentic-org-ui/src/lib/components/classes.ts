@@ -12,3 +12,6 @@ export const errorClass = 'mt-2 text-xs/5 text-danger-text';
 export const dangerButton =
 	'bg-danger-emphasis text-on-emphasis hover:bg-danger-emphasis/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-danger-text';
 export const mobileButton = 'max-[639px]:min-h-11';
+/** Shared styling for portal-mounted Bits UI Tooltip.Content popovers on icon-only controls. */
+export const tooltipContentClass =
+	'pointer-events-none z-60 rounded-[var(--exec-sm-radius,6px)] border border-line-strong bg-[var(--side-panel-surface,var(--surface-overlay,var(--exec-surface)))] px-2 py-1 text-xs leading-[1.3] font-medium text-[var(--exec-ink)] shadow-[var(--tooltip-shadow)]';

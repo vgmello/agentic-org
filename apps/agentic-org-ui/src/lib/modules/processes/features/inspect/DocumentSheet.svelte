@@ -10,6 +10,7 @@
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import { mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import {
 		Sheet,
 		SheetClose,
@@ -18,7 +19,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
 	import DiffView from '../../components/DiffView.svelte';
 	import DocumentText from '../../components/DocumentText.svelte';
 	import Glyph from '../../components/Glyph.svelte';
@@ -251,18 +252,20 @@
 				</section>
 			</div>
 		{/if}
-		<SheetClose>
-			{#snippet child({ props })}
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					class="absolute top-4 right-4 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-focus max-[639px]:size-11"
-					{...props}
-				>
-					<MiniIcon name="xMark" class="size-5" />
-					<span class="sr-only">Close</span>
-				</Button>
-			{/snippet}
-		</SheetClose>
+		<ModalTooltip label="Close" side="left" class="absolute top-4 right-4">
+			<SheetClose>
+				{#snippet child({ props })}
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-focus max-[639px]:size-11"
+						{...props}
+					>
+						<MiniIcon name="xMark" class="size-5" />
+						<span class="sr-only">Close</span>
+					</Button>
+				{/snippet}
+			</SheetClose>
+		</ModalTooltip>
 	</SheetContent>
 </Sheet>

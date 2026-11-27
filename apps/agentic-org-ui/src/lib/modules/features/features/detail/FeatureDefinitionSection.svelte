@@ -8,7 +8,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { inputClass, mobileButton, selectClass, textareaClass } from '$lib/components/classes';
-	import { DocDiffView } from '$lib/modules/docs';
+	import { DocDiffView } from '$lib/modules/docs/ui';
 	import type { FeatureDetail, ProjectFeaturesOverview } from '../../types';
 
 	let {

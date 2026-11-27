@@ -13,7 +13,7 @@ export interface OfficeApi {
 	/** Whether the running office answers. Read-only (never starts anything): safe to call often. */
 	ping(): Promise<HelloResult>;
 	/** The organizations as the host lists them now, read-only: it never starts or restarts anything (for the status checks). */
-	peekOrganizations(): Promise<Organization[]>;
+	peekOrganizations(signal?: AbortSignal): Promise<Organization[]>;
 	/** Ask the host to start an office again (`office.restart`). Rejects with the host's refusal; an office already starting is not an error. */
 	restartOffice(officeId: string): Promise<void>;
 	/** Create an organization on this Mac's host (reached by `ensureRunning`), and remember it. */
@@ -75,8 +75,8 @@ export const officeApi: OfficeApi = Object.freeze({
 	connections: browserConnections,
 	ensureRunning: () => (signedInSession() ? gatewayOfficeApi.ensureRunning() : unavailableCall()),
 	ping: () => (signedInSession() ? gatewayOfficeApi.ping() : unavailableCall()),
-	peekOrganizations: () =>
-		signedInSession() ? gatewayOfficeApi.peekOrganizations() : unavailableCall(),
+	peekOrganizations: (signal?: AbortSignal) =>
+		signedInSession() ? gatewayOfficeApi.peekOrganizations(signal) : unavailableCall(),
 	restartOffice: (officeId: string) =>
 		signedInSession() ? gatewayOfficeApi.restartOffice(officeId) : unavailableCall(),
 	createOrganization: unavailableCall,

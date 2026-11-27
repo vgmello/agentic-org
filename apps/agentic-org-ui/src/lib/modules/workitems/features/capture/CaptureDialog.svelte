@@ -4,15 +4,15 @@
   (work-items-ux §4, §9; feature-requests-ux §1; BUG-2..9, TSK-5, RQS-1..3, RQS-13, RQS-17).
 -->
 <script lang="ts">
-	import { tick, untrack } from 'svelte';
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import { newId } from '$lib/modules/organization/commands';
-	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
-	import { useShellAi } from '$lib/platform/shell/shell-ai';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
+	import { useShellAi } from '$lib/platform/workspace/shell-ai';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { toAppError } from '$lib/proto';
 	import {
 		Dialog,
@@ -202,17 +202,17 @@
 		operationId = newId();
 	}
 
-	$effect(() => {
-		if (!open || unknownOpId) return;
-		const nextType = initialType;
-		untrack(() => {
-			type = nextType;
-			createMore = false;
-			resetDraftFields(false);
-			void loadChoices();
-			void tick().then(() => titleInput?.focus());
-		});
-	});
+	function resetOnOpen(event: Event) {
+		if (unknownOpId) return;
+		type = initialType;
+		createMore = false;
+		resetDraftFields(false);
+		void loadChoices();
+		if (titleInput) {
+			event.preventDefault();
+			titleInput.focus();
+		}
+	}
 
 	// Similar open bugs (after 3 title characters, up to 3) and similar open requests (up to 2).
 	$effect(() => {
@@ -471,7 +471,10 @@
 </script>
 
 <Dialog bind:open onOpenChange={handleOpenChange}>
-	<DialogContent class="work-composer-dialog max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+	<DialogContent
+		onOpenAutoFocus={resetOnOpen}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-[var(--exec-cmdk-dialog-radius,12px)] bg-[var(--exec-cmdk-menu-bg,var(--surface))] [-webkit-backdrop-filter:var(--exec-cmdk-menu-blur,none)] [backdrop-filter:var(--exec-cmdk-menu-blur,none)] sm:max-w-xl [&_:is(input,textarea,select)]:bg-[var(--exec-well,var(--surface-raised))] [&_:is(input,textarea,select)]:outline-[var(--exec-border-hi,var(--line-strong))]"
+	>
 		<DialogHeader>
 			<div class="flex items-start justify-between gap-3 pr-6">
 				<DialogTitle text={dialogHeading} />
@@ -664,16 +667,6 @@
 />
 
 <style>
-	:global(.work-composer-dialog) {
-		border-radius: var(--exec-cmdk-dialog-radius, 12px);
-		background: var(--exec-cmdk-menu-bg, var(--surface));
-		-webkit-backdrop-filter: var(--exec-cmdk-menu-blur, none);
-		backdrop-filter: var(--exec-cmdk-menu-blur, none);
-	}
-	:global(.work-composer-dialog :is(input, textarea, select)) {
-		background-color: var(--exec-well, var(--surface-raised));
-		outline-color: var(--exec-border-hi, var(--line-strong));
-	}
 	.work-composer-tess-btn {
 		border: 1px solid var(--exec-border-hi, var(--line-strong));
 		background: var(--exec-well, var(--surface-raised));

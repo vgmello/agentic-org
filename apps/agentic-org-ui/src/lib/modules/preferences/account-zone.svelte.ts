@@ -54,6 +54,14 @@ class AccountZone {
 			this.loaded = true;
 		}
 	}
+	/** Resets account-scoped zone state on sign-out so a later account starts clean. */
+	reset(): void {
+		this.#loadSeq += 1;
+		this.#organization = undefined;
+		this.saved = undefined;
+		this.loaded = false;
+	}
 }
 
 export const accountZone = new AccountZone();
+appSession.onSessionEnded(() => accountZone.reset());

@@ -4,7 +4,7 @@
 	import InlineSearchRow from '$lib/components/InlineSearchRow.svelte';
 	import InlineSearchToggle from '$lib/components/InlineSearchToggle.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import NotificationsButton from '$lib/platform/shell/NotificationsButton.svelte';
+	import NotificationsButton from '$lib/components/shell/NotificationsButton.svelte';
 	import type { InboxScope } from '../../types';
 	import InboxTriageMenus from './InboxTriageMenus.svelte';
 	import {

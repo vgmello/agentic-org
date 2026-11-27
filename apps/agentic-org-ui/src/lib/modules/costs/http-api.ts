@@ -89,18 +89,20 @@ function decodeBudgetPeriod(r: Rec): BudgetPeriodState | undefined {
 
 async function loadMemberLookup(
 	orgApi: Pick<OrgApi, 'view'>,
-	organizationId: string
+	organizationId: string,
+	signal?: AbortSignal
 ): Promise<Map<string, { name: string; former: boolean }>> {
 	const memberLookup = new Map<string, { name: string; former: boolean }>();
 	try {
-		const { snapshot } = await orgApi.view(organizationId);
+		const { snapshot } = await orgApi.view(organizationId, signal);
 		for (const m of snapshot.members) {
 			memberLookup.set(m.id, {
 				name: m.name,
 				former: m.agent?.status === 'offboarded'
 			});
 		}
-	} catch {
+	} catch (err) {
+		if (signal?.aborted) throw err;
 		// Fall back to agent IDs if the org snapshot cannot be resolved alongside budgets.
 	}
 	return memberLookup;
@@ -131,8 +133,12 @@ function groupAgentBudgets(
 }
 
 export interface HttpCostsReadApi {
-	organizationCost(organizationId: string, period: PeriodRequest): Promise<OrganizationCost>;
-	agentBudgets(organizationId: string): Promise<AgentBudgets>;
+	organizationCost(
+		organizationId: string,
+		period: PeriodRequest,
+		signal?: AbortSignal
+	): Promise<OrganizationCost>;
+	agentBudgets(organizationId: string, signal?: AbortSignal): Promise<AgentBudgets>;
 }
 
 /**
@@ -151,7 +157,8 @@ export function createHttpCostsReadApi({
 	return Object.freeze({
 		async organizationCost(
 			organizationId: string,
-			period: PeriodRequest
+			period: PeriodRequest,
+			signal?: AbortSignal
 		): Promise<OrganizationCost> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/costs/query`;
 			const body: Record<string, unknown> = {
@@ -163,8 +170,9 @@ export function createHttpCostsReadApi({
 
 			let reply: GatewayReply;
 			try {
-				reply = await http.submit(path, body);
-			} catch {
+				reply = await (signal ? http.submit(path, body, signal) : http.submit(path, body));
+			} catch (err) {
+				if (signal?.aborted) throw err;
 				throw {
 					source: 'api',
 					code: 'unavailable',
@@ -199,12 +207,13 @@ export function createHttpCostsReadApi({
 			};
 		},
 
-		async agentBudgets(organizationId: string): Promise<AgentBudgets> {
+		async agentBudgets(organizationId: string, signal?: AbortSignal): Promise<AgentBudgets> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/budgets?scope_kind=agent`;
 			let reply: GatewayReply;
 			try {
-				reply = await http.read(path);
-			} catch {
+				reply = await (signal ? http.read(path, signal) : http.read(path));
+			} catch (err) {
+				if (signal?.aborted) throw err;
 				throw {
 					source: 'api',
 					code: 'unavailable',
@@ -228,7 +237,7 @@ export function createHttpCostsReadApi({
 				return { zone: { name: null, source: 'hq' }, agents: [] };
 			}
 
-			const memberLookup = await loadMemberLookup(orgApi, organizationId);
+			const memberLookup = await loadMemberLookup(orgApi, organizationId, signal);
 			const first = rawBudgets[0];
 			const zoneName = asStr(first.time_zone) ?? null;
 			const zoneSource = asStr(first.time_zone_source) === 'owner_person' ? 'owner_account' : 'hq';

@@ -4,7 +4,6 @@
   manages the whole subtree, including child-team leads; reporting lines do not change.
 -->
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,
@@ -36,15 +35,14 @@
 	let choice = $state('');
 	let busy = $state(false);
 	let error = $state<string | undefined>();
-	let shown = $state<TeamRow | undefined>();
-	$effect(() => {
-		if (open)
-			untrack(() => {
-				shown = team;
-				choice = team?.lead?.id ?? '';
-				error = undefined;
-			});
-	});
+	let lastTeam = $state<TeamRow | undefined>();
+	const shown = $derived(open ? (team ?? lastTeam) : lastTeam);
+
+	function resetOnOpen() {
+		if (team) lastTeam = team;
+		choice = team?.lead?.id ?? '';
+		error = undefined;
+	}
 
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
@@ -73,7 +71,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent>
+	<DialogContent onOpenAutoFocus={resetOnOpen}>
 		<form onsubmit={save} class="contents">
 			<DialogHeader>
 				<DialogTitle text={`Change the lead of ${shown?.name ?? ''}`} />

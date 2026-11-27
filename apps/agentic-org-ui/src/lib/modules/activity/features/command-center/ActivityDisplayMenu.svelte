@@ -2,7 +2,8 @@
 	import { mergeProps, Tooltip } from 'bits-ui';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { tooltipContentClass } from '$lib/components/classes';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 </script>
@@ -32,7 +33,7 @@
 				side="bottom"
 				sideOffset={6}
 				escapeKeydownBehavior="defer-otherwise-close"
-				class="activity-tooltip-content"
+				class={tooltipContentClass}
 			>
 				Assembly line display
 			</Tooltip.Content>

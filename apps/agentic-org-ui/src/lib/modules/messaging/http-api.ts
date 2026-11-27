@@ -45,14 +45,18 @@ export function createHttpChatApi({ http, subscribe, viewerId }: HttpChatApiOpti
 	}
 
 	return Object.freeze({
-		async snapshot(organizationId: string): Promise<ChatSnapshot> {
+		async snapshot(organizationId: string, signal?: AbortSignal): Promise<ChatSnapshot> {
 			const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat`;
 			const [convRes, chanRes] = await Promise.all([
-				safeRead(http, `${base}/conversations`, 'Conversations could not be loaded.'),
-				safeRead(http, `${base}/channels`, 'Channels could not be loaded.').catch(() => ({
-					channels: []
-				}))
+				safeRead(http, `${base}/conversations`, 'Conversations could not be loaded.', signal),
+				safeRead(http, `${base}/channels`, 'Channels could not be loaded.', signal).catch((err) => {
+					if (signal?.aborted) throw err;
+					return { channels: [] };
+				})
 			]);
+			if (signal?.aborted) {
+				throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+			}
 			const { conversations, joinedIds, readAt, lastReadByConv, pinnedIds } = mergeConversations(
 				convRes,
 				chanRes
@@ -63,7 +67,8 @@ export function createHttpChatApi({ http, subscribe, viewerId }: HttpChatApiOpti
 						http,
 						`${base}/messages/list`,
 						{ conversation: convId, limit: 100 },
-						'Messages could not be loaded.'
+						'Messages could not be loaded.',
+						signal
 					).then((res) => ({ convId, items: Array.isArray(res.messages) ? res.messages : [] }))
 				)
 			);

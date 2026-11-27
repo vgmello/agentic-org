@@ -4,7 +4,9 @@
   Filter icon popover menu, Display icon popover menu, and primary split Create CTA.
 -->
 <script lang="ts">
-	import { ChevronDown, Columns3, List, Plus } from '@lucide/svelte';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import Columns3 from '@lucide/svelte/icons/columns-3';
+	import List from '@lucide/svelte/icons/list';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import {
 		SHOW_VIEWS,
@@ -15,6 +17,7 @@
 	} from '../../filters';
 	import type { BoardMode, GroupBy, WorkSortBy, WorkSortDir } from '../../present';
 	import type { TaskType } from '../../types';
+	import WorkCreateSplitButton from './WorkCreateSplitButton.svelte';
 	import WorkDisplayMenu from './WorkDisplayMenu.svelte';
 	import WorkFilterMenu from './WorkFilterMenu.svelte';
 
@@ -105,7 +108,6 @@
 	} = $props();
 
 	let showMenuOpen = $state(false);
-	let createMenuOpen = $state(false);
 
 	const showLabel = $derived(SHOW_VIEWS.find((v) => v.id === showMode)?.label ?? 'Mine');
 
@@ -272,39 +274,14 @@
 	{/if}
 
 	{#if canCreate}
-		<div class="work-create-group">
-			<button
-				type="button"
-				disabled={createDisabled}
-				onclick={() => onCreate(primaryCreate.kind)}
-				class="work-create-primary"
-			>
-				<Plus class="size-3.5 shrink-0" aria-hidden="true" />
-				<span>{primaryCreate.label}</span>
-			</button>
-			<DropdownMenu.Root bind:open={createMenuOpen}>
-				<DropdownMenu.Trigger>
-					{#snippet child({ props })}
-						<button
-							{...props}
-							type="button"
-							disabled={createDisabled}
-							aria-label="More create options"
-							class="work-create-chevron"
-						>
-							<ChevronDown class="size-3.5" aria-hidden="true" />
-						</button>
-					{/snippet}
-				</DropdownMenu.Trigger>
-				<DropdownMenu.Content preventScroll={false} align="end" class="{menuMotion} w-44">
-					{#each secondaryCreates as item (item.kind)}
-						<DropdownMenu.Item onSelect={() => onCreate(item.kind)} class={itemHit}>
-							{item.label}
-						</DropdownMenu.Item>
-					{/each}
-				</DropdownMenu.Content>
-			</DropdownMenu.Root>
-		</div>
+		<WorkCreateSplitButton
+			{primaryCreate}
+			{secondaryCreates}
+			disabled={createDisabled}
+			{menuMotion}
+			{itemHit}
+			{onCreate}
+		/>
 	{/if}
 </div>
 
@@ -455,62 +432,21 @@
 		border-radius: 50%;
 		background: currentColor;
 	}
-	.work-create-group {
-		display: inline-flex;
-		align-items: stretch;
-		border-radius: var(--exec-ctrl-radius, 8px);
-		overflow: hidden;
-		background: var(--exec-cta-bg, var(--primary));
-		box-shadow: var(--exec-cta-shadow, none);
-	}
-	.work-create-primary,
-	.work-create-chevron {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-height: var(--work-control-height, 36px);
-		color: var(--exec-on-accent, var(--on-emphasis));
-		font-size: 0.8125rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background-color 120ms ease-out;
-	}
-	.work-create-primary {
-		gap: 5px;
-		padding: 0 11px 0 10px;
-		white-space: nowrap;
-	}
-	.work-create-chevron {
-		min-width: 28px;
-		padding: 0 6px;
-		border-inline-start: 1px solid var(--exec-border-hi, var(--line-strong));
-	}
-	.work-create-primary:hover:not(:disabled),
-	.work-create-chevron:hover:not(:disabled) {
-		background: var(--exec-cta-fill, var(--primary-hover));
-	}
-	.work-create-primary:disabled,
-	.work-create-chevron:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	:is(
-		.work-menu-trigger,
-		.work-toggle-tab,
-		.work-mode-btn,
-		.work-create-primary,
-		.work-create-chevron
-	):focus-visible,
+	:is(.work-menu-trigger, .work-toggle-tab, .work-mode-btn):focus-visible,
 	.work-icon-controls :global(.queue-icon-btn:focus-visible) {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
 	@media (max-width: 720px), (pointer: coarse) {
-		:is(.work-mode-btn, .work-toggle-tab, .work-create-primary) {
+		:is(.work-mode-btn, .work-toggle-tab) {
 			min-height: 44px;
 		}
-		.work-create-chevron {
-			min-width: 44px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.work-menu-trigger,
+		.work-toggle-tab,
+		.work-mode-btn {
+			transition: none;
 		}
 	}
 	@media (forced-colors: active) {

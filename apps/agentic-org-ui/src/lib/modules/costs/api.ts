@@ -43,13 +43,17 @@ import type {
  */
 export interface CostsApi {
 	/** Every price version, with whether the viewer may add one. Readable by anyone signed in: rates are not spend. */
-	prices(organizationId: string): Promise<PricesOverview>;
+	prices(organizationId: string, signal?: AbortSignal): Promise<PricesOverview>;
 	/** Adds a price version. Idempotent on `draft.operationId`: a replay answers with the version it created. */
 	addPrice(organizationId: string, draft: PriceDraft): Promise<PriceVersion>;
 	/** Where an add whose outcome was unknown stands, by its operation ID. */
 	priceOperation(organizationId: string, operationId: string): Promise<OperationOutcome>;
 	/** Organization › Cost for a period (owner only; others get `not_authorized`). Invalid periods are refused. */
-	organizationCost(organizationId: string, period: PeriodRequest): Promise<OrganizationCost>;
+	organizationCost(
+		organizationId: string,
+		period: PeriodRequest,
+		signal?: AbortSignal
+	): Promise<OrganizationCost>;
 	/** The effective records behind one breakdown figure, newest first, a page at a time (owner only). */
 	records(
 		organizationId: string,
@@ -68,7 +72,7 @@ export interface CostsApi {
 		request: { timeZone: string }
 	): Promise<ProjectInvestment>;
 	/** Every agent's daily and monthly budget in the budget zone (owner only). */
-	agentBudgets(organizationId: string): Promise<AgentBudgets>;
+	agentBudgets(organizationId: string, signal?: AbortSignal): Promise<AgentBudgets>;
 	/** Project › Insights for a period (owner or authorized project manager; others get `not_authorized`). */
 	projectInsights(
 		organizationId: string,
@@ -182,17 +186,17 @@ const gatewayCostsFullApi = createHttpCostsFullApi({
 // Full Costs, Budgets, Prices, Insights, and Subscription Usage gateway wiring (fails closed when signed out).
 // Under `bun run dev:mock`, `e2e/fakes/modules/costs.ts` stands in for this file.
 export const costsApi: CostsApi = Object.freeze<CostsApi>({
-	prices: (organizationId) =>
-		signedInSession() ? gatewayCostsFullApi.prices(organizationId) : unavailableCall(),
+	prices: (organizationId, signal) =>
+		signedInSession() ? gatewayCostsFullApi.prices(organizationId, signal) : unavailableCall(),
 	addPrice: (organizationId, draft) =>
 		signedInSession() ? gatewayCostsFullApi.addPrice(organizationId, draft) : unavailableCall(),
 	priceOperation: (organizationId, operationId) =>
 		signedInSession()
 			? gatewayCostsFullApi.priceOperation(organizationId, operationId)
 			: unavailableCall(),
-	organizationCost: (organizationId, period) =>
+	organizationCost: (organizationId, period, signal) =>
 		signedInSession()
-			? gatewayCostsFullApi.organizationCost(organizationId, period)
+			? gatewayCostsFullApi.organizationCost(organizationId, period, signal)
 			: unavailableCall(),
 	records: (organizationId, period, key, cursor) =>
 		signedInSession()
@@ -202,8 +206,10 @@ export const costsApi: CostsApi = Object.freeze<CostsApi>({
 		signedInSession()
 			? gatewayCostsFullApi.projectInvestment(organizationId, request)
 			: unavailableCall(),
-	agentBudgets: (organizationId) =>
-		signedInSession() ? gatewayCostsReadApi.agentBudgets(organizationId) : unavailableCall(),
+	agentBudgets: (organizationId, signal) =>
+		signedInSession()
+			? gatewayCostsReadApi.agentBudgets(organizationId, signal)
+			: unavailableCall(),
 	projectInsights: (organizationId, projectId, period) =>
 		signedInSession()
 			? gatewayInsightsReadApi.projectInsights(organizationId, projectId, period)

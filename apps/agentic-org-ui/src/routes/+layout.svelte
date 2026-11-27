@@ -2,8 +2,10 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { areaCapability } from '$lib/platform/shell/capabilities';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { installOverlayOpenerTracking } from '$lib/components/focus';
+	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import { areaCapability } from '$lib/platform/workspace/capabilities';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import Unavailable from '$lib/platform/shell/Unavailable.svelte';
 	import SessionInterruptions from '$lib/platform/auth/SessionInterruptions.svelte';
 
@@ -11,7 +13,9 @@
 	const capability = $derived(areaCapability(page.url.pathname));
 	onMount(() => {
 		uiPrefs.hydrate();
+		installOverlayOpenerTracking();
 		document.documentElement.dataset.hydrated = 'true';
+		return appSession.onSessionEnded(() => uiPrefs.clearFavorites());
 	});
 </script>
 

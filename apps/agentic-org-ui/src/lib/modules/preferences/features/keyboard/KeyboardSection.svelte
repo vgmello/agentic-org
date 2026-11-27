@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
 	import Section from '$lib/components/Section.svelte';
-	import { singleKeyShortcutsOn, writeSingleKeyShortcuts } from '$lib/platform/shell/shortcuts';
+	import { singleKeyShortcutsOn, writeSingleKeyShortcuts } from '$lib/platform/workspace/shortcuts';
 
 	const on = $derived(singleKeyShortcutsOn());
 	let refused = $state(false);

@@ -14,8 +14,8 @@
 	import { officesApi } from '$lib/modules/offices/api';
 	import { layerOffices } from '$lib/modules/offices/layer';
 	import { useTessPanel } from '$lib/modules/tess/tess-panel.svelte';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import {
 		deriveCatchUpDigest,
 		deriveDecisionSpotlight,
@@ -40,7 +40,7 @@
 	const tessPanel = useTessPanel();
 
 	const live = new HomeLiveState({
-		overview: (id) => officesApi.overview(id),
+		overview: (id, signal) => officesApi.overview(id, signal),
 		layer: layerOffices
 	});
 

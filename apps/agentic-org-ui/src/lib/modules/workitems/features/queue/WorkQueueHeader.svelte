@@ -3,7 +3,7 @@
   Org Work header + primary tab bar + WorkToolbarMenus (shared by Org and Project Work surfaces).
 -->
 <script lang="ts">
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
 	import type { LayoutMode, QueueFilters, SavedFilterId, ShowView } from '../../filters';
 	import type { BoardMode, GroupBy, WorkSortBy, WorkSortDir } from '../../present';
 	import type { TaskRow, TaskType } from '../../types';

@@ -15,9 +15,9 @@
 	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import { areaFor } from '$lib/nav';
-	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
-	import { useShellCommand } from '$lib/platform/shell/shell-command';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
+	import { useShellCommand } from '$lib/platform/workspace/shell-command';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import TessDrawerHeader from './TessDrawerHeader.svelte';
 	import TessTranscript from './TessTranscript.svelte';
 	import type { TessPanelState } from './tess-panel.svelte';

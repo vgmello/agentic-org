@@ -15,7 +15,12 @@ import type {
 /** The merged, authorized Activity feed (our-org-in-the-app §6, §6.1). */
 export interface ActivityApi {
 	/** Matching rows newest first, `limit` at a time, and how many older ones remain. */
-	feed(organizationId: string, query: ActivityQuery, limit: number): Promise<ActivityPage>;
+	feed(
+		organizationId: string,
+		query: ActivityQuery,
+		limit: number,
+		signal?: AbortSignal
+	): Promise<ActivityPage>;
 	/** The teams, members and projects the filters offer. */
 	options(organizationId: string): Promise<ActivityOptions>;
 	/** One authorized thread, read-only unless the owner is a participant. */
@@ -93,8 +98,10 @@ const gatewayActivityApi = createHttpActivityApi({
 // Production routes through the signed-in browser gateway and fails closed when signed out.
 // Under `bun run dev:mock`, `e2e/fakes/modules/activity.ts` stands in for this file.
 export const activityApi: ActivityApi = Object.freeze<ActivityApi>({
-	feed: (organizationId, query, limit) =>
-		signedInSession() ? gatewayActivityApi.feed(organizationId, query, limit) : unavailableCall(),
+	feed: (organizationId, query, limit, signal) =>
+		signedInSession()
+			? gatewayActivityApi.feed(organizationId, query, limit, signal)
+			: unavailableCall(),
 	options: (organizationId) =>
 		signedInSession() ? gatewayActivityApi.options(organizationId) : unavailableCall(),
 	thread: (organizationId, threadId) =>

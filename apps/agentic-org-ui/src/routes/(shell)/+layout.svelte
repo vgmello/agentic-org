@@ -3,12 +3,12 @@
 	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
 	import ShortcutsDialog from '$lib/platform/shell/ShortcutsDialog.svelte';
-	import { provideNotifications } from '$lib/platform/shell/notifications.svelte';
+	import { provideNotifications } from '$lib/platform/workspace/notifications.svelte';
 	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
 	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
 	import { createHttpTessApi } from '$lib/modules/tess/api';
 	import { provideTessPanel, TessPanelState } from '$lib/modules/tess/tess-panel.svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
@@ -23,15 +23,15 @@
 	import { liveState } from '$lib/modules/organization/live-state.svelte';
 	import { areaFor } from '$lib/nav';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
-	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
-	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
+	import { noteModalBackNavigation } from '$lib/platform/workspace/modal-back';
 	import { NavKeyController } from '$lib/platform/shell/nav-keys.svelte';
 	import {
 		createScopedSearchHost,
 		setScopedSearchContext
-	} from '$lib/platform/shell/scoped-search.svelte';
-	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
-	import { provideShellCommand } from '$lib/platform/shell/shell-command';
+	} from '$lib/platform/workspace/scoped-search.svelte';
+	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/workspace/shell-ai';
+	import { provideShellCommand } from '$lib/platform/workspace/shell-command';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';
@@ -169,8 +169,13 @@
 			navKeys.mode !== 'sidebar'
 	);
 
+	let sidebarFocusRaf: number | undefined;
 	function handleSidebarMenuOpenChange(open: boolean) {
 		clearTimeout(sidebarFocusTimer);
+		if (sidebarFocusRaf !== undefined) {
+			cancelAnimationFrame(sidebarFocusRaf);
+			sidebarFocusRaf = undefined;
+		}
 		sidebarMenuOpen = open;
 		if (!open) {
 			// Recompute focus containment after Bits UI focus restoration or outside click settles
@@ -181,7 +186,10 @@
 				sidebarFocused = Boolean(active instanceof Node && desktopNavigation?.contains(active));
 			};
 			queueMicrotask(syncFocus);
-			requestAnimationFrame(syncFocus);
+			sidebarFocusRaf = requestAnimationFrame(() => {
+				sidebarFocusRaf = undefined;
+				syncFocus();
+			});
 		}
 	}
 
@@ -223,14 +231,15 @@
 	onDestroy(() => {
 		clearTimeout(sidebarHoverTimer);
 		clearTimeout(sidebarFocusTimer);
+		if (sidebarFocusRaf !== undefined) cancelAnimationFrame(sidebarFocusRaf);
 	});
 
 	const shellData = provideShellData({
 		getOrganizationId: () => organizationId,
 		getBaseOffices: () => data.connection.organization.offices,
-		loadOffices: (id, baseOffices) =>
+		loadOffices: (id, baseOffices, signal) =>
 			officesApi
-				.overview(id)
+				.overview(id, signal)
 				.then((overview) => layerOffices(baseOffices, overview))
 				.catch(() => baseOffices)
 	});
@@ -265,9 +274,6 @@
 	const liveNotices: Record<string, number> = {};
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
 	const showPaused = $derived(liveState.paused[organizationId] === true || cannotListen);
-	$effect(() => {
-		if (!showPaused) retrying = false;
-	});
 
 	let stop: (() => void) | undefined;
 	function listen() {
@@ -276,6 +282,7 @@
 				if (notice.kind === 'live') {
 					liveNotices[notice.organization_id] = (liveNotices[notice.organization_id] ?? 0) + 1;
 					liveState.paused[notice.organization_id] = !notice.live;
+					if (notice.live && notice.organization_id === organizationId) retrying = false;
 				} else if (notice.organization_id === organizationId) noteChanged(notice, reload);
 			})
 			.then((unlisten) => {
@@ -283,6 +290,7 @@
 				else {
 					stop = unlisten;
 					cannotListen = false;
+					retrying = false;
 					listening = true;
 				}
 			})
@@ -417,7 +425,7 @@
 					{#if showPaused}<div class="shrink-0">
 							<LiveBanner
 								loadedAt={liveState.loadedAt[organizationId]}
-								{retrying}
+								retrying={retrying && showPaused}
 								onretry={retry}
 							/>
 						</div>{/if}

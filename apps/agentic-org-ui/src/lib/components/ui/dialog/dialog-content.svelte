@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { Dialog as DialogPrimitive, Tooltip, mergeProps } from 'bits-ui';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import XIcon from '@lucide/svelte/icons/x';
-	import { returnFocus } from '$lib/components/focus';
+	import { captureOverlayOpener, returnFocus } from '$lib/components/focus';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { cn, type WithoutChildrenOrChild } from '$lib/utils.js';
 	import DialogOverlay from './dialog-overlay.svelte';
 	import DialogPortal from './dialog-portal.svelte';
@@ -18,6 +19,7 @@
 		showCloseButton = true,
 		opener,
 		fallback,
+		onOpenAutoFocus,
 		onCloseAutoFocus,
 		...restProps
 	}: WithoutChildrenOrChild<DialogPrimitive.ContentProps> & {
@@ -31,11 +33,25 @@
 		fallback?: () => HTMLElement | null;
 	} = $props();
 
+	let capturedOpener: HTMLElement | null = null;
+
+	const openFocus = (e: Event) => {
+		capturedOpener = captureOverlayOpener(ref);
+		onOpenAutoFocus?.(e);
+	};
+
 	const closeFocus = (e: Event) => {
 		onCloseAutoFocus?.(e);
-		if (e.defaultPrevented || opener === undefined) return;
+		const captured = capturedOpener;
+		capturedOpener = null;
+		if (e.defaultPrevented) return;
+		const target = opener !== undefined ? opener : captured;
+		const targetUsable = Boolean(
+			target?.isConnected && !target.hasAttribute('disabled') && !target.closest('[inert]')
+		);
+		if (!targetUsable && fallback === undefined) return;
 		e.preventDefault();
-		void returnFocus(opener, { within: ref, fallback });
+		void returnFocus(target, { within: ref, fallback });
 	};
 </script>
 
@@ -44,6 +60,7 @@
 	<DialogPrimitive.Content
 		bind:ref
 		data-slot="dialog-content"
+		onOpenAutoFocus={openFocus}
 		onCloseAutoFocus={closeFocus}
 		class={cn(
 			'bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 ring-foreground/10 grid max-w-[calc(100%_-_2rem)] gap-6 rounded-xl p-6 text-sm ring-1 duration-100 sm:max-w-md fixed top-1/2 left-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 outline-none',
@@ -53,36 +70,21 @@
 	>
 		{@render children?.()}
 		{#if showCloseButton}
-			<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
-				<Tooltip.Root ignoreNonKeyboardFocus>
-					<DialogPrimitive.Close data-slot="dialog-close">
-						{#snippet child({ props: closeProps })}
-							<Tooltip.Trigger>
-								{#snippet child({ props: tipProps })}
-									<Button
-										variant="ghost"
-										class="absolute top-3 right-3 size-9 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
-										size="icon-sm"
-										aria-label="Close"
-										{...mergeProps(closeProps, tipProps)}
-									>
-										<XIcon aria-hidden="true" />
-									</Button>
-								{/snippet}
-							</Tooltip.Trigger>
-						{/snippet}
-					</DialogPrimitive.Close>
-					<Tooltip.Portal>
-						<Tooltip.Content
-							side="bottom"
-							sideOffset={6}
-							escapeKeydownBehavior="defer-otherwise-close"
-							class="z-[60] rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-							>Close</Tooltip.Content
+			<ModalTooltip label="Close" class="absolute top-3 right-3">
+				<DialogPrimitive.Close data-slot="dialog-close">
+					{#snippet child({ props: closeProps })}
+						<Button
+							variant="ghost"
+							class="size-9 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+							size="icon-sm"
+							aria-label="Close"
+							{...closeProps}
 						>
-					</Tooltip.Portal>
-				</Tooltip.Root>
-			</Tooltip.Provider>
+							<XIcon aria-hidden="true" />
+						</Button>
+					{/snippet}
+				</DialogPrimitive.Close>
+			</ModalTooltip>
 		{/if}
 	</DialogPrimitive.Content>
 </DialogPortal>

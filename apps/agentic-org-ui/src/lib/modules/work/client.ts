@@ -19,9 +19,9 @@ const gatewayWorkApi = createHttpWorkApi({
 // Production work reads use `/api/v1/organizations/{org}/tasks` when signed in and fail closed
 // when signed out; write/detail mutations stay unavailable until the full Work adapter lands.
 export const workApi: WorkApi = Object.freeze<WorkApi>({
-	snapshot: (organizationId, projectId, closedSince) =>
+	snapshot: (organizationId, projectId, closedSince, signal) =>
 		signedInSession()
-			? gatewayWorkApi.snapshot(organizationId, projectId, closedSince)
+			? gatewayWorkApi.snapshot(organizationId, projectId, closedSince, signal)
 			: unavailableCall(),
 	get: unavailableCall,
 	command: unavailableCall,

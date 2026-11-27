@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Hire requests (our-org-in-the-app §7.1): every hire with who hired, its home team and its state.
 	import { pageTitle } from '$lib/nav';
-	import { HireRequests } from '$lib/modules/employees';
+	import HireRequests from '$lib/modules/employees/features/hire-requests/HireRequests.svelte';
 
 	let { data } = $props();
 </script>

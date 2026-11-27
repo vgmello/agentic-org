@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Sheet,
@@ -77,14 +78,16 @@
 	const agents = $derived(office && snapshot ? agentsIn(snapshot, office.id) : []);
 
 	// Restarting (spec §3.3): the spinner stays until the office is no longer stopped, or half a minute has passed.
-	let restarting = $state(false);
-	let restartNote = $state<string | undefined>();
-	let unsupported = $state(false);
+	let restartingOfficeId = $state<string | undefined>();
+	let restartNoteEntry = $state<{ key: string; text: string } | undefined>();
+	let unsupportedState = $state<
+		{ officeId: string | undefined; canRestart: boolean | undefined } | undefined
+	>();
 	let sheetContent = $state<HTMLDivElement | null>(null);
 	const repairId = $props.id();
 	const repairCommand = 'agentic-org doctor';
-	let repairOpen = $state(false);
-	let commandCopied = $state(false);
+	let repairOpenFor = $state<string | undefined>();
+	let commandCopiedFor = $state<string | undefined>();
 	// Each restart run has a number; a run that is no longer the newest stops and leaves the state to the newer one.
 	let run = 0;
 	const action = $derived(office ? restartAction(office, capabilities) : {});
@@ -94,75 +97,76 @@
 	const canRestart = $derived(capabilities?.includes('office.restart'));
 	const reportedStatus = $derived(office?.status);
 	const reportedReason = $derived(office?.status_reason);
-	let noteRevision = 0;
-	$effect(() => {
-		void status;
-		void reportedStatus;
-		void reportedReason;
-		noteRevision++;
-		restartNote = undefined;
-	});
-	$effect(() => {
-		// Another office starts clean (the run for the old one stops).
-		void officeId;
+	const statusKey = $derived(
+		`${officeId ?? ''}|${status}|${reportedStatus ?? ''}|${reportedReason ?? ''}`
+	);
+	const restarting = $derived(Boolean(officeId && restartingOfficeId === officeId));
+	const restartNote = $derived(
+		restartNoteEntry?.key === statusKey ? restartNoteEntry.text : undefined
+	);
+	const unsupported = $derived(
+		Boolean(
+			unsupportedState &&
+			unsupportedState.officeId === officeId &&
+			unsupportedState.canRestart === canRestart
+		)
+	);
+	const repairEligible = $derived(
+		open && Boolean(why) && office?.status_reason === 'unsupported_version'
+	);
+	const repairOpen = $derived(Boolean(repairEligible && officeId && repairOpenFor === officeId));
+	const commandCopied = $derived(Boolean(repairOpen && officeId && commandCopiedFor === officeId));
+	onDestroy(() => {
 		run++;
-		restarting = false;
-		restartNote = undefined;
-		repairOpen = false;
-		commandCopied = false;
 	});
-	$effect(() => {
-		if (!open || !why || office?.status_reason !== 'unsupported_version') {
-			repairOpen = false;
-			commandCopied = false;
+	const isOfficeBack = (id: string) =>
+		office?.id === id && office.status !== 'offline' && office.status !== 'unavailable';
+
+	async function pollUntilOnline(id: string, live: () => boolean): Promise<void> {
+		for (let i = 0; i < 15 && live(); i++) {
+			await onrestarted?.();
+			if (!live() || isOfficeBack(id)) break;
+			await new Promise((r) => setTimeout(r, 2000));
 		}
-	});
-	$effect(() => {
-		// A new hello may say the host can restart now (it was updated).
-		void canRestart;
-		unsupported = false;
-	});
-	$effect(() => () => void run++); // the page is leaving: stop any loop
+	}
+
 	async function restart() {
 		if (!office || restarting) return;
 		const mine = ++run;
 		const id = office.id;
-		const revision = noteRevision;
-		restarting = true;
-		restartNote = undefined;
-		const live = () => mine === run;
+		const startedStatusKey = statusKey;
+		const startedCanRestart = canRestart;
+		restartingOfficeId = id;
+		restartNoteEntry = undefined;
+		const live = () => mine === run && office?.id === id;
 		try {
-			await officeApi.restartOffice(id);
-		} catch (e) {
-			if (!live()) return;
-			const err = toAppError(e);
-			const outcome = restartOutcome(err.source === 'api' ? err.code : 'unknown');
-			if (outcome.kind === 'unsupported') unsupported = true;
-			if (outcome.kind === 'refresh') await onrestarted?.();
-			if (outcome.kind !== 'wait') {
+			try {
+				await officeApi.restartOffice(id);
+			} catch (e) {
 				if (!live()) return;
-				// The reason row owns unavailable responses. A response from an older state has no note.
-				if (revision === noteRevision) {
-					restartNote = outcome.kind === 'unsupported' ? undefined : outcome.message;
+				const err = toAppError(e);
+				const outcome = restartOutcome(err.source === 'api' ? err.code : 'unknown');
+				if (outcome.kind === 'unsupported') {
+					unsupportedState = { officeId: id, canRestart: startedCanRestart };
 				}
-				restarting = false;
-				return;
+				if (outcome.kind === 'refresh') await onrestarted?.();
+				if (outcome.kind !== 'wait') {
+					if (!live()) return;
+					if (statusKey === startedStatusKey && outcome.kind !== 'unsupported' && outcome.message) {
+						restartNoteEntry = { key: startedStatusKey, text: outcome.message };
+					}
+					return;
+				}
 			}
-		}
-		// Keep the spinner until the host says it is no longer stopped (the live status), for up to 30 s.
-		for (let i = 0; i < 15 && live(); i++) {
-			await onrestarted?.();
+			await pollUntilOnline(id, live);
 			if (!live()) return;
-			if (office?.id !== id || (office.status !== 'offline' && office.status !== 'unavailable'))
-				break;
-			await new Promise((r) => setTimeout(r, 2000));
+			const back = isOfficeBack(id);
+			// The button goes with the stop; keep the keyboard somewhere sensible.
+			if (back)
+				sheetContent?.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.focus();
+		} finally {
+			if (mine === run && restartingOfficeId === id) restartingOfficeId = undefined;
 		}
-		if (!live()) return;
-		const back =
-			office?.id === id && office.status !== 'offline' && office.status !== 'unavailable';
-		restarting = false;
-		// The button goes with the stop; keep the keyboard somewhere sensible.
-		if (back) sheetContent?.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.focus();
 	}
 
 	async function copy() {
@@ -181,14 +185,14 @@
 		// WebKit doesn't focus a button on a pointer click.
 		if (event.currentTarget instanceof HTMLElement)
 			event.currentTarget.focus({ preventScroll: true });
-		repairOpen = !repairOpen;
-		commandCopied = false;
+		repairOpenFor = repairOpen ? undefined : officeId;
+		commandCopiedFor = undefined;
 	}
 
 	async function copyRepairCommand() {
 		try {
 			await navigator.clipboard.writeText(repairCommand);
-			if (repairOpen) commandCopied = true;
+			if (repairOpen) commandCopiedFor = officeId;
 		} catch {
 			toast.error("Couldn't copy. Select the command and copy it yourself.");
 		}

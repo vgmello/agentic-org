@@ -21,8 +21,8 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { hireUrl } from '$lib/modules/employees';
-	import { MoveHomeTeamDialog } from '$lib/modules/members';
-	import { AddPersonToTeam } from '$lib/modules/teams';
+	import { MoveHomeTeamDialog } from '$lib/modules/members/ui';
+	import { AddPersonToTeam } from '$lib/modules/teams/ui';
 	import type { Connection, OrgSnapshot } from '$lib/proto';
 	import { orgChartApi } from '../../api';
 	import { TREE_KEYS, treeMove } from '../../keyboard';

@@ -1,9 +1,2 @@
 # Legacy components -> platform/shell imports (shrink-only; zero new edges permitted).
-# Sorted by line. Delete entries as components are decoupled from platform/shell.
-src/lib/components/ConfirmDialog.svelte -> src/lib/platform/shell/modal-back
-src/lib/components/PageHeader.svelte -> src/lib/platform/shell/InteriorSearchBar.svelte
-src/lib/components/PageHeader.svelte -> src/lib/platform/shell/shell-command
-src/lib/components/ScopedSearchInput.svelte -> src/lib/platform/shell/shortcuts
-src/lib/components/SectionHead.svelte -> src/lib/platform/shell/ui-preferences.svelte
-src/lib/components/TabsNav.svelte -> src/lib/platform/shell/focus-destination
-src/lib/components/TabsNav.svelte -> src/lib/platform/shell/shortcuts
+# Empty: all shared components decoupled from platform/shell.

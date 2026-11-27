@@ -11,7 +11,7 @@ import type { ChatAccepted, ChatCall, ChatCallStatus, ChatSnapshot } from './typ
  * (re-exporting `e2e/fakes/modules/chat.ts`) stands in for this file.
  */
 export interface ChatApi {
-	snapshot(organizationId: string): Promise<ChatSnapshot>;
+	snapshot(organizationId: string, signal?: AbortSignal): Promise<ChatSnapshot>;
 	/** Rejects with the error the office gave (a `ChatRefusal`, which `toAppError` passes through). */
 	command(organizationId: string, call: ChatCall): Promise<ChatAccepted>;
 	/** Calls `listener` whenever the conversations change. Returns the way to stop. */
@@ -70,8 +70,8 @@ const gatewayChatApi = createHttpChatApi({
 });
 
 export const chatApi: ChatApi = Object.freeze<ChatApi>({
-	snapshot: (organizationId) =>
-		signedInSession() ? gatewayChatApi.snapshot(organizationId) : unavailableCall(),
+	snapshot: (organizationId, signal) =>
+		signedInSession() ? gatewayChatApi.snapshot(organizationId, signal) : unavailableCall(),
 	command: (organizationId, call) =>
 		signedInSession() ? gatewayChatApi.command(organizationId, call) : unavailableCall(),
 	status: (organizationId, changeId) =>

@@ -18,7 +18,8 @@ export interface WorkApi {
 	snapshot(
 		organizationId: string,
 		projectId?: string,
-		closedSince?: string
+		closedSince?: string,
+		signal?: AbortSignal
 	): Promise<{ position: WorkPosition; items: WorkItemSummary[] }>;
 	get(organizationId: string, itemId: string): Promise<WorkItem>;
 	/** Rejects with the error the office gave (an `AppError` with source `api`). */

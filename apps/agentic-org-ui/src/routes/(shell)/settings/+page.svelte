@@ -3,7 +3,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import GeneralPanel from '$lib/modules/settings/features/general/GeneralPanel.svelte';
 	import { pageTitle } from '$lib/nav';
-	import { UI_THEMES, uiPrefs, type UiTheme } from '$lib/platform/shell/ui-preferences.svelte';
+	import { UI_THEMES, uiPrefs, type UiTheme } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let { data } = $props();
 

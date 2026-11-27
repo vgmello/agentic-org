@@ -9,9 +9,9 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import NewTeamSheet from '$lib/modules/organization/features/teams/NewTeamSheet.svelte';
-	import MoveTeamDialog from '$lib/modules/organization/features/teams/MoveTeamDialog.svelte';
-	import RenameTeamDialog from '$lib/modules/organization/features/teams/RenameTeamDialog.svelte';
+	import { NewTeamSheet } from '$lib/modules/organization/ui';
+	import { MoveTeamDialog } from '$lib/modules/organization/ui';
+	import { RenameTeamDialog } from '$lib/modules/organization/ui';
 	import { membersApi } from '$lib/modules/members';
 	import { toAppError } from '$lib/proto';
 	import type { OrgSession } from '$lib/modules/organization/session';

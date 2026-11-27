@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
@@ -54,20 +53,16 @@
 	const leadChoices = $derived(candidates.filter((m) => chosen.has(m.id)));
 	const parents = $derived(teamOptions(snapshot));
 
-	// Each time the sheet opens it starts empty (only `open` triggers this: the chart reloading behind it must not).
-	$effect(() => {
-		if (open) {
-			untrack(() => {
-				name = '';
-				owner = ownerTeamId ?? '';
-				search = '';
-				chosen.clear();
-				lead = '';
-				nameError = undefined;
-				failure = undefined;
-			});
-		}
-	});
+	// Each time the sheet opens it starts empty (only opening triggers this: the chart reloading behind it must not).
+	function resetOnOpen() {
+		name = '';
+		owner = ownerTeamId ?? '';
+		search = '';
+		chosen.clear();
+		lead = '';
+		nameError = undefined;
+		failure = undefined;
+	}
 
 	function toggle(id: string, on: boolean) {
 		if (on) chosen.add(id);
@@ -128,7 +123,7 @@
 
 <!-- A click outside or Escape doesn't dismiss the sheet while the team is being created. -->
 <Sheet bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<SheetContent side="right" class="w-full max-w-md overflow-y-auto">
+	<SheetContent onOpenAutoFocus={resetOnOpen} side="right" class="w-full max-w-md overflow-y-auto">
 		<SheetHeader>
 			<SheetTitle>New team</SheetTitle>
 			<SheetDescription

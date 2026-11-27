@@ -4,6 +4,7 @@
 	import { tick, untrack } from 'svelte';
 	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import {
 		applyMention,
@@ -347,15 +348,16 @@
 					>
 						<HeroIcon variant="micro" name="paper-clip" />
 						<span class="min-w-0 truncate" title={a}>{a}</span>
-						<button
-							type="button"
-							data-attachment={a}
-							class="shrink-0 text-fg-muted hover:text-fg {attachmentFocus}"
-							aria-label="Remove {a}"
-							title="Remove {a}"
-							onclick={() => void removeAttachment(a)}
-							><HeroIcon class="text-current" variant="mini" name="x-mark" /></button
-						>
+						<ModalTooltip label="Remove {a}">
+							<button
+								type="button"
+								data-attachment={a}
+								class="shrink-0 text-fg-muted hover:text-fg {attachmentFocus}"
+								aria-label="Remove {a}"
+								onclick={() => void removeAttachment(a)}
+								><HeroIcon class="text-current" variant="mini" name="x-mark" /></button
+							>
+						</ModalTooltip>
 					</li>
 				{/each}
 			</ul>

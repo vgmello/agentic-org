@@ -84,18 +84,28 @@ describe('UI layered module dependency graph (AST-parsed, zero cycles)', () => {
 			const from = classifyPath(norm);
 			if (!from) continue;
 
-			if (from.kind !== 'shell' && !graph.has(from.unit)) {
+			if (!graph.has(from.unit)) {
 				graph.set(from.unit, new Set());
 			}
 
 			const abs = resolve(UI_ROOT, rel);
+			const isModuleIndex = /^src\/lib\/modules\/.+\/index\.ts$/.test(norm);
 			for (const spec of extractSpecifiers(abs)) {
 				const targetRel = resolveTargetRel(spec, abs, SRC_LIB);
+				if (
+					isModuleIndex &&
+					spec.endsWith('.svelte') &&
+					(!targetRel || !existsSync(resolve(UI_ROOT, `${targetRel}.ts`)))
+				) {
+					hardLayerErrors.push(
+						`${norm} -> ${spec} (module index.ts must be non-UI; export Svelte components via ui.ts)`
+					);
+				}
 				if (!targetRel) continue;
 				const to = classifyPath(targetRel);
 				if (!to) continue;
 
-				if (from.kind !== 'shell' && to.kind !== 'shell' && from.unit !== to.unit) {
+				if (from.unit !== to.unit) {
 					graph.get(from.unit)!.add(to.unit);
 				}
 

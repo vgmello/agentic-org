@@ -17,52 +17,17 @@ function nodes(value: unknown): Node[] {
 // Parse the checked-in caller so removing its ?? '' fails the absent-value case.
 const cases: [string, number, string, string, boolean?][] = [
 	['modules/organization/features/teams/MoveTeamDialog.svelte', 0, 'Move Name to…', 'Move  to…'],
-	['modules/work/features/requests/NewRequestDialog.svelte', 0, 'New request', 'New request'],
-	['modules/work/features/tasks/NewTaskDialog.svelte', 0, 'New task', 'New task'],
-	[
-		'modules/organization/features/project-teams/ProjectTeamDialog.svelte',
-		0,
-		'Add a project to Team',
-		'Add a project to '
-	],
-	[
-		'modules/organization/features/project-teams/ProjectTeamDialog.svelte',
-		1,
-		'Assign a team to Project',
-		'Assign a team to '
-	],
-	[
-		'modules/organization/features/project-teams/RemoveProjectDialog.svelte',
-		0,
-		'Remove Project from Team?',
-		'Remove  from ?'
-	],
 	[
 		'modules/organization/features/teams/RenameTeamDialog.svelte',
 		0,
 		'Rename Title',
 		'Rename Title'
 	],
-	['modules/work/features/bugs/ReportBugDialog.svelte', 0, 'Report a bug', 'Report a bug'],
-	['modules/work/features/tasks/TasksBoard.svelte', 0, 'Block T-1', 'Block T-1'],
-	[
-		'modules/employees/features/configure-run/HowItRunsDialog.svelte',
-		0,
-		'How Name runs',
-		'How  runs'
-	],
-	['modules/employees/features/edit-profile/EditAgentDialog.svelte', 0, 'Edit Name', 'Edit '],
 	[
 		'modules/employees/features/offboard-employee/OffboardAgentDialog.svelte',
 		0,
 		'Offboard Name?',
 		'Offboard ?'
-	],
-	[
-		'modules/employees/features/pause-employee/PauseAgentDialog.svelte',
-		0,
-		'Pause Name?',
-		'Pause ?'
 	],
 	['modules/messaging/features/manage-channel/ChannelDialog.svelte', 0, 'Title', 'Title'],
 	['modules/messaging/features/open-dm/NewMessageDialog.svelte', 0, 'New message', 'New message'],
@@ -140,8 +105,8 @@ for (const [file, site, present, absent, refused = false] of cases) {
 	});
 }
 
-// The old org chart's seven person and team dialogs were removed with that page (offices-and-teams-ux §7.8).
-test('compatibility table covers all 15 migrated files and 16 title sites', () => {
-	expect(new Set(cases.map(([file]) => file)).size).toBe(15);
-	expect(new Set(cases.map(([file, site]) => `${file}:${site}`)).size).toBe(16);
+// Legacy org-chart, work/features, project-teams, and retired employee dialogs were removed as unreachable dead code.
+test('compatibility table covers all 6 live migrated files and 6 title sites', () => {
+	expect(new Set(cases.map(([file]) => file)).size).toBe(6);
+	expect(new Set(cases.map(([file, site]) => `${file}:${site}`)).size).toBe(6);
 });

@@ -23,21 +23,39 @@ export function createChatSnapshotLoader(opts: {
 	let destroyed = false;
 	let loadGen = 0;
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+	let activeAbort: AbortController | undefined;
 
 	async function load(): Promise<boolean> {
 		if (destroyed) return false;
+		activeAbort?.abort();
+		const controller = new AbortController();
+		activeAbort = controller;
 		const gen = ++loadGen;
 		const orgId = opts.getOrganizationId();
 		try {
 			const nowIso = new Date().toISOString();
-			const snap = await opts.chatApi.snapshot(orgId);
-			if (destroyed || gen !== loadGen || orgId !== opts.getOrganizationId()) return false;
+			const snap = await opts.chatApi.snapshot(orgId, controller.signal);
+			if (
+				destroyed ||
+				controller.signal.aborted ||
+				gen !== loadGen ||
+				orgId !== opts.getOrganizationId()
+			)
+				return false;
 			opts.onSnapshot(snap, nowIso);
 			return true;
 		} catch (e) {
-			if (destroyed || gen !== loadGen) return false;
+			if (
+				destroyed ||
+				controller.signal.aborted ||
+				gen !== loadGen ||
+				orgId !== opts.getOrganizationId()
+			)
+				return false;
 			if (!opts.hasSnapshot()) opts.onError(toAppError(e).message);
 			return false;
+		} finally {
+			if (activeAbort === controller) activeAbort = undefined;
 		}
 	}
 
@@ -53,6 +71,8 @@ export function createChatSnapshotLoader(opts: {
 	function dispose(): void {
 		destroyed = true;
 		loadGen++;
+		activeAbort?.abort();
+		activeAbort = undefined;
 		clearTimeout(debounceTimer);
 		debounceTimer = undefined;
 	}

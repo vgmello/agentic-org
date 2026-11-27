@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { pageTitle } from '$lib/nav';
-	import { AccessPage } from '$lib/modules/access';
+	import AccessPage from '$lib/modules/access/features/overview/AccessPage.svelte';
 
 	let { data } = $props();
 </script>

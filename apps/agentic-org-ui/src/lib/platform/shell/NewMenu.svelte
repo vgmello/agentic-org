@@ -21,8 +21,8 @@
 	import { hireUrl } from '$lib/modules/employees/hire';
 	import { newProjectUrl } from '$lib/modules/projects/present';
 	import { taskHref } from '$lib/modules/workitems/present';
-	import { areaCapability } from './capabilities';
-	import { focusDestinationHeading } from './focus-destination';
+	import { areaCapability } from '$lib/platform/workspace/capabilities';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
 	import { useShellData } from './shell-data.svelte';
 	import { chatMembers } from '$lib/modules/messaging/model';
 	import { toAppError } from '$lib/proto';

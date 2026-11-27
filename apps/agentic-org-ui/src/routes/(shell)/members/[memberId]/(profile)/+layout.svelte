@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { ProfileFrame } from '$lib/modules/members';
+	import ProfileFrame from '$lib/modules/members/features/profile/ProfileFrame.svelte';
 
 	let { data, children } = $props();
 </script>

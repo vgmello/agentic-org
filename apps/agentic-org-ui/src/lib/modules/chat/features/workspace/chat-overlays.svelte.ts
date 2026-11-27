@@ -47,8 +47,16 @@ export class ChatOverlayController {
 	private sidebarReturn: 'toggle' | 'selection' | 'dialog' = 'toggle';
 	private sidebarDialogSelected = false;
 	private sidebarDialogOpener: HTMLElement | undefined;
+	private focusRaf: number | undefined;
 
 	constructor(private readonly deps: ChatOverlayDeps) {}
+
+	dispose = () => {
+		if (this.focusRaf !== undefined) {
+			cancelAnimationFrame(this.focusRaf);
+			this.focusRaf = undefined;
+		}
+	};
 
 	rowIsActive = (message: ChatMessage) => this.rowActivity.active(message.id);
 
@@ -71,22 +79,37 @@ export class ChatOverlayController {
 			!(this.deps.getConversationEl()?.contains(target) || target.closest('[data-chat-panel]'))
 		)
 			return;
-		requestAnimationFrame(() => {
+		if (this.focusRaf !== undefined) cancelAnimationFrame(this.focusRaf);
+		this.focusRaf = requestAnimationFrame(() => {
+			this.focusRaf = undefined;
 			if (target.isConnected && document.activeElement === target) revealFocus(target);
 		});
 	};
 
-	hasOpenOverlay = () =>
+	hasModalOverlay = () =>
 		[this.sidebarOpen, this.channelOpen, this.dmOpen, this.commandOpen, this.browseOpen].some(
 			Boolean
 		);
 
+	hasOpenOverlay = () => this.hasModalOverlay() || this.showMembers || this.showPins;
+
 	dismissAllOverlays = () => {
+		if (this.commandOpen || this.browseOpen || this.channelOpen || this.dmOpen) {
+			this.deps.getDialogs()?.dismissOpenDialogs();
+			return;
+		}
 		if (this.sidebarOpen) {
 			this.sidebarReturn = 'toggle';
 			this.sidebarOpen = false;
+			return;
 		}
-		this.deps.getDialogs()?.dismissOpenDialogs();
+		if (this.showMembers) {
+			this.closeMembers();
+			return;
+		}
+		if (this.showPins) {
+			this.closePins();
+		}
 	};
 
 	openSidebar = () => {
@@ -264,7 +287,7 @@ export class ChatOverlayController {
 	handleWindowKeydown = (event: KeyboardEvent) => {
 		const kind = this.deps.getPanelKind();
 		if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
-		if (!kind || this.hasOpenOverlay() || isTextInputTarget(event.target)) return;
+		if (!kind || this.hasModalOverlay() || isTextInputTarget(event.target)) return;
 		event.preventDefault();
 		if (kind === 'thread') this.closeThread();
 		else if (kind === 'members') this.closeMembers();

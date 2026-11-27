@@ -13,11 +13,12 @@
 	import Clock from '@lucide/svelte/icons/clock';
 	import Info from '@lucide/svelte/icons/info';
 	import ShieldAlert from '@lucide/svelte/icons/shield-alert';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { toAppError, type OrgSnapshot } from '$lib/proto';
 	import { executeDecisionAction } from '$lib/modules/inbox/decisions';
 	import { isDenyAction } from '$lib/modules/inbox/spotlight';
 	import type { HomeInboxState, SpotlightDecision } from '$lib/modules/home/model';
-	import { useShellAi } from '$lib/platform/shell/shell-ai';
+	import { useShellAi } from '$lib/platform/workspace/shell-ai';
 	import HomeDayOne from './HomeDayOne.svelte';
 	import SpotlightContextPanel from './SpotlightContextPanel.svelte';
 	import SpotlightDenyGuard from './SpotlightDenyGuard.svelte';
@@ -41,9 +42,7 @@
 		inboxState = 'ready',
 		onRefresh
 	}: Props = $props();
-
 	const shellAi = useShellAi();
-
 	let spotIdx = $derived.by(() => {
 		void organizationId;
 		return 0;
@@ -66,10 +65,7 @@
 	let pulseTimer: ReturnType<typeof setTimeout> | undefined;
 	let panelEl = $state<HTMLElement | null>(null);
 	let titleEl = $state<HTMLHeadingElement | null>(null);
-
-	onDestroy(() => {
-		clearTimeout(pulseTimer);
-	});
+	onDestroy(() => clearTimeout(pulseTimer));
 
 	export function jumpToDecision(id: string): boolean {
 		const idx = spotlight.findIndex((item) => item.id === id);
@@ -223,24 +219,26 @@
 					Priority {safeIdx + 1} of {spotlight.length}
 				</span>
 				<div class="flex items-center gap-1">
-					<button
-						type="button"
-						disabled={spotlight.length <= 1}
-						onclick={() => selectDecision((safeIdx - 1 + spotlight.length) % spotlight.length)}
-						aria-label="Previous decision"
-						class="stepper-arrow flex size-9 items-center justify-center rounded-full"
+					<ModalTooltip label="Previous decision"
+						><button
+							type="button"
+							disabled={spotlight.length <= 1}
+							onclick={() => selectDecision((safeIdx - 1 + spotlight.length) % spotlight.length)}
+							aria-label="Previous decision"
+							class="stepper-arrow flex size-9 items-center justify-center rounded-full"
+							><ChevronLeft class="size-4" aria-hidden="true" /></button
+						></ModalTooltip
 					>
-						<ChevronLeft class="size-4" aria-hidden="true" />
-					</button>
-					<button
-						type="button"
-						disabled={spotlight.length <= 1}
-						onclick={() => selectDecision((safeIdx + 1) % spotlight.length)}
-						aria-label="Next decision"
-						class="stepper-arrow flex size-9 items-center justify-center rounded-full"
+					<ModalTooltip label="Next decision"
+						><button
+							type="button"
+							disabled={spotlight.length <= 1}
+							onclick={() => selectDecision((safeIdx + 1) % spotlight.length)}
+							aria-label="Next decision"
+							class="stepper-arrow flex size-9 items-center justify-center rounded-full"
+							><ChevronRight class="size-4" aria-hidden="true" /></button
+						></ModalTooltip
 					>
-						<ChevronRight class="size-4" aria-hidden="true" />
-					</button>
 				</div>
 			</div>
 		</div>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { pageTitle } from '$lib/nav';
-	import { AgentSetupList } from '$lib/modules/agent-setup';
+	import AgentSetupList from '$lib/modules/agent-setup/features/list/AgentSetupList.svelte';
 	import { hireUrl } from '$lib/modules/employees';
 
 	let { data } = $props();

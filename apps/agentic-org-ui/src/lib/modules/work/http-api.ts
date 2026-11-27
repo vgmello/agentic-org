@@ -129,7 +129,9 @@ export function createHttpWorkApi({ http }: { http: Pick<GatewayHttpTransport, '
 	return Object.freeze({
 		async snapshot(
 			organizationId: string,
-			projectId?: string
+			projectId?: string,
+			_closedSince?: string,
+			signal?: AbortSignal
 		): Promise<{ position: WorkPosition; items: WorkItemSummary[] }> {
 			const params = new URLSearchParams();
 			if (projectId) params.set('project_id', projectId);
@@ -138,8 +140,9 @@ export function createHttpWorkApi({ http }: { http: Pick<GatewayHttpTransport, '
 
 			let reply: GatewayReply;
 			try {
-				reply = await http.read(path);
-			} catch {
+				reply = await (signal ? http.read(path, signal) : http.read(path));
+			} catch (err) {
+				if (signal?.aborted) throw err;
 				throw {
 					source: 'api',
 					code: 'unavailable',

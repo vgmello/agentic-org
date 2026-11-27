@@ -4,7 +4,7 @@ import {
 	projectFrame as platformProjectFrame,
 	setProjectFrame as platformSetProjectFrame,
 	type ProjectFrameContext as PlatformProjectFrameContext
-} from '$lib/platform/shell/project-frame';
+} from '$lib/platform/workspace/project-frame';
 import type { ProjectDetail } from '../../types';
 
 export type ProjectFrameContext = PlatformProjectFrameContext<ProjectDetail>;

@@ -8,7 +8,7 @@
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import type { Connection } from '$lib/proto';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
-	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
+	import { UI_THEMES, uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	interface FooterOfficeState {
 		label: string;
@@ -247,6 +247,11 @@
 			background-color 0.14s ease,
 			color 0.14s ease,
 			box-shadow 0.14s ease;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.exec-tess-contact {
+			transition: none;
+		}
 	}
 	.exec-tess-contact:hover {
 		background: var(--exec-accent-soft);

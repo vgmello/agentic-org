@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,
@@ -35,19 +34,16 @@
 	let error = $state<string | undefined>();
 	let busy = $state(false);
 	// Kept while the dialog closes, so its title doesn't flash empty.
-	let title = $state('');
+	let lockedTitle = $state('');
+	const title = $derived(open ? team?.name || lockedTitle : lockedTitle);
 
-	$effect(() => {
+	function resetOnOpen() {
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
-		if (open) {
-			untrack(() => {
-				if (!team) return;
-				name = team.name;
-				title = team.name;
-				error = undefined;
-			});
-		}
-	});
+		error = undefined;
+		if (!team) return;
+		name = team.name;
+		lockedTitle = team.name;
+	}
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -83,7 +79,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent>
+	<DialogContent onOpenAutoFocus={resetOnOpen}>
 		<form class="grid gap-6" onsubmit={submit} novalidate>
 			<DialogHeader>
 				<DialogTitle text={`Rename ${title}`} />

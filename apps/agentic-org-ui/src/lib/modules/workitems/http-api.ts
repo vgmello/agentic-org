@@ -1,37 +1,19 @@
 import type { AppError } from '$lib/proto';
-import {
-	gatewayStatusCode,
-	readGatewayAppError,
-	unwrapGatewayResult,
-	type GatewayHttpTransport,
-	type GatewayReply
-} from '$lib/platform/http/gateway-errors';
+import type { GatewayHttpTransport } from '$lib/platform/http/gateway-errors';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { isOpen, normalizeRef } from './present';
-import {
-	buildChoices,
-	buildOrgLookup,
-	buildViewer,
-	mapTaskDetail,
-	mapTaskLink,
-	mapTaskRow,
-	type OrgLookup,
-	type WireProject,
-	type WireTaskInspect,
-	type WireTaskView
-} from './wire-map';
+import { buildChoices, buildViewer, mapTaskDetail, mapTaskLink, mapTaskRow } from './wire-map';
 import {
 	buildClosePayload,
 	buildCreateBody,
 	defaultUuidV7,
-	inferTaskField,
-	isWireProject,
 	isWireTaskView,
 	normalizeUuidV7,
 	type PendingIds
 } from './http-api-payloads';
 import { createWorkItemNotesHandlers } from './http-api-notes';
+import { createWorkItemTransport, orgBase } from './http-api-transport';
 import type { WorkItemsApi } from './api';
 import type {
 	AssignmentChange,
@@ -75,95 +57,10 @@ export function createHttpWorkItemsApi({
 		return created;
 	}
 
-	function orgBase(orgId: string): string {
-		return `/api/v1/organizations/${encodeURIComponent(orgId)}`;
-	}
-
-	async function readJson(path: string, fallbackMessage: string): Promise<Record<string, unknown>> {
-		let reply: GatewayReply;
-		try {
-			reply = await http.read(path);
-		} catch {
-			throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies AppError;
-		}
-		return unwrapGatewayResult(reply, fallbackMessage);
-	}
-
-	async function postJson(
-		path: string,
-		body: Record<string, unknown>,
-		fallbackMessage: string
-	): Promise<Record<string, unknown>> {
-		let reply: GatewayReply;
-		try {
-			reply = await http.submit(path, body);
-		} catch {
-			throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies AppError;
-		}
-		if (reply.status !== 200) {
-			const err = readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallbackMessage);
-			const field = inferTaskField(err);
-			throw field ? { ...err, field } : err;
-		}
-		return unwrapGatewayResult(reply, fallbackMessage);
-	}
-
-	async function readProjects(organizationId: string): Promise<WireProject[]> {
-		try {
-			const res = await readJson(
-				`${orgBase(organizationId)}/projects?include_archived=true`,
-				'Projects could not be loaded.'
-			);
-			return Array.isArray(res.projects) ? res.projects.filter(isWireProject) : [];
-		} catch {
-			return [];
-		}
-	}
-
-	async function loadLookup(organizationId: string): Promise<{
-		lookup: OrgLookup;
-		projects: WireProject[];
-	}> {
-		const [view, projects] = await Promise.all([
-			orgApi.view(organizationId),
-			readProjects(organizationId)
-		]);
-		return { lookup: buildOrgLookup(view.snapshot, projects), projects };
-	}
-
-	async function readTasks(
-		organizationId: string,
-		params?: URLSearchParams
-	): Promise<WireTaskView[]> {
-		const qs = params?.toString();
-		const res = await readJson(
-			`${orgBase(organizationId)}/tasks${qs ? `?${qs}` : ''}`,
-			'Work items could not be loaded.'
-		);
-		if (!Array.isArray(res.tasks)) {
-			throw {
-				source: 'api',
-				code: 'unavailable',
-				message: 'The tasks response could not be read.'
-			} satisfies AppError;
-		}
-		return res.tasks.filter(isWireTaskView);
-	}
-
-	async function inspectRaw(organizationId: string, refOrId: string): Promise<WireTaskInspect> {
-		const res = await readJson(
-			`${orgBase(organizationId)}/tasks/${encodeURIComponent(refOrId)}`,
-			'The work item could not be loaded.'
-		);
-		if (!isWireTaskView(res.task)) {
-			throw {
-				source: 'api',
-				code: 'unavailable',
-				message: 'The work item could not be read.'
-			} satisfies AppError;
-		}
-		return res as unknown as WireTaskInspect;
-	}
+	const { readJson, postJson, loadLookup, readTasks, inspectRaw } = createWorkItemTransport(
+		http,
+		orgApi
+	);
 
 	const notesHandlers = createWorkItemNotesHandlers({
 		orgBase,
@@ -176,12 +73,16 @@ export function createHttpWorkItemsApi({
 	});
 
 	return Object.freeze<WorkItemsApi>({
-		async queue(organizationId: string, scope: WorkScope): Promise<WorkQueue> {
+		async queue(
+			organizationId: string,
+			scope: WorkScope,
+			signal?: AbortSignal
+		): Promise<WorkQueue> {
 			const params = new URLSearchParams();
 			if (scope.kind === 'project') params.set('project_id', scope.projectId);
 			const [tasks, { lookup }] = await Promise.all([
-				readTasks(organizationId, params),
-				loadLookup(organizationId)
+				readTasks(organizationId, params, signal),
+				loadLookup(organizationId, signal)
 			]);
 			return {
 				rows: tasks.map((t) => mapTaskRow(t, lookup)),

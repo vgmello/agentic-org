@@ -123,19 +123,35 @@ export function writeInboxDividersPreference(enabled: boolean): void {
 	}
 }
 
-/** Removes all device-local Inbox comment entries and drafts on sign-out or account switch (P1-4, TASK-226). */
+const SESSION_SCOPED_STORAGE_PREFIXES = [
+	INBOX_COMMENTS_PREFIX,
+	'agentic-org.requests.',
+	'agentic-org.tasks.view.',
+	'agentic-org.workitems.',
+	'agentic-org.work.',
+	'agentic-org.chat.',
+	'agentic-org.org.',
+	'agentic-org.organization.'
+];
+
+function clearStorageByPrefixes(storage: Storage, prefixes: readonly string[]): void {
+	const toRemove: string[] = [];
+	for (let i = 0; i < storage.length; i++) {
+		const key = storage.key(i);
+		if (key && prefixes.some((prefix) => key.startsWith(prefix))) toRemove.push(key);
+	}
+	for (const key of toRemove) {
+		storage.removeItem(key);
+	}
+}
+
+/** Removes all device-local Inbox comment entries, drafts, and org-scoped device filters on sign-out or account switch (P1-4, TASK-226). */
 export function clearInboxDeviceComments(): void {
 	clearInboxCommentDrafts();
 	if (typeof window === 'undefined') return;
 	try {
-		const toRemove: string[] = [];
-		for (let i = 0; i < window.localStorage.length; i++) {
-			const key = window.localStorage.key(i);
-			if (key?.startsWith(INBOX_COMMENTS_PREFIX)) toRemove.push(key);
-		}
-		for (const key of toRemove) {
-			window.localStorage.removeItem(key);
-		}
+		clearStorageByPrefixes(window.localStorage, SESSION_SCOPED_STORAGE_PREFIXES);
+		clearStorageByPrefixes(window.sessionStorage, SESSION_SCOPED_STORAGE_PREFIXES);
 	} catch {
 		/* Ignore storage unavailability during sign-out teardown. */
 	}

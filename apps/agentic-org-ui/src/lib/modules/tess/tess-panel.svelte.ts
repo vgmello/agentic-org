@@ -1,148 +1,30 @@
 import { createContext } from 'svelte';
-import { answerExecutiveQuestion } from '$lib/modules/home/model';
-import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
-import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
-import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/shell/shell-ai';
+import type { HomeDomainData } from '$lib/modules/home/model';
+import { isBuiltInAgent } from '$lib/proto';
+import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/workspace/shell-ai';
 import { defaultTessApi } from './api';
+import {
+	applyStreamEventToTurn,
+	buildLocalFallbackAnswer,
+	isProtectedBuiltInProposal,
+	updateProposalInBlocks
+} from './tess-stream';
 import type {
-	TessActionProposal,
 	TessApi,
+	TessCompanionMode,
 	TessContextRef,
+	TessContextSnapshot,
 	TessRuntimeStatus,
-	TessStreamEvent,
-	TessToolCall,
-	TessTurnMode,
+	TessTurn,
 	TessUiBlock
 } from './types';
-export type { TessTurnMode } from './types';
-
-export interface TessTurn {
-	id: string;
-	organizationId?: string;
-	serverTurnId?: string;
-	query: string;
-	createdAt: number;
-	mode: TessTurnMode;
-	streaming?: boolean;
-	streamText?: string;
-	toolCalls?: TessToolCall[];
-	blocks?: TessUiBlock[];
-	followUps?: string[];
-	errorMessage?: string;
-	answer: OrgAiAnswer;
-	contextLabel?: string;
-}
-
-export interface TessContextSnapshot {
-	organizationId?: string;
-	snapshot?: OrgSnapshot;
-	items: readonly WorkItemSummary[];
-	offices: readonly OfficeInfo[];
-	ownerId: string;
-	domain?: HomeDomainData;
-	routeLabel?: string;
-	routePath?: string;
-	offline?: boolean;
-}
-
-export const TESS_STARTERS: readonly string[] = [
-	'What needs me first?',
-	'Which projects need attention?',
-	'Budget, offices & active agents',
-	'Where is task time going?'
-];
-
-export type TessCompanionMode = 'hidden' | 'pill' | 'open' | 'expanded';
-
-const WRITE_OR_HOWTO_RE =
-	/\b(create|assign|pause|resume|hire|move|delete|archive|approve|deny|how do i|how to|configure|set up|setup)\b/i;
-
-function buildLocalFallbackAnswer(
-	prompt: string,
-	ctx: TessContextSnapshot,
-	mergedDomain: HomeDomainData | undefined,
-	activeDecision: ShellAiDecisionContext | undefined,
-	opts?: ShellAiAskOptions
-): OrgAiAnswer {
-	if (!activeDecision && WRITE_OR_HOWTO_RE.test(prompt)) {
-		return {
-			query: prompt,
-			headline: 'Live Tess runtime is not connected yet.',
-			bullets: [
-				{
-					text: 'Local quick summary can answer live read-only questions about decisions, projects, budgets, offices, and task flow, but creating or editing items requires a live Tess runtime.',
-					href: '/settings/agents',
-					linkLabel: 'Configure agent runtimes'
-				},
-				{
-					text: 'You can run this action directly using the workspace menu or Cmd+K commands.',
-					href: '/work',
-					linkLabel: 'Open Work'
-				}
-			]
-		};
-	}
-
-	return answerExecutiveQuestion(prompt, {
-		snapshot: ctx.snapshot,
-		items: ctx.items,
-		offices: ctx.offices,
-		ownerId: ctx.ownerId,
-		domain: mergedDomain,
-		decisionId: opts?.decisionId ?? activeDecision?.id,
-		decision: opts?.decision
-	});
-}
-
-function upsertToolCall(
-	calls: readonly TessToolCall[] | undefined,
-	next: TessToolCall
-): TessToolCall[] {
-	const list = calls ? [...calls] : [];
-	const idx = list.findIndex((c) => c.id === next.id);
-	if (idx >= 0) {
-		list[idx] = { ...list[idx], ...next };
-		return list;
-	}
-	return [...list, next];
-}
-
-function applyStreamEventToTurn(turn: TessTurn, event: TessStreamEvent): TessTurn {
-	switch (event.type) {
-		case 'turn.started':
-			return { ...turn, serverTurnId: event.turnId || turn.serverTurnId, streaming: true };
-		case 'tool.progress':
-			return { ...turn, toolCalls: upsertToolCall(turn.toolCalls, event.call) };
-		case 'text.delta':
-			return { ...turn, streamText: `${turn.streamText ?? ''}${event.delta}` };
-		case 'ui.block':
-			if (event.block.kind === 'follow_ups') {
-				return { ...turn, followUps: event.block.prompts.slice(0, 3) };
-			}
-			return { ...turn, blocks: [...(turn.blocks ?? []), event.block] };
-		case 'turn.completed':
-			return {
-				...turn,
-				streaming: false,
-				followUps: event.followUps?.length ? event.followUps.slice(0, 3) : turn.followUps
-			};
-		case 'turn.error':
-			return { ...turn, streaming: false, errorMessage: event.message };
-	}
-}
-
-function updateProposalInBlocks(
-	blocks: readonly TessUiBlock[] | undefined,
-	proposalId: string,
-	updater: (proposal: TessActionProposal) => TessActionProposal
-): TessUiBlock[] | undefined {
-	if (!blocks) return blocks;
-	return blocks.map((block) =>
-		block.kind === 'action_proposal' && block.proposal.id === proposalId
-			? { ...block, proposal: updater(block.proposal) }
-			: block
-	);
-}
+export {
+	TESS_STARTERS,
+	type TessCompanionMode,
+	type TessContextSnapshot,
+	type TessTurn,
+	type TessTurnMode
+} from './types';
 
 /**
  * Embedded Tess Companion controller (TASK-80.5 / doc-97).
@@ -167,6 +49,7 @@ export class TessPanelState {
 	#abortController: AbortController | undefined = undefined;
 	#activeOrgId: string | undefined = undefined;
 	#activeLocalTurnId: string | undefined = undefined;
+	#protectedMemberIds: string[] = [];
 
 	constructor(api: TessApi = defaultTessApi) {
 		this.#api = api;
@@ -217,6 +100,7 @@ export class TessPanelState {
 	setOrganization(organizationId: string | undefined): void {
 		if (organizationId === this.#activeOrgId) return;
 		this.#activeOrgId = organizationId;
+		this.#protectedMemberIds = [];
 		this.#sessionGen++;
 		this.#askGen++;
 		this.#abortStream();
@@ -271,7 +155,15 @@ export class TessPanelState {
 	}
 
 	#patchTurn(turnId: string, updater: (turn: TessTurn) => TessTurn): void {
-		this.turns = this.turns.map((t) => (t.id === turnId ? updater(t) : t));
+		const idx = this.turns.findIndex((t) => t.id === turnId);
+		if (idx < 0) return;
+		this.turns[idx] = updater(this.turns[idx]);
+	}
+
+	#appendStreamDelta(turnId: string, delta: string): void {
+		const idx = this.turns.findIndex((t) => t.id === turnId);
+		if (idx < 0) return;
+		this.turns[idx].streamText = `${this.turns[idx].streamText ?? ''}${delta}`;
 	}
 
 	async stopActiveTurn(): Promise<void> {
@@ -301,6 +193,19 @@ export class TessPanelState {
 			block.proposal.status === 'applied' ||
 			block.proposal.status === 'dismissed'
 		) {
+			return;
+		}
+		if (isProtectedBuiltInProposal(block.proposal, this.#protectedMemberIds)) {
+			const msg = 'Built-in agents (HR and Tess) cannot be modified, moved, paused, or removed.';
+			this.#patchTurn(turnId, (t) => ({
+				...t,
+				blocks: updateProposalInBlocks(t.blocks, proposalId, (p) => ({
+					...p,
+					status: 'error',
+					errorMessage: msg
+				}))
+			}));
+			this.liveAnnouncement = msg;
 			return;
 		}
 		const sessionGen = this.#sessionGen;
@@ -400,6 +305,9 @@ export class TessPanelState {
 				? activeDecision.title
 				: ctx.routeLabel;
 
+		if (ctx.snapshot) {
+			this.#protectedMemberIds = ctx.snapshot.members.filter(isBuiltInAgent).map((m) => m.id);
+		}
 		const mergedDomain: HomeDomainData | undefined =
 			this.#domainContext || ctx.domain
 				? {
@@ -522,7 +430,11 @@ export class TessPanelState {
 			{
 				onEvent: (event) => {
 					if (isStale()) return;
-					this.#patchTurn(localTurnId, (t) => applyStreamEventToTurn(t, event));
+					if (event.type === 'text.delta') {
+						this.#appendStreamDelta(localTurnId, event.delta);
+					} else {
+						this.#patchTurn(localTurnId, (t) => applyStreamEventToTurn(t, event));
+					}
 					if (event.type === 'turn.completed') {
 						this.liveAnnouncement = 'Tess finished responding.';
 					}

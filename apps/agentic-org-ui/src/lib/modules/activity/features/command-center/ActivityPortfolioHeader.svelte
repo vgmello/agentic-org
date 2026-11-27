@@ -6,7 +6,7 @@
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Layers from '@lucide/svelte/icons/layers';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
 	import type { ProjectSummary } from '$lib/proto';
 	import ActivityDisplayMenu from './ActivityDisplayMenu.svelte';
 	import { STREAM_TABS } from './activity-project-merge';

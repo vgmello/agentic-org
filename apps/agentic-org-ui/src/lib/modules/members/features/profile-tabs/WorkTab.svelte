@@ -29,8 +29,8 @@
 		readSessionShowArchived,
 		writeSessionShowArchived
 	} from '$lib/modules/workitems/archive';
-	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { useScopedSearchContext } from '$lib/platform/workspace/scoped-search.svelte';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import { membersApi } from '../../api';
 	import { WORK_PRIORITY_LABELS, WORK_STATE_LABELS } from '../../present';
 	import type { WorkState } from '../../types';

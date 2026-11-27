@@ -66,28 +66,22 @@
 	let blockBusy = $state(false);
 	let blockError = $state<string | undefined>();
 
-	$effect(() => {
-		if (closeOpen) {
-			closeKind = initialCloseKind;
-			duplicateRef = '';
-			closeReason = '';
-			closeError = undefined;
-		}
-	});
+	function resetCloseOnOpen() {
+		closeKind = initialCloseKind;
+		duplicateRef = '';
+		closeReason = '';
+		closeError = undefined;
+	}
 
-	$effect(() => {
-		if (reopenOpen) {
-			reopenNote = '';
-			reopenError = undefined;
-		}
-	});
+	function resetReopenOnOpen() {
+		reopenNote = '';
+		reopenError = undefined;
+	}
 
-	$effect(() => {
-		if (blockOpen) {
-			blockReason = task.blockedReason ?? '';
-			blockError = undefined;
-		}
-	});
+	function resetBlockOnOpen() {
+		blockReason = task.blockedReason ?? '';
+		blockError = undefined;
+	}
 
 	async function submitClose(event: SubmitEvent) {
 		event.preventDefault();
@@ -189,7 +183,10 @@
 
 <!-- Close as… modal -->
 <Dialog bind:open={closeOpen} onOpenChange={(n) => !n && closeBusy && (closeOpen = true)}>
-	<DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+	<DialogContent
+		onOpenAutoFocus={resetCloseOnOpen}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+	>
 		<DialogHeader>
 			<DialogTitle text="Close {task.ref}" />
 			<DialogDescription>
@@ -264,7 +261,10 @@
 
 <!-- Reopen modal -->
 <Dialog bind:open={reopenOpen} onOpenChange={(n) => !n && reopenBusy && (reopenOpen = true)}>
-	<DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+	<DialogContent
+		onOpenAutoFocus={resetReopenOnOpen}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+	>
 		<DialogHeader>
 			<DialogTitle text="Reopen {task.ref}" />
 			<DialogDescription>
@@ -302,7 +302,10 @@
 
 <!-- Block modal -->
 <Dialog bind:open={blockOpen} onOpenChange={(n) => !n && blockBusy && (blockOpen = true)}>
-	<DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+	<DialogContent
+		onOpenAutoFocus={resetBlockOnOpen}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+	>
 		<DialogHeader>
 			<DialogTitle text="Block {task.ref}" />
 			<DialogDescription>Explain what is blocking this work.</DialogDescription>

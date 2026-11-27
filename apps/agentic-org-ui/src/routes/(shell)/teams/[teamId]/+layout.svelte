@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { TeamPage } from '$lib/modules/teams/features/team-page';
+	import TeamPage from '$lib/modules/teams/features/team-page/TeamPage.svelte';
 
 	let { data, children } = $props();
 </script>

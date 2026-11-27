@@ -4,7 +4,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import type { Conversation } from '$lib/modules/messaging';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
 
 	let {
 		viewTitle,

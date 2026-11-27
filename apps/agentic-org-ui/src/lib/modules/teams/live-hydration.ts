@@ -122,7 +122,8 @@ function convKind(raw: string | undefined): ConversationRow['kind'] {
 async function hydrateConversationRow(
 	http: GatewayHttpTransport,
 	base: string,
-	conv: Rec
+	conv: Rec,
+	signal?: AbortSignal
 ): Promise<ConversationRow> {
 	const id = asStr(conv.id)!;
 	const kind = convKind(asStr(conv.kind));
@@ -131,7 +132,10 @@ async function hydrateConversationRow(
 	let lastAt = asIso(conv.updated_at ?? conv.created_at);
 	let preview = asStr(conv.purpose) ?? (kind === 'channel' ? 'Team channel' : 'Conversation');
 	try {
-		const msgReply = await http.submit(`${base}/messages/list`, { conversation: id, limit: 5 });
+		const body = { conversation: id, limit: 5 };
+		const msgReply = await (signal
+			? http.submit(`${base}/messages/list`, body, signal)
+			: http.submit(`${base}/messages/list`, body));
 		const msgRes = unwrapGatewayResult(msgReply, 'Messages could not be loaded.');
 		const list = Array.isArray(msgRes.messages) ? msgRes.messages : [];
 		const latest = list
@@ -146,7 +150,8 @@ async function hydrateConversationRow(
 			lastAt = asIso(latest.created_at ?? latest.at ?? latest.timestamp_ms);
 			preview = (asStr(latest.body) ?? preview).trim().slice(0, 160);
 		}
-	} catch {
+	} catch (err) {
+		if (signal?.aborted) throw err;
 		// Keep conversation metadata fallback when message list fails.
 	}
 	return { id, title, kind, lastAt, preview };
@@ -157,13 +162,17 @@ export async function readTeamConversations(
 	organizationId: string,
 	teamId: string,
 	teamName: string,
-	memberIds: ReadonlySet<string>
+	memberIds: ReadonlySet<string>,
+	signal?: AbortSignal
 ): Promise<ConversationRow[]> {
 	const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat`;
 	let reply: GatewayReply;
 	try {
-		reply = await http.read(`${base}/conversations`);
-	} catch {
+		reply = await (signal
+			? http.read(`${base}/conversations`, signal)
+			: http.read(`${base}/conversations`));
+	} catch (err) {
+		if (signal?.aborted) throw err;
 		return [];
 	}
 	let rawConvs: unknown[];
@@ -181,6 +190,8 @@ export async function readTeamConversations(
 			Boolean(r && asStr(r.id) && isTeamConversation(r, teamId, teamSlug, memberIds))
 		);
 
-	const rows = await Promise.all(matched.map((conv) => hydrateConversationRow(http, base, conv)));
+	const rows = await Promise.all(
+		matched.map((conv) => hydrateConversationRow(http, base, conv, signal))
+	);
 	return rows.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
 }

@@ -128,31 +128,42 @@ export function createHttpTeamsApi({
 	workItemsApi?: Pick<WorkItemsApi, 'queue'>;
 	newEntityId?: () => string;
 }): TeamsApi {
-	async function safeWorkRows(organizationId: string): Promise<TaskRow[] | undefined> {
+	async function safeWorkRows(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<TaskRow[] | undefined> {
 		if (!workItemsApi) return undefined;
 		try {
-			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' }, signal);
 			return queue.rows;
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return [];
 		}
 	}
 
-	async function teamMemberIds(organizationId: string, teamId: string): Promise<Set<string>> {
-		const { snapshot } = await orgApi.view(organizationId);
+	async function teamMemberIds(
+		organizationId: string,
+		teamId: string,
+		signal?: AbortSignal
+	): Promise<Set<string>> {
+		const { snapshot } = await orgApi.view(organizationId, signal);
 		return new Set(
 			snapshot.members
 				.filter((m) => isMemberActive(m) && m.home_team_id === teamId)
 				.map((m) => m.id)
 		);
 	}
-	async function readProjects(organizationId: string): Promise<GatewayProjectSummary[]> {
+	async function readProjects(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<GatewayProjectSummary[]> {
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/projects?include_archived=false`;
 		let reply: GatewayReply;
 		try {
-			reply = await http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/projects?include_archived=false`
-			);
-		} catch {
+			reply = await (signal ? http.read(path, signal) : http.read(path));
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			throw {
 				source: 'api',
 				code: 'unavailable',
@@ -208,19 +219,19 @@ export function createHttpTeamsApi({
 	}
 
 	return Object.freeze({
-		async list(organizationId: string): Promise<TeamRow[]> {
+		async list(organizationId: string, signal?: AbortSignal): Promise<TeamRow[]> {
 			const [{ snapshot }, projects] = await Promise.all([
-				orgApi.view(organizationId),
-				readProjects(organizationId)
+				orgApi.view(organizationId, signal),
+				readProjects(organizationId, signal)
 			]);
 			const membersById = new Map(snapshot.members.map((m) => [m.id, m]));
 			return snapshot.teams.map((t) => buildTeamRow(t, snapshot, projects, membersById));
 		},
 
-		async team(organizationId: string, teamId: string): Promise<TeamDetail> {
+		async team(organizationId: string, teamId: string, signal?: AbortSignal): Promise<TeamDetail> {
 			const [{ snapshot }, projects] = await Promise.all([
-				orgApi.view(organizationId),
-				readProjects(organizationId)
+				orgApi.view(organizationId, signal),
+				readProjects(organizationId, signal)
 			]);
 			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
 			const team = teamsById.get(teamId);
@@ -239,20 +250,24 @@ export function createHttpTeamsApi({
 			};
 		},
 
-		async work(organizationId: string, teamId: string) {
+		async work(organizationId: string, teamId: string, signal?: AbortSignal) {
 			if (!workItemsApi) return unavailableCall();
 			const [rows, memberIds] = await Promise.all([
-				safeWorkRows(organizationId),
-				teamMemberIds(organizationId, teamId)
+				safeWorkRows(organizationId, signal),
+				teamMemberIds(organizationId, teamId, signal)
 			]);
 			return buildTeamWorkRows(rows ?? [], teamId, memberIds);
 		},
 
-		async projects(organizationId: string, teamId: string): Promise<TeamProjectRow[]> {
+		async projects(
+			organizationId: string,
+			teamId: string,
+			signal?: AbortSignal
+		): Promise<TeamProjectRow[]> {
 			const [{ snapshot }, projects, workRows] = await Promise.all([
-				orgApi.view(organizationId),
-				readProjects(organizationId),
-				safeWorkRows(organizationId)
+				orgApi.view(organizationId, signal),
+				readProjects(organizationId, signal),
+				safeWorkRows(organizationId, signal)
 			]);
 			const workTotals = workRows ? aggregateProjectWork(workRows) : undefined;
 			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
@@ -285,24 +300,31 @@ export function createHttpTeamsApi({
 			return rows.sort((a, b) => a.name.localeCompare(b.name));
 		},
 
-		async activity(organizationId: string, teamId: string) {
+		async activity(organizationId: string, teamId: string, signal?: AbortSignal) {
 			if (!workItemsApi) return unavailableCall();
 			const [rows, memberIds] = await Promise.all([
-				safeWorkRows(organizationId),
-				teamMemberIds(organizationId, teamId)
+				safeWorkRows(organizationId, signal),
+				teamMemberIds(organizationId, teamId, signal)
 			]);
 			return buildTeamActivity(rows ?? [], teamId, memberIds);
 		},
 
-		async conversations(organizationId: string, teamId: string) {
-			const { snapshot } = await orgApi.view(organizationId);
+		async conversations(organizationId: string, teamId: string, signal?: AbortSignal) {
+			const { snapshot } = await orgApi.view(organizationId, signal);
 			const team = snapshot.teams.find((t) => t.id === teamId);
 			const memberIds = new Set(
 				snapshot.members
 					.filter((m) => isMemberActive(m) && m.home_team_id === teamId)
 					.map((m) => m.id)
 			);
-			return readTeamConversations(http, organizationId, teamId, team?.name ?? '', memberIds);
+			return readTeamConversations(
+				http,
+				organizationId,
+				teamId,
+				team?.name ?? '',
+				memberIds,
+				signal
+			);
 		},
 		archive: unavailableCall,
 

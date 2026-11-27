@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { DevCatalogue } from '$lib/modules/processes';
+	import DevCatalogue from '$lib/modules/processes/features/dev-catalogue/DevCatalogue.svelte';
 
 	let { data } = $props();
 </script>

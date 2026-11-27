@@ -31,10 +31,10 @@ export interface LiveSource {
 
 export class OfficesLive {
 	/** The offices as the host last listed them; until it has, `undefined` (the saved ones are shown). */
-	reported = $state<OfficeInfo[] | undefined>();
+	reported = $state.raw<OfficeInfo[] | undefined>();
 	check = $state<LiveCheck>('checking');
 	/** What the host said it can do in its last hello (`office.status_changed`, `office.restart`). */
-	capabilities = $state<string[] | undefined>();
+	capabilities = $state.raw<string[] | undefined>();
 	/** True from the first failure until the office answers again: the Retry button stays while it works. */
 	retryingProbe = $state(false);
 	// Replaced whole on every sample, never mutated: a plain map in raw state.
@@ -54,11 +54,17 @@ export class OfficesLive {
 		this.#source = source;
 		this.#probe = createProbe(officeApi, (next, caps) => {
 			this.check = next;
-			if (next === 'up') {
+			if (next === 'down') this.retryingProbe = true;
+			else if (next === 'up') {
+				this.retryingProbe = false;
 				this.capabilities = caps;
 				void this.refresh();
 			}
-			if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]'))
+			if (
+				next === 'up' &&
+				typeof document !== 'undefined' &&
+				document.activeElement?.matches('[data-testid=retry-office]')
+			)
 				source.onback();
 		});
 	}
@@ -76,10 +82,6 @@ export class OfficesLive {
 				this.#statusRevision += 1;
 				this.reported = undefined;
 			}
-		});
-		$effect(() => {
-			if (this.check === 'down') this.retryingProbe = true;
-			else if (this.check === 'up') this.retryingProbe = false;
 		});
 		// A new deadline gets an immediate sample, which anchors its stable live-status announcement.
 		$effect.pre(() => {

@@ -14,7 +14,7 @@
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TabsNav, { type Tab } from '$lib/components/TabsNav.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -23,7 +23,7 @@
 	import { pageTitle } from '$lib/nav';
 	import { orgApi } from '$lib/modules/organization/api';
 	import { sessionFor } from '$lib/modules/organization/session';
-	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
 	import type { Connection, OrgSnapshot } from '$lib/proto';
 	import { teamsApi } from '../../api';
 	import { TEAM_TABS, agentsText, lookUpTeam, peopleText, tabFor, teamHref } from '../../team-page';
@@ -53,8 +53,10 @@
 
 	const organizationId = $derived(connection.organization.id);
 	const session = $derived(sessionFor(orgApi, organizationId));
-	const team = new Resource(() => lookUpTeam(() => teamsApi.team(organizationId, teamId)));
-	const work = new Resource(() => teamsApi.work(organizationId, teamId));
+	const team = new Resource((signal) =>
+		lookUpTeam(() => teamsApi.team(organizationId, teamId, signal))
+	);
+	const work = new Resource((signal) => teamsApi.work(organizationId, teamId, signal));
 	// Live changes, New › Add a person and this page's own actions apply in place, keeping what's shown until then.
 	reloadOnChange(team, () => loads);
 	reloadOnChange(work, () => loads);

@@ -26,10 +26,7 @@
 		onCloseAutoFocus?: (event: Event) => void;
 	} = $props();
 
-	let shown = $state<{ id: string; name: string } | undefined>();
-	$effect(() => {
-		if (open && office) shown = office;
-	});
+	const shown = $derived(office);
 	const text = $derived(
 		removeOfficeText({
 			office: shown?.name ?? '',

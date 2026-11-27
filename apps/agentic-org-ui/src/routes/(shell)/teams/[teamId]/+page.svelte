@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { TeamOverview } from '$lib/modules/teams/features/team-page';
+	import TeamOverview from '$lib/modules/teams/features/team-page/TeamOverview.svelte';
 	import { teamHref } from '$lib/modules/teams/team-page';
 
 	// Preserve legacy deep links to team task details (`/teams/:id?item=...` -> `/teams/:id/work?item=...`).

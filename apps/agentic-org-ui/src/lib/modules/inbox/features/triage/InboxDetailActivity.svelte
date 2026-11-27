@@ -62,7 +62,7 @@
 			<Tooltip.Root>
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
-						<button {...props} type="submit" aria-label="Send comment" class="triage-send">
+						<button {...props} type="submit" aria-label="Save local note" class="triage-send">
 							<Send class="size-4" aria-hidden="true" />
 						</button>
 					{/snippet}
@@ -72,7 +72,7 @@
 						side="top"
 						sideOffset={6}
 						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-						>Send comment</Tooltip.Content
+						>Save local note</Tooltip.Content
 					>
 				</Tooltip.Portal>
 			</Tooltip.Root>

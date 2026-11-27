@@ -13,8 +13,8 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
-	import { useShellCommand } from '$lib/platform/shell/shell-command';
+	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
+	import { useShellCommand } from '$lib/platform/workspace/shell-command';
 
 	let {
 		title,

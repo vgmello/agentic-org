@@ -9,7 +9,7 @@
 		ARCHIVE_AFTER_DAYS_OPTIONS,
 		uiPrefs,
 		type ArchiveAfterDays
-	} from '$lib/platform/shell/ui-preferences.svelte';
+	} from '$lib/platform/workspace/ui-preferences.svelte';
 	import { settingsApi } from '../../api';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { tone } from '$lib/components/pills';
@@ -19,7 +19,7 @@
 	import RecoveryRow from './RecoveryRow.svelte';
 
 	let { organizationId }: { organizationId: string } = $props();
-	const resource = new Resource(() => settingsApi.general(organizationId));
+	const resource = new Resource((signal) => settingsApi.general(organizationId, signal));
 	let handOver = $state(false);
 	let handOverButton = $state<HTMLButtonElement | null>(null);
 

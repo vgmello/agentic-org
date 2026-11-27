@@ -75,6 +75,99 @@ function usable(el: HTMLElement | null | undefined): el is HTMLElement {
 	return !!el && el.isConnected && !(el as HTMLButtonElement).disabled && !el.closest('[inert]');
 }
 
+const INTERACTIVE_OPENER =
+	'button, a[href], [role="button"], [tabindex]:not([tabindex="-1"]), input, select, textarea, summary';
+const POINTER_OPENER_MAX_AGE_MS = 1500;
+let lastPointerEl: HTMLElement | null = null;
+let lastPointerAt = 0;
+let lastKeydownAt = 0;
+let pointerTrackingInstalled = false;
+
+function onDocumentPointerDown(event: Event): void {
+	const raw = event.target;
+	const target = raw instanceof Element ? raw : null;
+	if (!target) return;
+	// Do not overwrite the trigger button when clicking inside a dropdown/listbox menu item that will unmount;
+	// refresh the trigger timestamp so reading a menu for > 1.5 s still returns focus to its trigger on WebKit.
+	if (target.closest('[role="menu"], [role="listbox"]')) {
+		if (usable(lastPointerEl)) lastPointerAt = Date.now();
+		return;
+	}
+	const interactive = target.closest<HTMLElement>(INTERACTIVE_OPENER);
+	if (interactive) {
+		lastPointerEl = interactive;
+		lastPointerAt = Date.now();
+	} else {
+		lastPointerEl = null;
+		lastPointerAt = 0;
+	}
+}
+
+function onDocumentKeyDown(): void {
+	lastKeydownAt = Date.now();
+}
+
+/**
+ * Installs capture-phase pointer/keyboard listeners on `document` so the very first pointer-opened
+ * (including lazy-loaded) dialog or sheet knows which control opened it in WebKit.
+ */
+export function installOverlayOpenerTracking(): void {
+	if (pointerTrackingInstalled || typeof document === 'undefined') return;
+	pointerTrackingInstalled = true;
+	document.addEventListener('pointerdown', onDocumentPointerDown, { capture: true, passive: true });
+	document.addEventListener('keydown', onDocumentKeyDown, { capture: true, passive: true });
+}
+
+if (typeof document !== 'undefined') installOverlayOpenerTracking();
+
+/** Reset tracked pointer opener state (for unit tests). */
+export function resetPointerOpenerTrackingForTests(): void {
+	lastPointerEl = null;
+	lastPointerAt = 0;
+	lastKeydownAt = 0;
+	pointerTrackingInstalled = false;
+}
+
+function isActiveOpener(el: Element | null, within?: Element | null): el is HTMLElement {
+	return (
+		el instanceof HTMLElement &&
+		el !== document.body &&
+		el !== document.documentElement &&
+		usable(el) &&
+		!el.closest('[role="menu"], [role="listbox"]') &&
+		!within?.contains(el)
+	);
+}
+
+function isRecentPointerOpener(el: HTMLElement | null, within?: Element | null): el is HTMLElement {
+	return (
+		!!el &&
+		Date.now() - lastPointerAt <= POINTER_OPENER_MAX_AGE_MS &&
+		usable(el) &&
+		!within?.contains(el)
+	);
+}
+
+/**
+ * Captures the control that opened an overlay across both keyboard and WebKit mouse interactions.
+ * WebKit leaves `document.activeElement` on `document.body` (or a previously focused heading/control)
+ * after a pointer click on a button, so when the latest interaction was a pointer click we prefer
+ * the clicked interactive control recorded on `pointerdown`.
+ */
+export function captureOverlayOpener(within?: Element | null): HTMLElement | null {
+	if (typeof document === 'undefined') return null;
+	installOverlayOpenerTracking();
+	if (
+		lastPointerAt > 0 &&
+		lastPointerAt >= lastKeydownAt &&
+		isRecentPointerOpener(lastPointerEl, within)
+	) {
+		return lastPointerEl;
+	}
+	if (isActiveOpener(document.activeElement, within)) return document.activeElement;
+	return isRecentPointerOpener(lastPointerEl, within) ? lastPointerEl : null;
+}
+
 /**
  * Give focus back to what opened a menu or dialog (never to `document.activeElement`: WebKit does not focus a button
  * on a mouse click, so after a pointer open there is nothing to read back). Focus only moves when it has nowhere

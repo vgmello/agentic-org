@@ -23,7 +23,7 @@ import type {
  */
 export interface MembersApi {
 	/** Everyone in the organization, people and agents, former members included. */
-	directory(organizationId: string): Promise<MemberRow[]>;
+	directory(organizationId: string, signal?: AbortSignal): Promise<MemberRow[]>;
 	profile(organizationId: string, memberId: string): Promise<MemberProfile>;
 	work(organizationId: string, memberId: string): Promise<WorkRow[]>;
 	conversations(organizationId: string, memberId: string): Promise<ConversationRow[]>;
@@ -85,8 +85,8 @@ const gatewayMembersApi = createHttpMembersApi({
 // Production members API backed by `/api/v1/organizations/{org}` snapshot, mutations and access routes.
 // Under `bun run dev:mock`, e2e/fakes/modules/members.ts stands in for this file.
 export const membersApi: MembersApi = Object.freeze<MembersApi>({
-	directory: (orgId) =>
-		signedInSession() ? gatewayMembersApi.directory(orgId) : unavailableCall(),
+	directory: (orgId, signal) =>
+		signedInSession() ? gatewayMembersApi.directory(orgId, signal) : unavailableCall(),
 	profile: (orgId, memberId) =>
 		signedInSession() ? gatewayMembersApi.profile(orgId, memberId) : unavailableCall(),
 	work: (orgId, memberId) =>

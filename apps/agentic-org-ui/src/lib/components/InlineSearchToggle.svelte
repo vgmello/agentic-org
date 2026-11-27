@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Search from '@lucide/svelte/icons/search';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 
 	let {
 		open = false,
@@ -14,17 +15,18 @@
 	} = $props();
 </script>
 
-<button
-	type="button"
-	onclick={onToggle}
-	aria-label={label}
-	aria-expanded={open}
-	data-active={open || hasQuery ? '' : undefined}
-	title="{label} (/)"
-	class="inline-search-toggle"
->
-	<Search class="size-4" aria-hidden="true" />
-</button>
+<ModalTooltip label="{label} (/)">
+	<button
+		type="button"
+		onclick={onToggle}
+		aria-label={label}
+		aria-expanded={open}
+		data-active={open || hasQuery ? '' : undefined}
+		class="inline-search-toggle"
+	>
+		<Search class="size-4" aria-hidden="true" />
+	</button>
+</ModalTooltip>
 
 <style>
 	.inline-search-toggle {
@@ -62,5 +64,10 @@
 	.inline-search-toggle:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.inline-search-toggle {
+			transition: none;
+		}
 	}
 </style>

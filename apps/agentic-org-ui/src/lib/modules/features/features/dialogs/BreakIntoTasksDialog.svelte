@@ -13,6 +13,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { errorClass, inputClass, mobileButton, selectClass } from '$lib/components/classes';
 	import { toAppError } from '$lib/proto';
 	import { featuresApi } from '../../api';
@@ -144,16 +145,18 @@
 								/>
 							</div>
 							{#if drafts.length > 1}
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									class="mt-6 {mobileButton}"
-									aria-label="Remove draft task {idx + 1}"
-									onclick={() => removeDraft(draft.id)}
-								>
-									<Trash2Icon class="size-4" aria-hidden="true" />
-								</Button>
+								<ModalTooltip label="Remove draft task {idx + 1}" side="left" class="mt-6">
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										class={mobileButton}
+										aria-label="Remove draft task {idx + 1}"
+										onclick={() => removeDraft(draft.id)}
+									>
+										<Trash2Icon class="size-4" aria-hidden="true" />
+									</Button>
+								</ModalTooltip>
 							{/if}
 						</div>
 

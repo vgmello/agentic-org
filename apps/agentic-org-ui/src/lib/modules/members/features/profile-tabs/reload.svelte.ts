@@ -2,15 +2,22 @@
 import { Resource } from '$lib/components/resource.svelte';
 import { profileContext } from '../profile/context.svelte';
 
+export function createTabChangeSync(resource: Resource<unknown>, initialChanges: number) {
+	let seen = initialChanges;
+	return (nextChanges: number): boolean => {
+		if (nextChanges === seen) return false;
+		seen = nextChanges;
+		void resource.reload();
+		return true;
+	};
+}
+
 export function tabResource<T>(load: (organizationId: string, memberId: string) => Promise<T>) {
 	const ctx = profileContext();
 	const resource = new Resource(() => load(ctx.organizationId, ctx.profile.id));
-	let seen = ctx.changes;
+	const sync = createTabChangeSync(resource, ctx.changes);
 	$effect(() => {
-		if (ctx.changes !== seen) {
-			seen = ctx.changes;
-			void resource.reload();
-		}
+		sync(ctx.changes);
 	});
 	return resource;
 }

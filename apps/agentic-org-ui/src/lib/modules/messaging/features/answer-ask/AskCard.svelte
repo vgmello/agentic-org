@@ -65,7 +65,7 @@
 
 	let expanded = $state(false);
 	let mode = $state<'reply' | 'reject' | 'withdraw' | undefined>();
-	let text = $state('');
+	let text = $state(untrack(() => draft?.read() ?? ''));
 	let withdrawReason = $state('');
 	let replyBox = $state<HTMLTextAreaElement>();
 	let busy = $state(false);
@@ -101,13 +101,6 @@
 	const btn =
 		'h-auto min-h-8 max-w-full whitespace-normal px-2.5 py-1 text-center max-[640px]:min-h-[max(44px,2rem)]';
 
-	$effect.pre(() => {
-		const current = draft;
-		if (!current) return;
-		text = current.read();
-		withdrawReason = '';
-		mode = undefined;
-	});
 	$effect(() => {
 		const element = replyBox;
 		if (!element || !draft) return;

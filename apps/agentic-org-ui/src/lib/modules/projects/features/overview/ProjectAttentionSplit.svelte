@@ -8,7 +8,7 @@
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import SectionHead from '$lib/components/SectionHead.svelte';
 	import { deriveTriageItems, executeDecisionAction, type TriageItem } from '$lib/modules/inbox';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { toAppError } from '$lib/proto';
 
 	let {
@@ -289,5 +289,10 @@
 	.pj-att-open-btn:hover {
 		background: var(--exec-btn-outline-bg-hover);
 		color: var(--exec-btn-outline-ink-hover);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.pj-att-open-btn {
+			transition: none;
+		}
 	}
 </style>

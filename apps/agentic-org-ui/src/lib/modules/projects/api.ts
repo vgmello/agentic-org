@@ -23,11 +23,15 @@ import type {
  * field carries `field` (a `ProjectField`) so the form shows it there. Every change is one accepted operation at HQ.
  */
 export interface ProjectsApi {
-	list(organizationId: string): Promise<ProjectsOverview>;
-	project(organizationId: string, projectId: string): Promise<ProjectDetail>;
-	team(organizationId: string, projectId: string): Promise<ProjectTeamView>;
+	list(organizationId: string, signal?: AbortSignal): Promise<ProjectsOverview>;
+	project(organizationId: string, projectId: string, signal?: AbortSignal): Promise<ProjectDetail>;
+	team(organizationId: string, projectId: string, signal?: AbortSignal): Promise<ProjectTeamView>;
 	/** Newest first. */
-	activity(organizationId: string, projectId: string): Promise<ActivityEntry[]>;
+	activity(
+		organizationId: string,
+		projectId: string,
+		signal?: AbortSignal
+	): Promise<ActivityEntry[]>;
 	/** Only the threads the viewer may read (PRJ-2). */
 	conversations(organizationId: string, projectId: string): Promise<ConversationRow[]>;
 	/** Active teams a project may name, with path and reference. */
@@ -104,12 +108,14 @@ const gatewayProjectsApi = createHttpProjectsApi({
 // Production projects API backed by `/api/v1/organizations/{org}/projects`.
 // Under `bun run dev:mock`, e2e/fakes/modules/projects.ts stands in for this file.
 export const projectsApi: ProjectsApi = Object.freeze<ProjectsApi>({
-	list: (orgId) => (signedInSession() ? gatewayProjectsApi.list(orgId) : unavailableCall()),
-	project: (orgId, id) =>
-		signedInSession() ? gatewayProjectsApi.project(orgId, id) : unavailableCall(),
-	team: (orgId, id) => (signedInSession() ? gatewayProjectsApi.team(orgId, id) : unavailableCall()),
-	activity: (orgId, id) =>
-		signedInSession() ? gatewayProjectsApi.activity(orgId, id) : unavailableCall(),
+	list: (orgId, signal) =>
+		signedInSession() ? gatewayProjectsApi.list(orgId, signal) : unavailableCall(),
+	project: (orgId, id, signal) =>
+		signedInSession() ? gatewayProjectsApi.project(orgId, id, signal) : unavailableCall(),
+	team: (orgId, id, signal) =>
+		signedInSession() ? gatewayProjectsApi.team(orgId, id, signal) : unavailableCall(),
+	activity: (orgId, id, signal) =>
+		signedInSession() ? gatewayProjectsApi.activity(orgId, id, signal) : unavailableCall(),
 	conversations: (orgId, id) =>
 		signedInSession() ? gatewayProjectsApi.conversations(orgId, id) : unavailableCall(),
 	teamChoices: (orgId) =>

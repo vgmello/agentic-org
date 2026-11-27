@@ -11,11 +11,11 @@
 	import Loaded from '$lib/components/Loaded.svelte';
 	import SectionHead from '$lib/components/SectionHead.svelte';
 	import { Resource } from '$lib/components/resource.svelte';
-	import { ActivityRows } from '$lib/modules/members';
+	import { ActivityRows } from '$lib/modules/members/ui';
 	import { devProcessHref } from '$lib/modules/processes';
 	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
 	import { formatDate } from '$lib/modules/preferences/time';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { projectsApi } from '../../api';
 	import { computeProjectCycleTime } from '../../cycle-time';
 	import { investmentResource, investmentWords } from '../../investment';
@@ -49,7 +49,9 @@
 		shellData = undefined;
 	}
 
-	const activity = new Resource(() => projectsApi.activity(frame.organizationId, frame.projectId));
+	const activity = new Resource((signal) =>
+		projectsApi.activity(frame.organizationId, frame.projectId, signal)
+	);
 	const investment = investmentResource(() => frame.organizationId);
 	const amounts = $derived(investment.data?.allowed ? investment.data.value : undefined);
 	// A project manager sees the amounts of the projects they lead and of no other (costs §1 "Who sees amounts").

@@ -16,10 +16,17 @@ describe('createChatSnapshotLoader', () => {
 	it('ignores out-of-order stale snapshots and cancels on dispose', async () => {
 		let resolveFirst!: (s: ChatSnapshot) => void;
 		let resolveSecond!: (s: ChatSnapshot) => void;
+		const signals: (AbortSignal | undefined)[] = [];
 		const snapshot = vi
 			.fn<ChatApi['snapshot']>()
-			.mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)))
-			.mockImplementationOnce(() => new Promise((r) => (resolveSecond = r)));
+			.mockImplementationOnce((_orgId, signal) => {
+				signals.push(signal);
+				return new Promise((r) => (resolveFirst = r));
+			})
+			.mockImplementationOnce((_orgId, signal) => {
+				signals.push(signal);
+				return new Promise((r) => (resolveSecond = r));
+			});
 
 		const received: ChatSnapshot[] = [];
 		const loader = createChatSnapshotLoader({
@@ -32,7 +39,11 @@ describe('createChatSnapshotLoader', () => {
 		});
 
 		const p1 = loader.load();
+		expect(signals[0]?.aborted).toBe(false);
 		const p2 = loader.load();
+		// Starting a newer load aborts the superseded in-flight request's AbortSignal.
+		expect(signals[0]?.aborted).toBe(true);
+		expect(signals[1]?.aborted).toBe(false);
 		resolveSecond(fakeSnap('v2'));
 		await p2;
 		resolveFirst(fakeSnap('v1'));

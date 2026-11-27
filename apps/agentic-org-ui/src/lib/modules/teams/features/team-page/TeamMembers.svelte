@@ -9,7 +9,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import Avatar from '$lib/components/Avatar.svelte';
-	import { PresenceBadge, kindWord, rowPresence } from '$lib/modules/members';
+	import { kindWord, rowPresence } from '$lib/modules/members';
+	import { PresenceBadge } from '$lib/modules/members/ui';
 	import { membersOfMax } from '../../team-page';
 	import type { TeamDetail } from '../../types';
 	import { teamPageContext } from './context';

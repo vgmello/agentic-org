@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { RolePage } from '$lib/modules/roles';
+	import RolePage from '$lib/modules/roles/features/role-page/RolePage.svelte';
 
 	let { data } = $props();
 </script>

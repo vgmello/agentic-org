@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,
@@ -37,19 +36,15 @@
 	let error = $state<string | undefined>();
 	let busy = $state(false);
 	// Kept while the dialog closes, so its text doesn't flash empty.
-	let shown = $state<Team | undefined>();
+	let lastTeam = $state<Team | undefined>();
+	const shown = $derived(open ? (team ?? lastTeam) : lastTeam);
 
-	$effect(() => {
+	function resetOnOpen() {
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
-		if (open) {
-			untrack(() => {
-				if (!team) return;
-				shown = team;
-				target = undefined;
-				error = undefined;
-			});
-		}
-	});
+		if (team) lastTeam = team;
+		target = undefined;
+		error = undefined;
+	}
 
 	const choices = $derived(shown ? moveChoices(snapshot, shown) : []);
 	const atTop = $derived(!!shown && shown.owner_team_id === undefined);
@@ -76,7 +71,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent>
+	<DialogContent onOpenAutoFocus={resetOnOpen}>
 		<DialogHeader>
 			<DialogTitle text={`Move ${shown?.name ?? ''} to…`} />
 			<DialogDescription

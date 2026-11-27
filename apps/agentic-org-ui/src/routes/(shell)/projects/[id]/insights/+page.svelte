@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Project › Insights `/projects/[id]/insights`: thin route reading project context and viewer time zone.
-	import { ProjectInsightsView } from '$lib/modules/costs';
+	import ProjectInsightsView from '$lib/modules/costs/features/insights/ProjectInsightsView.svelte';
 	import { accountZone } from '$lib/modules/preferences';
 	import { projectFrame } from '$lib/modules/projects';
 

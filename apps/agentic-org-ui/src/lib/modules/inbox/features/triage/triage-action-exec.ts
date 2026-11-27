@@ -1,4 +1,4 @@
-import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
+import type { ShellRefreshResult } from '$lib/platform/workspace/shell-data-context';
 import type { OrgSnapshot } from '$lib/proto';
 import { inboxApi } from '../../api';
 import { executeDecisionAction } from '../../decisions';

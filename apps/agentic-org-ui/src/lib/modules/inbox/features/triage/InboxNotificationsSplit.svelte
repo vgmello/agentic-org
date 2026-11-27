@@ -15,7 +15,7 @@
 		useNotifications,
 		type BackgroundJob,
 		type ShellNotification
-	} from '$lib/platform/shell/notifications.svelte';
+	} from '$lib/platform/workspace/notifications.svelte';
 	import { splitHref } from './triage-model';
 
 	let {

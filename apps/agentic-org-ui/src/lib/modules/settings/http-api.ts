@@ -154,49 +154,60 @@ export function createHttpSettingsApi(deps: {
 	orgApi: Pick<OrgApi, 'view'>;
 	session: () => SettingsSessionInfo | undefined;
 }): SettingsApi {
-	async function readOrgView(organizationId: string): Promise<OrganizationView | undefined> {
+	async function readOrgView(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<OrganizationView | undefined> {
 		try {
-			const reply = await deps.http.read('/api/v1/organizations');
+			const reply = await (signal
+				? deps.http.read('/api/v1/organizations', signal)
+				: deps.http.read('/api/v1/organizations'));
 			if (reply.status !== 200) return undefined;
 			const envelope = readResponse(reply.body, readJsonObject);
 			if ('error' in envelope) return undefined;
 			return readOrganizationsList(envelope.result).organizations.find(
 				(o) => o.id === organizationId
 			);
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return undefined;
 		}
 	}
 
-	async function readInstanceInfo(): Promise<{ name: string } | undefined> {
+	async function readInstanceInfo(signal?: AbortSignal): Promise<{ name: string } | undefined> {
 		try {
-			const reply = await deps.http.read('/api/v1/instance');
+			const reply = await (signal
+				? deps.http.read('/api/v1/instance', signal)
+				: deps.http.read('/api/v1/instance'));
 			if (reply.status !== 200) return undefined;
 			const envelope = readResponse(reply.body, readInstance);
 			return 'result' in envelope ? { name: envelope.result.name || 'default' } : undefined;
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return undefined;
 		}
 	}
 
-	async function readOffices(organizationId: string) {
+	async function readOffices(organizationId: string, signal?: AbortSignal) {
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`;
 		try {
-			const reply = await deps.http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`
-			);
+			const reply = await (signal ? deps.http.read(path, signal) : deps.http.read(path));
 			if (reply.status !== 200) return [];
 			const envelope = readResponse(reply.body, readOfficeList);
 			return 'result' in envelope ? envelope.result.offices : [];
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return [];
 		}
 	}
 
-	async function readAccessEntries(organizationId: string): Promise<GatewayAccessEntry[]> {
+	async function readAccessEntries(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<GatewayAccessEntry[]> {
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/access`;
 		try {
-			const reply = await deps.http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/access`
-			);
+			const reply = await (signal ? deps.http.read(path, signal) : deps.http.read(path));
 			if (reply.status !== 200) return [];
 			const result = unwrapGatewayResult(reply, 'Access settings could not be loaded.');
 			if (!Array.isArray(result.entries)) return [];
@@ -213,18 +224,19 @@ export function createHttpSettingsApi(deps: {
 					};
 				})
 				.filter((e): e is GatewayAccessEntry => e !== undefined);
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return [];
 		}
 	}
 
 	async function readProviderConnections(
-		organizationId: string
+		organizationId: string,
+		signal?: AbortSignal
 	): Promise<WireProviderConnection[]> {
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/provider-connections`;
 		try {
-			const reply = await deps.http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/provider-connections`
-			);
+			const reply = await (signal ? deps.http.read(path, signal) : deps.http.read(path));
 			if (reply.status !== 200) return [];
 			const result = unwrapGatewayResult(reply, 'Provider connections could not be loaded.');
 			const raw = Array.isArray(result.connections)
@@ -244,19 +256,23 @@ export function createHttpSettingsApi(deps: {
 					};
 				})
 				.filter((c): c is WireProviderConnection => c !== undefined);
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return [];
 		}
 	}
 
-	async function loadGeneral(organizationId: string): Promise<GeneralSettings> {
+	async function loadGeneral(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<GeneralSettings> {
 		const [{ snapshot }, org, instance, offices, accessEntries, connections] = await Promise.all([
-			deps.orgApi.view(organizationId),
-			readOrgView(organizationId),
-			readInstanceInfo(),
-			readOffices(organizationId),
-			readAccessEntries(organizationId),
-			readProviderConnections(organizationId)
+			deps.orgApi.view(organizationId, signal),
+			readOrgView(organizationId, signal),
+			readInstanceInfo(signal),
+			readOffices(organizationId, signal),
+			readAccessEntries(organizationId, signal),
+			readProviderConnections(organizationId, signal)
 		]);
 
 		const current = deps.session();

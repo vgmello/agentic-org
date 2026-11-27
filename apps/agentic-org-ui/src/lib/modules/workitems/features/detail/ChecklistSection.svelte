@@ -11,6 +11,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Input } from '$lib/components/ui/input';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { errorClass, inputClass, mobileButton } from '$lib/components/classes';
 	import { workItemsApi } from '../../api';
 	import { linkText, splitSteps, stepError, taskHref, when } from '../../present';
@@ -264,24 +265,28 @@
 
 					{#if editable}
 						<div class="flex shrink-0 items-center gap-1">
-							<button
-								type="button"
-								aria-label="Move step up: {step.text}"
-								disabled={index === 0 || stepBusy !== null}
-								onclick={() => reorder(index, index - 1)}
-								class="rounded-md px-1.5 py-1 text-xs/5 text-fg-muted hover:bg-surface-overlay hover:text-fg disabled:opacity-40 max-[639px]:min-h-11"
-							>
-								<WorkIcon name="up" class="size-4" />
-							</button>
-							<button
-								type="button"
-								aria-label="Move step down: {step.text}"
-								disabled={index === steps.length - 1 || stepBusy !== null}
-								onclick={() => reorder(index, index + 1)}
-								class="rounded-md px-1.5 py-1 text-xs/5 text-fg-muted hover:bg-surface-overlay hover:text-fg disabled:opacity-40 max-[639px]:min-h-11"
-							>
-								<WorkIcon name="down" class="size-4" />
-							</button>
+							<ModalTooltip label="Move step up">
+								<button
+									type="button"
+									aria-label="Move step up: {step.text}"
+									disabled={index === 0 || stepBusy !== null}
+									onclick={() => reorder(index, index - 1)}
+									class="rounded-md px-1.5 py-1 text-xs/5 text-fg-muted hover:bg-surface-overlay hover:text-fg disabled:opacity-40 max-[639px]:min-h-11"
+								>
+									<WorkIcon name="up" class="size-4" />
+								</button>
+							</ModalTooltip>
+							<ModalTooltip label="Move step down">
+								<button
+									type="button"
+									aria-label="Move step down: {step.text}"
+									disabled={index === steps.length - 1 || stepBusy !== null}
+									onclick={() => reorder(index, index + 1)}
+									class="rounded-md px-1.5 py-1 text-xs/5 text-fg-muted hover:bg-surface-overlay hover:text-fg disabled:opacity-40 max-[639px]:min-h-11"
+								>
+									<WorkIcon name="down" class="size-4" />
+								</button>
+							</ModalTooltip>
 							<button
 								type="button"
 								disabled={stepBusy !== null}

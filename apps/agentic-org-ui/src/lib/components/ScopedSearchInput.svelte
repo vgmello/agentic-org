@@ -10,7 +10,7 @@
 	import { Tooltip } from 'bits-ui';
 	import Search from '@lucide/svelte/icons/search';
 	import X from '@lucide/svelte/icons/x';
-	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
+	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
 
 	let {
 		value = $bindable(''),

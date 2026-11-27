@@ -15,11 +15,11 @@
 	import WorkReadingPanel from '$lib/components/WorkReadingPanel.svelte';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { gutters } from '$lib/components/classes';
-	import { useShellCommand } from '$lib/platform/shell/shell-command';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
-	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
-	import { singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { useShellCommand } from '$lib/platform/workspace/shell-command';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
+	import { useScopedSearchContext } from '$lib/platform/workspace/scoped-search.svelte';
+	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import { workItemsApi } from '../../api';
 	import {
 		isArchivedTaskRow,

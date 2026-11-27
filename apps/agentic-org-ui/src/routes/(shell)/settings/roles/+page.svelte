@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { pageTitle } from '$lib/nav';
-	import { RolesList } from '$lib/modules/roles';
+	import RolesList from '$lib/modules/roles/features/list/RolesList.svelte';
 
 	let { data } = $props();
 </script>

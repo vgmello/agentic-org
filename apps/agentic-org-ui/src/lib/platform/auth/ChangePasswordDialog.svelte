@@ -44,13 +44,6 @@
 		generalError = undefined;
 	}
 
-	$effect(() => {
-		if (open) {
-			resetFields();
-			void tick().then(() => currentInput?.focus());
-		}
-	});
-
 	onDestroy(resetFields);
 
 	async function validateInputs(): Promise<boolean> {
@@ -119,10 +112,20 @@
 <Dialog.Root
 	bind:open
 	onOpenChange={(next) => {
-		if (!next && busy) open = true;
+		if (!next) {
+			if (busy) open = true;
+			else resetFields();
+		}
 	}}
 >
-	<Dialog.Content class="sm:max-w-md">
+	<Dialog.Content
+		onOpenAutoFocus={(e) => {
+			e.preventDefault();
+			resetFields();
+			currentInput?.focus();
+		}}
+		class="sm:max-w-md"
+	>
 		<Dialog.Header>
 			<Dialog.Title>Change password</Dialog.Title>
 			<Dialog.Description>
@@ -173,7 +176,16 @@
 				readonly={busy}
 			/>
 			<Dialog.Footer class="mt-2">
-				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>
+				<Button
+					type="button"
+					variant="outline"
+					disabled={busy}
+					onclick={() => {
+						if (busy) return;
+						resetFields();
+						open = false;
+					}}
+				>
 					Cancel
 				</Button>
 				<Button type="submit" disabled={busy}>

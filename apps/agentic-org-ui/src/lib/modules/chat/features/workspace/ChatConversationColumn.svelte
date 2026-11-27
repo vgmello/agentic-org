@@ -3,13 +3,13 @@
   Main conversation column (header, status callouts, MessageFeed, typing indicator, Composer) for ChatWorkspace.
 -->
 <script lang="ts">
+	import ArrowDown from '@lucide/svelte/icons/arrow-down';
 	import Info from '@lucide/svelte/icons/info';
 	import Unplug from '@lucide/svelte/icons/unplug';
 	import Callout from '$lib/components/Callout.svelte';
 	import {
-		Composer,
-		MessageRow,
 		titleOf,
+		useOptionalDraftStore,
 		type ChatContext,
 		type ChatMessage,
 		type ChatState,
@@ -20,8 +20,10 @@
 		type MessageRows,
 		type Sidebar
 	} from '$lib/modules/messaging';
+	import { Composer, MessageRow } from '$lib/modules/messaging/ui';
 	import { pendingToMessage } from '../../helpers';
 	import type { PendingMessage } from '../../types';
+	import { jumpToLatestMessage, type FeedScrollState } from './chat-scroll';
 	import type { ChatMessageActions } from './chat-workspace-actions';
 	import ConversationHeader from './ConversationHeader.svelte';
 	import MessageFeed from './MessageFeed.svelte';
@@ -125,6 +127,34 @@
 		onOpenMessage: (m: ChatMessage) => void;
 		onRemovePending: (key: number) => void;
 	} = $props();
+
+	const draftStore = useOptionalDraftStore();
+	const conversationId = $derived(conversation?.id);
+	const draftsCache: Record<
+		string,
+		ReturnType<NonNullable<typeof draftStore>['forThread']>
+	> = Object.create(null);
+	function draftsForConversation(id: string | undefined) {
+		if (!draftStore || !id) return undefined;
+		let entry = draftsCache[id];
+		if (!entry) {
+			entry = draftStore.forThread(`conversation:${id}`);
+			draftsCache[id] = entry;
+		}
+		return entry;
+	}
+	const convDrafts = $derived(draftsForConversation(conversationId));
+	let feedScroll = $state<FeedScrollState>({ hasNewer: false, unseenCount: 0 });
+	const jumpLabel = $derived(
+		feedScroll.unseenCount > 0
+			? `${feedScroll.unseenCount} newer ${feedScroll.unseenCount === 1 ? 'message' : 'messages'}`
+			: 'Jump to latest'
+	);
+
+	function handleJumpLatest() {
+		jumpToLatestMessage(listEl);
+		feedScroll = { hasNewer: false, unseenCount: 0 };
+	}
 </script>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
@@ -136,6 +166,7 @@
 		readOnly={bridgePreview}
 		{officeRunning}
 		active={rowIsActive(m)}
+		askDraftFor={draftsForConversation(m.conversation_id)?.ask}
 		{onmenu}
 		where={extra.where}
 		onreact={actions.react}
@@ -216,6 +247,7 @@
 		{channelRowLive}
 		{rowFor}
 		onopenthread={onOpenThread}
+		onScrollStateChange={(next) => (feedScroll = next)}
 	>
 		{#snippet undelivered()}
 			{#each pendingHere as p (p.key)}
@@ -235,6 +267,21 @@
 		{/snippet}
 	</MessageFeed>
 
+	{#if conversation && !searching && feedScroll.hasNewer}
+		<div class="flex shrink-0 justify-center px-4 pt-1.5">
+			<button
+				type="button"
+				data-testid="chat-latest-jump"
+				aria-label={feedScroll.unseenCount > 0 ? `${jumpLabel}, jump to the latest` : jumpLabel}
+				onclick={handleJumpLatest}
+				class="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-surface-overlay px-3 py-1 text-xs/5 font-semibold text-fg shadow-sm ring-1 ring-line transition-colors hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus motion-reduce:transition-none"
+			>
+				<ArrowDown class="size-3.5 shrink-0" aria-hidden="true" />
+				<span>{jumpLabel}</span>
+			</button>
+		</div>
+	{/if}
+
 	{#if conversation && !searching}
 		<div class="px-5 pb-1 text-xs/5 text-fg-muted" aria-live="polite" data-testid="typing">
 			{typing ?? ' '}
@@ -249,6 +296,7 @@
 			{conversation}
 			{ctx}
 			resetKey="conversation:{conversation.id}"
+			draft={convDrafts?.reply}
 			onsend={(t, o) => actions.submit(t, o, conversation, undefined)}
 		/>
 	{/if}

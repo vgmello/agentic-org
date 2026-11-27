@@ -1,10 +1,4 @@
-import {
-	isBuiltInAgent,
-	type AppError,
-	type Member,
-	type OrgSnapshot,
-	type Team
-} from '$lib/proto';
+import { isBuiltInAgent, type AppError } from '$lib/proto';
 import {
 	gatewayStatusCode,
 	readGatewayAppError,
@@ -22,159 +16,23 @@ import type { WorkItemsApi } from '$lib/modules/workitems/api';
 import type { TaskRow } from '$lib/modules/workitems/types';
 import type { MembersApi } from './api';
 import {
+	decodeSessionTurn,
+	mapMemberRow,
+	parseLinkResult,
+	teamRef,
+	type GatewayAccessEntry,
+	type MembersSessionInfo
+} from './http-api-map';
+import {
 	buildAssignableTasks,
 	buildMemberActivity,
 	buildMemberWorkRows,
 	pickCurrentTask,
 	readMemberConversations
 } from './live-hydration';
-import type {
-	EmployeeStatus,
-	MemberProfile,
-	MemberRow,
-	Placement,
-	RoleView,
-	RunNowResult,
-	SignInLink,
-	TeamRef,
-	Turn,
-	TurnState
-} from './types';
+import type { MemberProfile, MemberRow, RoleView, RunNowResult, SignInLink, Turn } from './types';
 
-export interface GatewayAccessEntry {
-	member_id: string;
-	account_id?: string | null;
-	login?: string | null;
-	admin: boolean;
-	owner: boolean;
-	pending_invite: boolean;
-	pending_password_reset: boolean;
-}
-
-export interface MembersSessionInfo {
-	accountAdmin: boolean;
-}
-
-function teamRef(team: Team | undefined): TeamRef | undefined {
-	if (!team) return undefined;
-	return { id: team.id, name: team.name, ref: '' };
-}
-
-function memberHandle(m: Member): string {
-	return m.handle ?? (m.kind === 'agent' ? (m.agent?.messaging_name ?? m.id) : m.name);
-}
-
-function memberStatus(m: Member): EmployeeStatus {
-	if (m.kind === 'agent' && m.agent?.status === 'offboarded') return 'inactive';
-	if (m.kind === 'agent' && m.agent?.status === 'paused') return 'paused';
-	return 'active';
-}
-
-function agentPlacement(
-	m: Member,
-	org: OrganizationView | undefined,
-	officeNamesById?: ReadonlyMap<string, string>
-): Placement | null | undefined {
-	if (m.kind !== 'agent') return undefined;
-	if (!m.office_id) return null;
-	const name =
-		officeNamesById?.get(m.office_id) ??
-		org?.offices.find((o) => o.id === m.office_id)?.name ??
-		m.office_id;
-	return { id: m.office_id, name };
-}
-
-function parseLinkResult(reply: GatewayReply, fallback: string): SignInLink {
-	const result = unwrapGatewayResult(reply, fallback);
-	if (typeof result.url !== 'string' || typeof result.expires_at_ms !== 'number') {
-		throw { source: 'api', code: 'unavailable', message: fallback } satisfies AppError;
-	}
-	return { url: result.url, expiresAt: new Date(result.expires_at_ms).toISOString() };
-}
-
-function mapMemberRow(
-	m: Member,
-	snapshot: OrgSnapshot,
-	teamsById: ReadonlyMap<string, Team>,
-	membersById: ReadonlyMap<string, Member>,
-	accessById: ReadonlyMap<string, GatewayAccessEntry> | undefined,
-	org: OrganizationView | undefined,
-	officeNamesById?: ReadonlyMap<string, string>
-): MemberRow {
-	const status = memberStatus(m);
-	const homeTeam = m.home_team_id ? teamRef(teamsById.get(m.home_team_id)) : undefined;
-	const manager = m.reports_to_member_id ? membersById.get(m.reports_to_member_id) : undefined;
-	const access = accessById?.get(m.id);
-	const canSignIn =
-		status !== 'inactive' &&
-		m.kind === 'person' &&
-		(access ? Boolean(access.account_id) : Boolean(m.owner && org?.employee_id === m.id));
-	const directReports = snapshot.members.filter(
-		(other) => memberStatus(other) !== 'inactive' && other.reports_to_member_id === m.id
-	).length;
-	return {
-		id: m.id,
-		kind: m.kind === 'agent' ? 'agent' : 'person',
-		name: m.name,
-		handle: memberHandle(m),
-		...(m.agent?.role ? { role: m.agent.role } : {}),
-		status,
-		owner: Boolean(m.owner),
-		canSignIn,
-		...(homeTeam ? { homeTeam } : {}),
-		...(m.kind === 'agent' ? { office: agentPlacement(m, org, officeNamesById) } : {}),
-		...(manager ? { reportsTo: { id: manager.id, name: manager.name } } : {}),
-		...(m.contact ? { contact: m.contact } : {}),
-		directReports
-	};
-}
-
-function decodeTurnState(raw: unknown): TurnState {
-	switch (typeof raw === 'string' ? raw.toLowerCase() : '') {
-		case 'running':
-		case 'active':
-			return 'running';
-		case 'succeeded':
-		case 'completed':
-		case 'idle':
-			return 'succeeded';
-		case 'failed':
-		case 'error':
-			return 'failed';
-		case 'cancelled':
-		case 'stopped':
-			return 'cancelled';
-		default:
-			return 'accepted';
-	}
-}
-
-function readOptString(value: unknown): string | undefined {
-	return typeof value === 'string' ? value : undefined;
-}
-
-function decodeSessionTurn(item: unknown): Turn | undefined {
-	if (!item || typeof item !== 'object') return undefined;
-	const r = item as Record<string, unknown>;
-	const id = readOptString(r.session_id) ?? readOptString(r.id);
-	if (!id) return undefined;
-	const startedAt =
-		readOptString(r.started_at) ?? readOptString(r.created_at) ?? new Date(0).toISOString();
-	const endedAt = readOptString(r.ended_at);
-	const summary = readOptString(r.summary);
-	const failure = readOptString(r.error);
-	return {
-		id,
-		startedAt,
-		...(endedAt ? { endedAt } : {}),
-		startedBy: { kind: 'run' },
-		state: decodeTurnState(r.state ?? r.status),
-		...(summary ? { summary } : {}),
-		...(failure ? { failure } : {}),
-		attempts: [],
-		hasLog: false
-	};
-}
+export type { GatewayAccessEntry, MembersSessionInfo } from './http-api-map';
 
 /**
  * Production HTTP adapter for Members directory, member profiles, home-team moves,
@@ -193,25 +51,28 @@ export function createHttpMembersApi({
 	session: () => MembersSessionInfo | undefined;
 	newEntityId?: () => string;
 }): MembersApi {
-	async function safeWorkRows(organizationId: string): Promise<TaskRow[]> {
+	async function safeWorkRows(organizationId: string, signal?: AbortSignal): Promise<TaskRow[]> {
 		if (!workItemsApi) return [];
 		try {
-			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' }, signal);
 			return queue.rows;
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return [];
 		}
 	}
 	async function readAccessMap(
-		organizationId: string
+		organizationId: string,
+		signal?: AbortSignal
 	): Promise<ReadonlyMap<string, GatewayAccessEntry> | undefined> {
 		let reply: GatewayReply;
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/access`;
 		try {
-			reply = await http.read(`/api/v1/organizations/${encodeURIComponent(organizationId)}/access`);
-		} catch {
+			reply = await (signal ? http.read(path, signal) : http.read(path));
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return undefined;
 		}
-		if (reply.status === 403 || reply.status === 401) return undefined;
 		if (reply.status !== 200) return undefined;
 		const result = unwrapGatewayResult(reply, 'Access details could not be loaded.');
 		if (!Array.isArray(result.entries)) return undefined;
@@ -228,16 +89,22 @@ export function createHttpMembersApi({
 		return map;
 	}
 
-	async function readOrgView(organizationId: string): Promise<OrganizationView | undefined> {
+	async function readOrgView(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<OrganizationView | undefined> {
 		try {
-			const reply = await http.read('/api/v1/organizations');
+			const reply = await (signal
+				? http.read('/api/v1/organizations', signal)
+				: http.read('/api/v1/organizations'));
 			if (reply.status !== 200) return undefined;
 			const envelope = readResponse(reply.body, readJsonObject);
 			if ('error' in envelope) return undefined;
 			return readOrganizationsList(envelope.result).organizations.find(
 				(o) => o.id === organizationId
 			);
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return undefined;
 		}
 	}
@@ -254,18 +121,21 @@ export function createHttpMembersApi({
 		}
 	}
 
-	async function readOfficeNames(organizationId: string): Promise<Map<string, string>> {
+	async function readOfficeNames(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<Map<string, string>> {
 		const map = new Map<string, string>();
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`;
 		try {
-			const reply = await http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`
-			);
+			const reply = await (signal ? http.read(path, signal) : http.read(path));
 			if (reply.status !== 200) return map;
 			const envelope = readResponse(reply.body, readOfficeList);
 			if ('result' in envelope) {
 				for (const o of envelope.result.offices) map.set(o.id, o.name);
 			}
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			// Fall back to org.offices when offices endpoint is unavailable.
 		}
 		return map;
@@ -322,13 +192,13 @@ export function createHttpMembersApi({
 	}
 
 	return Object.freeze({
-		async directory(organizationId: string): Promise<MemberRow[]> {
+		async directory(organizationId: string, signal?: AbortSignal): Promise<MemberRow[]> {
 			const [{ snapshot }, accessById, org, workRows, officeNames] = await Promise.all([
-				orgApi.view(organizationId),
-				readAccessMap(organizationId),
-				readOrgView(organizationId),
-				safeWorkRows(organizationId),
-				readOfficeNames(organizationId)
+				orgApi.view(organizationId, signal),
+				readAccessMap(organizationId, signal),
+				readOrgView(organizationId, signal),
+				safeWorkRows(organizationId, signal),
+				readOfficeNames(organizationId, signal)
 			]);
 			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
 			const membersById = new Map(snapshot.members.map((m) => [m.id, m]));

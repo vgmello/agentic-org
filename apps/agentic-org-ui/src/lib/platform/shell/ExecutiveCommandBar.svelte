@@ -23,10 +23,10 @@
 		hasBlockingOverlay,
 		isChatHashShortcut
 	} from './command-palette-shortcuts';
-	import type { ShellAiAskOptions } from './shell-ai';
+	import type { ShellAiAskOptions } from '$lib/platform/workspace/shell-ai';
 	import { useShellData } from './shell-data.svelte';
-	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
-	import { uiPrefs } from './ui-preferences.svelte';
+	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import type CommandPaletteModalType from './CommandPaletteModal.svelte';
 	import type CommandPaletteResultsType from './CommandPaletteResults.svelte';
 

@@ -5,9 +5,9 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Dialog } from 'bits-ui';
 	import { Button } from '$lib/components/ui/button';
-	import { uiPrefs } from './ui-preferences.svelte';
+	import { Dialog, DialogContent, DialogDescription, DialogTitle } from '$lib/components/ui/dialog';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
@@ -55,62 +55,49 @@
 	]);
 </script>
 
-<Dialog.Root bind:open>
-	<Dialog.Portal>
-		<Dialog.Overlay class="kbd-help-overlay fixed inset-0 z-90" />
-		<Dialog.Content
-			data-testid="shortcuts-help-dialog"
-			class="kbd-help-dialog fixed top-1/2 left-1/2 z-100 w-[min(620px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-xl p-6 focus:outline-none"
-		>
-			<Dialog.Title class="text-base/7 font-semibold text-[var(--exec-ink,var(--fg))]">
-				Keyboard shortcuts
-			</Dialog.Title>
-			<Dialog.Description class="mt-1 text-sm/5 text-[var(--exec-muted,var(--fg-muted))]">
-				{uiPrefs.singleKeyShortcuts
-					? 'Single-key shortcuts (N, /, S, M, A) are on.'
-					: 'Single-key shortcuts are currently off in Your preferences.'}
-			</Dialog.Description>
+<Dialog bind:open>
+	<DialogContent
+		showCloseButton={false}
+		data-testid="shortcuts-help-dialog"
+		overlayClass="z-90 bg-[var(--exec-scrim-bg,color-mix(in_srgb,var(--surface-sunken)_75%,transparent))] backdrop-blur-[6px]"
+		class="z-100 w-[min(620px,calc(100vw-32px))] max-w-none gap-0 rounded-xl border border-[var(--exec-notif-border,var(--exec-border-hi,var(--line-strong)))] bg-[var(--exec-notif-bg,var(--exec-cmdk-menu-bg,var(--surface)))] p-6 text-[var(--exec-ink,var(--fg))] shadow-[var(--exec-notif-shadow,var(--exec-cmdk-menu-shadow,none))] ring-0 [-webkit-backdrop-filter:var(--exec-notif-blur,var(--exec-cmdk-menu-blur,none))] [backdrop-filter:var(--exec-notif-blur,var(--exec-cmdk-menu-blur,none))] sm:max-w-[620px]"
+	>
+		<DialogTitle
+			class="text-base/7 font-semibold text-[var(--exec-ink,var(--fg))]"
+			text="Keyboard shortcuts"
+		/>
+		<DialogDescription class="mt-1 text-sm/5 text-[var(--exec-muted,var(--fg-muted))]">
+			{uiPrefs.singleKeyShortcuts
+				? 'Single-key shortcuts (N, /, S, M, A) are on.'
+				: 'Single-key shortcuts are currently off in Your preferences.'}
+		</DialogDescription>
 
-			<div class="kbd-help-grid mt-4">
-				{#each groups as group (group.title)}
-					<section class="kbd-help-grp">
-						<h3>{group.title}</h3>
-						<dl>
-							{#each group.rows as row (row.keys)}
-								<div class="kbd-help-row">
-									<dt><kbd>{row.keys}</kbd></dt>
-									<dd>{row.desc}</dd>
-								</div>
-							{/each}
-						</dl>
-					</section>
-				{/each}
-			</div>
+		<div class="kbd-help-grid mt-4">
+			{#each groups as group (group.title)}
+				<section class="kbd-help-grp">
+					<h3>{group.title}</h3>
+					<dl>
+						{#each group.rows as row (row.keys)}
+							<div class="kbd-help-row">
+								<dt><kbd>{row.keys}</kbd></dt>
+								<dd>{row.desc}</dd>
+							</div>
+						{/each}
+					</dl>
+				</section>
+			{/each}
+		</div>
 
-			<div class="mt-6 flex flex-wrap justify-end gap-2.5">
-				<Button variant="outline" href={resolve('/preferences')} onclick={() => (open = false)}>
-					Preferences
-				</Button>
-				<Button type="button" onclick={() => (open = false)}>Done</Button>
-			</div>
-		</Dialog.Content>
-	</Dialog.Portal>
-</Dialog.Root>
+		<div class="mt-6 flex flex-wrap justify-end gap-2.5">
+			<Button variant="outline" href={resolve('/preferences')} onclick={() => (open = false)}>
+				Preferences
+			</Button>
+			<Button type="button" onclick={() => (open = false)}>Done</Button>
+		</div>
+	</DialogContent>
+</Dialog>
 
 <style>
-	:global(.kbd-help-overlay) {
-		background: var(--exec-scrim-bg, color-mix(in srgb, var(--surface-sunken) 75%, transparent));
-		-webkit-backdrop-filter: blur(6px);
-		backdrop-filter: blur(6px);
-	}
-	:global(.kbd-help-dialog) {
-		background: var(--exec-notif-bg, var(--exec-cmdk-menu-bg, var(--surface)));
-		-webkit-backdrop-filter: var(--exec-notif-blur, var(--exec-cmdk-menu-blur, none));
-		backdrop-filter: var(--exec-notif-blur, var(--exec-cmdk-menu-blur, none));
-		border: 1px solid var(--exec-notif-border, var(--exec-border-hi, var(--line-strong)));
-		box-shadow: var(--exec-notif-shadow, var(--exec-cmdk-menu-shadow, none));
-		color: var(--exec-ink, var(--fg));
-	}
 	.kbd-help-grid {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));

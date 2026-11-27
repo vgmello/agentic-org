@@ -15,7 +15,7 @@
 	// The word is always shown: neither the icon nor its color alone carries the status.
 	const pill = {
 		ok: 't-green',
-		info: 'office-pill-info',
+		info: 'bg-[var(--tone-accent-bg)] text-[var(--tone-accent-ink)] shadow-[inset_0_0_0_1px_var(--tone-accent-ring)]',
 		muted: '',
 		warn: 't-amber',
 		bad: 't-red'
@@ -24,7 +24,7 @@
 		ok: 'text-success',
 		info: 'text-info',
 		muted: 'text-fg-muted',
-		warn: 'text-warning',
+		warn: 'text-[var(--tone-warn-ink)]',
 		bad: 'text-danger'
 	} as const;
 </script>
@@ -66,14 +66,3 @@
 		{:else}<CircleHelp class="size-3.5 shrink-0 {color[info.tone]}" aria-hidden="true" />{/if}
 	{/snippet}
 </StatusPill>
-
-<style>
-	:global(.office-pill-info) {
-		background: var(--tone-accent-bg);
-		color: var(--tone-accent-ink);
-		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
-	}
-	:global(.t-amber) :global(svg.text-warning) {
-		color: var(--tone-warn-ink);
-	}
-</style>

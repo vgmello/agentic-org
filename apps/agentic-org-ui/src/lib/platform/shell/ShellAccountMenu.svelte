@@ -15,8 +15,8 @@
 	import { signOutFlow } from '$lib/platform/auth/sign-out-flow.svelte';
 	import type { Connection } from '$lib/proto';
 	import AboutDialog from './AboutDialog.svelte';
-	import { useShellCommand } from './shell-command';
-	import { uiPrefs } from './ui-preferences.svelte';
+	import { useShellCommand } from '$lib/platform/workspace/shell-command';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let {
 		connection,

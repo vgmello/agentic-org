@@ -7,7 +7,7 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { Resource } from '$lib/components/resource.svelte';
-	import { ConversationRows } from '$lib/modules/members';
+	import { ConversationRows } from '$lib/modules/members/ui';
 	import { projectsApi } from '../../api';
 	import { projectFrame } from '../frame/context';
 

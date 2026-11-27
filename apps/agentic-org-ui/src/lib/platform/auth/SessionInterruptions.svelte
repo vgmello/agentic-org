@@ -34,13 +34,19 @@
 			page.url.pathname === '/approve' ||
 			page.url.pathname === '/cli-approve'
 	);
-	const ended = $derived(
+	// Key dismissal on the session object reference (a fresh object on every sign-in/boot),
+	// not the 2-value string union `current.reauth`, so a future session expiry reopens the modal.
+	const reauthToken = $derived(
 		!elsewhere && current.kind === 'signed-in' && current.reauth !== undefined
+			? current.session
+			: undefined
 	);
+	const ended = $derived(reauthToken !== undefined);
 	const showConfirm = $derived(
 		signOutFlow.confirming && !elsewhere && current.kind === 'signed-in'
 	);
-	let dismissed = $state(false);
+	let dismissedReauth = $state.raw<unknown>(undefined);
+	const dismissed = $derived(reauthToken !== undefined && dismissedReauth === reauthToken);
 	let editable = $state(false);
 	let password = $state('');
 	let passwordError = $state<string>();
@@ -54,23 +60,23 @@
 
 	onMount(() => signOutFlow.listen());
 
-	$effect(() => {
-		if (!ended && !elsewhere) {
-			dismissed = false;
-			discardAsk = false;
-			password = '';
-			failure = passwordError = undefined;
-		}
-	});
+	function clearReauthFields() {
+		discardAsk = false;
+		password = '';
+		failure = passwordError = undefined;
+	}
+
 	$effect(() => {
 		const open = ended && !dismissed;
 		if (!dialog) return;
 		if (open && !dialog.open) {
+			clearReauthFields();
 			editable = drafts.hasEditable();
 			returnFocus = document.activeElement;
 			dialog.showModal();
 			void tick().then(() => passwordInput?.focus());
 		} else if (!open && dialog.open) {
+			clearReauthFields();
 			dialog.close();
 			if (!dismissed && returnFocus instanceof HTMLElement) returnFocus.focus();
 		}
@@ -92,8 +98,8 @@
 	});
 
 	function notNow() {
-		dismissed = true;
-		discardAsk = false;
+		dismissedReauth = reauthToken;
+		clearReauthFields();
 	}
 
 	async function submit(event: SubmitEvent) {
@@ -128,7 +134,8 @@
 			return;
 		}
 		dialog?.close();
-		dismissed = true;
+		dismissedReauth = reauthToken;
+		clearReauthFields();
 		await goto(resolve(signInHref(page.url.pathname + page.url.search, location.origin, 'ended')));
 	}
 
@@ -147,8 +154,10 @@
 				? "You're signed out. Text you haven't saved is still here: copy it, or sign in to save it."
 				: "You're signed out."}
 		</p>
-		<button type="button" class="font-semibold underline" onclick={() => (dismissed = false)}
-			>Sign in</button
+		<button
+			type="button"
+			class="font-semibold underline"
+			onclick={() => (dismissedReauth = undefined)}>Sign in</button
 		>
 	</div>
 {/if}

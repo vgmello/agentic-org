@@ -7,7 +7,8 @@
 -->
 <script lang="ts">
 	import { Resource } from '$lib/components/resource.svelte';
-	import { PlaceProcesses, readPlace } from '$lib/modules/processes';
+	import { readPlace } from '$lib/modules/processes';
+	import { PlaceProcesses } from '$lib/modules/processes/ui';
 	import { teamPageContext } from './context';
 	import { reloadOnChange } from './reload.svelte';
 

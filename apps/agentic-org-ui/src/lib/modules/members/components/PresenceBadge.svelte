@@ -10,12 +10,14 @@
 
 	let { presence, class: className = '' }: { presence: Presence; class?: string } = $props();
 	const tone = $derived(PRESENCE[presence.id].tone);
+	const accentPill =
+		'bg-[var(--tone-accent-bg)] text-[var(--tone-accent-ink)] shadow-[inset_0_0_0_1px_var(--tone-accent-ring)]';
 	const pill = {
 		amber: 't-amber',
-		indigo: 'presence-pill-accent',
+		indigo: accentPill,
 		green: 't-green',
 		gray: 'bg-quiet/10 text-fg-secondary ring-quiet/20',
-		sky: 'presence-pill-accent'
+		sky: accentPill
 	} as const;
 	const dot = {
 		amber: 'presence-dot-warn',
@@ -77,11 +79,6 @@
 </StatusPill>
 
 <style>
-	:global(.presence-pill-accent) {
-		background: var(--tone-accent-bg);
-		color: var(--tone-accent-ink);
-		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
-	}
 	.presence-dot-warn {
 		fill: var(--tone-warn-ink);
 	}

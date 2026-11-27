@@ -19,7 +19,7 @@
 	import { formatDate } from '$lib/modules/preferences/time';
 	import { pageTitle } from '$lib/nav';
 	import { toAppError } from '$lib/proto';
-	import { projectFrame } from '$lib/platform/shell/project-frame';
+	import { projectFrame } from '$lib/platform/workspace/project-frame';
 	import { releasesApi } from '../../api';
 	import {
 		DEPLOYMENT_OP_WORD,

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Tooltip } from 'bits-ui';
 	import { resolve } from '$app/paths';
+	import { isBuiltInHandle } from '$lib/proto';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import X from '@lucide/svelte/icons/x';
@@ -139,7 +140,7 @@
 			>
 				Change manager…
 			</button>
-			{#if canMove && selectedData.employee.homeTeam}
+			{#if canMove && selectedData.employee.homeTeam && !isBuiltInHandle(selectedData.employee.kind, selectedData.employee.handle, undefined, selectedData.employee.builtinKey)}
 				<button
 					type="button"
 					onclick={() => onAction('move', selectedData.employee!)}

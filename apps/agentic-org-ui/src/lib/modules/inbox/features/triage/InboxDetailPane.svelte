@@ -154,12 +154,18 @@
 		}, 1800);
 	}
 
-	function clampMemberPreview(node: HTMLElement) {
+	let clampRaf: number | undefined;
+	function resetPreviewPosition() {
 		previewFlipAbove = false;
 		previewShiftX = 0;
 		previewShiftY = 0;
 		previewMaxHeight = undefined;
-		requestAnimationFrame(() => {
+	}
+	function clampMemberPreview(node: HTMLElement) {
+		resetPreviewPosition();
+		if (clampRaf !== undefined) cancelAnimationFrame(clampRaf);
+		clampRaf = requestAnimationFrame(() => {
+			clampRaf = undefined;
 			if ((!memberHovered && !memberFocused) || previewDismissed) return;
 			const next = computeMemberPreviewClamp(node, readingEl);
 			if (!next) return;
@@ -169,7 +175,6 @@
 			previewMaxHeight = next.maxHeight;
 		});
 	}
-
 	$effect(() => {
 		if ((!memberHovered && !memberFocused) || previewDismissed || !memberNodeEl) return;
 		const node = memberNodeEl;
@@ -179,20 +184,17 @@
 		window.addEventListener('scroll', onViewportChange, { capture: true, passive: true });
 		reading?.addEventListener('scroll', onViewportChange, { passive: true });
 		return () => {
+			if (clampRaf !== undefined) cancelAnimationFrame(clampRaf);
 			window.removeEventListener('resize', onViewportChange);
 			window.removeEventListener('scroll', onViewportChange, { capture: true });
 			reading?.removeEventListener('scroll', onViewportChange);
 		};
 	});
-
 	function memberPreviewTracking(node: HTMLElement) {
 		memberNodeEl = node;
 		const resetPreview = () => {
 			previewDismissed = false;
-			previewFlipAbove = false;
-			previewShiftX = 0;
-			previewShiftY = 0;
-			previewMaxHeight = undefined;
+			resetPreviewPosition();
 		};
 		const onEnter = () => {
 			memberHovered = true;
@@ -217,6 +219,7 @@
 		node.addEventListener('focusin', onFocusIn);
 		node.addEventListener('focusout', onFocusOut);
 		return () => {
+			if (clampRaf !== undefined) cancelAnimationFrame(clampRaf);
 			if (memberNodeEl === node) memberNodeEl = null;
 			node.removeEventListener('pointerenter', onEnter);
 			node.removeEventListener('pointerleave', onLeave);
@@ -546,7 +549,9 @@
 	.triage-detail-title:focus {
 		outline: none;
 	}
-	.triage-detail-title:focus-visible {
+	.triage-detail-title:focus-visible,
+	.triage-back:focus-visible,
+	.triage-from-link:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
 	}
@@ -571,11 +576,6 @@
 			min-width: 44px;
 			min-height: 44px;
 		}
-	}
-	.triage-back:focus-visible,
-	.triage-from-link:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 2px;
 	}
 	@media (forced-colors: active) {
 		.triage-back {

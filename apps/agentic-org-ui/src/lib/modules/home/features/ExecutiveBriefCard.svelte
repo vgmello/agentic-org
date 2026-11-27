@@ -489,4 +489,10 @@
 			min-height: 44px;
 		}
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.lens-tab,
+		.brief-copy {
+			transition: none;
+		}
+	}
 </style>

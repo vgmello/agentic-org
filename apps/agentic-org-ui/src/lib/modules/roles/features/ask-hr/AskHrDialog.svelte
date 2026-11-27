@@ -18,7 +18,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
 	import { toAppError } from '$lib/proto';
-	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
 	import { rolesApi } from '../../api';
 	import type { RoleDraft } from '../../types';
 

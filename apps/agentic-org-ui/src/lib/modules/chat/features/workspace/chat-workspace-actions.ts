@@ -6,6 +6,7 @@ import {
 	turnForm,
 	type ChatContext,
 	type ChatMessage,
+	type ChatState,
 	type CommandEnv,
 	type CommandForm,
 	type Conversation,
@@ -28,6 +29,7 @@ export interface ChatActionDeps {
 	getOrganizationId: () => string;
 	getSend: () => ReturnType<typeof sender>;
 	getCtx: () => ChatContext;
+	getChatState?: () => ChatState | undefined;
 	getEnv: () => CommandEnv;
 	getOfficeRunning: () => boolean;
 	getListEl: () => HTMLElement | undefined;
@@ -37,6 +39,7 @@ export interface ChatActionDeps {
 	removePending: (key: number) => void;
 	openCommandForm: (form: CommandForm | { error: string }) => boolean;
 	onTurnHeld: (messageId: string, opener: HTMLElement) => void;
+	onSelectConversation?: (id: string) => void;
 }
 
 export function createChatMessageActions(deps: ChatActionDeps) {
@@ -189,6 +192,26 @@ export function createChatMessageActions(deps: ChatActionDeps) {
 		}
 	};
 
+	const openDm = async (memberId: string) => {
+		const owner = deps.getCtx().owner;
+		const existing = deps
+			.getChatState?.()
+			?.conversations.find(
+				(c) =>
+					c.kind === 'dm' &&
+					c.members.length === 2 &&
+					c.members.includes(owner) &&
+					c.members.includes(memberId)
+			);
+		if (existing) {
+			deps.onSelectConversation?.(existing.id);
+			return;
+		}
+		if (!deps.getOfficeRunning()) return;
+		const accepted = await act({ method: 'dm.open', members: [memberId] });
+		if (accepted?.conversation_id) deps.onSelectConversation?.(accepted.conversation_id);
+	};
+
 	return {
 		act,
 		deliver,
@@ -204,7 +227,8 @@ export function createChatMessageActions(deps: ChatActionDeps) {
 		handBack,
 		withdraw,
 		removeMember,
-		archiveChannel
+		archiveChannel,
+		openDm
 	};
 }
 

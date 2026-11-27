@@ -7,7 +7,6 @@
 	import { Button } from '$lib/components/ui/button';
 	import { shellApi } from '$lib/modules/shell/api';
 	import {
-		ChatSidebar,
 		type CommandEnv,
 		browseChannels,
 		chatContext,
@@ -25,6 +24,7 @@
 		type ChatSnapshot,
 		type ChatView
 	} from '$lib/modules/messaging';
+	import { ChatSidebar } from '$lib/modules/messaging/ui';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { chatApi, sender } from '../../api';
 	import { conversationSubtitle, copyFreshness, urlLocation } from '../../helpers';
@@ -50,7 +50,7 @@
 	const conversationsId = `${componentId}-conversations`;
 	const send = $derived(sender(organizationId));
 
-	let chat = $state<ChatSnapshot | undefined>();
+	let chat = $state.raw<ChatSnapshot | undefined>();
 	let loadError = $state<string | undefined>();
 	let now = $state(new Date().toISOString());
 	let inboxCount = $state<number | undefined>();
@@ -75,7 +75,7 @@
 	let started = false;
 	let lastSearch = '';
 	let pendingPlace = $state.raw<URL>();
-	let documentPlace = $state('Chat');
+	let settledPlace = $state('Chat');
 	let listEl = $state<HTMLElement | undefined>();
 	let chatEl = $state<HTMLElement | undefined>();
 	let heading = $state<HTMLHeadingElement | undefined>();
@@ -206,9 +206,9 @@
 	);
 	const newAt = $derived(findNewMarkerMessageId(readMarker, convView?.shown, ctx.owner));
 
-	$effect(() => {
-		if (!pendingPlace || page.url.href === pendingPlace.href) documentPlace = viewTitle;
-	});
+	const documentPlace = $derived(
+		!pendingPlace || page.url.href === pendingPlace.href ? viewTitle : settledPlace
+	);
 
 	let mounted = false;
 	const loader = createChatSnapshotLoader({
@@ -224,18 +224,12 @@
 				lastSearch = page.url.search;
 				started = true;
 				shellApi.navigation(organizationId).then(
-					(n) => {
-						if (mounted) inboxCount = n.inboxOpen ?? undefined;
-					},
-					() => {
-						if (mounted) inboxCount = undefined;
-					}
+					(n) => (mounted ? (inboxCount = n.inboxOpen ?? undefined) : undefined),
+					() => (mounted ? (inboxCount = undefined) : undefined)
 				);
 			}
 		},
-		onError: (msg) => {
-			loadError = msg;
-		}
+		onError: (msg) => (loadError = msg)
 	});
 	const load = async (): Promise<void> => {
 		await loader.load();
@@ -252,6 +246,7 @@
 		const timer = setInterval(() => void load(), 30_000);
 		return () => {
 			mounted = false;
+			ui.dispose();
 			loader.dispose();
 			stop();
 			clearInterval(timer);
@@ -281,7 +276,7 @@
 		query = resolved.query;
 		if (resolved.threadRoot) ui.threadRoot = resolved.threadRoot;
 		ui.highlight = resolved.highlight;
-		scrollMessageIntoView(resolved.highlight);
+		scrollMessageIntoView(resolved.highlight, () => listEl);
 	}
 
 	function select(next: ChatView, navigate = true) {
@@ -316,6 +311,7 @@
 		options: { replaceState?: boolean; state?: typeof page.state } = {}
 	) {
 		if (next.href === (pendingPlace ?? page.url).href) return;
+		settledPlace = viewTitle;
 		pendingPlace = next;
 		const destination = `${resolve('/chat')}${next.search}`;
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- destination is built from resolve('/chat') + search params
@@ -333,7 +329,7 @@
 		if (compactPanels) ui.showPins = false;
 		if (view.type === 'conversation' && view.id === m.conversation_id) {
 			ui.highlight = m.id;
-			return scrollMessageIntoView(m.id);
+			return scrollMessageIntoView(m.id, () => listEl);
 		}
 		openMessage(m);
 	}
@@ -343,15 +339,14 @@
 		writePlace(m.id);
 	};
 
-	const removePending = (key: number) => {
-		pending = pending.filter((x) => x.key !== key);
-	};
+	const removePending = (key: number) => (pending = pending.filter((x) => x.key !== key));
 
 	const actions = createChatMessageActions({
 		chatApi,
 		getOrganizationId: () => organizationId,
 		getSend: () => send,
 		getCtx: () => ctx,
+		getChatState: () => chatState,
 		getEnv: () => env,
 		getOfficeRunning: () => officeRunning,
 		getListEl: () => listEl,
@@ -374,7 +369,8 @@
 		onTurnHeld: (messageId, opener) => {
 			ui.rowActivity.hold(messageId, opener, 'dialog');
 			ui.commandOpener = opener;
-		}
+		},
+		onSelectConversation: (id) => select({ type: 'conversation', id })
 	});
 
 	$effect(() => {
@@ -452,6 +448,7 @@
 			onnewchannel={(opener) => ui.startSidebarDialog('channel', opener)}
 			onnewmessage={(opener) => ui.startSidebarDialog('dm', opener)}
 			onbrowse={ui.openBrowse}
+			onopendm={actions.openDm}
 		/>
 
 		<ChatConversationColumn
@@ -533,6 +530,7 @@
 			onAddPeople={() => ui.openChannelDialog('members')}
 			onShowPinned={showPinnedMessage}
 			onRemovePending={removePending}
+			onMessageMember={actions.openDm}
 		/>
 	{/if}
 </div>

@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let {
 		id,
