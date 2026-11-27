@@ -29,24 +29,31 @@ function decodeSegmentFully(raw: string): string | undefined {
 	return PERCENT_ENCODED_RE.test(current) ? undefined : current;
 }
 
-function segmentsAreSafe(pathname: string): boolean {
+function isUnsafeSegment(rawSeg: string, decoded: string): boolean {
+	return (
+		decoded === '.' ||
+		decoded === '..' ||
+		decoded.includes('/') ||
+		decoded.includes('\\') ||
+		ROUTE_TEMPLATE_RE.test(rawSeg) ||
+		ROUTE_TEMPLATE_RE.test(decoded) ||
+		ROUTE_GROUP_RE.test(rawSeg) ||
+		ROUTE_GROUP_RE.test(decoded)
+	);
+}
+
+function parseSafeSegments(pathname: string): string[] | undefined {
+	const segments: string[] = [];
 	for (const rawSeg of pathname.split('/').filter(Boolean)) {
 		const decoded = decodeSegmentFully(rawSeg);
-		if (decoded === undefined) return false;
-		if (
-			decoded === '.' ||
-			decoded === '..' ||
-			decoded.includes('/') ||
-			decoded.includes('\\') ||
-			ROUTE_TEMPLATE_RE.test(rawSeg) ||
-			ROUTE_TEMPLATE_RE.test(decoded) ||
-			ROUTE_GROUP_RE.test(rawSeg) ||
-			ROUTE_GROUP_RE.test(decoded)
-		) {
-			return false;
-		}
+		if (decoded === undefined || isUnsafeSegment(rawSeg, decoded)) return undefined;
+		segments.push(decoded);
 	}
-	return true;
+	return segments;
+}
+
+function segmentsAreSafe(pathname: string): boolean {
+	return parseSafeSegments(pathname) !== undefined;
 }
 
 export interface SafeInternalPathOptions {
@@ -54,11 +61,23 @@ export interface SafeInternalPathOptions {
 	disallowApi?: boolean;
 }
 
-function isValidRawPath(trimmed: string): boolean {
+function isValidRawPrefix(trimmed: string): boolean {
 	if (trimmed.length === 0 || trimmed.length > 2048) return false;
 	if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) return false;
-	if (hasControlOrSpace(trimmed)) return false;
-	return segmentsAreSafe(trimmed.split(/[?#]/, 1)[0]);
+	return !hasControlOrSpace(trimmed);
+}
+
+function isValidRawPath(trimmed: string): boolean {
+	return isValidRawPrefix(trimmed) && segmentsAreSafe(trimmed.split(/[?#]/, 1)[0]);
+}
+
+function rawSegmentsAllowLiteralDot(pathname: string): boolean {
+	for (const rawSeg of pathname.split('/').filter(Boolean)) {
+		if (rawSeg === '.' || rawSeg === '..') continue;
+		const decoded = decodeSegmentFully(rawSeg);
+		if (decoded === undefined || isUnsafeSegment(rawSeg, decoded)) return false;
+	}
+	return true;
 }
 
 function parseAppRelativeUrl(trimmed: string): URL | undefined {
@@ -98,6 +117,26 @@ export function safeInternalPath(
 	}
 	const hash = options.allowHash ? parsed.hash : '';
 	return `${pathname}${parsed.search}${hash}` as `/${string}`;
+}
+
+/**
+ * Parses and normalizes an untrusted app-relative path (`/…`), collapsing duplicate slashes and
+ * rejecting external origins, protocol-relative prefixes, backslashes, control characters, encoded
+ * traversal (`%2e%2e`), route templates (`[id]`), and route groups (`(shell)`).
+ */
+export function parseNormalizedInternalUrl(
+	raw: unknown
+): { pathname: string; segments: string[]; search: string; hash: string } | undefined {
+	if (typeof raw !== 'string') return undefined;
+	const trimmed = raw.trim();
+	if (!isValidRawPrefix(trimmed)) return undefined;
+	if (!rawSegmentsAllowLiteralDot(trimmed.split(/[?#]/, 1)[0])) return undefined;
+	const parsed = parseAppRelativeUrl(trimmed);
+	if (!parsed) return undefined;
+	const pathname = parsed.pathname.replace(/\/+/g, '/');
+	const segments = parseSafeSegments(pathname);
+	if (!segments) return undefined;
+	return { pathname, segments, search: parsed.search, hash: parsed.hash };
 }
 
 /**
