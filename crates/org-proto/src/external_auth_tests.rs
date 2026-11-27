@@ -45,6 +45,19 @@ fn secrets_never_appear_in_debug_output() {
     };
     let rendered = format!("{signed:?}");
     assert!(!rendered.contains("nonce-secret") && !rendered.contains("sig-secret"));
+
+    let approve = MemberExternalApproveParams {
+        command_id: None,
+        code: Zeroizing::new("K7QF-9M2P".into()),
+        ttl_secs: Some(3600),
+        takeover: false,
+    };
+    assert!(!format!("{approve:?}").contains("K7QF-9M2P"));
+    assert!(!format!("{approve:?}").contains("9M2P"));
+    let approve_wire = serde_json::to_value(&approve).unwrap();
+    assert_eq!(approve_wire["code"], "K7QF-9M2P");
+    let approve_back: MemberExternalApproveParams = serde_json::from_value(approve_wire).unwrap();
+    assert_eq!(approve_back, approve);
 }
 
 #[test]

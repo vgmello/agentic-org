@@ -148,6 +148,22 @@ pub(super) fn agent_id_from_path(path: &Path) -> Option<String> {
     None
 }
 
+/// Extracts an office ID if `path` lies inside `.../local/offices/<office>/agents/<id>/...`.
+pub(super) fn office_id_from_path(path: &Path) -> Option<String> {
+    let eq = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+    let comps = raw_normal_components(path);
+    for (idx, seg) in comps.iter().enumerate() {
+        if eq(seg, "local")
+            && comps.get(idx + 1).is_some_and(|c| eq(c, "offices"))
+            && comps.get(idx + 3).is_some_and(|c| eq(c, "agents"))
+            && comps.get(idx + 4).is_some_and(|id| !id.is_empty())
+        {
+            return comps.get(idx + 2).filter(|id| !id.is_empty()).cloned();
+        }
+    }
+    None
+}
+
 /// Matches an office-managed `.../agents/<id>` layout at `idx`, returning `(agent_id, end_idx)`
 /// where `end_idx` is the component index immediately after `<id>`.
 pub(super) fn office_agent_segment<'a>(
@@ -205,6 +221,66 @@ pub(super) fn agent_managed_ancestor(path: &Path, agent_id: &str) -> Option<Path
         }
     }
     None
+}
+
+/// Rejects `/`, global temp directories (including macOS `/var/folders/...` buckets and `C`/`0`
+/// trees), direct host user homes (`/Users/<user>`, `/home/<user>`, `/root`, `/var/root`,
+/// `/private/var/root`), top-level mount/container directories (`/opt`, `/Volumes`, `/mnt`,
+/// `/Users`, `/home`), and OS/system trees so no root candidate can widen confinement beyond a
+/// real project/session directory.
+pub(crate) fn is_forbidden_root(path: &Path) -> bool {
+    let norm = lexical_normalize(path);
+    if !norm.is_absolute() {
+        return false;
+    }
+    let comps = lowercase_components(&norm);
+    let refs: Vec<&str> = comps.iter().map(String::as_str).collect();
+    matches!(
+        refs.as_slice(),
+        [] | ["tmp"]
+            | ["private"]
+            | ["private", "tmp"]
+            | ["var"]
+            | ["private", "var"]
+            | ["var", "tmp"]
+            | ["private", "var", "tmp"]
+            | ["var", "root", ..]
+            | ["private", "var", "root", ..]
+            | ["var", "folders"]
+            | ["private", "var", "folders"]
+            | ["var", "folders", _]
+            | ["private", "var", "folders", _]
+            | ["var", "folders", _, _]
+            | ["private", "var", "folders", _, _]
+            | ["var", "folders", _, _, _]
+            | ["private", "var", "folders", _, _, _]
+            | ["var", "folders", _, _, "c" | "0", ..]
+            | ["private", "var", "folders", _, _, "c" | "0", ..]
+            | ["run"]
+            | ["run", "user"]
+            | ["run", "user", _]
+            | ["opt"]
+            | ["volumes"]
+            | ["mnt"]
+            | ["root"]
+            | ["home"]
+            | ["home", _]
+            | ["users"]
+            | ["users", _]
+            | ["etc", ..]
+            | ["private", "etc", ..]
+            | ["usr", ..]
+            | ["bin", ..]
+            | ["sbin", ..]
+            | ["lib", ..]
+            | ["lib64", ..]
+            | ["system", ..]
+            | ["library", ..]
+            | ["applications", ..]
+            | ["proc", ..]
+            | ["sys", ..]
+            | ["dev", ..]
+    )
 }
 
 pub(super) fn denied_path(message: &str, hint: &str) -> Refusal {

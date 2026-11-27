@@ -10,13 +10,14 @@
 //!    dedicated session-scoped `TMPDIR` (NEVER `/`, OS/system trees, global temp roots, or direct
 //!    host user home directories).
 //! 2. **Unconditional denylist** ([`denylist`], checked both lexically and post-canonicalization):
-//!    office internals (`durable/blobs/`, `durable/private/`, `durable/messaging/`,
-//!    `private/(task-notes.db*|user-space.db*)`, `attachment-staging/`, `blob-outbox/`,
-//!    `runtime/<office>/protected/`, another agent's home) and sensitive host credentials/state
-//!    (`.ssh`, `.aws`, `.claude`, `.codex`, `.gemini`, `.docker`, `.kube`, `.gnupg`, `.config/gh`,
+//!    office internals (all 10 durable families + `durable/protected/` + `durable/local/` companion
+//!    stores outside own `agents/<id>/`, `private/(task-notes.db*|user-space.db*)`,
+//!    `attachment-staging/`, `blob-outbox/`, `restore-backups/`, `runtime/<office>/protected/`,
+//!    another agent's home) and sensitive host credentials/state (`.ssh`, `.aws`, `.claude`,
+//!    `.codex`, `.gemini`, `.docker`, `.kube`, `.gnupg`, `.config/gh`, `.cargo/credentials*`,
 //!    `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `host-secrets`, `git-credentials`,
-//!    `office.db*`, `host.db*`, `git-state.json`, `hq-owner.v1.json`, `session-binding*.v1`,
-//!    `.session-binding.*.tmp`).
+//!    `office.db*`, `host.db*`, `host-registry.*`, `git-state.json`, `hq-owner.v1.json`,
+//!    `session-binding*.v1`, `.session-binding.*.tmp`).
 //! 3. **POSIX safe open via `org_platform::fs`**: component-wise `openat` with
 //!    `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` and `fstat` `S_ISREG` verification.
 //! 4. **Bounded read + canonical `org_media` allowlist & magic-byte pre-check**: `<= 10 MiB` for
@@ -42,10 +43,12 @@ use self::paths::{denied_path, lexical_normalize, path_is_within, resolve_abs};
 use self::roots::match_beneath_root;
 
 #[cfg(test)]
-pub(crate) use self::paths::strip_root_prefix_with_case;
-pub(crate) use self::roots::FileRoots;
+pub(crate) use self::denylist::RootEntry;
 #[cfg(test)]
-pub(crate) use self::roots::{with_test_roots, RootEntry};
+pub(crate) use self::paths::strip_root_prefix_with_case;
+#[cfg(test)]
+pub(crate) use self::roots::with_test_roots;
+pub(crate) use self::roots::FileRoots;
 
 /// Validated local file ready to stream over `attachment.upload_*`.
 #[derive(Clone, Debug)]

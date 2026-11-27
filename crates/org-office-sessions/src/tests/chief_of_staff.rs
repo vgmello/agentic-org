@@ -344,7 +344,7 @@ fn she_never_signs_in_from_an_external_workspace() {
             &f.owner,
             &org_proto::external_auth::MemberExternalApproveParams {
                 command_id: None,
-                code,
+                code: code.into(),
                 ttl_secs: None,
                 takeover: false,
             },

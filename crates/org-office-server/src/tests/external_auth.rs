@@ -104,7 +104,7 @@ fn approve(w: &World, code: &str) -> ExternalSessionView {
         w,
         &MemberExternalApproveParams {
             command_id: None,
-            code: code.into(),
+            code: code.to_owned().into(),
             ttl_secs: None,
             takeover: false,
         },
@@ -231,7 +231,7 @@ fn wrong_codes_lock_a_sign_in_after_three_attempts() {
             &w,
             &MemberExternalApproveParams {
                 command_id: None,
-                code: flip(i),
+                code: flip(i).into(),
                 ttl_secs: None,
                 takeover: false,
             },
@@ -242,7 +242,7 @@ fn wrong_codes_lock_a_sign_in_after_three_attempts() {
         &w,
         &MemberExternalApproveParams {
             command_id: None,
-            code: request.approval_code.clone(),
+            code: request.approval_code.clone().into(),
             ttl_secs: None,
             takeover: false,
         },
@@ -483,7 +483,7 @@ fn an_approval_never_closes_a_connection_already_bound_with_the_new_lease() {
             &w.owner,
             &MemberExternalApproveParams {
                 command_id: None,
-                code: request.approval_code.clone(),
+                code: request.approval_code.clone().into(),
                 ttl_secs: None,
                 takeover: false,
             },
@@ -1604,7 +1604,7 @@ fn external_renew_and_pending_enforce_human_only_auth_masking_and_familiarity() 
             &w,
             &MemberExternalApproveParams {
                 command_id: None,
-                code: req1.approval_code.clone(),
+                code: req1.approval_code.clone().into(),
                 ttl_secs: Some(3_600),
                 takeover: false,
             },

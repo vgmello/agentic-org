@@ -46,6 +46,10 @@ impl ApprovalCode {
     pub(super) fn as_str(&self) -> &str {
         self.0.as_str()
     }
+
+    pub(super) fn clone_zeroizing(&self) -> Zeroizing<String> {
+        self.0.clone()
+    }
 }
 
 impl fmt::Debug for ApprovalCode {

@@ -11,13 +11,15 @@
 mod plan;
 mod probe;
 mod session;
+mod toolless;
 mod transcript;
 
 use org_agent_runtime::transcript::TranscriptParser;
 use org_agent_runtime::{
     AgentRuntime, Capabilities, CostBasis, ImageInputMode, LaunchContext, LaunchPlan,
     MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun,
-    RuntimeHostProfile, RuntimeId, Session, SessionSpec, UsageScope, VersionRange,
+    RuntimeHostProfile, RuntimeId, Session, SessionSpec, ToollessPromptAdapter, UsageScope,
+    VersionRange,
 };
 
 use crate::plan::{build_headless_plan, build_take_over_plan};
@@ -177,6 +179,10 @@ impl AgentRuntime for ClaudeRuntime {
 
     fn transcript_parser(&self) -> Option<&dyn TranscriptParser> {
         Some(&transcript::CLAUDE_TRANSCRIPT_PARSER)
+    }
+
+    fn toolless_prompt(&self) -> Option<&dyn ToollessPromptAdapter> {
+        Some(&toolless::CLAUDE_TOOLLESS_PROMPT)
     }
 }
 

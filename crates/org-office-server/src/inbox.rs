@@ -25,9 +25,8 @@ impl Hq {
         office: Arc<org_office::Office>,
         sources: Vec<Arc<dyn Source>>,
     ) -> std::io::Result<Self> {
-        use std::io::Read;
         let mut epoch = [0; 16];
-        std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
+        org_platform::confinement::fill_entropy(&mut epoch)?;
         let office_id = office.info().office_id.clone();
         let snapshot_office = Arc::clone(&office);
         let source = org_source::OrgSource::new(

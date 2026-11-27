@@ -1359,3 +1359,167 @@ fn watch_8_real_session_manager_wakes_only_on_confident_person_match_and_prepend
     mgr.stop_all("test_done");
     mgr_off.stop_all("test_done");
 }
+
+#[test]
+fn cli_watcher_runtime_provider_delegates_via_toolless_capability_and_fails_closed() {
+    use org_agent_runtime::{ToollessPromptAdapter, ToollessPromptOutput, ToollessPromptUsage};
+    use org_copilot::{CancelToken, RunRequest};
+
+    struct StubToollessAdapter;
+    static STUB_TOOLLESS: StubToollessAdapter = StubToollessAdapter;
+
+    impl ToollessPromptAdapter for StubToollessAdapter {
+        fn availability_args(&self) -> &'static [&'static str] {
+            &["--check"]
+        }
+        fn run_args(&self, model_key: &str) -> Vec<String> {
+            vec!["--run".to_owned(), model_key.to_owned()]
+        }
+        fn parse_output(&self, stdout_bytes: &[u8]) -> Option<ToollessPromptOutput> {
+            let text = std::str::from_utf8(stdout_bytes).ok()?.trim().to_owned();
+            Some(ToollessPromptOutput {
+                text,
+                usage: Some(ToollessPromptUsage {
+                    input_tokens: Some(7),
+                    output_tokens: Some(3),
+                }),
+            })
+        }
+    }
+
+    struct CapabilityRuntime {
+        id: &'static str,
+        aliases: &'static [&'static str],
+        supports_toolless: bool,
+    }
+
+    impl AgentRuntime for CapabilityRuntime {
+        fn id(&self) -> RuntimeId {
+            RuntimeId::try_from(self.id).unwrap()
+        }
+        fn binary_name(&self) -> &'static str {
+            "fake-toolless-cli"
+        }
+        fn aliases(&self) -> &'static [&'static str] {
+            self.aliases
+        }
+        fn capabilities(&self) -> Capabilities {
+            WatchScriptedRuntime {
+                recorded: Arc::new(WatchRecordedTurns::default()),
+            }
+            .capabilities()
+        }
+        fn plan_session(
+            &self,
+            _spec: &SessionSpec,
+            _ctx: &LaunchContext,
+        ) -> Result<(LaunchPlan, Box<dyn Session>), PlanError> {
+            Err(PlanError::Unsupported("not used"))
+        }
+        fn plan_take_over(
+            &self,
+            _spec: &SessionSpec,
+            _ctx: &LaunchContext,
+            _cols: u16,
+            _rows: u16,
+        ) -> Result<LaunchPlan, PlanError> {
+            Err(PlanError::Unsupported("not used"))
+        }
+        fn plan_probe(&self, _probe: Probe, _ctx: &ProbeContext) -> Option<ProbeRun> {
+            None
+        }
+        fn parse_probe(&self, _probe: Probe, _out: &ProbeOutput) -> ProbeResult {
+            ProbeResult::Unavailable {
+                reason: Unavailable::NotInstalled,
+            }
+        }
+        fn toolless_prompt(&self) -> Option<&dyn ToollessPromptAdapter> {
+            self.supports_toolless
+                .then_some(&STUB_TOOLLESS as &dyn ToollessPromptAdapter)
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("fake-toolless.sh");
+    fs::write(
+        &script,
+        "#!/bin/sh\nif [ \"$1\" = \"--check\" ]; then exit 0; fi\ncat >/dev/null\nprintf '{\"ok\":true}\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut registry = RuntimeRegistry::empty();
+    registry.register(
+        Arc::new(CapabilityRuntime {
+            id: "alpha",
+            aliases: &["alpha-cli"],
+            supports_toolless: true,
+        }),
+        Some(script),
+    );
+    registry.register(
+        Arc::new(CapabilityRuntime {
+            id: "beta",
+            aliases: &["beta-cli"],
+            supports_toolless: false,
+        }),
+        None,
+    );
+
+    let fx = WatcherFixture::new(WatcherConfig::default(), false);
+    let profile = fx
+        .office
+        .load_model_profile(&fx.profile_id)
+        .unwrap()
+        .expect("fixture profile exists");
+    let base_conn = fx
+        .office
+        .load_provider_connection(profile.connection_ids[0].as_str())
+        .unwrap()
+        .expect("fixture connection exists");
+    let make_conn = |driver: &str, enabled: bool, archived: bool| {
+        let mut conn = base_conn.clone();
+        conn.runtime_driver = driver.to_owned();
+        conn.enabled = enabled;
+        conn.archived = archived;
+        conn
+    };
+
+    let provider = super::runtime::CliWatcherRuntimeProvider::new(registry);
+
+    // 1. Adapter declaring `toolless_prompt()` is admitted and runs end-to-end.
+    let conn_ok = make_conn("alpha-cli", true, false);
+    let rt = provider
+        .runtime_for_profile(&profile, Some(&conn_ok))
+        .expect("toolless-capable adapter must resolve");
+    assert!(rt.available());
+    let output = rt
+        .run(
+            &RunRequest {
+                prompt: "hello".into(),
+                output_schema: json!({ "type": "object" }),
+                timeout: Duration::from_secs(5),
+                max_output_bytes: 1024,
+            },
+            &CancelToken::new(),
+        )
+        .expect("toolless CLI run succeeds");
+    assert_eq!(output.text, r#"{"ok":true}"#);
+    assert_eq!(output.usage.and_then(|u| u.input_tokens), Some(7));
+
+    // 2. Adapter without `toolless_prompt()`, unregistered driver, disabled, archived, or
+    //    missing connection all fail closed (`None`).
+    assert!(provider
+        .runtime_for_profile(&profile, Some(&make_conn("beta-cli", true, false)))
+        .is_none());
+    assert!(provider
+        .runtime_for_profile(&profile, Some(&make_conn("unknown-driver", true, false)))
+        .is_none());
+    assert!(provider
+        .runtime_for_profile(&profile, Some(&make_conn("alpha-cli", false, false)))
+        .is_none());
+    assert!(provider
+        .runtime_for_profile(&profile, Some(&make_conn("alpha-cli", true, true)))
+        .is_none());
+    assert!(provider.runtime_for_profile(&profile, None).is_none());
+}

@@ -18,11 +18,16 @@ use super::{
     MAX_SUBAGENTS_PER_TRANSCRIPT, MAX_TRANSCRIPT_READ_BYTES, MAX_WALK_DEPTH,
 };
 
+/// Upper bound on total directory entries inspected across recursive transcript discovery walks so
+/// thousands of symlinks or empty directories cannot stall session listing or loading (`TASK-259`).
+pub(super) const MAX_VISITED_ENTRIES: usize = 4_096;
+
 pub(super) fn discover_sessions(
     canon_home: &Path,
     runtimes: &RuntimeRegistry,
 ) -> Vec<DiscoveredSession> {
     let mut out = Vec::new();
+    let mut visited = 0usize;
     for adapter in runtimes.adapters() {
         let Some(parser) = adapter.transcript_parser() else {
             continue;
@@ -42,6 +47,7 @@ pub(super) fn discover_sessions(
                         skip_parent_dir,
                         subagents_subdir,
                         subagent_stem_prefix,
+                        &mut visited,
                         &mut out,
                     );
                 }
@@ -64,6 +70,10 @@ pub(super) fn discover_sessions(
     out
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive discovery carries search root, confinement home, parser, layout filters, shared visit budget, and output buffer"
+)]
 fn discover_recursive_jsonl(
     root: &Path,
     canon_home: &Path,
@@ -71,10 +81,11 @@ fn discover_recursive_jsonl(
     skip_parent_dir: Option<&str>,
     subagents_subdir: Option<&str>,
     subagent_stem_prefix: Option<&str>,
+    visited: &mut usize,
     out: &mut Vec<DiscoveredSession>,
 ) {
     let mut files = Vec::new();
-    walk_regular_files(root, canon_home, 0, &mut files);
+    walk_regular_files(root, canon_home, 0, visited, &mut files);
     for path in files {
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
@@ -105,9 +116,14 @@ fn discover_recursive_jsonl(
         };
         let (modified_ms, size_bytes) = file_meta_of(&file);
         let (subagent_files, subagents_capped) = match subagents_subdir {
-            Some(sub_rel) => {
-                discover_nested_subagents(&path, canon_home, parser, sub_rel, subagent_stem_prefix)
-            }
+            Some(sub_rel) => discover_nested_subagents(
+                &path,
+                canon_home,
+                parser,
+                sub_rel,
+                subagent_stem_prefix,
+                visited,
+            ),
             None => (Vec::new(), false),
         };
         out.push(DiscoveredSession {
@@ -128,6 +144,7 @@ fn discover_nested_subagents(
     parser: &dyn TranscriptParser,
     subagents_subdir: &str,
     subagent_stem_prefix: Option<&str>,
+    visited: &mut usize,
 ) -> (Vec<SubagentFile>, bool) {
     let Some(stem) = session_file.file_stem().and_then(|s| s.to_str()) else {
         return (Vec::new(), false);
@@ -140,7 +157,7 @@ fn discover_nested_subagents(
     };
     let sub_dir = parent.join(stem).join(subagents_subdir);
     let mut files = Vec::new();
-    walk_regular_files(&sub_dir, canon_home, 0, &mut files);
+    walk_regular_files(&sub_dir, canon_home, 0, visited, &mut files);
     files.sort();
     let mut out = Vec::new();
     let mut capped = false;
@@ -293,9 +310,10 @@ pub(super) fn walk_regular_files(
     dir: &Path,
     canon_home: &Path,
     depth: usize,
+    visited: &mut usize,
     out: &mut Vec<PathBuf>,
 ) {
-    if depth > MAX_WALK_DEPTH || out.len() >= 512 {
+    if depth > MAX_WALK_DEPTH || out.len() >= 512 || *visited >= MAX_VISITED_ENTRIES {
         return;
     }
     if depth == 0 {
@@ -311,9 +329,10 @@ pub(super) fn walk_regular_files(
         return;
     };
     for entry in entries.flatten() {
-        if out.len() >= 512 {
+        if out.len() >= 512 || *visited >= MAX_VISITED_ENTRIES {
             break;
         }
+        *visited += 1;
         let Ok(ft) = entry.file_type() else {
             continue;
         };
@@ -322,7 +341,7 @@ pub(super) fn walk_regular_files(
         }
         let path = dir.join(entry.file_name());
         if ft.is_dir() {
-            walk_regular_files(&path, canon_home, depth + 1, out);
+            walk_regular_files(&path, canon_home, depth + 1, visited, out);
         } else if ft.is_file() && is_safe_regular_file(&path, canon_home) {
             out.push(path);
         }

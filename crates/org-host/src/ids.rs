@@ -4,8 +4,7 @@
 //! rare and serialized, and a clash of 80 random bits is not a practical concern. Ids are
 //! therefore not ordered within one millisecond.
 
-use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use org_proto::location::OFFICE_SOCKET_HANDLE_CHARS;
@@ -17,14 +16,14 @@ pub(crate) fn handle_of(office_id: &str) -> &str {
     &office_id[office_id.len().saturating_sub(OFFICE_SOCKET_HANDLE_CHARS)..]
 }
 
-/// A fresh ULID: 48 bits of Unix milliseconds followed by 80 bits from `/dev/urandom`.
+/// A fresh ULID: 48 bits of Unix milliseconds followed by 80 bits from OS CSPRNG.
 pub(crate) fn generate() -> io::Result<String> {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
     let mut random = [0u8; 10];
-    File::open("/dev/urandom")?.read_exact(&mut random)?;
+    org_platform::confinement::fill_entropy(&mut random)?;
     Ok(encode(now_ms, random))
 }
 
@@ -39,7 +38,7 @@ pub(crate) fn uuid_v7() -> io::Result<String> {
         return Err(io::Error::other("UUID clock exhausted"));
     }
     let mut bytes = [0u8; 16];
-    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    org_platform::confinement::fill_entropy(&mut bytes)?;
     bytes[..6].copy_from_slice(&(ms as u64).to_be_bytes()[2..]);
     bytes[6] = (bytes[6] & 0x0f) | 0x70;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;

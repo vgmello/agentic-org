@@ -176,7 +176,7 @@ impl OfficeMasks {
             self.hash_sweep_entries(&mut ctx, sweep, &static_paths)?;
         }
         if track_absent_static_masks {
-            self.hash_static_presence(&mut ctx);
+            self.hash_static_presence(&mut ctx)?;
         }
         let mut out = String::with_capacity(64);
         for byte in ctx.finish().as_ref() {
@@ -239,7 +239,7 @@ impl OfficeMasks {
         set
     }
 
-    fn hash_static_presence(&self, ctx: &mut Context) {
+    fn hash_static_presence(&self, ctx: &mut Context) -> Option<()> {
         let entries = self
             .folders
             .iter()
@@ -258,12 +258,14 @@ impl OfficeMasks {
         for (tag, path) in entries {
             let norm = normalized(path);
             hash_path(ctx, tag, &norm);
-            ctx.update(if std::fs::symlink_metadata(&norm).is_ok() {
-                b"1\0"
-            } else {
-                b"0\0"
-            });
+            let marker: &[u8] = match std::fs::symlink_metadata(&norm) {
+                Ok(_) => b"1\0",
+                Err(err) if err.kind() == ErrorKind::NotFound => b"0\0",
+                Err(_) => return None,
+            };
+            ctx.update(marker);
         }
+        Some(())
     }
 
     /// True if masking `path` (as given or parent-resolved) would cover the office's own roots.

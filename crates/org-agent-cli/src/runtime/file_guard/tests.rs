@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use org_proto::ErrorCode;
 
-use super::paths::{is_under_host_user_home, path_is_within};
-use super::roots::{is_allowed_agent_home_path, is_allowed_session_tmpdir_path, is_forbidden_root};
+use super::paths::{is_forbidden_root, is_under_host_user_home, path_is_within};
+use super::roots::{
+    expected_agent_tmpdir_slug, is_allowed_agent_home_path, is_allowed_session_tmpdir_path,
+};
 use super::worktrees::find_git_root;
 use super::{prepare_output_path, read_upload_file, FileRoots, RootEntry};
 
@@ -608,11 +610,11 @@ fn host_home_and_root_tmpdir_env_are_strictly_allowlisted() {
         assert!(roots.session_tmpdir.is_none());
     }
 
-    // Genuine office-scoped agent home and dedicated session temp dir ARE admitted.
+    // Genuine office-scoped agent home and owner-only 0700 dedicated session temp dir ARE admitted.
     let agent_home = dir.path().join("local/offices/off-1/agents/agent-1/home");
     let agent_tmp = dir.path().join("local/offices/off-1/agents/agent-1/tmp");
     fs::create_dir_all(&agent_home).unwrap();
-    fs::create_dir_all(&agent_tmp).unwrap();
+    org_platform::fs::create_owner_only_dir_all(&agent_tmp).unwrap();
     let ok_roots = FileRoots::from_parts(
         workspace,
         Some("agent-1".to_owned()),
@@ -678,7 +680,7 @@ fn host_home_and_root_tmpdir_env_are_strictly_allowlisted() {
             "HOME allowlist must reject `{bad}`"
         );
         assert!(
-            !is_allowed_session_tmpdir_path(Path::new(bad), Some("agent-1")),
+            !is_allowed_session_tmpdir_path(Path::new(bad), Some("agent-1"), Some("o1")),
             "TMPDIR allowlist must reject `{bad}`"
         );
     }
@@ -706,21 +708,24 @@ fn host_home_and_root_tmpdir_env_are_strictly_allowlisted() {
         );
     }
 
-    // Valid allowlisted TMPDIR paths (own agent tmp, office runtime `t/<slug>`, OS temp subdirs).
+    // Valid allowlisted TMPDIR paths (own agent tmp, own office runtime `t/<slug>`, OS temp subdirs).
+    let own_slug = expected_agent_tmpdir_slug("o1", "agent-1");
+    let cache_own = format!("/home/alice/.cache/agentic-org/tmp/ao/2oe/t/{own_slug}");
+    let run_own = format!("/run/user/1000/ao/2oe/t/{own_slug}");
     for good_tmp in [
         "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1/tmp",
         "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1/tmp/run-1",
-        "/home/alice/.cache/agentic-org/tmp/ao/2oe/t/slug",
+        cache_own.as_str(),
         "/tmp/agentic-org-session-1",
         "/private/tmp/agentic-org-session-1",
         "/var/tmp/agentic-org-session-1",
         "/private/var/tmp/agentic-org-session-1",
         "/var/folders/ab/cdefgh/T/agentic-org-session-1",
         "/private/var/folders/ab/cdefgh/T/agentic-org-session-1",
-        "/run/user/1000/ao/2oe/t/slug1",
+        run_own.as_str(),
     ] {
         assert!(
-            is_allowed_session_tmpdir_path(Path::new(good_tmp), Some("agent-1")),
+            is_allowed_session_tmpdir_path(Path::new(good_tmp), Some("agent-1"), Some("o1")),
             "TMPDIR allowlist must permit `{good_tmp}`"
         );
     }
@@ -840,4 +845,210 @@ fn path_is_within_requires_matching_absolute_and_relative_kinds() {
     assert!(!path_is_within(Path::new("/foo/bar"), Path::new("foo")));
     assert!(path_is_within(Path::new("/foo/bar"), Path::new("/foo")));
     assert!(path_is_within(Path::new("foo/bar"), Path::new("foo")));
+}
+
+#[test]
+fn host_registry_all_durable_families_restore_backups_and_cargo_credentials_are_denied() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let roots = make_workspace_roots(&workspace);
+
+    let denied = [
+        // host-registry.* (DB, WAL, SHM, backups, sentinel, case variants)
+        "host-registry.db",
+        "host-registry.db-wal",
+        "host-registry.db-shm",
+        "host-registry.db.bak",
+        "host-registry.db.before-restore",
+        "host-registry.created",
+        "office-state/HOST-REGISTRY.DB",
+        // All 10 DURABLE_FAMILIES plus durable/protected and durable/local companion stores
+        "durable/state/org.json",
+        "durable/journal/0001.json",
+        "durable/authority/policy.json",
+        "durable/private/notes.json",
+        "durable/messaging/events.json",
+        "durable/budgets/limits.json",
+        "durable/accounting/ledger.json",
+        "durable/recovery/key.json",
+        "durable/blobs/sha256/ab.txt",
+        "durable/checkpoints/snap.json",
+        "durable/protected/messaging.db",
+        "durable/local/offices/o1/sessions/state.json",
+        "durable/local/offices/o1/auth/vault.json",
+        "durable/local/offices/o1/security/git-ssh-key",
+        "durable/local/offices/o1/tls/federation.v1.json",
+        "durable/local/offices/o1/agents/agent-other/home/secret.txt",
+        "durable/local/stray.txt",
+        // restore-backups anywhere in path
+        "restore-backups/before-1/office.json",
+        "nested/restore-backups/snap.txt",
+        // Cargo registry credentials (both legacy and .toml, case-insensitive)
+        ".cargo/credentials",
+        ".cargo/credentials.toml",
+        ".CARGO/CREDENTIALS.TOML",
+        "nested/.cargo/credentials.toml",
+    ];
+
+    for rel in denied {
+        let full = workspace.join(rel);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&full, b"{\"secret\":true}").unwrap();
+
+        let read_err = read_upload_file(rel, &roots).unwrap_err();
+        assert_eq!(
+            read_err.code,
+            ErrorCode::NotAuthorized,
+            "read of `{rel}` must be denied: {read_err:?}"
+        );
+        let write_err = prepare_output_path(rel, &roots).unwrap_err();
+        assert_eq!(
+            write_err.code,
+            ErrorCode::NotAuthorized,
+            "write to `{rel}` must be denied: {write_err:?}"
+        );
+    }
+
+    // Positive controls: non-sensitive `.cargo/config.toml` and own agent home under
+    // `durable/local/offices/<o>/agents/<self>/...` remain permitted.
+    let cargo_cfg = workspace.join(".cargo/config.toml");
+    fs::write(&cargo_cfg, b"[build]\njobs = 1\n").unwrap();
+    let own_durable_home =
+        workspace.join("durable/local/offices/o1/agents/agent-self/home/note.txt");
+    fs::create_dir_all(own_durable_home.parent().unwrap()).unwrap();
+    fs::write(&own_durable_home, b"own note").unwrap();
+    assert!(read_upload_file(
+        "durable/local/offices/o1/agents/agent-self/home/note.txt",
+        &roots
+    )
+    .is_ok());
+    assert!(prepare_output_path(".cargo/config.toml", &roots).is_ok());
+}
+
+#[test]
+fn tmpdir_admission_enforces_own_office_agent_slug_and_owner_only_0700_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+
+    let office_id = "0195a000-0000-7000-8000-00000000a001";
+    let self_agent = "0195a000-0000-7000-8000-00000000b001";
+    let other_agent = "0195a000-0000-7000-8000-00000000b002";
+    let own_slug = expected_agent_tmpdir_slug(office_id, self_agent);
+    let sibling_slug = expected_agent_tmpdir_slug(office_id, other_agent);
+    assert_ne!(own_slug, sibling_slug);
+
+    // 1. Path-shape checks: sibling `t/<other-slug>`, bare `ao/.../t`, parent `ao/2oe`,
+    //    and missing office/agent identity ALL fail closed (never falling through to OS temp).
+    for rejected in [
+        format!("/run/user/1000/ao/2oe/t/{sibling_slug}"),
+        format!("/tmp/ao/2oe/t/{sibling_slug}"),
+        format!("/var/folders/ab/cd/T/ao/2oe/t/{sibling_slug}"),
+        format!("/home/alice/.cache/agentic-org/tmp/ao/2oe/t/{sibling_slug}"),
+        "/run/user/1000/ao/2oe/t".to_owned(),
+        "/run/user/1000/ao/2oe".to_owned(),
+        "/tmp/ao/2oe".to_owned(),
+    ] {
+        assert!(
+            !is_allowed_session_tmpdir_path(
+                Path::new(&rejected),
+                Some(self_agent),
+                Some(office_id)
+            ),
+            "sibling or broad runtime TMPDIR `{rejected}` must be rejected"
+        );
+    }
+    let own_run_path = format!("/run/user/1000/ao/2oe/t/{own_slug}");
+    assert!(is_allowed_session_tmpdir_path(
+        Path::new(&own_run_path),
+        Some(self_agent),
+        Some(office_id)
+    ));
+    assert!(
+        !is_allowed_session_tmpdir_path(Path::new(&own_run_path), Some(self_agent), None),
+        "t/<slug> without office_id must fail closed"
+    );
+    assert!(
+        !is_allowed_session_tmpdir_path(Path::new(&own_run_path), None, Some(office_id)),
+        "t/<slug> without self_agent_id must fail closed"
+    );
+
+    // 2. Real filesystem admission: 0700 own `t/<own-slug>` is admitted; 0700 sibling
+    //    `t/<other-slug>` is rejected; non-0700 (e.g. 0755 under umask 022) is rejected.
+    let own_t_dir = dir.path().join("ao/2oe/t").join(&own_slug);
+    let sibling_t_dir = dir.path().join("ao/2oe/t").join(&sibling_slug);
+    org_platform::fs::create_owner_only_dir_all(&own_t_dir).unwrap();
+    org_platform::fs::create_owner_only_dir_all(&sibling_t_dir).unwrap();
+
+    let admitted = FileRoots::from_parts_with_office(
+        workspace.clone(),
+        Some(self_agent.to_owned()),
+        Some(office_id.to_owned()),
+        None,
+        Some(own_t_dir.clone()),
+    );
+    assert_eq!(
+        admitted.session_tmpdir.as_ref().map(|e| &e.canonical),
+        Some(&own_t_dir.canonicalize().unwrap())
+    );
+
+    let sibling_roots = FileRoots::from_parts_with_office(
+        workspace.clone(),
+        Some(self_agent.to_owned()),
+        Some(office_id.to_owned()),
+        None,
+        Some(sibling_t_dir),
+    );
+    assert!(
+        sibling_roots.session_tmpdir.is_none(),
+        "sibling agent's 0700 t/<other-slug> must never be admitted"
+    );
+
+    // Symlink pointing at own 0700 `t/<own-slug>` is rejected.
+    let link_to_own = dir.path().join("ao/2oe/t/symlink-tmp");
+    org_platform::fs::create_symlink(&own_t_dir, &link_to_own).unwrap();
+    let link_roots = FileRoots::from_parts_with_office(
+        workspace.clone(),
+        Some(self_agent.to_owned()),
+        Some(office_id.to_owned()),
+        None,
+        Some(link_to_own),
+    );
+    assert!(link_roots.session_tmpdir.is_none());
+
+    // Loose (non-0700) directory created via `fs::create_dir_all` under `umask 022` is rejected
+    // for both OS temp subdirs and own `t/<own-slug>` directories.
+    let loose_os_tmp = dir.path().join("loose-session-tmp");
+    fs::create_dir_all(&loose_os_tmp).unwrap();
+    let uid = org_platform::fs::effective_uid().unwrap();
+    if org_platform::fs::verify_owner_only_dir(&loose_os_tmp, uid).is_err() {
+        let loose_roots = FileRoots::from_parts_with_office(
+            workspace.clone(),
+            Some(self_agent.to_owned()),
+            Some(office_id.to_owned()),
+            None,
+            Some(loose_os_tmp.clone()),
+        );
+        assert!(
+            loose_roots.session_tmpdir.is_none(),
+            "non-0700 TMPDIR must be rejected fail-closed"
+        );
+    }
+
+    // Tightening `loose_os_tmp` to owner-only 0700 admits it.
+    org_platform::fs::set_owner_only_dir(&loose_os_tmp).unwrap();
+    let tight_roots = FileRoots::from_parts_with_office(
+        workspace,
+        Some(self_agent.to_owned()),
+        Some(office_id.to_owned()),
+        None,
+        Some(loose_os_tmp.clone()),
+    );
+    assert_eq!(
+        tight_roots.session_tmpdir.as_ref().map(|e| &e.canonical),
+        Some(&loose_os_tmp.canonicalize().unwrap())
+    );
 }

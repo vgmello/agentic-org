@@ -1,8 +1,6 @@
 //! Temp names belong to their allocator, never to caller-supplied office IDs.
 
 use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::directory::Directory;
@@ -53,10 +51,9 @@ pub(super) fn allocate<'a>(
     recorded: impl Iterator<Item = &'a str>,
 ) -> Result<(String, Directory), Error> {
     let used: BTreeSet<_> = recorded.collect();
-    let mut entropy = File::open("/dev/urandom")?;
     claim(parent, &used, || {
         let mut bytes = [0u8; 3];
-        entropy.read_exact(&mut bytes)?;
+        org_platform::confinement::fill_entropy(&mut bytes)?;
         Ok(bytes)
     })
 }

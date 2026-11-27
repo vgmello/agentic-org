@@ -4,11 +4,76 @@
 
 use std::collections::BTreeSet;
 
-use org_proto::search::SearchEntityType;
+use org_proto::search::{SearchEntityType, SEARCH_MAX_CURSOR_BYTES};
+use org_proto::{ApiError, ErrorCode};
 
-use super::rank::SearchCursor;
 use super::records::SearchDoc;
 use super::text::QueryTerm;
+
+fn invalid_cursor() -> ApiError {
+    ApiError::new(
+        ErrorCode::InvalidRequest,
+        "cursor is the next_cursor of a previous page",
+    )
+}
+
+/// Where a page ended: its last hit's ranking key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchCursor {
+    pub score: f64,
+    pub updated_at: String,
+    pub entity_type: SearchEntityType,
+    pub entity_id: String,
+}
+
+impl SearchCursor {
+    /// The score's exact bits, then the rest, `~`-separated.
+    pub fn encode(&self) -> String {
+        format!(
+            "{:016x}~{}~{}~{}",
+            self.score.to_bits(),
+            self.entity_type.as_str(),
+            self.updated_at,
+            self.entity_id
+        )
+    }
+
+    /// Parses a `next_cursor`.
+    pub fn parse(raw: &str) -> Result<Self, ApiError> {
+        if raw.len() > SEARCH_MAX_CURSOR_BYTES {
+            return Err(invalid_cursor());
+        }
+        let mut parts = raw.splitn(4, '~');
+        let (Some(bits), Some(kind), Some(updated_at), Some(entity_id)) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(invalid_cursor());
+        };
+        let plain = |text: &str, extra: &[char]| {
+            text.chars()
+                .all(|c| c.is_ascii_alphanumeric() || extra.contains(&c))
+        };
+        let score = (bits.len() == 16)
+            .then(|| u64::from_str_radix(bits, 16).ok())
+            .flatten()
+            .map(f64::from_bits)
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .ok_or_else(invalid_cursor)?;
+        let entity_type = SearchEntityType::parse(kind).ok_or_else(invalid_cursor)?;
+        if !plain(updated_at, &['-', ':', '.', '+'])
+            || entity_id.is_empty()
+            || !plain(entity_id, &['-'])
+        {
+            return Err(invalid_cursor());
+        }
+        Ok(Self {
+            score,
+            updated_at: updated_at.to_owned(),
+            entity_type,
+            entity_id: entity_id.to_owned(),
+        })
+    }
+}
 
 /// The filters of one search, each resolved to the value the documents hold.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

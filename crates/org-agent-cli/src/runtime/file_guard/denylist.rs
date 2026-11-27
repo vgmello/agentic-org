@@ -1,14 +1,47 @@
 //! Unconditional path denylist for office internals, host credential dotdirs/files, and other
 //! agents' homes (`TASK-98.4`, `TASK-252`, ADR-0037).
 
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use org_command::Refusal;
 
 use super::paths::{
-    denied_path, lowercase_components, normalized_components, office_agent_segment, path_is_within,
+    denied_path, is_forbidden_root, lexical_normalize, lowercase_components, normalized_components,
+    office_agent_segment, path_eq, path_is_within,
 };
-use super::roots::RootEntry;
+
+/// One allowed root directory, carrying both its pre-canonicalized path (for matching paths
+/// containing OS ancestor symlinks such as macOS `/var -> /private/var` without dereferencing
+/// symlinks inside the root) and its canonical path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RootEntry {
+    pub raw: PathBuf,
+    pub canonical: PathBuf,
+}
+
+impl RootEntry {
+    pub(crate) fn from_path(path: PathBuf) -> Option<Self> {
+        let raw = lexical_normalize(&path);
+        if is_forbidden_root(&raw) || has_denied_static_segment(&raw) {
+            return None;
+        }
+        let canonical = fs::canonicalize(&path).ok()?;
+        if !canonical.is_dir()
+            || is_forbidden_root(&canonical)
+            || has_denied_static_segment(&canonical)
+        {
+            return None;
+        }
+        Some(Self { raw, canonical })
+    }
+}
+
+pub(super) fn push_unique(list: &mut Vec<RootEntry>, entry: RootEntry) {
+    if !list.iter().any(|e| path_eq(&e.canonical, &entry.canonical)) {
+        list.push(entry);
+    }
+}
 
 /// Host credential dotdirs/files and sensitive office/host state filenames that are ALWAYS
 /// blocked anywhere in a path, even inside an allowed root or with an allowlisted extension
@@ -32,8 +65,26 @@ const DENIED_HOST_SECRET_COMPONENTS: &[&str] = &[
     "hq-owner.v1.json",
 ];
 
+/// All 10 durable office families (mirroring `org-office-sessions` `DURABLE_FAMILIES`) plus
+/// `protected`, always forbidden beneath `durable/`.
+const DENIED_DURABLE_FAMILIES: &[&str] = &[
+    "state",
+    "journal",
+    "authority",
+    "private",
+    "messaging",
+    "budgets",
+    "accounting",
+    "recovery",
+    "blobs",
+    "checkpoints",
+    "protected",
+];
+
 fn is_office_or_host_db(lower_seg: &str) -> bool {
-    lower_seg.starts_with("office.db") || lower_seg.starts_with("host.db")
+    lower_seg.starts_with("office.db")
+        || lower_seg.starts_with("host.db")
+        || lower_seg.starts_with("host-registry.")
 }
 
 fn is_session_binding_filename(lower_seg: &str) -> bool {
@@ -67,26 +118,52 @@ fn check_denied_host_secret_segment(
             "Attach a regular workspace or non-sensitive file instead.",
         ));
     }
+    if lower == ".cargo"
+        && comps.get(idx + 1).is_some_and(|next| {
+            next.eq_ignore_ascii_case("credentials")
+                || next.eq_ignore_ascii_case("credentials.toml")
+        })
+    {
+        return Err(denied_path(
+            "Access to Cargo registry credentials (`.cargo/credentials*`) is forbidden.",
+            "Attach a regular workspace or non-sensitive file instead.",
+        ));
+    }
     Ok(())
+}
+
+fn is_durable_local_agent_path(comps: &[String], idx: usize) -> bool {
+    let eq = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+    comps.get(idx + 2).is_some_and(|n| eq(n, "offices"))
+        && comps.get(idx + 3).is_some_and(|id| !id.is_empty())
+        && comps.get(idx + 4).is_some_and(|n| eq(n, "agents"))
+        && comps.get(idx + 5).is_some_and(|id| !id.is_empty())
 }
 
 fn check_denied_office_segment(comps: &[String], idx: usize, seg: &str) -> Result<(), Refusal> {
     let eq = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
-    if eq(seg, "attachment-staging") || eq(seg, "blob-outbox") {
+    if eq(seg, "attachment-staging") || eq(seg, "blob-outbox") || eq(seg, "restore-backups") {
         return Err(denied_path(
-            "Access to office attachment staging or outbox paths is forbidden.",
+            "Access to office attachment staging, blob outbox, or restore-backups paths is forbidden.",
             "Attach a regular user or workspace file instead.",
         ));
     }
-    if eq(seg, "durable")
-        && comps
-            .get(idx + 1)
-            .is_some_and(|n| eq(n, "blobs") || eq(n, "private") || eq(n, "messaging"))
-    {
-        return Err(denied_path(
-            "Direct access to durable office storage (`durable/blobs`, `durable/private`, `durable/messaging`) is forbidden.",
-            "Reference existing attachments by --attachment-id or attach a workspace/private_home file instead.",
-        ));
+    if eq(seg, "durable") {
+        if let Some(next) = comps.get(idx + 1) {
+            let next_lower = next.to_ascii_lowercase();
+            if DENIED_DURABLE_FAMILIES.contains(&next_lower.as_str()) {
+                return Err(denied_path(
+                    "Direct access to durable office storage families is forbidden.",
+                    "Reference existing attachments by --attachment-id or attach a workspace/private_home file instead.",
+                ));
+            }
+            if next_lower == "local" && !is_durable_local_agent_path(comps, idx) {
+                return Err(denied_path(
+                    "Direct access to durable/local office companion stores is forbidden.",
+                    "Attach files only from your workspace, own private_home, active worktrees, or session TMPDIR.",
+                ));
+            }
+        }
     }
     if eq(seg, "private")
         && comps.get(idx + 1).is_some_and(|leaf| {

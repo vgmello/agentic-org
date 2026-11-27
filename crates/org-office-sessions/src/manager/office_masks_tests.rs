@@ -616,3 +616,37 @@ fn topology_digest_tracks_cohosted_org_and_satellite_changes_without_companion_c
     assert_ne!(sat_masks.topology_digest(false).unwrap(), sat_native_0);
     assert_ne!(sat_masks.topology_digest(true).unwrap(), sat_bwrap_1);
 }
+
+#[test]
+fn hash_static_presence_fails_closed_on_non_not_found_symlink_metadata_error() {
+    let host = Host::new();
+    let org = host.mk(ORG_A);
+    let (durable, runtime) = (org.join("durable"), org.join("runtime"));
+    std::fs::create_dir_all(&durable).unwrap();
+    std::fs::create_dir_all(&runtime).unwrap();
+
+    // A regular file as a parent component causes `symlink_metadata(blocker/child)` to return
+    // `ErrorKind::NotADirectory` (not `NotFound`), which works deterministically under any UID.
+    let blocker = host.file("blocker");
+    let broken_static = OfficeMasks {
+        folders: Vec::new(),
+        files: vec![blocker.join("host-registry.db")],
+        neighbours: Vec::new(),
+        sweeps: Vec::new(),
+        own_roots: own_root_forms([&durable, &runtime]),
+    };
+    assert!(
+        broken_static.topology_digest(true).is_none(),
+        "non-NotFound symlink_metadata error in hash_static_presence must fail closed with None"
+    );
+
+    // Genuinely absent static entry (`ErrorKind::NotFound`) still returns `Some(digest)`.
+    let missing_static = OfficeMasks {
+        folders: Vec::new(),
+        files: vec![host.data.join("missing/host-registry.db")],
+        neighbours: Vec::new(),
+        sweeps: Vec::new(),
+        own_roots: own_root_forms([&durable, &runtime]),
+    };
+    assert!(missing_static.topology_digest(true).is_some());
+}

@@ -7,38 +7,16 @@ use std::path::{Path, PathBuf};
 
 use org_command::Refusal;
 
-use super::denylist::{check_other_agent_for_id, has_denied_static_segment};
+use crate::runtime::binding::OFFICE_ENV;
+
+use super::denylist::{
+    check_other_agent_for_id, has_denied_static_segment, push_unique, RootEntry,
+};
 use super::paths::{
-    agent_id_from_path, denied_path, is_under_host_user_home, lexical_normalize,
-    lowercase_components, path_eq, raw_normal_components, strip_root_prefix,
+    agent_id_from_path, denied_path, is_forbidden_root, is_under_host_user_home, lexical_normalize,
+    lowercase_components, office_id_from_path, raw_normal_components, strip_root_prefix,
 };
 use super::worktrees::{discover_git_worktrees, find_git_root};
-
-/// One allowed root directory, carrying both its pre-canonicalized path (for matching paths
-/// containing OS ancestor symlinks such as macOS `/var -> /private/var` without dereferencing
-/// symlinks inside the root) and its canonical path.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RootEntry {
-    pub raw: PathBuf,
-    pub canonical: PathBuf,
-}
-
-impl RootEntry {
-    pub(crate) fn from_path(path: PathBuf) -> Option<Self> {
-        let raw = lexical_normalize(&path);
-        if is_forbidden_root(&raw) || has_denied_static_segment(&raw) {
-            return None;
-        }
-        let canonical = fs::canonicalize(&path).ok()?;
-        if !canonical.is_dir()
-            || is_forbidden_root(&canonical)
-            || has_denied_static_segment(&canonical)
-        {
-            return None;
-        }
-        Some(Self { raw, canonical })
-    }
-}
 
 /// Allowed local roots for `file upload`, `--attach`, and `file fetch --output`.
 #[derive(Clone, Debug, Default)]
@@ -61,23 +39,44 @@ impl FileRoots {
     ///   (`self_agent_id = None`, `private_home = None`) if `HOME` and `AGENT_OS_AGENT_ID`
     ///   disagree so neither ambient env var can impersonate another agent.
     /// - Strictly allowlists `private_home` (own `.../agents/<id>/(home|private_home)`) and
-    ///   `session_tmpdir` (own `.../agents/<id>/tmp`, office runtime `.../t/<slug>`, or
-    ///   dedicated subdirectory under OS temp roots).
+    ///   `session_tmpdir` (own `.../agents/<id>/tmp`, own office runtime `.../t/<own-slug>`, or
+    ///   dedicated owner-only `0700` subdirectory under OS temp roots).
     /// - Requires bidirectional `.git` back-pointers and managed-boundary confinement for any
     ///   linked Git worktree discovered from `.git/worktrees/*/gitdir`.
+    #[cfg(test)]
     pub(crate) fn from_parts(
         cwd: PathBuf,
         self_agent_id: Option<String>,
         home: Option<PathBuf>,
         tmpdir: Option<PathBuf>,
     ) -> Self {
-        let env_id = sanitize_agent_id(self_agent_id);
+        Self::from_parts_with_office(cwd, self_agent_id, None, home, tmpdir)
+    }
+
+    /// Like [`Self::from_parts`], also binding the caller's office ID (e.g. `AGENT_OS_OFFICE`)
+    /// so office runtime `t/<slug>` `TMPDIR` admission validates the caller's own slug.
+    pub(crate) fn from_parts_with_office(
+        cwd: PathBuf,
+        self_agent_id: Option<String>,
+        office_id: Option<String>,
+        home: Option<PathBuf>,
+        tmpdir: Option<PathBuf>,
+    ) -> Self {
+        let env_id = sanitize_id(self_agent_id);
+        let env_office = sanitize_id(office_id);
         let cwd_entry = RootEntry::from_path(cwd.clone());
         let cwd_id = agent_id_from_cwd(&cwd, cwd_entry.as_ref());
+        let cwd_office = office_id_from_cwd(&cwd, cwd_entry.as_ref());
         let home_opt = home.filter(|p| !p.as_os_str().is_empty());
         let home_id = home_opt.as_deref().and_then(agent_id_from_home);
+        let home_office = home_opt.as_deref().and_then(office_id_from_home);
         let resolved_agent_id =
-            resolve_self_agent_id(cwd_id.as_deref(), home_id.as_deref(), env_id.as_deref());
+            resolve_self_id(cwd_id.as_deref(), home_id.as_deref(), env_id.as_deref());
+        let resolved_office_id = resolve_self_id(
+            cwd_office.as_deref(),
+            home_office.as_deref(),
+            env_office.as_deref(),
+        );
 
         let mut workspace_roots = Vec::new();
         let mut worktrees = Vec::new();
@@ -93,9 +92,13 @@ impl FileRoots {
 
         let private_home = home_opt.and_then(|h| admit_agent_home(h, resolved_agent_id.as_deref()));
 
-        let session_tmpdir = tmpdir
-            .filter(|p| !p.as_os_str().is_empty())
-            .and_then(|t| admit_session_tmpdir(t, resolved_agent_id.as_deref()));
+        let session_tmpdir = tmpdir.filter(|p| !p.as_os_str().is_empty()).and_then(|t| {
+            admit_session_tmpdir(
+                t,
+                resolved_agent_id.as_deref(),
+                resolved_office_id.as_deref(),
+            )
+        });
 
         Self {
             cwd,
@@ -115,13 +118,14 @@ impl FileRoots {
         }
         let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let self_agent_id = env::var("AGENT_OS_AGENT_ID").ok();
+        let office_id = env::var(OFFICE_ENV).ok();
         let home = env::var_os("HOME")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from);
         let tmpdir = env::var_os("TMPDIR")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from);
-        Self::from_parts(cwd, self_agent_id, home, tmpdir)
+        Self::from_parts_with_office(cwd, self_agent_id, office_id, home, tmpdir)
     }
 
     pub(super) fn all_roots(&self) -> impl Iterator<Item = &RootEntry> {
@@ -131,66 +135,6 @@ impl FileRoots {
             .chain(self.worktrees.iter())
             .chain(self.session_tmpdir.iter())
     }
-}
-
-/// Rejects `/`, global temp directories (including macOS `/var/folders/...` buckets and `C`/`0`
-/// trees), direct host user homes (`/Users/<user>`, `/home/<user>`, `/root`, `/var/root`,
-/// `/private/var/root`), top-level mount/container directories (`/opt`, `/Volumes`, `/mnt`,
-/// `/Users`, `/home`), and OS/system trees so no root candidate can widen confinement beyond a
-/// real project/session directory.
-pub(crate) fn is_forbidden_root(path: &Path) -> bool {
-    let norm = lexical_normalize(path);
-    if !norm.is_absolute() {
-        return false;
-    }
-    let comps = lowercase_components(&norm);
-    let refs: Vec<&str> = comps.iter().map(String::as_str).collect();
-    matches!(
-        refs.as_slice(),
-        [] | ["tmp"]
-            | ["private"]
-            | ["private", "tmp"]
-            | ["var"]
-            | ["private", "var"]
-            | ["var", "tmp"]
-            | ["private", "var", "tmp"]
-            | ["var", "root", ..]
-            | ["private", "var", "root", ..]
-            | ["var", "folders"]
-            | ["private", "var", "folders"]
-            | ["var", "folders", _]
-            | ["private", "var", "folders", _]
-            | ["var", "folders", _, _]
-            | ["private", "var", "folders", _, _]
-            | ["var", "folders", _, _, _]
-            | ["private", "var", "folders", _, _, _]
-            | ["var", "folders", _, _, "c" | "0", ..]
-            | ["private", "var", "folders", _, _, "c" | "0", ..]
-            | ["run"]
-            | ["run", "user"]
-            | ["run", "user", _]
-            | ["opt"]
-            | ["volumes"]
-            | ["mnt"]
-            | ["root"]
-            | ["home"]
-            | ["home", _]
-            | ["users"]
-            | ["users", _]
-            | ["etc", ..]
-            | ["private", "etc", ..]
-            | ["usr", ..]
-            | ["bin", ..]
-            | ["sbin", ..]
-            | ["lib", ..]
-            | ["lib64", ..]
-            | ["system", ..]
-            | ["library", ..]
-            | ["applications", ..]
-            | ["proc", ..]
-            | ["sys", ..]
-            | ["dev", ..]
-    )
 }
 
 pub(super) fn match_beneath_root(
@@ -218,13 +162,7 @@ pub(super) fn match_beneath_root(
     ))
 }
 
-pub(super) fn push_unique(list: &mut Vec<RootEntry>, entry: RootEntry) {
-    if !list.iter().any(|e| path_eq(&e.canonical, &entry.canonical)) {
-        list.push(entry);
-    }
-}
-
-fn sanitize_agent_id(raw: Option<String>) -> Option<String> {
+fn sanitize_id(raw: Option<String>) -> Option<String> {
     let trimmed = raw?.trim().to_owned();
     if trimmed.is_empty()
         || trimmed == "."
@@ -267,7 +205,20 @@ fn agent_id_from_home(home_path: &Path) -> Option<String> {
         .or_else(|| agent_id_from_path(&lexical_normalize(home_path)))
 }
 
-fn resolve_self_agent_id(
+fn office_id_from_cwd(cwd_raw: &Path, cwd_entry: Option<&RootEntry>) -> Option<String> {
+    cwd_entry
+        .and_then(|e| office_id_from_path(&e.canonical).or_else(|| office_id_from_path(&e.raw)))
+        .or_else(|| office_id_from_path(&lexical_normalize(cwd_raw)))
+}
+
+fn office_id_from_home(home_path: &Path) -> Option<String> {
+    fs::canonicalize(home_path)
+        .ok()
+        .and_then(|canon| office_id_from_path(&canon))
+        .or_else(|| office_id_from_path(&lexical_normalize(home_path)))
+}
+
+fn resolve_self_id(
     cwd_id: Option<&str>,
     home_id: Option<&str>,
     env_id: Option<&str>,
@@ -328,19 +279,36 @@ fn is_own_agent_tmpdir(comps: &[String], self_agent_id: Option<&str>) -> bool {
         .any(|w| w[0] == "agents" && w[1].eq_ignore_ascii_case(self_id) && w[2] == "tmp")
 }
 
-fn is_office_runtime_session_tmpdir(comps: &[String]) -> bool {
-    let Some(anchor_idx) = comps
+/// Computes the deterministic 8-hex-char `t/<slug>` directory name matching
+/// `org_office_sessions::host_auth::agent_tmpdir_slug(office_id, agent_id)`.
+pub(super) fn expected_agent_tmpdir_slug(office_id: &str, agent_id: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let input = format!("{office_id}:{agent_id}");
+    let digest = ring::digest::digest(&ring::digest::SHA256, input.as_bytes());
+    let mut out = String::with_capacity(8);
+    for &b in &digest.as_ref()[..4] {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn office_runtime_anchor_idx(comps: &[String]) -> Option<usize> {
+    comps
         .iter()
         .position(|seg| seg == "agentic-org" || seg == "ao")
-    else {
-        return false;
-    };
+}
+
+fn extract_office_runtime_tmpdir_slug(comps: &[String], anchor_idx: usize) -> Option<&str> {
     comps
         .iter()
         .enumerate()
         .skip(anchor_idx + 1)
-        .any(|(t_idx, seg)| {
-            t_idx >= 2 && seg == "t" && comps.get(t_idx + 1).is_some_and(|slug| !slug.is_empty())
+        .find_map(|(t_idx, seg)| {
+            (t_idx >= 2 && seg == "t")
+                .then(|| comps.get(t_idx + 1).map(String::as_str))
+                .flatten()
+                .filter(|slug| !slug.is_empty())
         })
 }
 
@@ -361,7 +329,11 @@ fn is_os_temp_subdir(norm: &Path, comps: &[String]) -> bool {
     }
 }
 
-pub(super) fn is_allowed_session_tmpdir_path(path: &Path, self_agent_id: Option<&str>) -> bool {
+pub(super) fn is_allowed_session_tmpdir_path(
+    path: &Path,
+    self_agent_id: Option<&str>,
+    office_id: Option<&str>,
+) -> bool {
     let norm = lexical_normalize(path);
     if !norm.is_absolute() || is_forbidden_root(&norm) || has_denied_static_segment(&norm) {
         return false;
@@ -370,18 +342,38 @@ pub(super) fn is_allowed_session_tmpdir_path(path: &Path, self_agent_id: Option<
         return false;
     }
     let comps = lowercase_components(&norm);
-    is_own_agent_tmpdir(&comps, self_agent_id)
-        || is_office_runtime_session_tmpdir(&comps)
-        || is_os_temp_subdir(&norm, &comps)
+    if is_own_agent_tmpdir(&comps, self_agent_id) {
+        return true;
+    }
+    // Any path beneath an office runtime root (`.../agentic-org/...` or `.../ao/...`) must
+    // match the caller's own `t/<slug>` — never fall through to generic OS temp admission,
+    // which would admit sibling agents' `t/<other-slug>` or parent `ao/<handle>` dirs.
+    if let Some(anchor_idx) = office_runtime_anchor_idx(&comps) {
+        let Some(slug) = extract_office_runtime_tmpdir_slug(&comps, anchor_idx) else {
+            return false;
+        };
+        let (Some(oid), Some(aid)) = (office_id, self_agent_id) else {
+            return false;
+        };
+        return slug == expected_agent_tmpdir_slug(oid, aid);
+    }
+    is_os_temp_subdir(&norm, &comps)
 }
 
-fn admit_session_tmpdir(tmpdir: PathBuf, self_agent_id: Option<&str>) -> Option<RootEntry> {
+fn admit_session_tmpdir(
+    tmpdir: PathBuf,
+    self_agent_id: Option<&str>,
+    office_id: Option<&str>,
+) -> Option<RootEntry> {
     let entry = RootEntry::from_path(tmpdir)?;
-    if !is_allowed_session_tmpdir_path(&entry.raw, self_agent_id)
-        || !is_allowed_session_tmpdir_path(&entry.canonical, self_agent_id)
+    if !is_allowed_session_tmpdir_path(&entry.raw, self_agent_id, office_id)
+        || !is_allowed_session_tmpdir_path(&entry.canonical, self_agent_id, office_id)
     {
         return None;
     }
+    let uid = org_platform::fs::effective_uid().ok()?;
+    org_platform::fs::verify_owner_only_dir(&entry.raw, uid).ok()?;
+    org_platform::fs::verify_owner_only_dir(&entry.canonical, uid).ok()?;
     Some(entry)
 }
 
