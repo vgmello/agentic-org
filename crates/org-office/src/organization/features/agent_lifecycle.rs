@@ -11,8 +11,8 @@ use serde::Serialize;
 
 use super::{
     authority::{
-        admit_active_employee, check_team_capacity, is_owner, is_person_above_employee,
-        is_person_ancestor_lead,
+        admit_active_employee, check_team_capacity, is_owner, is_person_ancestor_lead,
+        may_manage_employee,
     },
     changed, invalid,
     shared::{
@@ -74,7 +74,7 @@ impl Feature for UpdateAgent {
         let Some(agent) = view.employee(&self.id)? else {
             return reject(RejectCode::NotFound, "no such agent");
         };
-        if !is_person_above_employee(view, owner, &admitted.actor, &agent)? {
+        if !may_manage_employee(view, owner, &admitted.actor, &agent)? {
             return invalid(NOT_AUTHORIZED);
         }
         if agent.kind != EmployeeKind::Agent {
@@ -252,7 +252,7 @@ impl Feature for MoveAgent {
         let Some(agent) = view.employee(&self.id)? else {
             return reject(RejectCode::NotFound, "no such agent");
         };
-        if !is_person_above_employee(view, owner, &admitted.actor, &agent)? {
+        if !may_manage_employee(view, owner, &admitted.actor, &agent)? {
             return invalid(NOT_AUTHORIZED);
         }
         let Some(team) = view.team(&self.home_team)? else {
@@ -269,11 +269,9 @@ impl Feature for MoveAgent {
         if agent.status == EmployeeStatus::Inactive {
             return reject(RejectCode::InvalidRequest, "the agent is offboarded");
         }
-        if agent.builtin_key.is_some() {
-            return reject(
-                RejectCode::InvalidRequest,
-                "the built-in HR lead stays in the top-level team",
-            );
+        if let Some(key) = agent.builtin_key {
+            let reason = format!("{} stays in the top-level team", key.described());
+            return reject(RejectCode::InvalidRequest, reason);
         }
         if !team.is_active() {
             return reject(RejectCode::InvalidRequest, "the team is archived");
@@ -355,7 +353,7 @@ impl Feature for SetAgentStatus {
         let Some(agent) = view.employee(&self.id)? else {
             return reject(RejectCode::NotFound, "no such agent");
         };
-        if !is_person_above_employee(view, owner, &admitted.actor, &agent)? {
+        if !may_manage_employee(view, owner, &admitted.actor, &agent)? {
             return invalid(NOT_AUTHORIZED);
         }
         if agent.kind != EmployeeKind::Agent {
@@ -367,11 +365,9 @@ impl Feature for SetAgentStatus {
         if agent.status == EmployeeStatus::Inactive {
             return reject(RejectCode::InvalidRequest, "the agent is offboarded");
         }
-        if agent.builtin_key.is_some() {
-            return reject(
-                RejectCode::InvalidRequest,
-                "the built-in HR lead cannot be paused",
-            );
+        if let Some(key) = agent.builtin_key {
+            let reason = format!("{} cannot be paused", key.described());
+            return reject(RejectCode::InvalidRequest, reason);
         }
         check_revision(agent.meta.revision, self.expected_revision)?;
         let Some(chain) = view.team_chain(&agent.home_team_id)? else {
@@ -421,17 +417,15 @@ impl Feature for OffboardAgent {
         let Some(agent) = view.employee(&self.id)? else {
             return reject(RejectCode::NotFound, "no such agent");
         };
-        if !is_person_above_employee(view, owner, &admitted.actor, &agent)? {
+        if !may_manage_employee(view, owner, &admitted.actor, &agent)? {
             return invalid(NOT_AUTHORIZED);
         }
         if agent.kind != EmployeeKind::Agent {
             return reject(RejectCode::InvalidRequest, "only agents can be offboarded");
         }
-        if agent.builtin_key.is_some() {
-            return reject(
-                RejectCode::InvalidRequest,
-                "the built-in HR lead cannot be offboarded",
-            );
+        if let Some(key) = agent.builtin_key {
+            let reason = format!("{} cannot be offboarded", key.described());
+            return reject(RejectCode::InvalidRequest, reason);
         }
         if agent.status == EmployeeStatus::Inactive {
             return reject(
@@ -506,7 +500,7 @@ impl Feature for UpsertAgentExecution {
         let Some(agent) = view.employee(&self.employee_id)? else {
             return reject(RejectCode::NotFound, "no such agent");
         };
-        if !is_person_above_employee(view, owner, &admitted.actor, &agent)? {
+        if !may_manage_employee(view, owner, &admitted.actor, &agent)? {
             return invalid(NOT_AUTHORIZED);
         }
         if agent.kind != EmployeeKind::Agent {

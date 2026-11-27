@@ -111,7 +111,8 @@ fn map_receipt_to_org_changes(
         | "organization.update_agent"
         | "organization.move_agent"
         | "organization.set_agent_status"
-        | "organization.upsert_agent_execution" => members
+        | "organization.upsert_agent_execution"
+        | "organization.ensure_chief_of_staff" => members
             .get(entity_id)
             .map(|m| {
                 vec![OrgChange::MemberUpserted {

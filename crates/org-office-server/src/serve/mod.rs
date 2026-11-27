@@ -14,6 +14,7 @@ mod auth;
 mod auth_limits;
 mod binding;
 mod connection;
+mod delegation;
 mod dispatch;
 mod external;
 mod held;
@@ -41,6 +42,7 @@ use org_proto::{ApiError, OrgSnapshot, Request, Response};
 
 use self::dispatch::answer;
 
+pub use self::delegation::{ChiefOfStaffPort, Delegation};
 #[cfg(test)]
 pub(crate) use self::external::close_after_approval;
 pub use self::external::ExternalAuthPort;
@@ -178,6 +180,9 @@ pub struct OfficePorts {
     pub sessions: Option<SessionsFn>,
     pub run_binding_verify: Option<RunBindingVerifyFn>,
     pub run_binding_active: Option<RunBindingActiveFn>,
+    /// The Chief of Staff's delegation, intersected with her own authority on every call she
+    /// makes and on what it answers (`TASK-80.1`). `None`: no member is gated.
+    pub delegation: Option<Arc<dyn ChiefOfStaffPort>>,
     /// External (BYOA) agent sign-in, leases and fast tokens (`TASK-137`). `None`: `auth.*`
     /// answers `unsupported` and only managed runs bind.
     pub external_auth: Option<Arc<dyn ExternalAuthPort>>,

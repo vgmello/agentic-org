@@ -103,8 +103,9 @@ fn optional_builtin_key(row: &Row<'_>, column: usize) -> rusqlite::Result<Option
     let stored: Option<String> = row.get(column)?;
     match stored.as_deref() {
         None => Ok(None),
-        Some(text) if text == BuiltinKey::Hr.as_str() => Ok(Some(BuiltinKey::Hr)),
-        Some(_) => Err(foreign(column, "not a known value")),
+        Some(text) => BuiltinKey::parse(text)
+            .map(Some)
+            .ok_or_else(|| foreign(column, "not a known value")),
     }
 }
 

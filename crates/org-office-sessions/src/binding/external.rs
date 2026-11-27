@@ -31,6 +31,8 @@ impl RunBindingRegistry {
             session_id,
             mode: BindingMode::External { expires_at_ms },
             accepted_commands: Vec::new(),
+            // An external lease never acts for anyone (the Chief of Staff gets none).
+            acting_for_caller_id: None,
         };
         let mut map = self.external.lock().unwrap_or_else(|p| p.into_inner());
         map.insert(binding.employee_id.clone(), binding.clone());

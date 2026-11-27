@@ -64,7 +64,7 @@ pub(super) fn is_active_employee(emp: &Employee) -> bool {
     matches!(emp.status, EmployeeStatus::Active | EmployeeStatus::Paused)
 }
 
-pub(super) fn resolve_employee<'a>(
+pub(crate) fn resolve_employee<'a>(
     employees: &'a [Employee],
     owner: &Id,
     reference: &str,
@@ -93,8 +93,10 @@ pub(super) fn resolve_employee<'a>(
 }
 
 /// Enforces `HIRE-2` (`doc-78`, ADR-0029 decision 3): only the owner, an active employee
-/// who `may_hire_anywhere` (leads a team with `may_hire == true`), or HR itself may address
-/// or `@mention` the builtin HR lead.
+/// who may hire somewhere ([`may_address_hr`]: never the built-in Chief of Staff), or HR
+/// itself may address or `@mention` the builtin HR lead.
+///
+/// [`may_address_hr`]: crate::organization::features::authority::may_address_hr
 pub(super) fn check_hr_access(
     read: &impl MessagingRead,
     employees: &[Employee],
@@ -124,9 +126,8 @@ pub(super) fn check_hr_access(
             crate::organization::features::HIRE_DENIED,
         ));
     };
-    let allowed =
-        crate::organization::features::authority::may_hire_anywhere(read, owner, caller_emp)
-            .map_err(|_| refusal(ErrorCode::StorageError, "failed to verify hire access"))?;
+    let allowed = crate::organization::features::authority::may_address_hr(read, owner, caller_emp)
+        .map_err(|_| refusal(ErrorCode::StorageError, "failed to verify hire access"))?;
     if allowed {
         Ok(())
     } else {

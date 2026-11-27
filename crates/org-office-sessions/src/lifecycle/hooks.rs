@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use org_office::organization_family::records::EmployeeStatus;
+use org_office::organization_family::records::{BuiltinKey, EmployeeStatus};
 use org_office::Office;
 
 use crate::binding::RunBindingRegistry;
@@ -29,12 +29,18 @@ use super::drain::drain_pending_wakes_into_live_pump;
 use super::usage::{flush_pending_usage, record_session_usage};
 
 impl SessionManager {
+    /// The pump hooks of one run. A `partitioned` run (the Chief of Staff's, `TASK-80.1`) gets
+    /// no mid-turn delivery and no turn-end drain into its live process: a queued wake never
+    /// joins the turn or the process of the member the run acts for. Its turn end instead
+    /// dispatches the queue like an idle agent's, through the partition-checked start path,
+    /// in her `tess:wake` partition, acting for nobody.
     pub(crate) fn build_pump_hooks(
         &self,
         employee_id: &str,
         route_digest: String,
         oauth_expires_at_ms: Option<u64>,
         bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+        partitioned: bool,
     ) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
@@ -72,13 +78,7 @@ impl SessionManager {
             },
         );
 
-        let drain_ctx = self.turn_end_drain_ctx();
-        let on_turn_ended: TurnEndedHook = Arc::new(move |emp_id: &str| {
-            let _ = flush_pending_usage(&drain_ctx.office, &drain_ctx.store, emp_id);
-            let _ = drain_ctx.office.mark_budget_holds_stopped(emp_id);
-            drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
-        });
-
+        let on_turn_ended = build_turn_ended_hook(self, partitioned);
         let (stage_mid_turn_wakes, on_mid_turn_delivered) = build_mid_turn_hooks(self);
 
         let usage_office = Arc::clone(&self.office);
@@ -134,11 +134,38 @@ impl SessionManager {
             on_permit_release_pending: Some(on_permit_release_pending),
             on_rate_limit: Some(on_rate_limit),
             on_failover: Some(on_failover),
-            stage_mid_turn_wakes: Some(stage_mid_turn_wakes),
-            on_mid_turn_delivered: Some(on_mid_turn_delivered),
+            stage_mid_turn_wakes: (!partitioned).then_some(stage_mid_turn_wakes),
+            on_mid_turn_delivered: (!partitioned).then_some(on_mid_turn_delivered),
             is_bwrap_topology_stale,
         }
     }
+}
+
+/// The turn-end hook: settles the turn's usage and budget holds, then hands queued wakes on.
+/// An ordinary run drains them into its own live process. A partitioned run never does: a
+/// background dispatch starts them through the partition-checked path once the process is
+/// idle (`TASK-80.1`).
+fn build_turn_ended_hook(mgr: &SessionManager, partitioned: bool) -> TurnEndedHook {
+    let drain_ctx = mgr.turn_end_drain_ctx();
+    Arc::new(move |emp_id: &str| {
+        let _ = flush_pending_usage(&drain_ctx.office, &drain_ctx.store, emp_id);
+        let _ = drain_ctx.office.mark_budget_holds_stopped(emp_id);
+        if !partitioned {
+            drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
+            return;
+        }
+        let queued = drain_ctx
+            .store
+            .pending_wakes_path(emp_id)
+            .is_ok_and(|path| path.exists());
+        let mgr = drain_ctx.weak_mgr.as_ref().and_then(|weak| weak.upgrade());
+        if let (true, Some(mgr)) = (queued, mgr) {
+            let emp = emp_id.to_owned();
+            crate::manager::spawn_bg_worker(&mgr, "org-partition-wake", move |m| {
+                let _ = m.process_due_wakes_for(&emp);
+            });
+        }
+    })
 }
 
 pub(super) fn build_mid_turn_hooks(
@@ -204,7 +231,8 @@ pub(super) fn employee_allows_mid_turn_staging(
     let Some(emp) = office.load_employee(emp_id).ok().flatten() else {
         return false;
     };
-    if emp.status != EmployeeStatus::Active {
+    // The Chief of Staff's turn acts for one member: another's wake never joins it.
+    if emp.status != EmployeeStatus::Active || emp.builtin_key == Some(BuiltinKey::ChiefOfStaff) {
         return false;
     }
     if store.read_suspended_state(emp_id).ok().flatten().is_some() {

@@ -580,6 +580,7 @@ fn task166_unrecovered_pre_pump_abort_persists_and_blocks_sibling_isolation() {
             active_permit: handle.active_permit,
             supports_mid_turn: false,
             bwrap_masked_siblings: Some(std::collections::BTreeSet::new()),
+            partition: None,
         },
     );
 

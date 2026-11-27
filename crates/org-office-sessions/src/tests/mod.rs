@@ -55,6 +55,8 @@ use crate::subagents::{
 mod approval;
 mod approval_bridge;
 mod bwrap;
+mod chief_of_staff;
+mod chief_of_staff_partitions;
 mod effort;
 mod enrollment;
 mod instructions;
@@ -703,6 +705,7 @@ fn spawn_stub_bwrap_handle(
         suspended_since: None,
         pending_wake_count: 0,
         pending_wake_reason: None,
+        queued_turns: 0,
     }));
     (
         crate::manager::LiveSessionHandle {
@@ -716,6 +719,7 @@ fn spawn_stub_bwrap_handle(
             active_permit: Arc::new(Mutex::new(None)),
             supports_mid_turn: false,
             bwrap_masked_siblings: Some(masked),
+            partition: None,
         },
         stopped,
     )

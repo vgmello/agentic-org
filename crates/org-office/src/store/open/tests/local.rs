@@ -522,7 +522,21 @@ fn the_snapshot_of_the_golden_creation() {
         assert_eq!(team.lead_member_id.as_deref(), Some(id(CREATOR).as_str()));
         assert_eq!(team.version, 1);
 
-        assert_eq!(snapshot.members.len(), 2, "{engine:?}");
+        // The creator, the HR lead and the Chief of Staff (`TASK-80.1`).
+        assert_eq!(snapshot.members.len(), 3, "{engine:?}");
+        let tess = snapshot
+            .members
+            .iter()
+            .find(|m| m.name == "Tess")
+            .expect("the Chief of Staff");
+        assert_eq!(tess.kind, MemberKind::Agent);
+        assert!(!tess.owner);
+        // She reports to the owner, which the wire writes as reporting to no one.
+        assert_eq!(tess.reports_to_member_id, None);
+        assert_eq!(
+            tess.agent.as_ref().map(|a| a.messaging_name.as_str()),
+            Some("tess")
+        );
         let member = |n: u64| {
             let found = snapshot.members.iter().find(|m| m.id == id(n).as_str());
             found.expect("the member").clone()

@@ -6,7 +6,8 @@
 //! switches, the name of the config-dir variable) comes in as arguments.
 
 use crate::{
-    EnvName, LaunchContext, PlanError, SessionKind, SessionSpec, SpecPath, ToolCapability, ToolName,
+    EnvName, LaunchContext, PermissionMode, PlanError, RuleScope, SessionKind, SessionSpec,
+    SpecPath, ToolCapability, ToolName,
 };
 
 /// Refuses a spec or context that puts `/` where an adapter would grant or write: the
@@ -38,6 +39,64 @@ pub fn validate_plan_paths(spec: &SessionSpec, ctx: &LaunchContext) -> Result<()
         ));
     }
     Ok(())
+}
+
+/// Checks an operator session ([`SessionSpec::operator_shell_prefixes`], `TASK-80.1`) and
+/// answers whether the spec is one. Every adapter calls it before it plans, so a malformed
+/// operator spec reads the same refusal whichever runtime gets it.
+///
+/// An operator session may read and search, and run shell commands that start with one of its
+/// prefixes; nothing else. So it is refused ([`PlanError::InvalidSpec`]) unless:
+///
+/// - its sandbox is on, with **no writable root** (the adapter still adds the run's `TMPDIR`);
+/// - it loads **no MCP server**;
+/// - its permission mode is not [`PermissionMode::AcceptEdits`];
+/// - its tool allowlist is set, holds `cap:shell` and nothing beyond `cap:read`,
+///   `cap:search` and `cap:shell`;
+/// - every allow rule is a `cap:read` or `cap:search` rule, or a `cap:shell` rule scoped to
+///   one of its prefixes (never `*`, never an unscoped shell, never an edit).
+pub fn validate_operator_shell(spec: &SessionSpec) -> Result<bool, PlanError> {
+    if spec.operator_shell_prefixes.is_empty() {
+        return Ok(false);
+    }
+    let refuse = |why: &str| Err(PlanError::InvalidSpec(format!("operator session: {why}")));
+    if !spec.sandbox.enabled || !spec.sandbox.writable_roots.is_empty() {
+        return refuse("needs the sandbox on with no writable root");
+    }
+    if !spec.mcp_servers.is_empty() {
+        return refuse("loads no MCP server");
+    }
+    if matches!(spec.permission_mode, PermissionMode::AcceptEdits) {
+        return refuse("never accepts edits");
+    }
+    let read_like = [ToolCapability::Read, ToolCapability::Search];
+    let tools_ok = spec.tools.as_ref().is_some_and(|tools| {
+        let caps: Vec<_> = tools
+            .iter()
+            .map(|tool| ToolCapability::parse_rule_token(tool.as_str()))
+            .collect();
+        caps.contains(&Some(ToolCapability::Shell))
+            && caps.iter().all(|cap| {
+                cap.is_some_and(|c| c == ToolCapability::Shell || read_like.contains(&c))
+            })
+    });
+    if !tools_ok {
+        return refuse("its tools are read, search and its confined shell");
+    }
+    for rule in &spec.policy.allow {
+        let cap = ToolCapability::parse_rule_token(rule.tool.as_str());
+        let allowed = match (cap, &rule.scope) {
+            (Some(cap), RuleScope::Any | RuleScope::Path(_)) => read_like.contains(&cap),
+            (Some(ToolCapability::Shell), RuleScope::CommandPrefix(prefix)) => {
+                spec.operator_shell_prefixes.contains(prefix)
+            }
+            _ => false,
+        };
+        if !allowed {
+            return refuse("allows only reads and its confined shell");
+        }
+    }
+    Ok(true)
 }
 
 /// Accepts the session kinds every runtime runs today ([`SessionKind::Home`],
@@ -170,6 +229,7 @@ mod tests {
             },
             mcp_servers: Default::default(),
             tools: None,
+            operator_shell_prefixes: Vec::new(),
         }
     }
 

@@ -360,6 +360,10 @@ pub(crate) fn build_office_ports(
         sessions: Some(session_hooks.sessions),
         run_binding_verify: Some(session_hooks.run_binding_verify),
         run_binding_active: Some(session_hooks.run_binding_active),
+        delegation: Some(Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
+            Arc::clone(&office),
+            Arc::clone(&session_manager),
+        ))),
         external_auth: Some(Arc::new(crate::session_proxy::ExternalAuth(Arc::clone(
             &session_manager,
         )))),

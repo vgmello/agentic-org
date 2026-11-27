@@ -201,3 +201,37 @@ pub(crate) fn decode_pubkey(b64: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests;
+
+/// The Chief of Staff runs only in the office's operator sandbox: an external workspace would
+/// run her outside it, so no step of an external sign-in (request, approval, challenge,
+/// exchange) is ever hers (`TASK-80.1`).
+pub(crate) fn refuse_chief_of_staff(
+    employee: &org_office::organization_family::records::Employee,
+) -> Result<(), org_proto::ApiError> {
+    if employee.builtin_key
+        == Some(org_office::organization_family::records::BuiltinKey::ChiefOfStaff)
+    {
+        return Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::NotAuthorized,
+            "the Chief of Staff runs only inside the office",
+        ));
+    }
+    Ok(())
+}
+
+impl crate::manager::SessionManager {
+    /// [`refuse_chief_of_staff`] by employee ID; an unreadable record is refused too.
+    pub(crate) fn refuse_chief_of_staff_id(
+        &self,
+        employee_id: &str,
+    ) -> Result<(), org_proto::ApiError> {
+        match self.office.load_employee(employee_id) {
+            Ok(Some(employee)) => refuse_chief_of_staff(&employee),
+            Ok(None) => Ok(()),
+            Err(_) => Err(org_proto::ApiError::new(
+                org_proto::ErrorCode::StorageError,
+                "could not read the agent's record",
+            )),
+        }
+    }
+}
