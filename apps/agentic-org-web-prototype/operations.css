@@ -331,10 +331,11 @@
   content: "";
   position: absolute;
   inset-inline-start: -13px;
-  top: .3em;
+  /* Same mark as the toolbar separator between List|Board and Search (owner) */
+  top: calc(.75em - 9px);
   width: 1px;
-  height: .9em;
-  background: var(--page-subtitle-divider);
+  height: 18px;
+  background: var(--toolbar-divider-color);
 }
 /* Narrow: a short summary stays beside the title; one too long for the rest of the line goes under it, full width */
 @media (max-width: 639px) {
@@ -479,6 +480,14 @@ html[data-theme="report"] {
   color: var(--toolbar-seg-active-ink);
 }
 .work-layout-toggle .queue-tab[aria-pressed="true"]:hover { background: var(--toolbar-seg-active-bg); }
+/* Owner (owner-51): view controls sit at the right, under New task; tabs stay left.
+   No outline on the List/Board toggle (no border lines). */
+@media (min-width: 900px) {
+  #main .work-toolbar > .primary-tab-row + * { margin-inline-start: auto; }
+  #main .work-toolbar > .primary-tab-row + *::before { display: none; }
+}
+#main .work-layout-toggle { box-shadow: none; }
+#main .work-layout-toggle .queue-tab[aria-pressed="true"] { border-color: transparent; }
 
 /* Inside a project, the Work tab's All / Needs me / Mine is a segmented control so it doesn't read as a second page-tab bar */
 .project-header ~ .work-subbar-header .primary-tab-row > .queue-tabs {
@@ -2499,30 +2508,8 @@ html[data-theme^="report"] .triage-queue {
   color: var(--gray-300);
 }
 .triage-from-time { color: var(--gray-400); font-size: var(--fs-xs); }
-.triage-from-member { position: relative; }
-.triage-from-member > a { color: var(--white); font-weight: 600; }
-.triage-from-member > a:is(:hover, :focus-visible) { text-decoration: underline; }
-.triage-from-card {
-  position: absolute;
-  z-index: 1;
-  inset-block-start: 100%;
-  inset-inline-start: 0;
-  display: none;
-  align-items: center;
-  gap: 10px;
-  width: max-content;
-  max-width: min(17rem, 65cqi);
-  padding: 9px 12px;
-  border: 1px solid var(--line2);
-  border-radius: var(--radius-lg);
-  background: var(--gray-900);
-  box-shadow: 0 8px 24px rgb(0 0 0 / .2);
-  color: var(--gray-300);
-  font-size: var(--fs-xs);
-  line-height: 1.45;
-}
-.triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-card { display: flex; }
-.triage-from-card strong { display: block; color: var(--white); font-size: var(--fs-base); font-weight: 600; }
+.triage-from-name { color: var(--white); font-weight: 600; }
+.triage-from-name:is(:hover, :focus-visible) { text-decoration: underline; }
 .triage-document h2 { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: var(--fw-display); line-height: 1.2; letter-spacing: var(--ls-display); font-optical-sizing: auto; overflow-wrap: anywhere; }
 .triage-document h3:not(.recommendation-label) { color: var(--white); font-size: var(--item-title-size); font-weight: 600; }
 .triage-description { max-width: 75ch; color: var(--gray-300); overflow-wrap: anywhere; }

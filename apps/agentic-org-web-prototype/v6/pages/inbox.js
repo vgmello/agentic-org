@@ -6,7 +6,7 @@ import { boardItemHref, findWorkItem, fitTextarea, workCommentPrefix } from "./w
 import { route } from "../shell/router.js";
 import { getNotifications, getRunningJobs, markNotificationRead, unreadNotificationsCount } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
-import { av, displayCheckbox, esc, ic, kindWord, mlink, plink, plural, queueHeadline, recommendationCallout, searchRow, searchToggle, showMenu, toast, unhandled } from "../ui.js";
+import { av, displayCheckbox, esc, ic, mlink, plink, plural, queueHeadline, recommendationCallout, searchRow, searchToggle, showMenu, toast, unhandled } from "../ui.js";
 
 const INBOX_TABS = ["all", "approval", "decision", "notifications"];
 const INBOX_MORE = ["question", "problem", "suggestion", "handled"];
@@ -322,13 +322,7 @@ function inboxDetail(it) {
     <header class="triage-intro">
       <p class="triage-from">
         <span>From:</span>
-        <span class="triage-from-member">
-          <a class="alink" href="#/members/${esc(it.from)}" data-person="${esc(it.from)}" aria-describedby="triage-from-role">${esc(m.name)}</a>
-          <span class="triage-from-card">
-            ${av(it.from, 32)}
-            <span><strong aria-hidden="true">${esc(m.name)}</strong><span id="triage-from-role">${esc(m.role)} · ${kindWord(it.from)}</span></span>
-          </span>
-        </span>
+        <a class="alink triage-from-name" href="#/members/${esc(it.from)}" data-person="${esc(it.from)}">${esc(m.name)}</a>
         <span aria-hidden="true">·</span><span class="triage-from-time">${esc(it.time)}</span>
       </p>
       <h2 tabindex="-1" id="triage-detail-title">${esc(it.what)}</h2>

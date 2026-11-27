@@ -71,7 +71,7 @@ async function checkMessage(page: Page) {
 /* Inbox From and a Chat author open the same panel; a person shows no A2A list */
 async function checkInboxAndChat(page: Page) {
   await navTo(page, "#/inbox/in1");
-  const from = await openFrom(page, 'a[data-person][aria-describedby="triage-from-role"]');
+  const from = await openFrom(page, '.triage-from a[data-person]');
   const who = await from.getAttribute("data-person");
   assert.equal(await panel(page).getAttribute("data-person"), who, "Inbox From opens its sender");
   await panel(page).getByRole("button", { name: "Close" }).click();
