@@ -202,36 +202,107 @@ pub(crate) fn decode_pubkey(b64: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests;
 
-/// The Chief of Staff runs only in the office's operator sandbox: an external workspace would
-/// run her outside it, so no step of an external sign-in (request, approval, challenge,
-/// exchange) is ever hers (`TASK-80.1`).
-pub(crate) fn refuse_chief_of_staff(
-    employee: &org_office::organization_family::records::Employee,
-) -> Result<(), org_proto::ApiError> {
-    if employee.builtin_key
-        == Some(org_office::organization_family::records::BuiltinKey::ChiefOfStaff)
+/// Validates and trims an external workspace label against the wire byte budget and control-char
+/// rules (single choke-point shared by `auth.login_request` and `member.external_bind`).
+pub(crate) fn validate_workspace_label(label: &str) -> Result<String, org_proto::ApiError> {
+    use org_proto::external_auth::MAX_WORKSPACE_LABEL_BYTES;
+    let trimmed = label.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_WORKSPACE_LABEL_BYTES
+        || trimmed.chars().any(char::is_control)
     {
         return Err(org_proto::ApiError::new(
-            org_proto::ErrorCode::NotAuthorized,
-            "the Chief of Staff runs only inside the office",
+            org_proto::ErrorCode::InvalidRequest,
+            format!(
+                "the workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control characters"
+            ),
         ));
     }
-    Ok(())
+    Ok(trimmed.to_owned())
+}
+
+/// Built-in office agents (Chief of Staff, HR) run only inside the office: an external workspace
+/// would run them outside their office sandbox, so no step of an external sign-in or bind
+/// (request, approval, bind, challenge, exchange) is ever theirs (`TASK-80.1`, `ADR-0036`).
+pub(crate) fn refuse_builtin_agent(
+    employee: &org_office::organization_family::records::Employee,
+) -> Result<(), org_proto::ApiError> {
+    use org_office::organization_family::records::BuiltinKey;
+    let Some(key) = employee.builtin_key else {
+        return Ok(());
+    };
+    let message = match key {
+        BuiltinKey::ChiefOfStaff => "the Chief of Staff runs only inside the office",
+        BuiltinKey::Hr => "the built-in HR agent runs only inside the office",
+    };
+    Err(org_proto::ApiError::new(
+        org_proto::ErrorCode::NotAuthorized,
+        message,
+    ))
 }
 
 impl crate::manager::SessionManager {
-    /// [`refuse_chief_of_staff`] by employee ID; an unreadable record is refused too.
-    pub(crate) fn refuse_chief_of_staff_id(
+    /// [`refuse_builtin_agent`] by employee ID; an unreadable record is refused too.
+    pub(crate) fn refuse_builtin_agent_id(
         &self,
         employee_id: &str,
     ) -> Result<(), org_proto::ApiError> {
         match self.office.load_employee(employee_id) {
-            Ok(Some(employee)) => refuse_chief_of_staff(&employee),
+            Ok(Some(employee)) => refuse_builtin_agent(&employee),
             Ok(None) => Ok(()),
             Err(_) => Err(org_proto::ApiError::new(
                 org_proto::ErrorCode::StorageError,
                 "could not read the agent's record",
             )),
         }
+    }
+
+    /// `member.external_bind`: atomically authorizes and installs an external workspace lease for
+    /// `employee_id` in one operator call (`TASK-211`), bypassing `PendingLogins` entirely so
+    /// unauthenticated pending-login traffic can never DoS binding or leak approval codes.
+    pub fn external_bind(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &org_proto::external_auth::MemberExternalBindParams,
+    ) -> Result<org_proto::external_auth::ExternalSessionView, org_proto::ApiError> {
+        use org_proto::external_auth::{
+            DEFAULT_LEASE_TTL_SECS, MAX_LEASE_TTL_SECS, MIN_LEASE_TTL_SECS,
+        };
+        use org_proto::{ApiError, ErrorCode};
+
+        let ttl = params.ttl_secs.unwrap_or(DEFAULT_LEASE_TTL_SECS);
+        if !(MIN_LEASE_TTL_SECS..=MAX_LEASE_TTL_SECS).contains(&ttl) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                format!("--ttl must be between {MIN_LEASE_TTL_SECS}s and {MAX_LEASE_TTL_SECS}s"),
+            ));
+        }
+        if decode_pubkey(&params.pubkey_ed25519_b64).is_none() {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "pubkey_ed25519_b64 must be a base64 Ed25519 public key (32 bytes)",
+            ));
+        }
+        let label = validate_workspace_label(&params.workspace_label)?;
+        self.authorize_owner_or_person_inner(actor, false)?;
+        let _serial = self
+            .external
+            .lease_mutation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let employee = self.require_agent(employee_id)?;
+        refuse_builtin_agent(&employee)?;
+        self.authorize_external_operator(actor, &employee)?;
+        let employee = self.require_active_agent(employee_id)?;
+        self.commit_external_lease(lease::LeaseCommit {
+            actor,
+            employee: &employee,
+            pubkey_ed25519_b64: params.pubkey_ed25519_b64.trim(),
+            workspace_label: &label,
+            ttl,
+            takeover: params.takeover,
+            verb: "bind",
+        })
     }
 }

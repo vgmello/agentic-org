@@ -48,13 +48,16 @@ const COMMON_VALUE_OPTIONS: [&str; 9] = [
     "if-match",
 ];
 
-fn flag_takes_value(forwarded: &[String], flag_name: &str) -> bool {
+pub(super) fn flag_takes_value(forwarded: &[String], flag_name: &str) -> bool {
     if COMMON_VALUE_OPTIONS.contains(&flag_name) {
         return true;
     }
     let Some((resource, verb)) = resource_and_verb(forwarded) else {
         return false;
     };
+    if resource == "hr" && verb == "hire" && flag_name == "bind-workspace" {
+        return true;
+    }
     org_agent_cli::runtime_table()
         .find(resource, verb)
         .is_some_and(|cmd| {

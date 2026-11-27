@@ -54,6 +54,8 @@ pub(crate) struct Guidance {
     pub(crate) operator_resources: &'static [ResourceCue],
     /// Verbs only `agent-os` runs, outside the table (`session attach`).
     pub(crate) agent_verbs: &'static [ExtraVerb],
+    /// Verbs only `agentic-org` runs, outside the table (`agent bind`).
+    pub(crate) operator_verbs: &'static [ExtraVerb],
     /// What `agent-os --help` closes with: the top-level verbs outside the table.
     pub(crate) agent_footer: &'static str,
 }
@@ -76,14 +78,17 @@ impl Guidance {
         command_cue(self.domains, resource, verb)
     }
 
-    fn agent_verbs<'a>(
+    fn extra_verbs<'a>(
         &'a self,
         program: &'a str,
         resource: &'a str,
     ) -> impl Iterator<Item = &'a ExtraVerb> + 'a {
-        self.agent_verbs
-            .iter()
-            .filter(move |extra| program == "agent-os" && extra.resource == resource)
+        let verbs = if program == "agent-os" {
+            self.agent_verbs
+        } else {
+            self.operator_verbs
+        };
+        verbs.iter().filter(move |extra| extra.resource == resource)
     }
 }
 
@@ -161,7 +166,9 @@ pub(crate) fn augment_help(
         HelpTarget::Resource(resource) => {
             augment_resource_help(table, guidance, program, resource, &output.stdout)
         }
-        HelpTarget::Command(command) => augment_command_help(guidance, command, &output.stdout),
+        HelpTarget::Command(command) => {
+            augment_command_help(guidance, program, command, &output.stdout)
+        }
     };
     output
 }
@@ -223,14 +230,14 @@ fn augment_resource_help(
         .map(|row| row.verb.len())
         .max()
         .unwrap_or(0);
-    for extra in guidance.agent_verbs(program, resource) {
+    for extra in guidance.extra_verbs(program, resource) {
         width = width.max(extra.verb.len());
     }
     let mut out = String::with_capacity(help.len() + 1024);
     let mut in_verbs = false;
     for (idx, line) in help.lines().enumerate() {
         if in_verbs && line.trim().is_empty() {
-            for extra in guidance.agent_verbs(program, resource) {
+            for extra in guidance.extra_verbs(program, resource) {
                 out.push_str(&format!("  {:width$}  {}\n", extra.verb, extra.summary));
                 out.push_str(&format!("  {:width$}  Use when: {}\n", "", extra.use_when));
             }
@@ -274,7 +281,12 @@ fn durable_help(command: &Command) -> Option<&'static str> {
     }
 }
 
-fn augment_command_help(guidance: &Guidance, command: &Command, help: &str) -> String {
+fn augment_command_help(
+    guidance: &Guidance,
+    program: &str,
+    command: &Command,
+    help: &str,
+) -> String {
     let durable = durable_help(command);
     let cue = guidance.command(command.resource, command.verb);
     let mut out = String::with_capacity(help.len() + 256);
@@ -293,6 +305,11 @@ fn augment_command_help(guidance: &Guidance, command: &Command, help: &str) -> S
         if idx == 2 {
             out.push_str(&format!("Use when: {cue}\n"));
         }
+    }
+    if program != "agent-os" && command.resource == "hr" && command.verb == "hire" {
+        out.push_str(
+            "\nOperator workspace binding:\n  --bind-workspace <dir>  Immediately bind a local directory or Git repo to the newly hired agent (outside Git, no approval code).\n",
+        );
     }
     out
 }

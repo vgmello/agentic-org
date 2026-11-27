@@ -2420,6 +2420,9 @@ mod attachments;
 #[path = "tests/task_defaults.rs"]
 mod task_defaults;
 
+#[path = "tests/search.rs"]
+mod search;
+
 #[test]
 fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
     let (gateway, calls) = gateway(organization_script(|method, _| {
