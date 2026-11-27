@@ -1009,10 +1009,12 @@ function mountOverlays(root) {
    Swapping the lines resizes the observed element, so the swap waits for the next frame: changing it inside the
    observer callback raised "ResizeObserver loop completed with undelivered notifications" while the app nav
    animated (the Bun dev overlay showed it at 1024 px). */
+/* Headers without a context line (channels and DMs since the one-line header) still place their description, so
+   the watcher observes the header itself. */
 function watchContext(root) {
-  const ctx = root.querySelector(".chhead .chat-context"), full = ctx?.querySelector(".chat-ctx-full");
-  if (!full || !root.querySelector(".chat-details-btn")) return;
-  const measure = () => { root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1); placeDescription(root); };
+  const ctx = root.querySelector(".chhead .chat-context") || root.querySelector(".chhead"), full = ctx?.querySelector(".chat-ctx-full");
+  if (!ctx) return;
+  const measure = () => { if (full && root.querySelector(".chat-details-btn")) root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1); placeDescription(root); };
   let frame = 0;
   const ro = new ResizeObserver(() => {
     if (!ctx.isConnected) { ro.disconnect(); return; }
