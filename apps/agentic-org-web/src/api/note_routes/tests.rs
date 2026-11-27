@@ -1,6 +1,7 @@
+use hyper::StatusCode;
 use org_proto::private_notes::{PrivateNoteField, PrivateNoteKind, PrivateNoteListParams};
 
-use super::{decisions_params, parse_list_query, ListScope};
+use super::{decisions_params, parse_list_query, valid_ref, ListScope};
 
 const MEMBER: &str = "0193a5c0-0000-7000-8000-000000000040";
 
@@ -232,4 +233,46 @@ fn private_note_params_debug_redacts_private_content() {
     };
     assert!(!format!("{add:?}").contains(secret));
     assert!(!format!("{upd:?}").contains(secret));
+}
+
+#[test]
+fn list_queries_and_refs_reject_control_characters_with_bad_request() {
+    for query in [
+        "tag=bad%0atag",
+        "tag=bad%0dtag",
+        "tag=bad%1btag",
+        "tag=bad%7ftag",
+        "tag=bad%00tag",
+        "tag=bad%c2%9btag",
+        "since=2026-11-26%0a",
+        "cursor=abc%0ddef",
+        "task=T-A1%1b",
+        "task_id=T-A1%7f",
+    ] {
+        let err = parse_list_query(
+            ListScope::All,
+            Some(query),
+            PrivateNoteListParams::default(),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("expected 400 for {query}"));
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST, "{query}");
+
+        let err = decisions_params(MEMBER, Some(query))
+            .err()
+            .unwrap_or_else(|| panic!("expected 400 for decisions {query}"));
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST, "decisions: {query}");
+    }
+
+    for raw in [
+        "T-A1\n",
+        "T-A1\r",
+        "T-A1\x1b[31m",
+        "T-A1\x7f",
+        "T-A1\0",
+        "T-A1\u{009b}",
+    ] {
+        let err = valid_ref(raw).expect_err("control char ref must fail");
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST, "{raw:?}");
+    }
 }

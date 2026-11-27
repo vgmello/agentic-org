@@ -1999,3 +1999,264 @@ fn task210_host_channel_agent_sessions_end_to_end_authorized_and_accurate_refusa
     drop(reader);
     srv.join().unwrap();
 }
+
+/// Seeds private notes (owner, Ada, Ben), a private owner<->Ben DM, and a public channel message
+/// for the BYOA `search.query` isolation regression test. Returns `(ada_note_id, ben_note_id, dm_id)`.
+fn seed_byoa_search_fixtures(
+    w: &World,
+    ada_token: &str,
+    ben_token: &str,
+) -> (String, String, String) {
+    use org_proto::chat::{ChatChannelCreate, ChatChannelCreateParams, ChatSend, ChatSendParams};
+    use org_proto::msg::Meta;
+    use org_proto::private_notes::{PrivateNoteAddParams, PrivateNoteKind, TasksNotesAdd};
+
+    let (code, ada_note) = agent_os(
+        w,
+        token_binding(w, &w.ada, ada_token),
+        &[
+            "note",
+            "add",
+            "--standalone",
+            "--kind",
+            "decision",
+            "--text",
+            "CANARY_PRIV_BOTH CANARY_ADA_ONLY",
+        ],
+    );
+    assert_eq!(code, 0, "ada note add: {ada_note}");
+    let ada_note_id = ada_note["data"]["id"].as_str().unwrap().to_owned();
+
+    let (code, ben_note) = agent_os(
+        w,
+        token_binding(w, &w.ben, ben_token),
+        &[
+            "note",
+            "add",
+            "--standalone",
+            "--text",
+            "CANARY_PRIV_BOTH CANARY_BEN_ONLY",
+        ],
+    );
+    assert_eq!(code, 0, "ben note add: {ben_note}");
+    let ben_note_id = ben_note["data"]["id"].as_str().unwrap().to_owned();
+
+    ok_value(grant_call::<TasksNotesAdd>(
+        w,
+        &PrivateNoteAddParams {
+            command_id: w.office.next_uuid_v7(),
+            note_id: w.office.next_uuid_v7(),
+            task: None,
+            project_id: None,
+            kind: PrivateNoteKind::Note,
+            title: Some("Owner private draft".into()),
+            why: None,
+            alternatives: None,
+            tags: vec![],
+            body_markdown: "CANARY_PRIV_BOTH CANARY_OWNER_ONLY".into(),
+            checkpoint: false,
+        },
+    ));
+
+    let send = |to: String, body: &str| {
+        ok_value(grant_call::<ChatSend>(
+            w,
+            &ChatSendParams {
+                id: w.office.next_uuid_v7(),
+                to,
+                kind: "msg".into(),
+                priority: None,
+                subject: None,
+                body: body.into(),
+                meta: Meta::new(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+                attachment_ids: vec![],
+            },
+        ))
+    };
+    let dm = send(w.ben.clone(), "CANARY_PRIVATE_DM_OWNER_BEN");
+    let dm_id = dm["conversation_id"].as_str().unwrap().to_owned();
+    ok_value(grant_call::<ChatChannelCreate>(
+        w,
+        &ChatChannelCreateParams {
+            id: Some(w.office.next_uuid_v7()),
+            name: "byoa-public-search".into(),
+            members: vec![],
+        },
+    ));
+    send("#byoa-public-search".into(), "CANARY_PUBLIC_CHANNEL_MSG");
+    (ada_note_id, ben_note_id, dm_id)
+}
+
+/// TASK-91 / ADR-0031: BYOA external-agent `search.query` enforces strict private-note author
+/// isolation (an external agent sees only its own notes/decisions, never another agent's or the
+/// owner's) and private-conversation isolation (never leaks a private DM the agent is not in).
+#[test]
+fn byoa_external_search_query_enforces_private_note_and_private_channel_isolation() {
+    let w = world();
+    let (_, _, ada_token) = signed_in(&w, "@ada");
+    let (_, _, ben_token) = signed_in(&w, "@ben");
+    let (ada_note_id, ben_note_id, dm_id) = seed_byoa_search_fixtures(&w, &ada_token, &ben_token);
+    let ada = || token_binding(&w, &w.ada, &ada_token);
+    let ben = || token_binding(&w, &w.ben, &ben_token);
+
+    // 1. ADR-0031 private-note author isolation over BYOA external sessions.
+    let (code, res) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "private_note",
+            "--types",
+            "private_decision",
+        ],
+    );
+    assert_eq!(code, 0, "{res}");
+    let hits = res["data"].as_array().unwrap();
+    assert_eq!(hits.len(), 1, "ada must see only her own note: {res}");
+    assert_eq!(hits[0]["entity_id"], ada_note_id);
+    assert_eq!(hits[0]["author_id"], w.ada);
+
+    for args in [
+        vec![
+            "search",
+            "query",
+            "--q",
+            "CANARY_BEN_ONLY",
+            "--types",
+            "private_note",
+        ],
+        vec![
+            "search",
+            "query",
+            "--q",
+            "CANARY_OWNER_ONLY",
+            "--types",
+            "private_note",
+        ],
+        vec![
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "private_note",
+            "--author-id",
+            w.ben.as_str(),
+        ],
+    ] {
+        let (code, res) = agent_os(&w, ada(), &args);
+        assert_eq!(code, 0, "{args:?}: {res}");
+        assert!(
+            res["data"].as_array().unwrap().is_empty(),
+            "{args:?}: {res}"
+        );
+    }
+
+    let (code, ben_res) = agent_os(
+        &w,
+        ben(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "private_note",
+            "--types",
+            "private_decision",
+        ],
+    );
+    assert_eq!(code, 0, "{ben_res}");
+    assert_eq!(ben_res["data"].as_array().unwrap().len(), 1, "{ben_res}");
+    assert_eq!(ben_res["data"][0]["entity_id"], ben_note_id);
+
+    // Mixing shared and private types is refused over BYOA as well.
+    let (code, mixed) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "task",
+            "--types",
+            "private_note",
+        ],
+    );
+    assert_ne!(code, 0, "{mixed}");
+    assert_eq!(mixed["error"]["code"], "invalid_request", "{mixed}");
+
+    // 2. Private-conversation isolation vs public channel visibility over BYOA.
+    let (code, dm_hidden) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIVATE_DM_OWNER_BEN",
+            "--types",
+            "message",
+        ],
+    );
+    assert_eq!(code, 0, "{dm_hidden}");
+    assert!(
+        dm_hidden["data"].as_array().unwrap().is_empty(),
+        "ada must not see owner<->ben private DM: {dm_hidden}"
+    );
+    let (code, dm_probe) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIVATE_DM_OWNER_BEN",
+            "--types",
+            "message",
+            "--channel",
+            &dm_id,
+        ],
+    );
+    assert_ne!(code, 0, "{dm_probe}");
+    assert_eq!(dm_probe["error"]["code"], "not_found", "{dm_probe}");
+
+    let (code, pub_hit) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PUBLIC_CHANNEL_MSG",
+            "--types",
+            "message",
+        ],
+    );
+    assert_eq!(code, 0, "{pub_hit}");
+    assert_eq!(pub_hit["data"].as_array().unwrap().len(), 1, "{pub_hit}");
+
+    let (code, ben_dm) = agent_os(
+        &w,
+        ben(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIVATE_DM_OWNER_BEN",
+            "--types",
+            "message",
+        ],
+    );
+    assert_eq!(code, 0, "{ben_dm}");
+    assert_eq!(ben_dm["data"].as_array().unwrap().len(), 1, "{ben_dm}");
+}

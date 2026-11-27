@@ -370,5 +370,20 @@ pub(crate) fn parse_ttl(text: &str) -> Result<u64, Refusal> {
         })
 }
 
+/// Rewrites legacy `note get ...` (from `task-note get` / `task note get`) to `note inspect ...`
+/// after shorthand alias expansion, preserving backward compatibility without extra catalogue bytes.
+pub(crate) fn rewrite_note_args(args: &[String]) -> Option<Vec<String>> {
+    if args.first().map(String::as_str) == Some("note")
+        && args.get(1).map(String::as_str) == Some("get")
+    {
+        let mut rewritten = Vec::with_capacity(args.len());
+        rewritten.push("note".to_owned());
+        rewritten.push("inspect".to_owned());
+        rewritten.extend_from_slice(&args[2..]);
+        return Some(rewritten);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests;

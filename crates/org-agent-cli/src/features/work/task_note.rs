@@ -165,49 +165,54 @@ fn server_list_fields(requested: Option<&[String]>) -> Vec<PrivateNoteField> {
     }
 }
 
-pub(super) fn write_note_add<T: OfficeTransport + ?Sized>(
+fn resolve_note_task<T: OfficeTransport + ?Sized>(
     transport: &mut T,
-    request: &Request,
-) -> Result<Answer, Refusal> {
-    let i = &request.input;
-    let standalone = is_set(i, "standalone");
-    let checkpoint = is_set(i, "checkpoint");
-    let explicit_task = opt_string(i, "task");
-    if standalone && explicit_task.is_some() {
-        return Err(invalid(
-            "--standalone and --task cannot be given together.",
-            "Pass --task to attach the note to a task, or --standalone for an unbound note.",
-        ));
+    input: &serde_json::Map<String, Value>,
+    checkpoint: bool,
+) -> Result<Option<String>, Refusal> {
+    let standalone = is_set(input, "standalone");
+    let explicit_task = opt_string(input, "task");
+    if standalone {
+        if explicit_task.is_some() {
+            return Err(invalid(
+                "--standalone and --task cannot be given together.",
+                "Pass --task to attach the note to a task, or --standalone for an unbound note.",
+            ));
+        }
+        if checkpoint {
+            return Err(invalid(
+                "--checkpoint cannot be combined with --standalone.",
+                "Working checkpoints are pinned to a task; pass --task or omit --standalone.",
+            ));
+        }
+        return Ok(None);
     }
-    if standalone && checkpoint {
-        return Err(invalid(
-            "--checkpoint cannot be combined with --standalone.",
-            "Working checkpoints are pinned to a task; pass --task or omit --standalone.",
-        ));
-    }
-    let task = if standalone {
-        None
-    } else {
-        explicit_task.or_else(|| transport.active_task())
-    };
+    let task = explicit_task.or_else(|| transport.active_task());
     if checkpoint && task.is_none() {
         return Err(invalid(
             "--checkpoint requires a task.",
             "Pass --task <task> or run inside an active task session.",
         ));
     }
-    let project_id = match opt_string(i, "project") {
-        Some(raw) => Some(resolve_project_id(transport, &raw)?),
-        None if task.is_none() => match transport.active_project() {
-            Some(raw) => Some(resolve_project_id(transport, &raw)?),
-            None => None,
-        },
-        None => None,
-    };
-    let kind = match opt_string(i, "kind") {
-        Some(raw) => parse_kind(&raw)?,
-        None => PrivateNoteKind::Note,
-    };
+    Ok(task)
+}
+
+pub(super) fn write_note_add<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let i = &request.input;
+    let checkpoint = is_set(i, "checkpoint");
+    let task = resolve_note_task(transport, i, checkpoint)?;
+    let project_ref = opt_string(i, "project")
+        .or_else(|| task.is_none().then(|| transport.active_project()).flatten());
+    let project_id = project_ref
+        .map(|raw| resolve_project_id(transport, &raw))
+        .transpose()?;
+    let kind = opt_string(i, "kind")
+        .map(|raw| parse_kind(&raw))
+        .transpose()?
+        .unwrap_or(PrivateNoteKind::Note);
     let params = PrivateNoteAddParams {
         command_id: cmd_id(request)?,
         task,

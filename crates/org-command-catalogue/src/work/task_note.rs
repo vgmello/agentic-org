@@ -77,7 +77,7 @@ const NOTE_ADD_INPUT: &[Field] = &[
     Field::optional(
         "title",
         Type::String,
-        "Short title (at most 160 characters)",
+        "Short title (at most 200 characters)",
     ),
     Field::optional(
         "why",

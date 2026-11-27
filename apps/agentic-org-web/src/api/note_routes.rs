@@ -58,9 +58,9 @@ fn valid_org_id(id: &str) -> Result<(), ApiReply> {
         .ok_or_else(invalid)
 }
 
-/// A task reference or text filter: non-blank, at most 128 bytes, and free of NUL bytes.
+/// A task reference or text filter: non-blank, at most 128 bytes, and free of control characters.
 fn valid_ref(value: &str) -> Result<(), ApiReply> {
-    if value.trim().is_empty() || value.len() > 128 || value.contains('\0') {
+    if value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
         return Err(invalid());
     }
     Ok(())
@@ -125,7 +125,7 @@ enum ListScope {
 /// Parses a notes list query. `All` accepts every filter; `Task` takes `author_id` and `kind`
 /// (its task is the path's); `Decisions` takes `task_id`/`task` (its author and kind are the
 /// path's). IDs are canonical UUIDv7s, `limit` is 1 to 500, text filters are 1 to 128 bytes
-/// without NUL, and each key comes at most once. Anything else is refused before leaving here.
+/// without control characters, and each key comes at most once. Anything else is refused before leaving here.
 fn parse_list_query(
     scope: ListScope,
     query: Option<&str>,

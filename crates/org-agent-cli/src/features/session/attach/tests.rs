@@ -11,10 +11,27 @@ struct StubTransport {
 
 impl OfficeTransport for StubTransport {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, org_command::Refusal> {
+        let note_id = params["note_id"]
+            .as_str()
+            .unwrap_or("0193a5c0-0000-7000-8000-000000000400")
+            .to_owned();
         self.calls.push((method.to_owned(), params));
         match method {
             "chat.inbox" => Ok(serde_json::json!({ "items": [] })),
             "status.set" => Ok(serde_json::json!({ "status": "building" })),
+            "tasks.notes.get" => Ok(serde_json::json!({
+                "note": {
+                    "id": note_id,
+                    "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                    "author_id": "0193a5c0-0000-7000-8000-000000000001",
+                    "revision": 1,
+                    "kind": "note",
+                    "body_markdown": "private working draft",
+                    "created_at": "2026-11-27T00:00:00.000Z",
+                    "updated_at": "2026-11-27T00:00:00.000Z",
+                    "editable": true
+                }
+            })),
             _ => Err(org_command::Refusal::new(
                 ErrorCode::UnknownMethod,
                 "stub unknown",
@@ -449,4 +466,77 @@ fn true_is_a_bare_flag_for_yes_or_no_flags_only() {
         envelopes[0]
     );
     assert!(office.0.calls.is_empty());
+}
+
+#[test]
+fn legacy_note_get_aliases_work_and_validate_options_in_attach() {
+    let table = crate::registry::runtime_table();
+    let note_id = "0193a5c0-0000-7000-8000-000000000400";
+
+    // Positive: `note get`, `task-note get`, and `task note get` all rewrite to `note inspect`
+    // and dispatch `tasks.notes.get` in `session attach` identically to one-shot CLI.
+    for cmd in ["note get", "task-note get", "task note get"] {
+        let line = format!(r#"{{"command":"{cmd}","input":{{"id":"{note_id}"}}}}"#);
+        let parsed = parse_line_args(table, &line).expect("parsed");
+        assert_eq!(&parsed[..2], ["note", "inspect"], "{cmd}");
+
+        let mut office = recording();
+        let envelopes = attach_lines(&format!("{line}\n"), &mut office);
+        assert_eq!(envelopes.len(), 1, "{cmd}");
+        assert_eq!(envelopes[0]["ok"], true, "{cmd}: {}", envelopes[0]);
+        assert_eq!(envelopes[0]["data"]["id"], note_id, "{cmd}");
+        assert_eq!(office.0.calls.len(), 1, "{cmd}");
+        assert_eq!(office.0.calls[0].0, "tasks.notes.get", "{cmd}");
+        assert_eq!(office.0.calls[0].1["note_id"], note_id, "{cmd}");
+    }
+
+    // Also via `options` rather than `input`.
+    let mut office = recording();
+    let envelopes = attach_lines(
+        &format!(r#"{{"command":"task-note get","options":{{"id":"{note_id}"}}}}"#),
+        &mut office,
+    );
+    assert_eq!(envelopes[0]["ok"], true, "{}", envelopes[0]);
+    assert_eq!(office.0.calls[0].0, "tasks.notes.get");
+    assert_eq!(office.0.calls[0].1["note_id"], note_id);
+
+    // Negative: because rewrite runs BEFORE `table.command_for(&args)`, value-taking and unknown
+    // boolean flags on `note get` / `task-note get` / `task note get` are refused before dispatch.
+    for (line, expected_msg) in [
+        (
+            r#"{"command":"task-note get","options":{"id":true}}"#,
+            "Option `id` takes a value, not `true`.",
+        ),
+        (
+            r#"{"command":"task note get","options":{"bogus":true}}"#,
+            "Option `bogus` is not a flag of `note inspect`.",
+        ),
+        (
+            r#"{"command":"note get","options":{"help":true}}"#,
+            "`help` is refused in `session attach`",
+        ),
+        (r#"{"command":"note get","input":{}}"#, "required"),
+        (
+            r#"{"command":"task-note get --id 0193a5c0-0000-7000-8000-000000000400"}"#,
+            "`--id` is a flag",
+        ),
+        (
+            r#"{"command":"note frobnicate"}"#,
+            "`note frobnicate` is not a command",
+        ),
+    ] {
+        let mut office = recording();
+        let envelopes = attach_lines(&format!("{line}\n"), &mut office);
+        assert_eq!(envelopes.len(), 1, "{line}");
+        assert_eq!(envelopes[0]["ok"], false, "{line}: {}", envelopes[0]);
+        assert_eq!(envelopes[0]["error"]["code"], "invalid_request", "{line}");
+        assert!(
+            envelopes[0]["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains(expected_msg)),
+            "{line}: expected `{expected_msg}` in {}",
+            envelopes[0]
+        );
+        assert!(office.0.calls.is_empty(), "{line}: must not dispatch RPC");
+    }
 }
