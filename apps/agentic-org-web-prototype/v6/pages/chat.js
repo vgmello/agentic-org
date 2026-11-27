@@ -163,10 +163,12 @@ function streamHtml(id) {
     const [day] = splitTime(m.time);
     /* A static rule marks where the day starts; its label sticks to the stream's top edge until the next day's
        label replaces it, so the first visible message always has a date. */
-    /* Owner: "Today" isn't announced on its own; only older days get a label. Today keeps its rule only after an
-       older day, so that day's sticky label doesn't sit over today's messages. */
-    const showDay = day !== lastDay && (day !== "Today" || lastDay);
-    const divider = showDay ? `<div class="chat-day-rule" aria-hidden="true"></div><h2 class="chat-day"><span>${esc(day)}</span></h2>` : "";
+    /* Owner: only older days get a label; "Today" is never shown. Where today follows an older day, a plain
+       unlabelled line marks the change (the label is for screen readers only). Labels don't stick while scrolling,
+       so an older day's label never sits over today's messages. */
+    const today = day === "Today";
+    const divider = day === lastDay || (today && !lastDay) ? ""
+      : `<div class="chat-day-rule" aria-hidden="true"></div><h2 class="chat-day${today ? " is-today" : ""}"><span${today ? ' class="sr-only"' : ""}>${esc(day)}</span></h2>`;
     lastDay = day;
     /* Where this visit's unread messages begin. */
     const fresh = m.id === newFrom ? `<p class="chat-new-rule"><span>New messages</span></p>` : "";
