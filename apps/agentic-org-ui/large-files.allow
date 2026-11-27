@@ -1,13 +1,2 @@
 # Legacy production UI files > 700 lines (TASK-225, CAP=700, TARGET=500).
 # Sorted by path. Entries may ONLY shrink or be deleted; never raise or add.
-src/lib/components/WorkReadingPanel.svelte 719
-src/lib/modules/agent-setup/http-api.ts 701
-src/lib/modules/home/features/DecisionSpotlight.svelte 877
-src/lib/modules/members/features/profile/AgentAnalysisOverlay.svelte 959
-src/lib/modules/members/features/profile/ProfileFrame.svelte 797
-src/lib/modules/org-chart/features/chart/OrgChartCanvas.svelte 1005
-src/lib/modules/teams/features/team-page/TeamOverview.svelte 799
-src/lib/platform/auth/session-controller.ts 712
-src/lib/platform/http/wire.ts 788
-src/lib/platform/shell/ExecutiveSidebar.svelte 889
-src/lib/styles/themes/cozy.css 900

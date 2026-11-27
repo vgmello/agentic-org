@@ -1,13 +1,7 @@
 import type { createEventStreamClient, EventStreamHandlers, Subscription } from '../http/events';
 import { createEventStreamManager } from './event-stream-manager';
 import type { createAuthlessJsonHttp, createJsonHttp } from '../http/json-http';
-import {
-	readJsonObject,
-	readResponse,
-	readSafeInteger,
-	SESSION_PROOF_HEADER,
-	versionCompatible
-} from '../http/wire';
+import { readSafeInteger, SESSION_PROOF_HEADER, versionCompatible } from '../http/wire';
 import {
 	SessionRequestError,
 	type AccessView,
@@ -17,43 +11,20 @@ import {
 	type SessionView,
 	type TlsEnableResult
 } from './session-gateway';
+import {
+	DEFAULT_ACCESS,
+	SIGN_OUT_ENDED,
+	UpdateRequiredError,
+	matches,
+	readSessionErrorReason,
+	sameAccount,
+	type ControllerGateway,
+	type SessionState
+} from './session-http-helpers';
 import { readSessionRecord, type SessionRecord, type SessionStore } from './session-record';
 
-/** The API and this page disagree on the contract version: the page must reload (§4a.3 "Page out of date"). */
-export class UpdateRequiredError extends Error {
-	constructor() {
-		super('Gateway update required');
-		this.name = 'UpdateRequiredError';
-	}
-}
-export type SessionState =
-	| { kind: 'signed-out'; reason?: 'ended' | 'signed-out' | 'changed-account'; login?: string }
-	| { kind: 'update-required' }
-	| {
-			kind: 'signed-in';
-			session: SessionView;
-			reauth?: 'session_ended' | 'unknown';
-			/** Present only when local HQ serves plain HTTP without authentication (ADR-0034). */
-			authless?: true;
-	  };
-type ControllerGateway = Pick<
-	SessionGateway,
-	'version' | 'signIn' | 'register' | 'get' | 'refresh' | 'signOut'
-> &
-	Partial<
-		Pick<
-			SessionGateway,
-			| 'access'
-			| 'getLocal'
-			| 'enableAuth'
-			| 'enableTls'
-			| 'decideCliApproval'
-			| 'registerSignIn'
-			| 'inspectLink'
-			| 'setPassword'
-			| 'changePassword'
-		>
-	>;
+export { UpdateRequiredError, type SessionState };
+
 type Options = {
 	store: SessionStore;
 	gateway: ControllerGateway;
@@ -66,21 +37,6 @@ type Options = {
 	changed: (state: SessionState) => void;
 	accessChanged?: (access: AccessView) => void;
 };
-const DEFAULT_ACCESS: AccessView = Object.freeze({
-	auth_enabled: true,
-	listen_scheme: 'unknown'
-});
-const sameAccount = (a: SessionRecord, b: SessionRecord) =>
-	a.instance_id === b.instance_id && a.account_id === b.account_id;
-const matches = (view: SessionView, record: SessionRecord) =>
-	view.instance_id === record.instance_id && view.account.id === record.account_id;
-
-/**
- * Sign-out refusals that prove the host no longer holds this browser's session. Only an
- * unauthenticated 401 does: a 503 may come before dispatch, and the host deletes the stored
- * record first, so an unavailable reply leaves the session in place (ADR-0013, SIGN-29).
- */
-const SIGN_OUT_ENDED: ReadonlySet<number> = new Set([401]);
 
 /** Owns the browser pair. UI receives views only; every pair change shares the cross-tab lock. */
 export function createSessionController({
@@ -420,14 +376,7 @@ export function createSessionController({
 			current();
 			if (response.status !== 401) return response;
 		}
-		let reason: 'session_ended' | 'unknown' | undefined;
-		try {
-			const body = readResponse(response.body, readJsonObject);
-			if ('error' in body) reason = body.error.session_reason;
-		} catch {
-			/* Untrusted error payload. */
-		}
-		reauth(reason);
+		reauth(readSessionErrorReason(response.body));
 		return response;
 	}
 	async function callAuthless<T>(call: (proof: string | undefined) => Promise<T>): Promise<T> {
@@ -685,8 +634,7 @@ export function createSessionController({
 				if (res.status === 401) {
 					let sessionReason: 'session_ended' | 'unknown' | undefined;
 					try {
-						const body = readResponse(await res.json(), readJsonObject);
-						if ('error' in body) sessionReason = body.error.session_reason;
+						sessionReason = readSessionErrorReason(await res.json());
 					} catch {
 						/* Untrusted error payload. */
 					}
