@@ -48,6 +48,7 @@ impl Mailbox {
                 body: params.body,
                 meta: params.meta,
                 reply_to: Some(params.to_id.clone()),
+                attachment_ids: params.attachment_ids,
             },
         )?;
         let now = self.now_utc()?;

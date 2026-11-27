@@ -15,6 +15,7 @@ fn chat_wire_shapes_round_trip_and_redact_body_in_debug() {
         reply_to: None,
         also_in_channel: false,
         reason: None,
+        attachment_ids: Vec::new(),
     };
     let dbg = format!("{send:?}");
     assert!(!dbg.contains("super-secret-body-text"), "{dbg}");
@@ -44,6 +45,7 @@ fn chat_wire_shapes_round_trip_and_redact_body_in_debug() {
         related_message_ids: vec![],
         reason: None,
         local_seq: 1,
+        attachments: Vec::new(),
     };
     let encoded = serde_json::to_value(&item).unwrap();
     assert_eq!(encoded["delivered_because"], "mention");

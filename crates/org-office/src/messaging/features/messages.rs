@@ -179,8 +179,14 @@ fn build_chat_message_view(
     } else {
         (Some(m.body_markdown), None, None, m.metadata)
     };
+    let attachments = crate::messaging::files::metas(
+        &m.attachments,
+        &m.created_at,
+        m.sender_employee_id.as_ref(),
+    );
     Ok(ChatMessageView {
         attachment_count: m.attachments.len() as u64,
+        attachments,
         id: m.id,
         conversation_id: m.conversation_id.as_str().to_owned(),
         thread_id,
@@ -258,7 +264,8 @@ pub fn list_chat_messages(
             .as_ref()
             .is_none_or(|tid| *tid == thread_id);
         let shown = !params.top_level_only || is_top_level(&m);
-        if !in_thread || !shown || (params.since_read && sent_by(&m, caller)) {
+        let has = crate::messaging::files::admits(params.attachment_filter(), &m.attachments);
+        if !in_thread || !shown || !has || (params.since_read && sent_by(&m, caller)) {
             continue;
         }
         total += 1;

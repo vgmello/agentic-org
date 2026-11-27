@@ -634,6 +634,7 @@ fn live_three_runtimes_claude_codex_and_agy_cross_office_a2a_ring() {
                 reply_to: None,
                 also_in_channel: false,
                 reason: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()

@@ -1770,6 +1770,7 @@ fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wa
                 subject: None,
                 body: "reply".into(),
                 meta: std::collections::BTreeMap::new(),
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -1868,6 +1869,7 @@ fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wa
                 subject: None,
                 body: "self follow-up".into(),
                 meta: std::collections::BTreeMap::new(),
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -2684,6 +2686,7 @@ fn task141_satellite_agent_addresses_owner_by_handle_and_receives_reply() {
             body: "ack from HQ owner".into(),
             priority: None,
             meta: Default::default(),
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();
@@ -3149,6 +3152,7 @@ fn verify_sat_owner_ask_and_answer(
             }],
             option_id: None,
             text: Some("approved".into()),
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();

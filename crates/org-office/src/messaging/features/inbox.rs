@@ -1,11 +1,12 @@
 //! The chat inbox: matching, ordering and paging of inbox items.
 
+use org_proto::attachments::AttachmentFilter;
 use org_proto::chat::{ChatInboxItem, ChatInboxParams, ChatInboxResult};
 use org_proto::msg::{is_urgent, MessageLifecycleState, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
-use crate::messaging::{ports::MessagingRead, records::RecipientStateRecord};
+use crate::messaging::{files, ports::MessagingRead, records::RecipientStateRecord};
 
 use super::resolve_employee;
 
@@ -37,6 +38,15 @@ fn inbox_item_if_matching(
     if from_filter.is_some_and(|fid| msg.sender_employee_id.as_ref() != Some(fid)) {
         return Ok(None);
     }
+    let has = AttachmentFilter::new(params.has_image, params.has_file);
+    if !files::admits(has, &msg.attachments) {
+        return Ok(None);
+    }
+    let attachments = files::metas(
+        &msg.attachments,
+        &msg.created_at,
+        msg.sender_employee_id.as_ref(),
+    );
     let thread_id = msg.thread_root_id.clone().unwrap_or_else(|| msg.id.clone());
     if params.thread_id.as_deref().is_some_and(|t| thread_id != t) {
         return Ok(None);
@@ -75,6 +85,7 @@ fn inbox_item_if_matching(
         related_message_ids: st.related_message_ids,
         reason: st.reason,
         local_seq: seq,
+        attachments,
     }))
 }
 

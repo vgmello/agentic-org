@@ -2495,6 +2495,7 @@ fn send_params(n: u32, to: &str, body: &str) -> MsgSendParams {
         body: body.to_owned(),
         meta: Default::default(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     }
 }
 

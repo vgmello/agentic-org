@@ -1,5 +1,6 @@
 //! Consumer-owned source contract for the Inbox composition root. Domains never depend on
 //! this module. Each source returns counts and items from one read view, or fails as a unit.
+use org_proto::attachments::AttachmentFilter;
 use org_proto::inbox::{InboxCounts, InboxItem, InboxKind, InboxPosition, InboxState};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -78,8 +79,18 @@ pub struct Query<'a> {
     pub project: Option<&'a str>,
     pub team: Option<&'a str>,
     pub after: Option<&'a Keyset>,
+    /// `has:image` / `has:file` (`TASK-98.2`): only items whose files pass.
+    pub has: AttachmentFilter,
     /// Zero requests counts only; other reads return at most 500 items per source.
     pub limit: usize,
+}
+
+impl Query<'_> {
+    /// Whether `item`'s files pass the `has:image` / `has:file` filter.
+    pub fn admits_files(&self, item: &InboxItem) -> bool {
+        self.has
+            .admits(item.attachments.iter().map(|file| file.mime_type.as_str()))
+    }
 }
 
 pub struct SourceRead {
@@ -165,6 +176,7 @@ pub fn recount(sources: &[&dyn Source]) -> Totals {
             project: None,
             team: None,
             after: None,
+            has: AttachmentFilter::default(),
             limit: 0,
         },
     )

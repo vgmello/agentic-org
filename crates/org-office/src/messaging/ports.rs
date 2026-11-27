@@ -9,8 +9,19 @@ use crate::projects::ports::{ProjectsRead, ProjectsWrite};
 
 use super::records::{
     ConversationPreferenceRecord, ConversationReadMarkerRecord, ConversationRecord,
-    MessageReactionRecord, MessageRecord, ParticipantAnswerFile, RecipientStateRecord,
+    MessageAttachmentRecord, MessageReactionRecord, MessageRecord, ParticipantAnswerFile,
+    RecipientStateRecord,
 };
+
+/// One file bound to a message or to an ask answer, found by its attachment ID (`TASK-98.2`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundMessageFile {
+    /// The message the file is on, or the ask an answer's file answers.
+    pub message_id: String,
+    /// The answerer, for a file on an ask answer.
+    pub answerer: Option<Id>,
+    pub file: MessageAttachmentRecord,
+}
 
 /// Read-only queries over the messaging projection (`protected/messaging.db` on SQLite,
 /// `MessagingTables` on Memory).
@@ -67,6 +78,8 @@ pub trait MessagingRead: ProjectsRead {
     fn max_local_seq(&self) -> Result<u64, EngineError>;
     /// Office-local sequence assigned to `message_id` (for monotonic cursor paging).
     fn message_local_seq(&self, message_id: &str) -> Result<Option<u64>, EngineError>;
+    /// The message or ask-answer file whose attachment ID is `attachment_id`.
+    fn message_file(&self, attachment_id: &str) -> Result<Option<BoundMessageFile>, EngineError>;
 }
 
 /// Write operations on the messaging projection during a transaction.
