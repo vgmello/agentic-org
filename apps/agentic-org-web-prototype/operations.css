@@ -3006,6 +3006,15 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
   inset-inline-end: calc(100% + 8px);
 }
 #assembly-play .icon-tooltip { inset-inline: 0 auto; }
+/* Owner: no tool rail on the right; the panel toggles live in the toolbar after Filter and Display, and the panel
+   opens beside the main view */
+#main .activity-body { grid-template-columns: minmax(0, 1fr) 0px; grid-template-areas: "main panel"; }
+#main .activity-body[data-panel-open] { grid-template-columns: minmax(0, 1fr) clamp(17rem, 27%, 24rem); }
+#main .queue-controls > .activity-tools { grid-area: auto; flex-direction: row; gap: 2px; padding: 0; border: 0; background: none; }
+#main .queue-controls > .activity-tools .activity-tool .icon-tooltip { inset-block-start: calc(100% + 6px); inset-inline-end: 0; }
+@container activity (max-width: 42.5rem) {
+  #main .activity-body, #main .activity-body[data-panel-open] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "panel"; }
+}
 .activity-body[data-panel-open] .activity-panel { visibility: visible; }
 @container activity (max-width: 42.5rem) {
   .activity-body, .activity-body[data-panel-open] {

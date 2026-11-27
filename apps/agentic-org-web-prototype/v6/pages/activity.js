@@ -631,7 +631,7 @@ function activityFilterMenu(isFeed, waitingCount, projectId) {
   });
 }
 
-function activityViewControls(projectId, waitingCount = unhandled().filter((item) => item.proj === projectId).length) {
+function activityViewControls(projectId, waitingCount = unhandled().filter((item) => item.proj === projectId).length, tools = "") {
   const viewKey = activityViewKey(projectId);
   const isFeed = S[viewKey] === "feed";
   const filter = !projectId || isFeed ? activityFilterMenu(isFeed, waitingCount, projectId) : "";
@@ -641,14 +641,17 @@ function activityViewControls(projectId, waitingCount = unhandled().filter((item
   });
   const tabs = activityViewTabs(viewKey);
   return `${projectId ? tabs : `<div class="primary-tab-row" data-page-menu>${tabs}</div>`}
-    <div class="queue-controls" role="group" aria-label="Activity view settings">${filter}${display}</div>`;
+    <div class="queue-controls" role="group" aria-label="Activity view settings">${filter}${display}${tools}</div>`;
 }
 
-function activitySidebarPanelHtml(projectId, panels) {
+/* The panel toggles (Release gates, Simulation…) sit in the toolbar after Filter and Display, not in a rail (owner) */
+function activityPanelTools(panels) {
   const tools = panels.map(([id, { label, icon }]) => `<button class="btn ghost icon icon-with-tooltip activity-tool" type="button" data-act="activity-panel" data-v="${id}" aria-label="${label}" aria-expanded="${S.actPanel === id}" aria-controls="activity-panel">${iconWithTooltip(label, icon, "ic20")}</button>`).join("");
+  return `<div class="activity-tools" role="group" aria-label="Activity panels">${tools}</div>`;
+}
+function activitySidebarPanelHtml(projectId) {
   const moreBtn = projectId ? `<button class="activity-panel-more" id="activity-panel-more" type="button" data-act="activity-panel-more" aria-controls="activity-panel-scroll" hidden>Scroll for more${ic("chev-down", "ic16")}</button>` : "";
-  return `<div class="activity-tools" role="group" aria-label="Activity sidebar tools">${tools}</div>
-      <aside class="activity-panel" id="activity-panel" aria-labelledby="activity-panel-title"${S.actPanel ? "" : " inert"}>
+  return `<aside class="activity-panel" id="activity-panel" aria-labelledby="activity-panel-title"${S.actPanel ? "" : " inert"}>
         <div class="activity-panel-scroll" id="activity-panel-scroll" role="region" aria-label="Activity sidebar contents" tabindex="0">
           <header class="side-panel-header">
             <h2 id="activity-panel-title" tabindex="-1">${ACTIVITY_PANELS[S.actPanel]?.label || ""}</h2>
@@ -672,10 +675,10 @@ function pageActivity(projectId = null) {
   const panels = projectId && P[projectId].archived ? [["release", ACTIVITY_PANELS.release]] : Object.entries(ACTIVITY_PANELS);
   const count = `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`;
   /* Project scope: the release strip (shown on every project tab), then the view switch in its own toolbar row. */
-  const projectToolbar = `<div class="work-subbar-header"><div class="work-toolbar queue-toolbar project-subbar"><div class="queue-controls project-activity-controls">${activityViewControls(projectId)}</div></div></div>`;
+  const projectToolbar = `<div class="work-subbar-header"><div class="work-toolbar queue-toolbar project-subbar"><div class="queue-controls project-activity-controls">${activityViewControls(projectId, undefined, activityPanelTools(panels))}</div></div></div>`;
   const header = projectId ? projectReleaseSummary(projectId) + projectToolbar : `<header class="activity-header queue-header">
       ${queueHeadline("Activity", count, true)}
-      <div class="activity-toolbar queue-toolbar">${activityViewControls(null, waiting.length)}</div>
+      <div class="activity-toolbar queue-toolbar">${activityViewControls(null, waiting.length, activityPanelTools(panels))}</div>
     </header>`;
   return `<section class="activity-workspace" data-activity-scope="${esc(projectId || "portfolio")}" aria-label="${projectId ? "Project activity" : "Activity command center"}">
     ${header}
@@ -683,7 +686,7 @@ function pageActivity(projectId = null) {
       <div class="activity-main" id="activity-view" role="tabpanel" aria-labelledby="activity-tab-${view}" tabindex="0" data-view="${view}">
         ${isFeed ? activityFeedLayout(items, Boolean(projectId)) : assemblyLayout()}
       </div>
-      ${activitySidebarPanelHtml(projectId, panels)}
+      ${activitySidebarPanelHtml(projectId)}
     </div>
   </section>`;
 }
