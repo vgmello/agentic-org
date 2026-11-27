@@ -1,4 +1,5 @@
 import { badgeInitials as initialsOf, relativeAge } from '$lib/format';
+import { familiarityMeta } from '$lib/modules/members/external-auth-present';
 import type { Area, Member, OrgSnapshot, Team, WorkItemSummary } from '$lib/proto';
 import { deriveDecisionSpotlight, type SpotlightDecision } from '../../spotlight';
 import { KIND_WORD, type InboxItem } from '../../types';
@@ -67,6 +68,7 @@ function resolveMemberRole(
 function resolveClearsLabel(decision: SpotlightDecision): string {
 	const inbox = decision.inboxItem;
 	if (!inbox) return decision.impact.sub;
+	if (inbox.external_auth) return 'When approved with the terminal code or when it expires';
 	if (inbox.actions.includes('approve') || inbox.actions.includes('deny')) {
 		return 'Only when you approve or deny';
 	}
@@ -225,11 +227,29 @@ function mapOpenDecision(decision: SpotlightDecision, maps: LookupMaps, nowMs: n
 		openHref: links.openHref,
 		relatedHref: links.relatedHref,
 		openLabel: resolveOpenLabel(decision),
-		auditChecks: decision.auditChecks,
+		auditChecks: [...decision.auditChecks, ...externalAuthAuditChecks(inbox)],
 		ageLabel: decision.ageLabel,
 		createdAgeLabel: openedIso ? relativeAge(openedIso, nowMs) : decision.ageLabel,
 		timestampMs: parseTimestamp(createdIso, nowMs)
 	};
+}
+
+function externalAuthAuditChecks(item: InboxItem | undefined): string[] {
+	const ea = item?.external_auth;
+	if (!ea) return [];
+	const workspace = ea.workspace_path
+		? `${ea.workspace_label} (${ea.workspace_path})`
+		: ea.workspace_label;
+	const checks = [
+		`Office: ${ea.office_name}`,
+		`Workspace: ${workspace}`,
+		`Familiarity: ${familiarityMeta(ea.workspace_familiarity).label}`,
+		`Code prefix: ${ea.code_prefix}`,
+		`Key fingerprint: ${ea.pubkey_fingerprint}`
+	];
+	if (ea.hostname) checks.push(`Host: ${ea.hostname}`);
+	if (ea.managed_turn_active) checks.push('Managed turn active (takeover confirmation required)');
+	return checks;
 }
 
 function buildInboxAuditChecks(item: InboxItem, outcome?: string): string[] {
@@ -237,6 +257,7 @@ function buildInboxAuditChecks(item: InboxItem, outcome?: string): string[] {
 	if (item.source) checks.push(`Source: ${item.source}`);
 	if (item.project?.name) checks.push(`Project: ${item.project.name}`);
 	if (item.team?.name) checks.push(`Team: ${item.team.name}`);
+	checks.push(...externalAuthAuditChecks(item));
 	if (outcome) checks.push(`Outcome: ${outcome}`);
 	return checks;
 }

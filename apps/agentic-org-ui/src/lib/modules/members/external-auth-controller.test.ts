@@ -1,0 +1,247 @@
+import { describe, expect, it, vi } from 'vitest';
+import { ExternalAuthController } from './external-auth-controller.svelte';
+import type {
+	ExternalAuthApi,
+	ExternalAuthError,
+	ExternalSessionView,
+	MemberExternalSessionsView
+} from './external-auth-types';
+
+const ORG_A = 'org-a';
+const MEM_A = 'mem-a';
+const MEM_B = 'mem-b';
+
+function sampleSessions(memberId: string, label: string): MemberExternalSessionsView {
+	return {
+		employee_id: memberId,
+		active: {
+			session_id: `sess-${label}`,
+			employee_id: memberId,
+			workspace_label: `ws-${label}`,
+			pubkey_fingerprint: '0011223344556677',
+			approved_by: 'Alex',
+			approved_at: '2026-11-27T08:00:00Z',
+			expires_at: '2026-12-04T08:00:00Z',
+			active: true,
+			took_over_managed: false
+		},
+		pending: [],
+		history: []
+	};
+}
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+function createStubApi(overrides: Partial<ExternalAuthApi> = {}): ExternalAuthApi {
+	return {
+		pending: vi.fn().mockResolvedValue([]),
+		memberSessions: vi.fn().mockResolvedValue(sampleSessions(MEM_A, 'default')),
+		approve: vi.fn(),
+		renew: vi.fn(),
+		revoke: vi.fn(),
+		...overrides
+	};
+}
+
+describe('ExternalAuthController', () => {
+	it('forwards AbortSignal, cancels superseded load(), and discards stale success and error replies', async () => {
+		const first = deferred<MemberExternalSessionsView>();
+		const second = deferred<MemberExternalSessionsView>();
+		const third = deferred<MemberExternalSessionsView>();
+		const signals: (AbortSignal | undefined)[] = [];
+		const memberSessions = vi
+			.fn<ExternalAuthApi['memberSessions']>()
+			.mockImplementationOnce((_org, _mem, opts) => {
+				signals.push(opts?.signal);
+				return first.promise;
+			})
+			.mockImplementationOnce((_org, _mem, opts) => {
+				signals.push(opts?.signal);
+				return second.promise;
+			})
+			.mockImplementationOnce((_org, _mem, opts) => {
+				signals.push(opts?.signal);
+				return third.promise;
+			});
+
+		const controller = new ExternalAuthController({
+			api: createStubApi({ memberSessions }),
+			onSessionEnded: () => () => {}
+		});
+
+		const p1 = controller.load(ORG_A, MEM_A);
+		expect(signals[0]?.aborted).toBe(false);
+
+		const p2 = controller.load(ORG_A, MEM_B);
+		expect(signals[0]?.aborted).toBe(true);
+		expect(signals[1]?.aborted).toBe(false);
+
+		second.resolve(sampleSessions(MEM_B, 'fresh'));
+		await p2;
+		expect(controller.status).toBe('ready');
+		expect(controller.data?.employee_id).toBe(MEM_B);
+		expect(controller.reloading).toBe(false);
+
+		// Late resolution of superseded request 1 must NOT overwrite fresher MEM_B state.
+		first.resolve(sampleSessions(MEM_A, 'stale'));
+		await p1;
+		expect(controller.data?.employee_id).toBe(MEM_B);
+
+		// Late rejection of a superseded request must NOT flip status to error.
+		const p3 = controller.load(ORG_A, MEM_B, { silent: true });
+		controller.dispose();
+		expect(signals[2]?.aborted).toBe(true);
+		third.reject({ source: 'api', code: 'unavailable', message: 'Late failure' });
+		await p3;
+		expect(controller.status).toBe('ready');
+		expect(controller.error).toBeUndefined();
+		expect(controller.reloading).toBe(false);
+	});
+
+	it('clears state and aborts in-flight loads when onSessionEnded fires', async () => {
+		let fireSessionEnded: (() => void) | undefined;
+		const unsubscribe = vi.fn();
+		const inflight = deferred<MemberExternalSessionsView>();
+		let capturedSignal: AbortSignal | undefined;
+
+		const api = createStubApi({
+			memberSessions: vi
+				.fn<ExternalAuthApi['memberSessions']>()
+				.mockResolvedValueOnce(sampleSessions(MEM_A, 'initial'))
+				.mockImplementationOnce((_org, _mem, opts) => {
+					capturedSignal = opts?.signal;
+					return inflight.promise;
+				})
+		});
+
+		const controller = new ExternalAuthController({
+			api,
+			onSessionEnded: (listener) => {
+				fireSessionEnded = listener;
+				return unsubscribe;
+			}
+		});
+
+		await controller.load(ORG_A, MEM_A);
+		expect(controller.status).toBe('ready');
+		expect(controller.data?.active?.session_id).toBe('sess-initial');
+
+		const reloadPromise = controller.reload();
+		expect(capturedSignal?.aborted).toBe(false);
+
+		fireSessionEnded?.();
+		expect(capturedSignal?.aborted).toBe(true);
+		expect(controller.status).toBe('idle');
+		expect(controller.data).toBeUndefined();
+		expect(controller.error).toBeUndefined();
+		expect(controller.actionError).toBeUndefined();
+		expect(controller.reloading).toBe(false);
+
+		inflight.resolve(sampleSessions(MEM_A, 'after-signout'));
+		await reloadPromise;
+		expect(controller.status).toBe('idle');
+		expect(controller.data).toBeUndefined();
+
+		controller.dispose();
+		expect(unsubscribe).toHaveBeenCalledTimes(1);
+	});
+
+	it('maps 403 to unauthorized and surfaces 409/429 action errors while resetting busyAction in finally', async () => {
+		const forbidden: ExternalAuthError = {
+			source: 'api',
+			code: 'not_authorized',
+			status: 403,
+			message: 'Human lead required.'
+		};
+		const conflict: ExternalAuthError = {
+			source: 'api',
+			code: 'conflict',
+			status: 409,
+			message: 'Managed turn running.'
+		};
+		const rateLimited: ExternalAuthError = {
+			source: 'api',
+			code: 'rate_limited',
+			status: 429,
+			message: 'Too many attempts.',
+			retry_after_ms: 30_000
+		};
+		const renewedSession: ExternalSessionView = {
+			session_id: 'sess-1',
+			employee_id: MEM_A,
+			workspace_label: 'ws-1',
+			pubkey_fingerprint: '0011223344556677',
+			approved_by: 'Alex',
+			approved_at: '2026-11-27T08:00:00Z',
+			expires_at: '2026-12-04T08:00:00Z',
+			active: true,
+			took_over_managed: false
+		};
+
+		const memberSessions = vi
+			.fn<ExternalAuthApi['memberSessions']>()
+			.mockRejectedValueOnce(forbidden)
+			.mockResolvedValue(sampleSessions(MEM_A, 'ok'));
+		const approve = vi
+			.fn<ExternalAuthApi['approve']>()
+			.mockRejectedValueOnce(conflict)
+			.mockRejectedValueOnce(rateLimited);
+		const renew = vi.fn<ExternalAuthApi['renew']>().mockResolvedValueOnce(renewedSession);
+		const revoke = vi
+			.fn<ExternalAuthApi['revoke']>()
+			.mockResolvedValueOnce({ employee_id: MEM_A, revoked: true, session_id: 'sess-1' });
+
+		const controller = new ExternalAuthController({
+			api: createStubApi({ memberSessions, approve, renew, revoke }),
+			onSessionEnded: () => () => {}
+		});
+
+		await controller.load(ORG_A, MEM_A);
+		expect(controller.status).toBe('unauthorized');
+		expect(controller.error?.code).toBe('not_authorized');
+
+		await controller.load(ORG_A, MEM_A);
+		expect(controller.status).toBe('ready');
+
+		await expect(controller.approve(ORG_A, { code: 'K7P4-9M2X' })).rejects.toMatchObject({
+			code: 'conflict',
+			status: 409
+		});
+		expect(controller.busyAction).toBeUndefined();
+		expect(controller.actionError).toMatchObject({ code: 'conflict', status: 409 });
+
+		await expect(controller.approve(ORG_A, { code: 'K7P4-9M2X' })).rejects.toMatchObject({
+			code: 'rate_limited',
+			status: 429,
+			retry_after_ms: 30_000
+		});
+		expect(controller.busyAction).toBeUndefined();
+		expect(controller.actionError).toMatchObject({
+			code: 'rate_limited',
+			retry_after_ms: 30_000
+		});
+
+		const renewed = await controller.renew(ORG_A, MEM_A, {
+			session_id: 'sess-1',
+			ttl_seconds: 604_800
+		});
+		expect(renewed.session_id).toBe('sess-1');
+		expect(controller.busyAction).toBeUndefined();
+		expect(controller.actionError).toBeUndefined();
+
+		const revoked = await controller.revoke(ORG_A, MEM_A, { session_id: 'sess-1' });
+		expect(revoked.revoked).toBe(true);
+		expect(controller.busyAction).toBeUndefined();
+		expect(memberSessions).toHaveBeenCalledTimes(4);
+
+		controller.dispose();
+	});
+});

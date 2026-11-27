@@ -17,6 +17,30 @@ export interface InboxPerson {
 	kind: 'agent' | 'person';
 }
 
+export type InboxWorkspaceFamiliarity =
+	'first_time' | 'returning_new_key' | 'returning_known_key' | 'unknown';
+
+/** Pending BYOA external-agent sign-in metadata attached to Inbox approval items (`TASK-249`). */
+export interface InboxExternalAuthMeta {
+	request_id: string;
+	employee_id: string;
+	handle?: string;
+	office_id: string;
+	office_name: string;
+	hostname?: string;
+	workspace_path?: string;
+	workspace_label: string;
+	pubkey_fingerprint: string;
+	managed_turn_active: boolean;
+	requested_at: string;
+	expires_at: string;
+	/** Masked lookup half (`XXXX-••••`); never contains the secret half. */
+	code_prefix: string;
+	workspace_familiarity: InboxWorkspaceFamiliarity;
+	last_approved_by?: string;
+	last_approved_at?: string;
+}
+
 export interface InboxItem {
 	id: string;
 	kind: InboxKind;
@@ -51,4 +75,6 @@ export interface InboxItem {
 	/** Optional snooze note recorded when deferring the item (`TASK-81`). */
 	snooze_note?: string;
 	handled?: { outcome: string; at: string; by?: string };
+	/** Present when this inbox item represents a pending BYOA external-agent sign-in request (`TASK-249`). */
+	external_auth?: InboxExternalAuthMeta;
 }

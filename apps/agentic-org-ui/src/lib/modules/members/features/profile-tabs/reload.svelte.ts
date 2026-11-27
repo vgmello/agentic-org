@@ -12,9 +12,11 @@ export function createTabChangeSync(resource: Resource<unknown>, initialChanges:
 	};
 }
 
-export function tabResource<T>(load: (organizationId: string, memberId: string) => Promise<T>) {
+export function tabResource<T>(
+	load: (organizationId: string, memberId: string, signal?: AbortSignal) => Promise<T>
+) {
 	const ctx = profileContext();
-	const resource = new Resource(() => load(ctx.organizationId, ctx.profile.id));
+	const resource = new Resource((signal) => load(ctx.organizationId, ctx.profile.id, signal));
 	const sync = createTabChangeSync(resource, ctx.changes);
 	$effect(() => {
 		sync(ctx.changes);

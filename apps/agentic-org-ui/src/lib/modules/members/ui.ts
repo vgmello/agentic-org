@@ -1,5 +1,6 @@
 export { default as ActivityRows } from './components/ActivityRows.svelte';
 export { default as ConversationRows } from './components/ConversationRows.svelte';
+export { default as ExternalAuthApproveDialog } from './features/external-auth/ExternalAuthApproveDialog.svelte';
 export { default as MoveHomeTeamDialog } from './features/profile/MoveHomeTeamDialog.svelte';
 export { default as PresenceBadge } from './components/PresenceBadge.svelte';
 export {

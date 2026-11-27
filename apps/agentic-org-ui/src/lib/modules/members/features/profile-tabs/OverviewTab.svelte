@@ -18,6 +18,7 @@
 	import { reportedText, turnLine, whenText } from '../../present';
 	import type { Supervision } from '../../types';
 	import AllowHiring from '../allow-hiring/AllowHiring.svelte';
+	import ExternalAuthSection from '../external-auth/ExternalAuthSection.svelte';
 	import { profileContext } from '../profile/context.svelte';
 	import SignInAccess from '../sign-in-access/SignInAccess.svelte';
 
@@ -199,6 +200,15 @@
 		{/snippet}
 		<DescriptionList items={execution} />
 	</Section>
+
+	<div class="border-t border-line-subtle">
+		<ExternalAuthSection
+			organizationId={ctx.organizationId}
+			profile={p}
+			changes={ctx.changes}
+			onChanged={ctx.changed}
+		/>
+	</div>
 {/if}
 
 <Section level={3} title="Details" class="border-t border-line-subtle">
