@@ -39,7 +39,8 @@ struct BoundedBatchCommitter<'a> {
     /// The most a batch holds, unless one record's group alone is larger.
     max_batch_bytes: usize,
     /// For each path the snapshot writes, the local paths of the same record at the team
-    /// chain it left (`MoveTeam`): removed in the same batch, just before the write.
+    /// chain it left (`MoveTeam`, `MovePerson`, `MoveAgent`): removed in the same batch, just
+    /// before the write.
     superseded: BTreeMap<String, Vec<String>>,
     /// The superseded paths already pushed for removal: reconciliation never removes them
     /// again (one batch never changes a path twice).
@@ -49,8 +50,11 @@ struct BoundedBatchCommitter<'a> {
     batch_idx: usize,
 }
 
+/// What a batch counts for each file beside its path and bytes, as staging does.
+const ITEM_OVERHEAD_BYTES: usize = 64;
+
 fn item_bytes(item: &(String, Option<Vec<u8>>)) -> usize {
-    item.0.len() + item.1.as_ref().map_or(0, Vec::len) + 64
+    item.0.len() + item.1.as_ref().map_or(0, Vec::len) + ITEM_OVERHEAD_BYTES
 }
 
 impl<'a> BoundedBatchCommitter<'a> {
@@ -177,11 +181,14 @@ fn stream_org_core_pass(
     Ok(())
 }
 
+/// Applies the organization core: in one batch when `org_core_batch_bytes`, its files and the
+/// removals of its moved records' old paths, fit one; else in the cycle-breaking passes.
 fn apply_staged_org_core(
     staged: &StagedSnapshotImport,
+    org_core_batch_bytes: usize,
     committer: &mut BoundedBatchCommitter<'_>,
 ) -> Result<(), String> {
-    if staged.org_core_bytes <= committer.max_batch_bytes {
+    if org_core_batch_bytes <= committer.max_batch_bytes {
         stream_org_core_pass(staged, committer, false, None, false)?;
         stream_org_core_pass(staged, committer, true, None, false)?;
         if !committer.single_commit_mode {
@@ -298,6 +305,22 @@ fn moved_record_paths(
     ))
 }
 
+/// The bytes the removals of moved records' old paths add to the batches, as [`item_bytes`]
+/// counts them: for the organization core's records, and for all (`TASK-224`).
+fn superseded_bytes(superseded: &BTreeMap<String, Vec<String>>) -> (usize, usize) {
+    let (mut org_core, mut all) = (0usize, 0usize);
+    for (new_path, old_paths) in superseded {
+        let removals = old_paths.iter().fold(0usize, |sum, old| {
+            sum.saturating_add(old.len().saturating_add(ITEM_OVERHEAD_BYTES))
+        });
+        all = all.saturating_add(removals);
+        if is_org_core_put(new_path, true) {
+            org_core = org_core.saturating_add(removals);
+        }
+    }
+    (org_core, all)
+}
+
 fn apply_staged_deletions(
     office: &Office,
     staged: &StagedSnapshotImport,
@@ -369,8 +392,15 @@ pub(crate) fn sync_initial_snapshot_in_batches(
             protected_tasks.insert(tid);
         }
     }
-    let single_commit_mode =
-        staged.total_decoded_bytes <= max_batch_bytes && staged.org_core_bytes <= max_batch_bytes;
+    // A moved record's old path is removed in the batch that writes its new one: the removals
+    // count toward whether the organization core, and the whole snapshot, fit one batch, so the
+    // core is never split without its cycle-breaking passes (`TASK-224`).
+    let superseded = moved_record_paths(&session.office, &staged, &pending_work_paths)?;
+    let (org_core_superseded, all_superseded) = superseded_bytes(&superseded);
+    let org_core_batch_bytes = staged.org_core_bytes.saturating_add(org_core_superseded);
+    let single_commit_mode = staged.total_decoded_bytes.saturating_add(all_superseded)
+        <= max_batch_bytes
+        && org_core_batch_bytes <= max_batch_bytes;
     let mut committer = BoundedBatchCommitter::new(
         &session.office,
         &staged.tasks,
@@ -379,8 +409,8 @@ pub(crate) fn sync_initial_snapshot_in_batches(
         single_commit_mode,
         max_batch_bytes,
     );
-    committer.superseded = moved_record_paths(&session.office, &staged, &pending_work_paths)?;
-    apply_staged_org_core(&staged, &mut committer)?;
+    committer.superseded = superseded;
+    apply_staged_org_core(&staged, org_core_batch_bytes, &mut committer)?;
     apply_staged_non_core_tiers(
         &staged,
         &pending_work_paths,
