@@ -288,11 +288,18 @@ pub const PROCESS_INSPECT_COMMANDS: &[Command] = &[Command {
 
 const SKILL_CATEGORY_TYPE: Type = Type::Enum(&["workflow", "product_guide", "chief_of_staff"]);
 
-const SKILL_LIST_INPUT: &[Field] = &[Field::optional(
-    "category",
-    SKILL_CATEGORY_TYPE,
-    "Filter by skill category (workflow, product_guide, or chief_of_staff)",
-)];
+const SKILL_LIST_INPUT: &[Field] = &[
+    Field::optional(
+        "category",
+        SKILL_CATEGORY_TYPE,
+        "Filter by skill category (workflow, product_guide, or chief_of_staff)",
+    ),
+    Field::optional(
+        "offline",
+        Type::Boolean,
+        "List built-in product skills locally without an office binding; returns {mode, org_skills_included, caveat, skills} and omits dynamic organization/project skills",
+    ),
+];
 
 const SKILL_SUMMARY_FIELDS: &[Field] = &[
     Field::required("key", Type::String, "Skill key"),
@@ -302,11 +309,14 @@ const SKILL_SUMMARY_FIELDS: &[Field] = &[
     Field::optional("category", SKILL_CATEGORY_TYPE, "Skill category"),
 ];
 
-const SKILL_READ_INPUT: &[Field] = &[Field::required(
-    "name",
-    Type::String,
-    "Skill key from `skill list`",
-)];
+const SKILL_READ_INPUT: &[Field] = &[
+    Field::required("name", Type::String, "Skill key from `skill list`"),
+    Field::optional(
+        "offline",
+        Type::Boolean,
+        "Read a built-in product skill locally without an office binding (dynamic organization/project skills require a bound session)",
+    ),
+];
 
 const SKILL_READ_OUTPUT: &[Field] = &[
     Field::required("key", Type::String, "Skill key"),
@@ -315,6 +325,21 @@ const SKILL_READ_OUTPUT: &[Field] = &[
     Field::required("source", Type::String, "Origin (built_in)"),
     Field::optional("category", SKILL_CATEGORY_TYPE, "Skill category"),
     Field::required("body_markdown", Type::String, "Full Markdown guidance"),
+    Field::optional(
+        "mode",
+        Type::Enum(&["offline_builtin_only"]),
+        "Set to offline_builtin_only when answered locally via --offline",
+    ),
+    Field::optional(
+        "org_skills_included",
+        Type::Boolean,
+        "False when answered locally via --offline (organization skills require an office binding)",
+    ),
+    Field::optional(
+        "caveat",
+        Type::String,
+        "Notice that dynamic organization/project skills require an office binding (--offline only)",
+    ),
 ];
 
 /// The `skill` rows.
@@ -322,7 +347,7 @@ pub const SKILL_COMMANDS: &[Command] = &[
     Command {
         resource: "skill",
         verb: "list",
-        summary: "List built-in skills",
+        summary: "List skills (--offline for built-in guides without an office)",
         call: "skill.list",
         kind: Kind::List,
         input: SKILL_LIST_INPUT,
@@ -337,7 +362,7 @@ pub const SKILL_COMMANDS: &[Command] = &[
     Command {
         resource: "skill",
         verb: "read",
-        summary: "Read built-in skill",
+        summary: "Read skill (--offline for built-in guides without an office)",
         call: "skill.read",
         kind: Kind::Read,
         input: SKILL_READ_INPUT,

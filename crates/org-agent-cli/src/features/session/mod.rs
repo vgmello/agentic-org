@@ -10,7 +10,7 @@ mod skills;
 use org_command::{Answer, CommandTable, Request};
 
 pub use attach::SESSION_ATTACH_HELP;
-pub(crate) use attach::{run_attach_loop, usage_refusal, wants_help};
+pub(crate) use attach::{run_attach_loop_with, usage_refusal, wants_help};
 pub(crate) use context::bound_briefing;
 pub use context::{CORE_RULES, EXTERNAL_RULES};
 pub use skills::SKILL_INDEX;

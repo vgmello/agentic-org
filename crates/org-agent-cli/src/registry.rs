@@ -5,7 +5,9 @@
 use std::borrow::Cow;
 use std::io::{BufRead, Write};
 
-use org_command::{Answer, Office, Output, Refusal, Request};
+use org_command::{
+    Answer, Command, Field, KeySource, Node, Office, Output, Refusal, Request, Sources, Status,
+};
 pub use org_command_catalogue::{catalogue_table, runtime_table, table};
 use org_proto::ErrorCode;
 use serde_json::Value;
@@ -75,6 +77,240 @@ pub(crate) fn run_lifecycle(args: &[String]) -> Option<(String, u8)> {
     auth::run_lifecycle(args, &LOGIN_HOOKS)
 }
 
+/// Runs one parsed command against `office` through `org_command::run`, ensuring offline
+/// `skill list|read --offline` responses always retain explicit partial-scope metadata
+/// (`mode: "offline_builtin_only"`, `org_skills_included: false`, `caveat`) even under `--fields`.
+pub(crate) fn run_command(
+    program: &str,
+    effective_args: &[String],
+    sources: &mut dyn Sources,
+    keys: &mut dyn KeySource,
+    office: &mut dyn Office,
+) -> Output {
+    let table = runtime_table();
+    let mut observer = OfflineSkillObserver {
+        inner: office,
+        captured: None,
+    };
+    let output = org_command::run(table, program, effective_args, sources, keys, &mut observer);
+    if output.exit_code == 0 {
+        if let Some(captured) = observer.captured {
+            let format = requested_format(captured.command, effective_args);
+            return format_offline_skill(&captured, format);
+        }
+    }
+    output
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutputFormat {
+    Json,
+    Yaml,
+    Compact,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OfflineSkillKind {
+    List,
+    Read,
+}
+
+struct CapturedOfflineSkill {
+    kind: OfflineSkillKind,
+    command: &'static Command,
+    answer: Answer,
+    fields: Option<Vec<String>>,
+}
+
+struct OfflineSkillObserver<'a> {
+    inner: &'a mut dyn Office,
+    captured: Option<CapturedOfflineSkill>,
+}
+
+impl Office for OfflineSkillObserver<'_> {
+    fn call(&mut self, request: &Request) -> Result<Answer, Refusal> {
+        let kind = if request.command.resource == "skill"
+            && request.input.get("offline").and_then(Value::as_bool) == Some(true)
+        {
+            match request.command.verb {
+                "list" => Some(OfflineSkillKind::List),
+                "read" => Some(OfflineSkillKind::Read),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let answer = self.inner.call(request)?;
+        if let Some(kind) = kind {
+            self.captured = Some(CapturedOfflineSkill {
+                kind,
+                command: request.command,
+                answer: answer.clone(),
+                fields: request.fields.clone(),
+            });
+        }
+        Ok(answer)
+    }
+}
+
+fn requested_format(command: &Command, args: &[String]) -> OutputFormat {
+    let rest = args.get(2..).unwrap_or_default();
+    let mut at = 0;
+    while let Some(arg) = rest.get(at) {
+        at += 1;
+        let Some(body) = arg.strip_prefix("--") else {
+            continue;
+        };
+        let (name, inline) = match body.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (body, None),
+        };
+        let value = match (command.flag_takes_value(name), inline) {
+            (Some(true), Some(value)) => Some(value),
+            (Some(true), None) => {
+                let val = rest.get(at).map(String::as_str);
+                at += 1;
+                val
+            }
+            _ => None,
+        };
+        if name == "format" {
+            return match value {
+                Some("yaml") => OutputFormat::Yaml,
+                Some("compact") => OutputFormat::Compact,
+                _ => OutputFormat::Json,
+            };
+        }
+    }
+    OutputFormat::Json
+}
+
+const OFFLINE_SCOPE_FIELDS: [&str; 3] = ["mode", "org_skills_included", "caveat"];
+
+fn build_skill_list_nodes(
+    schema_fields: &[Field],
+    raw_data: &Value,
+    projected: Option<&[String]>,
+) -> Vec<Node> {
+    let Some(items) = raw_data.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|item| {
+            let Some(obj) = item.as_object() else {
+                return Node::from_value(item);
+            };
+            let entries: Vec<(String, Node)> = schema_fields
+                .iter()
+                .filter(|field| {
+                    projected.is_none_or(|wanted| wanted.iter().any(|w| w == field.name))
+                })
+                .filter_map(|field| {
+                    obj.get(field.name)
+                        .map(|val| (field.name.to_owned(), Node::from_value(val)))
+                })
+                .collect();
+            Node::Map(entries)
+        })
+        .collect()
+}
+
+fn build_skill_read_node(
+    schema_fields: &[Field],
+    raw_data: &Value,
+    projected: Option<&[String]>,
+) -> Node {
+    let Some(obj) = raw_data.as_object() else {
+        return Node::from_value(raw_data);
+    };
+    let entries: Vec<(String, Node)> = schema_fields
+        .iter()
+        .filter(|field| {
+            OFFLINE_SCOPE_FIELDS.contains(&field.name)
+                || projected.is_none_or(|wanted| wanted.iter().any(|w| w == field.name))
+        })
+        .filter_map(|field| {
+            obj.get(field.name)
+                .map(|val| (field.name.to_owned(), Node::from_value(val)))
+        })
+        .collect();
+    Node::Map(entries)
+}
+
+fn format_offline_skill(captured: &CapturedOfflineSkill, format: OutputFormat) -> Output {
+    let (data, empty_list) = match captured.kind {
+        OfflineSkillKind::List => {
+            let skills = build_skill_list_nodes(
+                captured.command.output,
+                &captured.answer.data,
+                captured.fields.as_deref(),
+            );
+            let empty = skills.is_empty();
+            let node = Node::map([
+                ("mode", Node::text(processes::OFFLINE_SKILL_MODE)),
+                ("org_skills_included", Node::Bool(false)),
+                ("caveat", Node::text(processes::OFFLINE_SKILL_CAVEAT)),
+                ("skills", Node::List(skills)),
+            ]);
+            (node, empty)
+        }
+        OfflineSkillKind::Read => {
+            let node = build_skill_read_node(
+                captured.command.output,
+                &captured.answer.data,
+                captured.fields.as_deref(),
+            );
+            (node, false)
+        }
+    };
+    let mut meta_entries = vec![(
+        "status".to_owned(),
+        Node::text(captured.answer.status.as_str()),
+    )];
+    if let Some(cursor) = &captured.answer.next_cursor {
+        meta_entries.push(("next_cursor".to_owned(), Node::text(cursor)));
+    }
+    if let Some(total) = captured.answer.total {
+        meta_entries.push(("total".to_owned(), Node::Number(total.into())));
+    }
+    let meta = Node::Map(meta_entries);
+    let stdout = match format {
+        OutputFormat::Json => {
+            let envelope = Node::map([
+                ("ok", Node::Bool(true)),
+                ("data", data),
+                ("meta", meta),
+                ("error", Node::Null),
+            ]);
+            format!("{}\n", envelope.to_json())
+        }
+        OutputFormat::Yaml => {
+            let envelope = Node::map([
+                ("ok", Node::Bool(true)),
+                ("data", data),
+                ("meta", meta),
+                ("error", Node::Null),
+            ]);
+            envelope.to_yaml()
+        }
+        OutputFormat::Compact => {
+            let mut out = data.to_compact(&[]);
+            if captured.answer.status != Status::Completed
+                || captured.answer.next_cursor.is_some()
+                || (captured.answer.total.is_some() && empty_list)
+            {
+                out.push_str(&format!("meta: {}\n", meta.to_json()));
+            }
+            out
+        }
+    };
+    Output {
+        stdout,
+        exit_code: 0,
+    }
+}
+
 /// Runs the `session attach` line loop over the live table.
 pub(crate) fn run_attach_loop<R: BufRead, W: Write>(
     program: &str,
@@ -82,7 +318,14 @@ pub(crate) fn run_attach_loop<R: BufRead, W: Write>(
     writer: W,
     office: &mut dyn Office,
 ) -> u8 {
-    session::run_attach_loop(runtime_table(), program, reader, writer, office)
+    session::run_attach_loop_with(
+        runtime_table(),
+        program,
+        reader,
+        writer,
+        office,
+        run_command,
+    )
 }
 
 /// Dispatches one parsed `org-command` [`Request`] over `transport` to the slice that owns its

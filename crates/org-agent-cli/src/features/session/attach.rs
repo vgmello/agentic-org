@@ -15,7 +15,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use org_command::{Command, CommandTable, Office, Refusal, Sources};
+use org_command::{Command, CommandTable, KeySource, Office, Output, Refusal, Sources};
 use org_proto::ErrorCode;
 use serde_json::{Map, Value};
 
@@ -59,13 +59,35 @@ impl Sources for AttachSources {
 /// Runs the `session attach` line loop of `table` over arbitrary `reader`, `writer`, and
 /// `office`. Answers 0 when the input ends or the reader of `writer` goes away (a closed pipe),
 /// and 1 when `writer` fails otherwise.
+#[cfg(test)]
 pub(crate) fn run_attach_loop<R: BufRead, W: Write>(
+    table: &CommandTable,
+    program: &str,
+    reader: R,
+    writer: W,
+    office: &mut dyn Office,
+) -> u8 {
+    run_attach_loop_with(table, program, reader, writer, office, |p, a, s, k, o| {
+        org_command::run(table, p, a, s, k, o)
+    })
+}
+
+/// Runs the `session attach` line loop using `run_cmd` for each parsed command so caller-level
+/// wrappers (such as `registry::run_command` offline skill formatting) apply identically in attach
+/// mode without violating VSA slice isolation.
+pub(crate) fn run_attach_loop_with<R, W, F>(
     table: &CommandTable,
     program: &str,
     reader: R,
     mut writer: W,
     office: &mut dyn Office,
-) -> u8 {
+    mut run_cmd: F,
+) -> u8
+where
+    R: BufRead,
+    W: Write,
+    F: FnMut(&str, &[String], &mut dyn Sources, &mut dyn KeySource, &mut dyn Office) -> Output,
+{
     let mut sources = AttachSources::default();
     let mut keys = UuidV7KeySource;
     for line in reader.lines() {
@@ -77,7 +99,14 @@ pub(crate) fn run_attach_loop<R: BufRead, W: Write>(
             continue;
         }
         let reply = match parse_line_args(table, trimmed) {
-            Ok(args) => run_one(table, program, &args, &mut sources, &mut keys, office),
+            Ok(args) => run_one(
+                &mut run_cmd,
+                program,
+                &args,
+                &mut sources,
+                &mut keys,
+                office,
+            ),
             Err(message) => error_envelope(ErrorCode::InvalidRequest, &message),
         };
         let written = writeln!(writer, "{reply}").and_then(|()| writer.flush());
@@ -90,15 +119,18 @@ pub(crate) fn run_attach_loop<R: BufRead, W: Write>(
     0
 }
 
-fn run_one(
-    table: &CommandTable,
+fn run_one<F>(
+    run_cmd: &mut F,
     program: &str,
     args: &[String],
     sources: &mut AttachSources,
     keys: &mut UuidV7KeySource,
     office: &mut dyn Office,
-) -> String {
-    let out = org_command::run(table, program, args, sources, keys, office);
+) -> String
+where
+    F: FnMut(&str, &[String], &mut dyn Sources, &mut dyn KeySource, &mut dyn Office) -> Output,
+{
+    let out = run_cmd(program, args, sources, keys, office);
     let trimmed = out.stdout.trim_end_matches('\n');
     if !trimmed.contains('\n') && serde_json::from_str::<Value>(trimmed).is_ok() {
         trimmed.to_owned()

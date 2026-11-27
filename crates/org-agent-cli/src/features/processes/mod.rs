@@ -11,12 +11,14 @@ use org_proto::ErrorCode;
 use crate::runtime::domain::Domain;
 use crate::runtime::transport::{OfficeTransport, Refusal};
 
+pub(crate) use skill::{OFFLINE_SKILL_CAVEAT, OFFLINE_SKILL_MODE};
+
 /// The processes slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
     commands: org_command_catalogue::processes::ALL,
     resources: &[
         ("process", "listing, inspecting (including `--why` inheritance), creating, or updating org/team/project processes and standards."),
-        ("skill", "discovering and reading built-in `agent-os` product skills on demand."),
+        ("skill", "discovering and reading live organization/project and built-in `agent-os` operational skills on demand (pass `--offline` for built-ins without an office)."),
     ],
     cues: &[process::CUES, process_inspect::CUES, skill::CUES],
     dispatch,
