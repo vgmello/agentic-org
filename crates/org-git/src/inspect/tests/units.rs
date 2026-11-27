@@ -105,7 +105,7 @@ fn repo_paths_are_accepted_only_when_normalized_and_relative() {
         "dir",
         ".github/x.yml",
         "é/ü.txt",
-        ":colon",
+        "a/:colon",
     ] {
         assert_eq!(validate_repo_path(good).unwrap(), good);
     }
@@ -129,6 +129,12 @@ fn repo_paths_are_accepted_only_when_normalized_and_relative() {
         "a\nb",
         "a\u{7f}b",
         "a\\b",
+        ":colon",
+        ":(glob)*",
+        ":(icase)README.md",
+        ":(attr:text)*",
+        ":!src",
+        ":/README.md",
         too_long.as_str(),
     ] {
         assert!(
@@ -202,6 +208,7 @@ fn summary_parsing_joins_raw_and_numstat_records() {
 fn malformed_summaries_fail_closed() {
     for bad in [
         &b":000000 100644 0000000 1111111 R100\0a\0"[..],
+        b":000000 100644 0000000 1111111 AM\0a\0",
         b":000000 100644 0000000 1111111 A\0",
         b"1\t2\tunknown.txt\0",
         b":000000 100644 0000000 1111111 A\0a\0x\t1\ta\0",

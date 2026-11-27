@@ -205,16 +205,12 @@ pub(crate) fn parse_summary(stdout: &[u8]) -> Result<Vec<DiffFileStat>, GitError
             continue;
         }
         if let Some(raw) = record.strip_prefix(b":") {
-            let status = raw
-                .rsplit(|b| *b == b' ')
-                .next()
-                .and_then(|field| field.first())
-                .ok_or_else(malformed)?;
+            let status = raw.rsplit(|b| *b == b' ').next().ok_or_else(malformed)?;
             let status = match status {
-                b'A' => DiffFileStatus::Added,
-                b'M' => DiffFileStatus::Modified,
-                b'D' => DiffFileStatus::Deleted,
-                b'T' => DiffFileStatus::TypeChanged,
+                b"A" => DiffFileStatus::Added,
+                b"M" => DiffFileStatus::Modified,
+                b"D" => DiffFileStatus::Deleted,
+                b"T" => DiffFileStatus::TypeChanged,
                 _ => return Err(malformed()),
             };
             let path = records

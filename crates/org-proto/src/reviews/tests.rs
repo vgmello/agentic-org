@@ -547,6 +547,19 @@ fn anchors_are_checked_for_their_kind() {
         FindingAnchor::file_lines("-p", 1, 1),
         FindingAnchor::file_lines("a//b", 1, 1),
         FindingAnchor::file_lines("a\nb", 1, 1),
+        FindingAnchor::file_lines("src\\..\\..\\etc\\passwd", 1, 1),
+        FindingAnchor::file_lines("src\\lib.rs", 1, 1),
+        FindingAnchor::file_lines(".git/config", 1, 1),
+        FindingAnchor::file_lines("a/.GIT/HEAD", 1, 1),
+        FindingAnchor::file_lines(":(glob)*", 1, 1),
+        FindingAnchor::file_lines(":(icase)a.rs", 1, 1),
+        FindingAnchor::file_lines(":(attr:text)a.rs", 1, 1),
+        FindingAnchor {
+            kind: AnchorKind::DocSection,
+            path: Some(".git/HEAD".into()),
+            doc_section: Some("S".into()),
+            ..FindingAnchor::default()
+        },
         FindingAnchor::file_lines("x".repeat(REVIEW_PATH_MAX_LEN + 1), 1, 1),
         FindingAnchor {
             anchor_snippet_sha256: Some(SNIPPET.to_uppercase()),

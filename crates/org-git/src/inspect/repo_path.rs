@@ -8,8 +8,8 @@ use crate::GitError;
 pub const MAX_REPO_PATH_BYTES: usize = 4096;
 
 /// Accepts a normalized repository-relative path: 1 to [`MAX_REPO_PATH_BYTES`] bytes, no
-/// leading `/` or `-`, no control characters (NUL included) or `\`, and `/`-separated
-/// components that are never empty, `.`, `..` or `.git` (in any letter case).
+/// leading `/`, `-` or `:` (Git pathspec magic), no control characters (NUL included) or `\`,
+/// and `/`-separated components that are never empty, `.`, `..` or `.git` (in any letter case).
 pub fn validate_repo_path(raw: &str) -> Result<&str, GitError> {
     if raw.is_empty() || raw.len() > MAX_REPO_PATH_BYTES {
         return Err(GitError::InvalidInput(format!(
@@ -24,6 +24,11 @@ pub fn validate_repo_path(raw: &str) -> Result<&str, GitError> {
     if raw.starts_with('-') {
         return Err(GitError::InvalidInput(
             "repository path must not start with `-`".into(),
+        ));
+    }
+    if raw.starts_with(':') {
+        return Err(GitError::InvalidInput(
+            "repository path must not start with `:` (pathspec magic)".into(),
         ));
     }
     if raw.chars().any(|c| c.is_control() || c == '\\') {

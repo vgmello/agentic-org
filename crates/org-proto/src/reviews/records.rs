@@ -62,8 +62,9 @@ impl FindingAnchor {
 
     /// Checks the anchor's shape for its kind, answering why it is malformed:
     /// - `general`: no other field.
-    /// - `file_line`: `path` (1 to [`REVIEW_PATH_MAX_LEN`] bytes, relative, no control
-    ///   characters), `start_line >= 1`, `end_line >= start_line`, at most
+    /// - `file_line`: `path` (1 to [`REVIEW_PATH_MAX_LEN`] bytes, relative, normalized, no
+    ///   leading `-` or `:`, no control characters or `\\`, no `.git` component in any letter
+    ///   case), `start_line >= 1`, `end_line >= start_line`, at most
     ///   [`REVIEW_ANCHOR_MAX_LINES`] lines, an optional 64-hex lowercase snippet hash.
     /// - `doc_section`: `doc_section` (1 to [`REVIEW_DOC_SECTION_MAX_CHARS`]), optional `path`.
     /// - `checklist_item`: `checklist_item_id` only.
@@ -144,14 +145,20 @@ fn check_path(path: &str) -> Result<(), &'static str> {
     if path.is_empty() || path.len() > REVIEW_PATH_MAX_LEN {
         return Err("anchor path is empty or too long");
     }
-    if path.starts_with(['/', '-']) || path.chars().any(char::is_control) {
-        return Err("anchor path must be relative, without control characters");
+    if path.starts_with(['/', '-', ':']) {
+        return Err("anchor path must be relative, without a leading `-` or `:`");
+    }
+    if path.chars().any(|c| c.is_control() || c == '\\') {
+        return Err("anchor path must not contain control characters or `\\`");
     }
     if path
         .split('/')
         .any(|c| c.is_empty() || c == "." || c == "..")
     {
         return Err("anchor path must be normalized");
+    }
+    if path.split('/').any(|c| c.eq_ignore_ascii_case(".git")) {
+        return Err("anchor path must not name a `.git` component");
     }
     Ok(())
 }

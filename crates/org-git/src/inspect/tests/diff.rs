@@ -110,13 +110,32 @@ fn a_path_filter_limits_both_the_summary_and_the_text() {
         );
         assert!(!out.unified_diff.contains("README.md"), "{filter}");
     }
-    // Pathspec magic and globs are literal: they match nothing.
-    for literal in [":(glob)*", "*.md", ":!src"] {
+    // Globs are literal: they match nothing.
+    let req = DiffCommitsRequest {
+        path_filter: Some("*.md"),
+        ..DiffCommitsRequest::new(&fx.base, &c2)
+    };
+    assert!(diff(&fx, &req).files.is_empty());
+    // Pathspec magic is refused before Git runs.
+    for magic in [
+        ":(glob)*",
+        ":(icase)README.md",
+        ":(attr:text)*",
+        ":!src",
+        ":/README.md",
+        ":colon",
+    ] {
         let req = DiffCommitsRequest {
-            path_filter: Some(literal),
+            path_filter: Some(magic),
             ..DiffCommitsRequest::new(&fx.base, &c2)
         };
-        assert!(diff(&fx, &req).files.is_empty(), "{literal}");
+        assert!(
+            matches!(
+                diff_commits(&fx.cache(), &req),
+                Err(GitError::InvalidInput(_))
+            ),
+            "{magic}"
+        );
     }
 }
 
