@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::bounded::{capture, BoundedOutput, CaptureError, OutputLimits};
 use crate::GitError;
 
 /// Minimum supported Git version (supports `GIT_CONFIG_COUNT` and `safe.directory`).
@@ -137,6 +138,60 @@ impl GitRunner {
         credential: &GitCredential,
         args: &[&str],
     ) -> Result<GitCommandOutput, GitError> {
+        let mut cmd = self.command(git_dir, work_tree, protocol, credential, args)?;
+        cmd.stdin(Stdio::null());
+        let output = cmd.output().map_err(|e| GitError::io(&self.git_bin, e))?;
+        let status = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Ok(GitCommandOutput {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+
+    /// Runs a local-only `git` command (no transport, no credential) under `limits`: keeps at
+    /// most `limits.max_stdout` raw stdout bytes (killing Git once it writes more), at most
+    /// [`crate::MAX_BOUNDED_STDERR_BYTES`] of stderr, and kills Git when it outlives
+    /// `limits.timeout` ([`GitError::CommandFailed`] with status `-1`).
+    pub fn run_local_bounded(
+        &self,
+        git_dir: Option<&Path>,
+        work_tree: Option<&Path>,
+        args: &[&str],
+        limits: OutputLimits,
+    ) -> Result<BoundedOutput, GitError> {
+        let mut cmd = self.command(
+            git_dir,
+            work_tree,
+            AllowedProtocol::None,
+            &GitCredential::None,
+            args,
+        )?;
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = cmd.spawn().map_err(|e| GitError::io(&self.git_bin, e))?;
+        capture(child, limits).map_err(|e| match e {
+            CaptureError::Io(source) => GitError::io(&self.git_bin, source),
+            CaptureError::TimedOut => GitError::CommandFailed {
+                status: -1,
+                stderr: format!("git timed out after {} s", limits.timeout.as_secs()),
+            },
+        })
+    }
+
+    /// Builds the hardened `git` command: clean environment, mandatory non-disableable config,
+    /// explicit `GIT_DIR` / optional `GIT_WORK_TREE`, one allowed protocol and its credential.
+    fn command(
+        &self,
+        git_dir: Option<&Path>,
+        work_tree: Option<&Path>,
+        protocol: AllowedProtocol,
+        credential: &GitCredential,
+        args: &[&str],
+    ) -> Result<Command, GitError> {
         let mut cmd = Command::new(&self.git_bin);
         cmd.env_clear();
         cmd.env("PATH", &self.fixed_path);
@@ -178,18 +233,8 @@ impl GitRunner {
             cmd.arg("-c").arg(allow);
         }
         apply_credential(&mut cmd, protocol, credential)?;
-
         cmd.args(args);
-        cmd.stdin(Stdio::null());
-        let output = cmd.output().map_err(|e| GitError::io(&self.git_bin, e))?;
-        let status = output.status.code().unwrap_or(-1);
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        Ok(GitCommandOutput {
-            status,
-            stdout,
-            stderr,
-        })
+        Ok(cmd)
     }
 
     /// Runs `git` and maps non-zero exit codes to [`GitError::CommandFailed`].
