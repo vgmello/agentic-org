@@ -20,7 +20,8 @@ use super::{
     },
 };
 
-/// The family's tables in the memory engine. It has no constraint of any kind.
+/// The family's tables in the memory engine, mirroring SQLite's immutability and
+/// registered-subscription triggers so dual-engine parity holds under test.
 #[derive(Clone, Default, Debug)]
 pub struct OrganizationTables {
     organization: Option<Organization>,
@@ -56,6 +57,58 @@ impl OrganizationTables {
     pub(crate) fn remove_record_ref(&mut self, kind: &str, id: &Id) {
         self.record_refs.remove(&record_ref(kind, id));
     }
+}
+
+fn collides_with_registered_subscription(
+    other: &ProviderConnection,
+    record: &ProviderConnection,
+) -> bool {
+    if other.subscription_identity.is_none() {
+        return false;
+    }
+    other.key == record.key
+        || (other.provider_type == record.provider_type
+            && other.subscription_identity == record.subscription_identity)
+}
+
+fn validate_provider_connection_update(
+    tables: &OrganizationTables,
+    existing: &ProviderConnection,
+    record: &ProviderConnection,
+) -> Result<(), EngineError> {
+    if existing.subscription_identity.is_some()
+        && (record.provider_type != existing.provider_type
+            || record.subscription_identity != existing.subscription_identity)
+    {
+        return Err(EngineError::new(
+            "registered subscription identity is immutable",
+        ));
+    }
+    let displaces = tables.provider_connections.values().any(|other| {
+        other.id != existing.id && collides_with_registered_subscription(other, record)
+    });
+    if displaces {
+        return Err(EngineError::new(
+            "registered subscription cannot be displaced by another connection",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_provider_connection_insert(
+    tables: &OrganizationTables,
+    record: &ProviderConnection,
+) -> Result<(), EngineError> {
+    let replaces = tables.provider_connections.values().any(|other| {
+        other.subscription_identity.is_some()
+            && (other.id == record.id || collides_with_registered_subscription(other, record))
+    });
+    if replaces {
+        return Err(EngineError::new(
+            "registered subscription cannot be replaced; resolve existing connection",
+        ));
+    }
+    Ok(())
 }
 
 impl FamilyTable for OrganizationTables {
@@ -315,7 +368,16 @@ impl OrganizationWrite for MemoryTx {
     }
 
     fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
+        let tables = self.table_mut::<OrganizationTables>()?;
+        if let Some(existing) = tables.hire_requests.get(&record.id) {
+            if existing.state.is_terminal() {
+                if existing == record {
+                    return Ok(());
+                }
+                return Err(EngineError::new("terminal hire request is immutable"));
+            }
+        }
+        tables
             .hire_requests
             .insert(record.id.clone(), record.clone());
         Ok(())
@@ -343,7 +405,16 @@ impl OrganizationWrite for MemoryTx {
     }
 
     fn put_provider_connection(&mut self, record: &ProviderConnection) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
+        let tables = self.table_mut::<OrganizationTables>()?;
+        if let Some(existing) = tables.provider_connections.get(&record.id) {
+            if existing == record {
+                return Ok(());
+            }
+            validate_provider_connection_update(tables, existing, record)?;
+        } else {
+            validate_provider_connection_insert(tables, record)?;
+        }
+        tables
             .provider_connections
             .insert(record.id.clone(), record.clone());
         Ok(())
