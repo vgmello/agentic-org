@@ -190,7 +190,10 @@ function syncActivityScopeState(r0, projectId) {
   const activityScope = r0 === "activity" ? "portfolio" : projectId;
   const sameActivity = activityScope && document.querySelector(".activity-workspace")?.dataset.activityScope === activityScope;
   if (activityScope && !sameActivity) {
-    S.actPanel = "release";
+    /* The viewer's last choice (open panel, or none) is remembered locally; first visit opens Release gates */
+    let saved = null;
+    try { saved = localStorage.getItem("ao.activityPanel"); } catch (e) {}
+    S.actPanel = saved === null ? "release" : saved || null;
     if (projectId) { S.projectActView = "assembly"; S.projectActFilter = "all"; }
   }
   return sameActivity;

@@ -436,6 +436,7 @@ function refreshActivityPanel(snapshot) {
 function setActivityPanel(next) {
   const previous = S.actPanel;
   S.actPanel = next;
+  try { localStorage.setItem("ao.activityPanel", next || ""); } catch (e) {}
   const panel = document.getElementById("activity-panel");
   const open = Boolean(next);
   panel.parentElement.toggleAttribute("data-panel-open", open);
