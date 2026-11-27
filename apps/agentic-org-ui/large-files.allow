@@ -1,7 +1,6 @@
 # Legacy production UI files > 700 lines (TASK-225, CAP=700, TARGET=500).
 # Sorted by path. Entries may ONLY shrink or be deleted; never raise or add.
 src/lib/components/WorkReadingPanel.svelte 719
-src/lib/home/model.ts 1463
 src/lib/modules/activity/features/command-center/ActivityCommandCenter.svelte 2258
 src/lib/modules/activity/features/command-center/ActivityOpsRail.svelte 1146
 src/lib/modules/activity/features/command-center/ActivityStreamPanel.svelte 989
@@ -27,7 +26,6 @@ src/lib/modules/messaging/model.ts 952
 src/lib/modules/org-chart/features/chart/OrgChartCanvas.svelte 1005
 src/lib/modules/roles/http-api.ts 1075
 src/lib/modules/teams/features/team-page/TeamOverview.svelte 799
-src/lib/modules/tess/TessPanel.svelte 1149
 src/lib/modules/work/features/requests/RequestSheet.svelte 714
 src/lib/modules/work/features/tasks/TaskSheet.svelte 736
 src/lib/modules/workitems/features/capture/CaptureDialog.svelte 1357
@@ -39,6 +37,5 @@ src/lib/modules/workitems/features/queue/WorkToolbarMenus.svelte 1026
 src/lib/modules/workitems/http-api.ts 747
 src/lib/platform/auth/session-controller.ts 712
 src/lib/platform/http/wire.ts 788
-src/lib/platform/shell/ExecutiveCommandBar.svelte 1697
 src/lib/platform/shell/ExecutiveSidebar.svelte 889
 src/lib/styles/themes/cozy.css 900

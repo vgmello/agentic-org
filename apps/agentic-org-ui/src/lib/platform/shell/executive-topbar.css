@@ -1,0 +1,152 @@
+/* Styles for the Home top command bar (`ExecutiveCommandBar.svelte`). */
+.exec-topbar {
+	height: var(--exec-topbar-height);
+	background: var(--exec-topbar-bg);
+	border-bottom: var(--exec-topbar-border);
+	overflow: visible;
+}
+.exec-home-topbar {
+	display: grid;
+	grid-template-columns: 1fr minmax(0, 640px) 1fr;
+	align-items: center;
+	gap: 12px;
+}
+.exec-home-cmdk {
+	grid-column: 2;
+	justify-self: center;
+}
+.exec-home-utils {
+	grid-column: 3;
+	justify-self: end;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+@media (max-width: 959px) {
+	.exec-home-topbar {
+		display: flex;
+		justify-content: space-between;
+		gap: 10px;
+	}
+	.exec-home-cmdk {
+		flex: 1 1 auto;
+	}
+}
+html[data-ui-theme='ocean'] .exec-topbar::before {
+	bottom: -14px;
+}
+.exec-cmdk-bar {
+	height: 46px;
+	padding: 5px 6px;
+	border-radius: var(--exec-cmdk-radius);
+	background-color: var(--exec-cmdk-bg);
+	-webkit-backdrop-filter: var(--exec-cmdk-blur);
+	backdrop-filter: var(--exec-cmdk-blur);
+	box-shadow: var(--exec-cmdk-shadow);
+	transition:
+		background-color 0.18s ease,
+		box-shadow 0.18s ease,
+		transform 0.18s ease;
+}
+.exec-cmdk-home-input::placeholder {
+	color: var(--exec-cmdk-trigger-ink);
+	opacity: 1;
+}
+.exec-cmdk-bar:hover {
+	background-color: var(--exec-cmdk-bg-hover);
+	box-shadow: var(--exec-cmdk-shadow-hover);
+	transform: var(--exec-cmdk-hover-lift);
+}
+.exec-cmdk-trigger {
+	height: 100%;
+	gap: 11px;
+	padding: 0 10px 0 12px;
+	border-radius: var(--exec-cmdk-trigger-radius);
+	color: var(--exec-cmdk-trigger-ink);
+	font-size: 0.875rem;
+	line-height: 1.2;
+	font-weight: 450;
+	letter-spacing: -0.005em;
+	transition:
+		color 0.14s ease,
+		background-color 0.14s ease;
+}
+.exec-cmdk-home-field {
+	cursor: text;
+}
+.exec-cmdk-home-field:focus-within {
+	outline: 1px solid var(--exec-border-hi);
+	outline-offset: -1px;
+}
+.exec-cmdk-home-results {
+	position: absolute;
+	top: calc(100% + 8px);
+	inset-inline: 0;
+	z-index: 40;
+	max-height: min(27rem, 58dvh);
+	border-radius: var(--exec-cmdk-dialog-radius, 14px);
+}
+.exec-cmdk-trigger:hover {
+	color: var(--exec-ink);
+	background: var(--exec-cmdk-trigger-hover-bg);
+}
+.exec-cmdk-trigger .exec-cmdk-ico {
+	color: var(--exec-cmdk-icon);
+	transition: color 0.14s ease;
+}
+.exec-cmdk-trigger:hover .exec-cmdk-ico {
+	color: var(--exec-cmdk-icon-hover);
+}
+.exec-cmdk-kbd {
+	align-items: center;
+	justify-content: center;
+	height: 24px;
+	padding: 0 8px;
+	border-radius: var(--exec-cmdk-kbd-radius);
+	background: var(--exec-cmdk-kbd-bg);
+	box-shadow: var(--exec-cmdk-kbd-shadow);
+	color: var(--exec-cmdk-kbd-ink);
+	font-family: inherit;
+	font-size: 0.72rem;
+	font-weight: 600;
+	flex: none;
+}
+@media (max-width: 720px), (pointer: coarse) {
+	.exec-topbar {
+		height: auto;
+		min-height: max(68px, var(--exec-topbar-height));
+		padding-block: 7px;
+	}
+	.exec-cmdk-bar {
+		height: auto;
+		min-height: 52px;
+		padding: 4px 6px;
+	}
+	.exec-cmdk-trigger {
+		height: auto;
+		min-height: 44px;
+	}
+}
+@media (height <= 320px) {
+	.exec-topbar {
+		height: auto;
+		min-height: 44px;
+		padding-block: 0;
+		border-bottom: 0;
+	}
+	.exec-cmdk-bar {
+		height: auto;
+		min-height: 44px;
+		padding: 0 4px;
+	}
+	.exec-cmdk-trigger {
+		height: auto;
+		min-height: 44px;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.exec-cmdk-bar,
+	.exec-cmdk-trigger {
+		transition: none;
+	}
+}
