@@ -7,6 +7,7 @@ import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
 import { savedTaskContext, workDetailContext } from "./task-context.js";
 import { clearFacets, facetValues, filterMenu, hasFacetFilters, matchesFacets, singleValue } from "./work-filter.js";
+import { featureRef, getFeature, getMilestone, getRelease, milestoneRef, releaseRef } from "../plan-data.js";
 
 /* Work with a pending owner ask (a fix waiting for your approval) is never archived out of sight */
 function isArchivedWork(w) {
@@ -86,7 +87,7 @@ function scopedWorkView(currentRoute, type) {
 const SCOPED_WORK_GROUPS = {
   agent: [["status", "Status"], ["project", "Project"]],
   person: [["status", "Status"], ["project", "Project"]],
-  project: [["status", "Status"], ["assignee", "Assignee"]],
+  project: [["status", "Status"], ["assignee", "Assignee"], ["milestone", "Milestone"], ["feature", "Feature"]],
   team: [["status", "Status"], ["project", "Project"], ["assignee", "Assignee"]],
 };
 
@@ -400,9 +401,12 @@ function workGroups(items, field) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   }
-  const keys = field === "status" ? WORK_STATUS_ORDER.filter((status) => groups.has(status)) : [...groups.keys()];
+  const keys = field === "status" ? WORK_STATUS_ORDER.filter((status) => groups.has(status))
+    : field === "milestone" || field === "feature" ? [...groups.keys()].sort((a, b) => (a === "none") - (b === "none") || planGroupLabel(field, a).localeCompare(planGroupLabel(field, b), undefined, { numeric: true }))
+    : [...groups.keys()];
   return keys.map((key) => {
     const label = field === "status" ? key : field === "proj" ? P[key].name
+      : field === "milestone" ? planGroupLabel("milestone", key) : field === "feature" ? planGroupLabel("feature", key)
       : M[key] ? M[key].name + " · " + kindWord(key) : "Unassigned";
     return { label, rows: groups.get(key) };
   });
@@ -1386,7 +1390,7 @@ function fitTextarea(field) {
 const WORK_PRESETS = [["all", "All"], ["needs-me", "Needs you"], ["mine", "Mine"]];
 const WORK_DEFAULT_GROUP = "status";
 const WORK_GROUPS = [["project", "Project"], ["status", "Status"], ["assignee", "Assignee"]];
-const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who" };
+const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who", milestone: "milestone", feature: "feature" };
 const WORK_SORTS = [["default", "Original order"], ["title", "Title"], ["priority", "Priority"], ["eta", "ETA"]];
 /* On the board the default order is Attention first (expiring owner asks, other owner asks, then priority);
    Priority is the explicit priority-only order */
@@ -1760,7 +1764,18 @@ async function createWorkTask(form) {
   }
 }
 
+/* Milestone and feature groups name the record (TASK-244); tasks without one come last. */
+function planGroupLabel(field, key) {
+  if (field === "milestone") {
+    const m = getMilestone(key), r = m && getRelease(m.release_id);
+    return m ? `${releaseRef(r)} › ${milestoneRef(m)} ${m.title}` : "No milestone";
+  }
+  const f = getFeature(key);
+  return f ? `${featureRef(f)} ${f.title}` : "No feature";
+}
+
 export {
+  workStatus,
   boardItemHref,
   clearWorkFilterState,
   focusRevealedWork,

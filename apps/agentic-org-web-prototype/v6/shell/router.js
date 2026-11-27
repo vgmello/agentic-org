@@ -104,7 +104,7 @@ function normalizeRouteRedirects() {
 const ROUTE_RENDERERS = {
   home: () => pageHome(),
   inbox: (r1, r2) => pageInbox(r1, r2),
-  projects: (r1, r2) => (!r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2) : notFound()),
+  projects: (r1, r2, r3) => (!r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2, r3) : notFound()),
   work: () => pageWork(),
   chat: (r1) => pageChat(r1), /* Chat resolves unknown ids; dm-<member> opens or creates that DM */
   activity: () => pageActivity(),

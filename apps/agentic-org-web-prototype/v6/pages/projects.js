@@ -5,6 +5,9 @@ import { msgHtml } from "./chat.js";
 import { INSIGHT_DAY, INSIGHT_TODAY, insightCompletions, projectInsights } from "./insights.js";
 import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
+import { pageFeature, pageFeatures } from "./project-plan-features.js";
+import { pageRelease, pageReleases } from "./project-plan-releases.js";
+import { featureRef, getFeature, getRelease, projectFeatures, projectReleases, releaseRef } from "../plan-data.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
 import { acts, av, avStack, crumbs, esc, feed, hdr, ic, itemActions, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, plural, presPill, progress, projMembers, projPill, recommendationCallout, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
@@ -30,7 +33,17 @@ function pageProjects() {
   }).join("")}</ul>`;
 }
 
-function pageProject(id, tab) {
+/* Features and Releases (TASK-244): a detail page sits under its tab, named in the breadcrumb. */
+function planCrumbs(id, tab, sub) {
+  const base = "#/projects/" + id;
+  if (tab !== "features" && tab !== "releases") return [];
+  const label = tab === "features" ? "Features" : "Releases";
+  if (!sub) return [[null, label]];
+  const rec = tab === "features" ? getFeature(sub) : getRelease(sub);
+  const ref = rec ? (tab === "features" ? featureRef(rec) : releaseRef(rec)) : "Not found";
+  return [[`${base}/${tab}`, label], [null, ref]];
+}
+function pageProject(id, tab, sub) {
   const pr = P[id]; if (!pr) return notFound();
   tab = tab || "overview";
   const ws = W.filter((w) => w.proj === id);
@@ -42,14 +55,17 @@ function pageProject(id, tab) {
     ["insights", "Insights"],
     ["conversations", "Conversations"],
     ["team", "Team", projMembers(id).length],
+    ["features", "Features", projectFeatures(id).filter((f) => f.status !== "retired").length || null],
+    ["releases", "Releases", projectReleases(id).length || null],
   ];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
-  return crumbs([["#/projects", "Projects"], [null, pr.name]]) + `<div class="section-header project-header">
+  const trail = planCrumbs(id, tab, sub);
+  return crumbs([["#/projects", "Projects"], [trail.length ? "#/projects/" + id : null, pr.name], ...trail]) + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
     ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), more)}
-  </div>` + (tab === "activity" ? "" : projectReleaseSummary(id)) + projectBody(id, tab);
+  </div>` + (tab === "activity" || tab === "releases" ? "" : projectReleaseSummary(id)) + projectBody(id, tab, sub);
 }
-function projectBody(id, tab) {
+function projectBody(id, tab, sub) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
   if (tab === "overview") {
     const needs = IN.filter((i) => i.proj === id && (!i.handled || i.handledNow));
@@ -66,6 +82,8 @@ function projectBody(id, tab) {
   if (tab === "team") return `<div class="pj-team">${projectTeams(id)}${memberRows(projMembers(id), { emptyText: "No members yet." })}</div>`;
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);
+  if (tab === "features") return sub ? pageFeature(id, sub) : pageFeatures(id);
+  if (tab === "releases") return sub ? pageRelease(id, sub) : pageReleases(id);
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
   return notFound();
 }

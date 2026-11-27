@@ -1,0 +1,117 @@
+/* Project › Features and Releases (TASK-244). Tokens only; selectors are scoped to the plan screens so the result
+   does not depend on stylesheet order. Rows reuse the Projects list (.rows) and the Work list (.work-row). */
+
+/* Toolbar: views on the left, the one primary action at the end of the row */
+.queue-toolbar.plan-toolbar { padding-block: 8px; }
+.queue-toolbar.plan-toolbar > .btn.primary { margin-inline-start: auto; }
+.plan-toolbar .plan-toolbar-note { color: var(--gray-400); font-size: var(--fs-sm); }
+.plan-results { padding-block-end: 32px; }
+/* The Releases toolbar has no view tabs, so it draws the divider the tab row draws elsewhere */
+.work-subbar-header.plan-subbar.is-plain { border-bottom: 1px solid var(--line); }
+.plan-results > .work-group { margin: 8px var(--gutter) 0; }
+.plan-results > .work-group + .work-group { margin-top: 16px; }
+
+/* List rows: reference, title and facts, progress, state */
+.plan-rows > li.plan-row { gap: 12px 20px; padding-block: 14px; }
+.plan-results > .plan-rows > li.plan-row { padding-inline: var(--gutter); }
+.plan-group .plan-rows > li.plan-row { padding-inline: 12px; }
+.plan-row-ref {
+  flex: none; min-width: 3rem; color: var(--gray-400);
+  font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums;
+}
+.plan-row-prog { flex: 0 0 13rem; min-width: 0; }
+.plan-prog .tnum { flex: none; min-width: 7.5em; font-variant-numeric: tabular-nums; }
+.plan-version {
+  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 500; color: var(--gray-300);
+  padding: 1px 6px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2);
+}
+.plan-owner { display: inline-flex; align-items: center; gap: 6px; }
+.plan-group-toggle {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 1.75rem; margin: -4px -8px; padding: 2px 8px;
+  border-radius: var(--radius-md); color: inherit; font: inherit;
+}
+.plan-group-toggle:hover { background: var(--line2); }
+
+/* Detail page */
+.plan-page { display: grid; gap: 20px; padding: 24px var(--gutter) 40px; min-width: 0; }
+.plan-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; }
+.plan-head-t { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.plan-head-t h2 { font-size: var(--fs-lg); line-height: 1.3; font-weight: 600; color: var(--white); overflow-wrap: anywhere; }
+.plan-ref { color: var(--gray-400); font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; }
+.plan-head-actions, .plan-ms-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.plan-summary { max-width: 56rem; }
+.plan-summary .plan-prog { font-size: var(--fs-sm); color: var(--gray-300); }
+.plan-summary .progress { height: 8px; }
+.plan-summary .plan-prog { flex-wrap: wrap; row-gap: 6px; }
+.plan-summary .plan-prog .progress { flex: 1 1 12rem; max-width: 24rem; }
+.plan-summary .plan-prog .tnum { flex: 1 1 auto; min-width: 0; }
+.plan-facts code, .plan-form code { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--gray-300); overflow-wrap: anywhere; }
+.plan-body { display: grid; gap: 8px; max-width: 46rem; color: var(--gray-300); line-height: 1.6; }
+.plan-body.is-empty, .plan-empty { color: var(--gray-400); }
+.plan-empty { padding: 12px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line); font-size: var(--fs-sm); }
+.plan-sec { display: grid; gap: 10px; min-width: 0; }
+.plan-sec + .plan-sec { padding-top: 20px; border-top: 1px solid var(--line); }
+.plan-sec .work-items.plan-work { margin: 0; }
+.plan-work .work-group + .work-group { margin-top: 12px; }
+.plan-callout p + p { margin-top: 4px; }
+.plan-task-row .work-facts { flex-wrap: nowrap; }
+.plan-task-row .work-markers .pill { font-size: var(--fs-xs); }
+.plan-icon-btn { flex: none; color: var(--gray-400); }
+.plan-icon-btn:hover { color: var(--white); }
+
+/* Milestones: an ordered list of blocks, each with its own tasks */
+.plan-ms-list { display: grid; gap: 12px; }
+.plan-ms {
+  display: grid; gap: 10px; padding: 14px 16px; min-width: 0;
+  border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--line2);
+}
+.plan-ms-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.plan-ms-t { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.plan-ms-t h4 { font-size: var(--fs-md); font-weight: 600; color: var(--white); overflow-wrap: anywhere; }
+.plan-ms-body { color: var(--gray-400); font-size: var(--fs-sm); max-width: 46rem; }
+.plan-ms-prog { max-width: 28rem; }
+.plan-ms-tasks { margin-inline: -12px; }
+
+/* Dialogs: the shared dialog with the New task form's field layout */
+.sheet.dialog.plan-dialog { width: min(32rem, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.plan-form textarea { min-height: 5.5rem; resize: vertical; }
+.plan-form .plan-hint { color: var(--gray-400); font-size: var(--fs-xs); font-weight: 400; }
+.plan-pick { border: 0; margin: 0; padding: 0; min-width: 0; }
+.plan-pick ul { display: grid; max-height: min(22rem, 50dvh); overflow-y: auto; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); }
+.plan-pick li + li { border-top: 1px solid var(--line); }
+.work-task-form .plan-pick label {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: start; gap: 4px 10px;
+  min-height: 2.75rem; padding: 10px 12px; font-weight: 400; cursor: pointer;
+}
+.plan-pick label:hover { background: var(--hover); }
+.plan-pick input { width: 1rem; height: 1rem; margin-top: 2px; accent-color: var(--tone-accent-solid); }
+.plan-pick-ref { min-width: 4.5em; color: var(--gray-400); font-family: var(--font-mono); font-size: var(--fs-sm); white-space: nowrap; }
+.plan-pick-t { display: grid; gap: 2px; min-width: 0; color: var(--white); overflow-wrap: anywhere; }
+/* Where the task is now reads quietly; it turns amber once checking it would move the task */
+.plan-pick-note { color: var(--gray-400); font-size: var(--fs-xs); }
+.plan-pick label:has(input:checked) .plan-pick-note.is-move { color: var(--tone-warn-ink); }
+
+@media (max-width: 959px) {
+  .plan-row-prog { flex-basis: 10rem; }
+}
+@media (max-width: 639px) {
+  .plan-rows > li.plan-row { flex-wrap: wrap; align-items: flex-start; }
+  .plan-rows > li.plan-row > .grow { flex: 1 1 calc(100% - 5rem); }
+  .plan-rows > li.plan-row > .pill { order: 1; margin-inline-start: calc(3rem + 12px); }
+  .plan-rows > li.plan-row > .plan-row-prog { order: 2; flex: 1 1 8rem; }
+  .plan-rows > li.plan-row > .chev { display: none; }
+  .plan-page { padding-top: 16px; gap: 16px; }
+  .plan-ms { padding: 12px; }
+  .plan-ms-tasks { margin-inline: -8px; }
+  .plan-task-row .work-owner { display: none; }
+  .queue-toolbar.plan-toolbar > .btn.primary { margin-inline-start: 0; }
+}
+@media (max-width: 639px), (pointer: coarse) {
+  .plan-group-toggle { min-height: 2.75rem; }
+  .plan-icon-btn.btn.icon { width: 2.75rem; height: 2.75rem; }
+  .plan-task-row .work-title { display: inline-flex; align-items: center; min-height: 2.75rem; }
+}
+@media (forced-colors: active) {
+  .plan-ms, .plan-empty, .plan-pick ul { border: 1px solid CanvasText; }
+}
+.plan-task-row .work-heading.plan-heading-plain { grid-template-columns: minmax(0, 1fr); }

@@ -90,6 +90,7 @@ document.addEventListener("keydown", (e) => {
 export {
   closeSheet,
   openAddTeam,
+  openDialog,
   openAssign,
   openConfirmOffboard,
   openConfirmRemove,

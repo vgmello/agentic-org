@@ -5,6 +5,7 @@ import "./shell/dialogs.js";
 import "./shell/actions.js";
 import "./shell/sidebar.js";
 import "./pages/person-panel.js";
+import "./pages/project-plan-actions.js";
 
 applyNavCollapsed();
 if (!location.hash) {

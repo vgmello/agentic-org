@@ -1,4 +1,5 @@
 import { IN, M, OPEN, P, W, blockedOnOwner } from "../data.js";
+import { currentRelease, featureTasks, projectFeatures, releaseName, releaseTasks } from "../plan-data.js";
 import { own, route } from "../shell/router.js";
 import { S } from "../state.js";
 import { acts, av, displayCheckbox, esc, feed, hash, ic, iconWithTooltip, mlink, plural, projMembers, queueHeadline, showMenu, toast, unhandled } from "../ui.js";
@@ -6,11 +7,9 @@ import { acts, av, displayCheckbox, esc, feed, hash, ic, iconWithTooltip, mlink,
 const ACTIVITY_STAGES = [
   ["queue", "Queue"], ["agents", "Agents"], ["ci", "CI"], ["review", "Human review"], ["merged", "Merged"]
 ];
-const ASSEMBLY_FEATURES = {
-  "agency-v1": [["Office sync & release", ["T-A121", "T-A140", "T-A142", "T-A146"]], ["UI quality & onboarding", ["T-A112", "T-A124", "T-A144", "T-A70", "T-A86", "T-A88"]]],
-  "office-federation": [["Distributed file access", ["T-A118", "T-A135", "T-A81"]], ["Office enrollment", ["T-A138"]]],
-  "look-feel": [["Navigation & presence", ["T-A130", "T-A131"]], ["Theme & accessibility", ["T-A133", "T-A76", "T-A84"]]]
-};
+/* Feature rows come from the project's features (plan-data.js, TASK-244); retired features drop out. */
+const assemblyFeatureGroups = (id) => projectFeatures(id).filter((f) => f.status !== "retired")
+  .map((f) => [f.title, featureTasks(f.id).map((w) => w.id)]);
 const ACTIVITY_TRIAGE = { a2: "in1", a5: "in2", a6: "in5", a7: "in3", a13: "in4" };
 const DELIVERY_HISTORY = {
   "agency-v1": [2, 4, 3, 2], "office-federation": [0, 2, 2, 1], "look-feel": [1, 2, 1, 1]
@@ -123,7 +122,7 @@ function assemblyProjects(simulated, scope = activityProject()) {
       const stage = progress?.initial === initial && assemblyCanAdvance(work, review, initial) ? progress.stage : initial;
       return { work, review, stage };
     });
-    const groups = ASSEMBLY_FEATURES[id] || [];
+    const groups = assemblyFeatureGroups(id);
     const used = new Set(groups.flatMap(([, ids]) => ids));
     const features = [
       ...groups.map(([label, ids]) => ({ label, entries: entries.filter(({ work }) => ids.includes(work.id)) })),
@@ -170,10 +169,14 @@ function releaseGateState(item) {
   return releaseGateBlocked(item.outcome) ? "blocked" : "cleared";
 }
 const releaseReadinessLabel = (entries, merged) => `Release readiness ${assemblyPct(entries)}% · ${merged}/${entries.length} release tasks merged`;
+/* The strip names the project's current release and counts its tasks (milestones plus its explicit list);
+   simulated sample tasks join it while the simulation runs. */
 function projectReleaseSummary(id) {
-  const release = P[id].release;
+  const current = currentRelease(id), release = current ? releaseName(current) : P[id].release;
   if (!release) return "";
-  const { entries, counts: { merged } } = assemblySnapshot(true, id);
+  const members = current ? new Set(releaseTasks(current.id).map((w) => w.id)) : null;
+  const entries = assemblySnapshot(true, id).entries.filter(({ work }) => !members || work.sample || members.has(work.id));
+  const merged = entries.filter((entry) => entry.stage === "merged").length;
   const gates = releaseGates([id]);
   const gateStates = { pending: ["clock", "Pending"], blocked: ["deny", "Blocked"], cleared: ["check", "Cleared"] };
   return `<section class="assembly-release" id="project-release-summary" aria-label="Release summary">
@@ -194,7 +197,9 @@ function projectReleaseSummary(id) {
   </section>`;
 }
 function assemblyProjectBodyHtml({ id, project, entries: projectEntries, features }) {
-  const milestoneTitle = esc(project.milestoneTitle || project.name) + (project.release ? " · " + esc(project.release) : "");
+  const current = currentRelease(id);
+  const milestoneTitle = current ? esc(current.title) + (current.version_label ? " · " + esc(current.version_label) : "")
+    : esc(project.milestoneTitle || project.name) + (project.release ? " · " + esc(project.release) : "");
   const rows = features.length ? features.map((feature) => `<tr>
           <th scope="row">${esc(feature.label)}<small>${plural(feature.entries.length, "task", "tasks")}</small></th>
           ${ACTIVITY_STAGES.map(([stage]) => {
