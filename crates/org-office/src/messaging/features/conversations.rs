@@ -11,6 +11,7 @@ use crate::messaging::{ports::MessagingRead, records::ConversationRecord};
 
 use super::auto_channels::{active_member, effective_auto_members, virtual_auto_channels};
 use super::catchup::{new_messages, watermark_boundary};
+use super::is_active_employee;
 
 pub(super) fn summarize_conversation(
     read: &impl MessagingRead,
@@ -105,6 +106,10 @@ pub(super) fn all_conversations_including_auto(
 /// Whether `caller` may read `conv`'s messages: every channel, and a DM or group DM whose
 /// active (effective) member the caller is, or any of them for the organization's owner. The
 /// one rule every read of messages applies (`chat.messages`, channel summaries, search).
+///
+/// Only a channel has an auto scope (`messaging-schema.sql`), so a DM's effective members are
+/// its current members who are active employees: the caller's own membership and record
+/// decide, read once.
 pub(crate) fn may_read(
     read: &impl MessagingRead,
     owner: &Id,
@@ -114,7 +119,17 @@ pub(crate) fn may_read(
     if conv.kind == ConversationKind::Channel || caller == owner {
         return Ok(true);
     }
-    Ok(effective_auto_members(read, conv, owner)?.contains(caller))
+    if conv.auto_scope.is_some() {
+        return Ok(effective_auto_members(read, conv, owner)?.contains(caller));
+    }
+    let member = conv
+        .memberships
+        .iter()
+        .any(|m| m.employee_id == *caller && m.left_at.is_none());
+    Ok(member
+        && read
+            .employee(caller)?
+            .is_some_and(|e| is_active_employee(&e)))
 }
 
 /// Every conversation (the virtual auto channels included) whose messages `caller` may read,

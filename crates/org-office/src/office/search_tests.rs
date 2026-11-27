@@ -690,14 +690,14 @@ fn assert_pages_and_fields(w: &World) {
     assert!(hit.updated_at.is_none() && hit.status.is_none());
 }
 
+/// One hit as both engines must answer it: its type, reference, title and score.
+type HitPrint = (SearchEntityType, Option<String>, Option<String>, f64);
+
+/// One search's answers: its label, total and hits.
+type SearchPrint = (String, u64, Vec<HitPrint>);
+
 /// What both engines must answer alike: every hit's type, reference, title and score.
-fn fingerprint(
-    w: &World,
-) -> Vec<(
-    String,
-    u64,
-    Vec<(SearchEntityType, Option<String>, Option<String>, f64)>,
-)> {
+fn fingerprint(w: &World) -> Vec<SearchPrint> {
     let office = &w.f.office;
     let (owner, a, b) = (
         ("owner", w.f.owner.as_str()),

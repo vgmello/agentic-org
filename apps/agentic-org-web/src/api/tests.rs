@@ -2322,6 +2322,9 @@ fn role_inspect_route_requires_canonical_uuidv7_before_reaching_office() {
 #[path = "tests/attachments.rs"]
 mod attachments;
 
+#[path = "tests/search.rs"]
+mod search;
+
 #[test]
 fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
     let (gateway, calls) = gateway(organization_script(|method, _| {
