@@ -35,7 +35,10 @@ fn view(upload: &StagedUpload) -> StagedUploadView {
 
 impl Office {
     /// The caller's staged upload, after the policy said they may touch it. Anyone but the
-    /// uploader is told it does not exist.
+    /// uploader is told it does not exist, and so is the Chief of Staff once her run acts for
+    /// another member than the one she staged it for (`TASK-240`). Every chunk, commit, abort
+    /// and binding of an upload (`attachment.attach` and the files of a message, ask or
+    /// answer) comes through here.
     pub(super) fn staged_for(
         &self,
         caller: &PrincipalContext,
@@ -53,6 +56,9 @@ impl Office {
         };
         if let Err(refusal) = self.decide(|policy| policy.can_write(caller, &resource))? {
             return Ok(Err(refusal));
+        }
+        if !self.attachments.staging.made_for_now(&upload) {
+            return Ok(Err(not_found()));
         }
         Ok(Ok(upload))
     }

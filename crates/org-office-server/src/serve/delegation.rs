@@ -20,8 +20,13 @@
 //! - **open**: reads and messages any active member may make; still checked against her own
 //!   authority by the method itself, and what a read answers is narrowed to what the caller
 //!   may also see ([`scope`]): a DM is shown only to a participant of it. A call that acts on
-//!   one conversation or message (`dm.open`, marking read, muting, reacting, replying,
-//!   answering, triage) is refused when the caller is not in it.
+//!   one conversation or message (`dm.open`, sending, asking, marking read, muting, reacting,
+//!   replying, answering, triage) is refused when the caller is not in it; only for the owner
+//!   does a message, ask or answer carry staged files (`TASK-240`).
+//!
+//! A file bound to a message, an ask or an answer is inspected, read, listed, edited or
+//! re-attached only for a caller in its conversation (`TASK-240`), even for the owner: she is
+//! in every member's DM with her, the owner is not.
 //!
 //! A run acting for a member who is no longer an active person may do nothing at all. A run
 //! acting for nobody (a wake) gets only the open class, and no DM at all. When the office
@@ -55,6 +60,9 @@ pub trait ChiefOfStaffPort: Send + Sync {
     /// The conversation message `message_id` (a chat or mailbox message, or an ask) is in;
     /// `None` for an unknown message.
     fn message_conversation(&self, message_id: &str) -> Result<Option<String>, ApiError>;
+    /// The conversation a file bound to a message, an ask or an answer is in; `None` for any
+    /// other file and for an unknown one (`TASK-240`).
+    fn attachment_conversation(&self, attachment_id: &str) -> Result<Option<String>, ApiError>;
     /// The member a `dm.open` participant reference (an ID, handle, name or `owner`) names,
     /// read without writing anything; `None` when it names nobody.
     fn resolve_member(&self, reference: &str) -> Result<Option<String>, ApiError>;
@@ -149,7 +157,7 @@ const OPEN: &[&str] = &[
     "who",
     "worktree.list",
 ];
-const OPEN_PREFIXES: &[&str] = &["chat.", "dm.", "msg.", "skill.", "tasks.", "work."];
+const OPEN_PREFIXES: &[&str] = &["chat.", "dm.", "msg.", "skill.", "tasks."];
 
 /// The class of `method`. A method named nowhere needs the owner.
 pub(super) fn access(method: &str) -> Access {

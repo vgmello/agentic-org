@@ -11,8 +11,9 @@
 //!   the record claims are the bytes' own. Only a retry of a file HQ already bound may skip
 //!   them, so a hash alone never binds anything (no possession proof, no existence oracle).
 //! - **Fetch.** A satellite asks for one shared file by `attachment_id`
-//!   ([`Office::attachment_peer_fetch`]): HQ looks in its shared projection and shared store
-//!   alone. The private space (`private/user-space.db`, `private/blobs/`) is never read for a
+//!   ([`Office::attachment_peer_fetch`]): HQ looks in its shared projection (a standalone file,
+//!   or the file of a message, an ask or an answer, `TASK-98.2`) and its shared store alone.
+//!   The private space (`private/user-space.db`, `private/blobs/`) is never read for a
 //!   satellite, whatever ID or digest it sends.
 
 use org_proto::attachments::AttachmentScope;
@@ -112,6 +113,17 @@ impl Office {
             .read(AttachmentById(id.clone()))
             .map_err(storage)?
             .0
+            .filter(|record| record.scope() == AttachmentScope::Shared))
+    }
+
+    /// The shared file `id`: a standalone record of the projection, else the file of a
+    /// message, an ask or an answer (`TASK-98.2`). Never the private space.
+    pub(super) fn shared_file(&self, id: &Id) -> Result<Option<AttachmentRecord>, OfficeError> {
+        if let Some(record) = self.shared_record(id)? {
+            return Ok(Some(record));
+        }
+        Ok(self
+            .message_file_record(id.as_str())?
             .filter(|record| record.scope() == AttachmentScope::Shared))
     }
 
@@ -293,9 +305,9 @@ impl Office {
         }
     }
 
-    /// HQ: the shared file a satellite may fetch, by `attachment_id` alone. Anything that is not
-    /// a shared record of HQ's projection (a private file's ID, a digest, garbage) is
-    /// `not_found`.
+    /// HQ: the shared file a satellite may fetch, by `attachment_id` alone: a standalone shared
+    /// record, or a message's, ask's or answer's file. Anything else (a private file's ID, a
+    /// digest, garbage) is `not_found`. The satellite's reader passed its own policy first.
     pub fn attachment_peer_fetch(&self, attachment_id: &str) -> Answer<PeerBlob> {
         if self.is_satellite() {
             return Ok(Err(hq_custody_only()));
@@ -306,7 +318,7 @@ impl Office {
         else {
             return Ok(Err(not_found()));
         };
-        let Some(record) = self.shared_record(&id)? else {
+        let Some(record) = self.shared_file(&id)? else {
             return Ok(Err(not_found()));
         };
         if self.attachments.shared.size(&record.content_sha256)? != Some(record.byte_count) {
