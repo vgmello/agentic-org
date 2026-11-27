@@ -1929,19 +1929,61 @@ async function checkMentions(page: Page) {
   assert.ok(await landed.evaluate((el) => el === document.activeElement), "Focus lands on the mentioning reply");
   await page.locator(".thread [data-act=thread-close]").click();
 }
-/* A context line that would be cut shows a plain summary; its links move to Details, out of the tab order. */
-async function checkHeaderSummary(page: Page) {
-  await viewport(page, 700, 800);
+/* "Title | description" on the title line; project and members on the row under it, at the title's left edge; the
+   header actions centred on the header. A long description wraps (never cut); one that would take more than two lines
+   beside the title goes under it. Phones keep the description in Details. */
+async function headerBoxes(page: Page) {
+  return page.evaluate(() => {
+    const b = (s: string) => { const r = document.querySelector(s)!.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height, c: r.top + r.height / 2 }; };
+    const d = document.querySelector(".chat-desc") as HTMLElement;
+    return { h1: b("#ch-title"), desc: b(".chat-desc"), sep: b(".chat-desc-sep"), meta: b(".chat-context"), head: b("#main .chat > .chhead"), actions: b("#main .chat > .chhead > .ph-actions"),
+      cut: d.scrollWidth > d.clientWidth + 1 || d.scrollHeight > d.clientHeight + 1, below: document.querySelector("#main .chat")!.classList.contains("desc-below") };
+  });
+}
+async function checkHeaderTitleLine(page: Page) {
+  await viewport(page, 1440, 900);
   await navTo(page, "#/chat/agency-v1");
-  await page.locator(".chat.ctx-overflow").waitFor();
-  assert.equal(await page.locator(".chat-ctx-summary").innerText(), "Shipping the first release · 8 members");
-  assert.equal(await page.locator(".chat-ctx-full").evaluate((el) => getComputedStyle(el).visibility), "hidden", "The clipped links leave the tab order");
+  assert.equal(await page.locator(".chat-titleline .chat-desc").innerText(), "Shipping the first release", "The description sits on the title line");
+  assert.equal(await page.locator(".chat-ctx-full").innerText(), "Agentic Org v1.0 · 8 members", "The row under the title keeps project and members");
+  let m = await headerBoxes(page);
+  assert.ok(Math.abs(m.desc.c - m.h1.c) < 3 && m.sep.w === 1 && m.sep.l > m.h1.l + m.h1.w, `Description centred on the title after a 1 px divider (${JSON.stringify(m)})`);
+  assert.ok(Math.abs(m.meta.l - m.h1.l) < 1, "The meta row starts at the title's left edge");
+  assert.ok(Math.abs(m.actions.c - m.head.c) < 3, `Header actions are centred on the header (${m.actions.c} vs ${m.head.c})`);
+  const long = "Shipping the first release: office sync, the Inbox, hiring through HR, the review gates and the codec split, with the CSP checks, release notes and every sign-off the owner gives before the tag";
+  await page.evaluate((t) => { document.querySelector(".chat-desc")!.textContent = t; }, long);
+  await viewport(page, 1024, 768);
+  m = await headerBoxes(page);
+  assert.ok(!m.cut && !m.below && m.desc.h > 30 && m.desc.t < m.meta.t, `A long description wraps beside the title, whole (${JSON.stringify(m)})`);
+  await viewport(page, 800, 700);
+  await page.waitForFunction(() => document.querySelector("#main .chat")!.classList.contains("desc-below"));
+  m = await headerBoxes(page);
+  assert.ok(!m.cut && m.sep.w === 0 && m.desc.t >= m.h1.t + m.h1.h - 1 && Math.abs(m.desc.l - m.h1.l) < 1, `Narrower, it goes under the title without the divider (${JSON.stringify(m)})`);
+  await navTo(page, "#/chat/general");
+  await navTo(page, "#/chat/agency-v1");
+  m = await headerBoxes(page);
+  assert.ok(!m.below && Math.abs(m.desc.c - m.h1.c) < 3, `At 800 a short description stays beside the title (${JSON.stringify(m)})`);
+  await viewport(page, 420, 900);
+  assert.equal(await page.locator(".chat-desc").isVisible(), false, "Phones: the description moves to Details");
   await page.locator(".chat-details-btn").click();
-  await page.locator('.chat-details a[href="#/projects/agency-v1"]').waitFor();
+  assert.match(await page.locator("#chat-details").innerText(), /Topic\s+Shipping the first release/);
   await page.locator(".chat-details-btn").click();
   await viewport(page, 1440, 900);
+}
+/* A context row that would be cut shows a plain summary; its links move to Details, out of the tab order. */
+async function checkHeaderSummary(page: Page) {
+  await viewport(page, 660, 800);
+  await navTo(page, "#/chat/dm-ada");
+  await page.locator(".chat.ctx-overflow").waitFor();
+  assert.equal(await page.locator(".chat-ctx-summary").innerText(), "1 in this DM · 2 more requests");
+  assert.equal(await page.locator(".chat-ctx-full").evaluate((el) => getComputedStyle(el).visibility), "hidden", "The clipped links leave the tab order");
+  await page.locator(".chat-details-btn").click();
+  await page.locator('.chat-details .chat-here-link').waitFor();
+  await page.locator(".chat-details-btn").click();
+  await viewport(page, 1440, 900);
+  await navTo(page, "#/chat/agency-v1");
   await page.waitForFunction(() => !document.querySelector("#main .chat.ctx-overflow"));
-  assert.ok(await page.locator(".chat-ctx-full .chat-members-btn").isVisible(), "Wide: the full line with its links");
+  assert.ok(await page.locator(".chat-ctx-full .chat-members-btn").isVisible(), "Wide: the full row with its links");
+  await checkHeaderTitleLine(page);
 }
 /* Agents' conversations name "Message Rowan about this" on desktop; the DM opens with its composer focused. */
 async function checkA2AMessageAction(page: Page) {
@@ -2332,9 +2374,9 @@ async function checkListRail(page: Page) {
   await viewport(page, 1440, 900);
 }
 const openDmHash = (who: string) => `#/chat/dm-${who}`;
-/* At 800 px a DM's header keeps the actionable status, in the same words as Details. */
+/* At 660 px a DM's header keeps the actionable status, in the same words as Details. */
 async function checkCompactStatus(page: Page) {
-  await viewport(page, 800, 800);
+  await viewport(page, 660, 800);
   await navTo(page, "#/chat/dm-ada");
   const summary = page.locator(".chat-ctx-summary");
   await summary.waitFor();

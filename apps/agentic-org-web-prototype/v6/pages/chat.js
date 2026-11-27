@@ -1,4 +1,4 @@
-import { CH, IN, M, OFFICES, W } from "../data.js";
+import { CH, IN, M, OFFICES, P, W } from "../data.js";
 import { fitTextarea } from "./work.js";
 import { openSmartTaskComposer } from "./task-composer.js";
 import {
@@ -488,25 +488,37 @@ function contextParts(ch, chId, slot = "ctx") {
     ["Members", membersLink(ch)],
   ];
 }
-const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).map(([, v]) => (v ? `<span>${v}</span>` : "")));
+/* The description sits on the title line ("#agentic-org-v1 | Shipping the first release"); the row under the title
+   keeps the rest (project and members, a DM's kind and status). Details keeps every part. */
+const DESCRIPTION_PART = { channel: "Topic", dm: "Role", a2a: "Kind" };
+function description(ch) {
+  if (ch.kind === "dm") return M[ch.with].role || "";
+  return ch.kind === "a2a" ? "Between agents" : ch.topic || "";
+}
+const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).filter(([k]) => k !== DESCRIPTION_PART[ch.kind]).map(([, v]) => (v ? `<span>${v}</span>` : "")));
+/* "Title | description": a thin divider, then the muted description, which wraps rather than truncating. */
+function titleLine(title, desc) {
+  const rest = desc ? `<span class="chat-desc-sep" aria-hidden="true"></span><p class="chat-desc">${esc(desc)}</p>` : "";
+  return `<div class="chat-titleline"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>${rest}</div>`;
+}
 /* Plain words for when the full context line would be cut off: no links, so nothing clipped is focusable;
    Details holds the full line with its links. */
-/* An agent's summary leads with its status, so the actionable part survives the narrowest header: "Waiting on you · 2"
-   (its open requests) needs nothing more; otherwise the status, then the role. Details keeps role and links. */
+/* An agent's summary leads with its status, so the actionable part survives the narrowest header: "1 in this DM ·
+   2 more requests" needs nothing more; otherwise the status. The role is the title line's description. */
 function dmSummary(who) {
   const m = M[who];
-  if (m.kind === "person") return [m.role, m.last];
+  if (m.kind === "person") return [m.last];
   const word = PRESENCE_WORD[presence(who)];
-  if (presence(who) !== "needs") return [word, m.role];
+  if (presence(who) !== "needs") return [word];
   const { here, elsewhere } = dmRequests(who, `dm-${who}`);
-  if (!here.length && !elsewhere.length) return [word, m.role];
+  if (!here.length && !elsewhere.length) return [word];
   return [here.length ? `${here.length} in this DM` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
-  if (ch.kind === "a2a") return ["Reading as the owner", "Between agents"];
+  if (ch.kind === "a2a") return ["Reading as the owner"];
   const n = channelMembers(ch).length;
-  return [ch.topic, n ? plural(n, "member", "members") : ""];
+  return [ch.proj ? P[ch.proj].name : "", n ? plural(n, "member", "members") : ""];
 }
 const headerSummary = (ch) => esc(summaryParts(ch).filter(Boolean).join(" · "));
 function detailsPanel(ch, chId) {
@@ -557,7 +569,7 @@ function chatHeaderHtml(id, ch, title) {
     ${listButton(id)}
     <div class="ph-t chat-title">
       ${headerLead(ch)}
-      <div class="chat-heading">${backToAgent(ch)}<h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
+      <div class="chat-heading">${backToAgent(ch)}${titleLine(title, description(ch))}
         <p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
@@ -656,7 +668,7 @@ function pageChatView(kind) {
   if (S.chatList && S.chatList !== kind) S.chatList = null;
   const view = CHAT_VIEWS[kind];
   const header = `<header class="ph chhead">${listButton(kind)}
-    <div class="ph-t chat-title"><div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(view.title)}</h1><p class="chat-context">${esc(view.about)}</p></div></div></header>`;
+    <div class="ph-t chat-title"><div class="chat-heading">${titleLine(view.title, view.about)}</div></div></header>`;
   return chatFrame(kind, [], header, chatViewHtml(kind));
 }
 function pageChat(id) {
@@ -957,7 +969,7 @@ function mountOverlays(root) {
 function watchContext(root) {
   const ctx = root.querySelector(".chhead .chat-context"), full = ctx?.querySelector(".chat-ctx-full");
   if (!full || !root.querySelector(".chat-details-btn")) return;
-  const measure = () => root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1);
+  const measure = () => { root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1); placeDescription(root); };
   let frame = 0;
   const ro = new ResizeObserver(() => {
     if (!ctx.isConnected) { ro.disconnect(); return; }
@@ -966,6 +978,16 @@ function watchContext(root) {
   });
   ro.observe(ctx);
   measure();
+}
+/* The description stays beside the title while it fits there in two lines. When it would take more (or wraps under
+   the title anyway), .desc-below puts it under the title at full width and drops the divider, which would dangle.
+   Measured beside the title first. */
+function placeDescription(root) {
+  const h1 = root.querySelector(".chat-titleline > h1"), desc = root.querySelector(".chat-titleline > .chat-desc");
+  if (!desc) return;
+  root.classList.remove("desc-below");
+  const twoLines = 2 * parseFloat(getComputedStyle(desc).lineHeight) + 2;
+  root.classList.toggle("desc-below", desc.offsetTop >= h1.offsetTop + h1.offsetHeight - 2 || desc.offsetHeight > twoLines);
 }
 /* The open thread takes its landing once; while searching, matches in its replies are marked as in the stream. */
 function mountThread(root) {
