@@ -213,4 +213,33 @@ impl fmt::Display for ControlError {
     }
 }
 
+impl crate::Capabilities {
+    /// How a person's explicit steer reaches a running turn (`TASK-103`).
+    ///
+    /// - `Ok(())`: the runtime steers natively and immediately, without interrupting the turn
+    ///   ([`crate::MidTurnDelivery::NativeSteer`]: send it with [`Control::DeliverMidTurn`]).
+    /// - [`ControlError::NeedsInterrupt`]: the runtime can only take it promptly by interrupting
+    ///   the turn in-band ([`Self::interrupt_in_band`]) and sending it as the next turn. A
+    ///   [`crate::MidTurnDelivery::StepHook`] runtime counts here: its hook waits for the next
+    ///   tool boundary, which a person redirecting the agent can't wait for.
+    /// - [`ControlError::Unsupported`]: neither; the steer can only queue behind the turn.
+    pub const fn steer_route(&self) -> Result<(), ControlError> {
+        match (self.mid_turn_delivery, self.interrupt_in_band) {
+            (crate::MidTurnDelivery::NativeSteer, _) => Ok(()),
+            (crate::MidTurnDelivery::StepHook | crate::MidTurnDelivery::None, true) => {
+                Err(ControlError::NeedsInterrupt)
+            }
+            (crate::MidTurnDelivery::StepHook | crate::MidTurnDelivery::None, false) => {
+                Err(ControlError::Unsupported)
+            }
+        }
+    }
+
+    /// Whether a person's steer reaches a running turn natively, without interrupting it
+    /// ([`Self::steer_route`] is `Ok`).
+    pub const fn supports_native_steer(&self) -> bool {
+        self.steer_route().is_ok()
+    }
+}
+
 impl std::error::Error for ControlError {}

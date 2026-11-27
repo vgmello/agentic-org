@@ -1,6 +1,6 @@
 //! [`Capabilities`]: where runtimes differ, so the office can adapt instead of guessing.
 
-use crate::{ControlError, CostBasis, UsageScope};
+use crate::{CostBasis, UsageScope};
 
 /// How a runtime supports non-destructive mid-turn message delivery (`doc-101`, `ADR-0035`).
 ///
@@ -142,33 +142,6 @@ impl Capabilities {
     /// Whether this runtime supports non-destructive mid-turn delivery (`NativeSteer` or `StepHook`).
     pub const fn supports_mid_turn_delivery(&self) -> bool {
         !matches!(self.mid_turn_delivery, MidTurnDelivery::None)
-    }
-
-    /// How a person's explicit steer reaches a running turn (`TASK-103`).
-    ///
-    /// - `Ok(())`: the runtime steers natively and immediately, without interrupting the turn
-    ///   ([`MidTurnDelivery::NativeSteer`]: send it with [`crate::Control::DeliverMidTurn`]).
-    /// - [`ControlError::NeedsInterrupt`]: the runtime can only take it promptly by interrupting
-    ///   the turn in-band ([`Self::interrupt_in_band`]) and sending it as the next turn. A
-    ///   [`MidTurnDelivery::StepHook`] runtime counts here: its hook waits for the next tool
-    ///   boundary, which a person redirecting the agent can't wait for.
-    /// - [`ControlError::Unsupported`]: neither; the steer can only queue behind the turn.
-    pub const fn steer_route(&self) -> Result<(), ControlError> {
-        match (self.mid_turn_delivery, self.interrupt_in_band) {
-            (MidTurnDelivery::NativeSteer, _) => Ok(()),
-            (MidTurnDelivery::StepHook | MidTurnDelivery::None, true) => {
-                Err(ControlError::NeedsInterrupt)
-            }
-            (MidTurnDelivery::StepHook | MidTurnDelivery::None, false) => {
-                Err(ControlError::Unsupported)
-            }
-        }
-    }
-
-    /// Whether a person's steer reaches a running turn natively, without interrupting it
-    /// ([`Self::steer_route`] is `Ok`).
-    pub const fn supports_native_steer(&self) -> bool {
-        self.steer_route().is_ok()
     }
 }
 
