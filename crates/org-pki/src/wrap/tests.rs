@@ -176,3 +176,67 @@ fn task_11_ca_and_provider_credentials_use_distinct_wrapping_keys_and_domains() 
         Err(WrapError::Rejected)
     );
 }
+
+#[test]
+fn task_135_git_credentials_use_distinct_key_class_and_strict_repo_scope_binding() {
+    let ca_key = derive_wrapping_key(&KEY, KeyClass::OfficePrivateKey).unwrap();
+    let provider_key = derive_wrapping_key(&KEY, KeyClass::ProviderCredential).unwrap();
+    let git_key = derive_wrapping_key(&KEY, KeyClass::GitCredential).unwrap();
+
+    assert_ne!(*git_key, *ca_key);
+    assert_ne!(*git_key, *provider_key);
+    assert_ne!(*git_key, KEY);
+
+    let binding = GitCredentialBinding {
+        organization_id: ORG,
+        office_id: OFFICE,
+        repository_id: "01950000-0000-7000-8000-000000000301",
+        scope_url: "https://github.com/acme/private-repo.git",
+    };
+    let secret = b"{\"username\":\"x-access-token\",\"token\":\"ghp_SCOPED123\"}";
+    let wrapped = wrap_git_credential(&git_key, &binding, secret).unwrap();
+    assert!(!wrapped.windows(secret.len()).any(|w| w == secret));
+    assert_eq!(
+        *unwrap_git_credential(&git_key, &binding, &wrapped).unwrap(),
+        secret
+    );
+
+    // Wrong key class, wrong repo ID, wrong scope URL, or empty scope URL fail closed.
+    assert_eq!(
+        unwrap_git_credential(&provider_key, &binding, &wrapped),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_git_credential(
+            &git_key,
+            &GitCredentialBinding {
+                repository_id: "01950000-0000-7000-8000-000000000302",
+                ..binding
+            },
+            &wrapped
+        ),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_git_credential(
+            &git_key,
+            &GitCredentialBinding {
+                scope_url: "https://github.com/acme/other-repo.git",
+                ..binding
+            },
+            &wrapped
+        ),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        wrap_git_credential(
+            &git_key,
+            &GitCredentialBinding {
+                scope_url: "",
+                ..binding
+            },
+            secret
+        ),
+        Err(WrapError::Invalid)
+    );
+}

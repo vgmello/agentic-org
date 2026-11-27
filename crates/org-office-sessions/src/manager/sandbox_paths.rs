@@ -13,7 +13,9 @@ use crate::runtime_registry::RuntimeRegistry;
 
 use super::environment::ensure_owner_only_dir;
 use super::office_masks::OfficeMasks;
-use super::rust_toolchain::canonicalize_with_tail;
+use super::rust_toolchain::{
+    canonicalize_with_tail, prepare_agent_cargo_target, prepare_isolated_cargo_home,
+};
 use super::sandbox_rules::{
     append_bare_cache_sandbox_rules, append_cargo_credential_denies,
     append_privileged_socket_patterns, append_runtime_credential_denies,
@@ -511,7 +513,48 @@ pub(super) fn collect_sibling_agent_ids_in_office(
 }
 
 impl SessionManager {
-    pub(super) fn build_employee_preset_cfg(
+    /// Returns the agent's own writable Cargo directories (`home/.cargo` and `cache/cargo-target`)
+    /// so task-worktree sessions (where `workspace != home`) can write Cargo locks, unpacked crate
+    /// sources, and build artifacts without touching host `~/.cargo` or any sibling agent (`TASK-135`).
+    pub(crate) fn agent_cargo_sandbox_roots(
+        &self,
+        employee_id: &str,
+        create_dirs: bool,
+    ) -> Vec<SpecPath> {
+        let base = self.agent_base_dir(employee_id);
+        let home = base.join("home");
+        let dirs = if create_dirs {
+            let mut out = Vec::new();
+            if let Some(cargo_home) = prepare_isolated_cargo_home(&home) {
+                out.push(cargo_home);
+            }
+            if let Some(target_dir) = prepare_agent_cargo_target(&base) {
+                out.push(target_dir);
+            }
+            out
+        } else {
+            let mut out = Vec::new();
+            let cache_dir = base.join("cache");
+            for (parent, candidate) in [
+                (&home, home.join(".cargo")),
+                (&cache_dir, cache_dir.join("cargo-target")),
+            ] {
+                let parent_symlink =
+                    std::fs::symlink_metadata(parent).is_ok_and(|m| m.file_type().is_symlink());
+                let leaf_symlink =
+                    std::fs::symlink_metadata(&candidate).is_ok_and(|m| m.file_type().is_symlink());
+                if !parent_symlink && !leaf_symlink {
+                    out.push(canonicalize_with_tail(&candidate));
+                }
+            }
+            out
+        };
+        dirs.into_iter()
+            .filter_map(|p| SpecPath::try_from(p.to_string_lossy().as_ref()).ok())
+            .collect()
+    }
+
+    pub(crate) fn build_employee_preset_cfg(
         &self,
         employee_id: &str,
         preset: PermissionPreset,
@@ -533,6 +576,10 @@ impl SessionManager {
         .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid permission preset"))?;
         let (wt_writable, wt_write_denies) = self.worktree_sandbox_grants(employee_id, create_root);
         apply_worktree_sandbox_rules(&mut cfg, &wt_writable, &wt_write_denies);
+        if !preset.is_read_only_fs() {
+            let cargo_writable = self.agent_cargo_sandbox_roots(employee_id, create_root);
+            apply_worktree_sandbox_rules(&mut cfg, &cargo_writable, &[]);
+        }
         Ok(cfg)
     }
 }

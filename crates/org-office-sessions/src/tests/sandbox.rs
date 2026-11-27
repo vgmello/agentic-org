@@ -701,3 +701,315 @@ fn task126_host_rust_dir_env_rejects_office_roots_and_symlinks() {
         "must reject symlink escaping into durable_root"
     );
 }
+
+fn hire_autonomous_agent(
+    office: &Office,
+    root_team_id: &str,
+    owner_id: &str,
+    name: &str,
+    handle: &str,
+) -> String {
+    let req = Request::new::<HrHire>(
+        1,
+        &HrHireParams {
+            command_id: new_uuid_v7(),
+            request_id: new_uuid_v7(),
+            employee_id: new_uuid_v7(),
+            home_team_id: root_team_id.to_owned(),
+            role_id: None,
+            proposal: HireProposalWire {
+                name: name.into(),
+                handle: handle.into(),
+                title: Some("Engineer".into()),
+                focus: None,
+                role_text: None,
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner_id.to_owned()),
+                office_id: None,
+                model_profile_id: None,
+                model_id: None,
+                permission_preset: Some("autonomous_sandboxed".into()),
+                tools_config: Vec::new(),
+                system_prompt_markdown: None,
+                body: Some("Work.".into()),
+                effort: None,
+            },
+            reason: "Test hire".into(),
+        },
+    )
+    .unwrap();
+    let resp = office.dispatch_hiring_rpc(Some(owner_id), &req).unwrap();
+    match resp.outcome {
+        org_proto::Outcome::Result(v) => {
+            serde_json::from_value::<org_proto::hiring::HireOpResult>(v)
+                .unwrap()
+                .employee_id
+                .unwrap()
+        }
+        org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+    }
+}
+
+fn capture_cargo_env(
+    mgr: &SessionManager,
+    home: &std::path::Path,
+    workspace: &std::path::Path,
+    tmpdir: &std::path::Path,
+    emp_id: &str,
+    sandbox_enabled: bool,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let bind = tmpdir.join("b");
+    mgr.captured_env(&crate::manager::SessionEnvInput {
+        home,
+        agent_base: home.parent(),
+        workspace,
+        tmpdir,
+        employee_id: emp_id,
+        employee_name: "Cargo Agent",
+        employee_handle: "cargo-agent",
+        session_id: "sess-1",
+        token: "tok-1",
+        binding_file: &bind,
+        sandbox_enabled,
+        operator: false,
+    })
+}
+
+#[test]
+fn task135_per_agent_cargo_isolation_readonly_toolchain_and_office_vault_deny() {
+    use org_agent_runtime::SpecPath;
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let emp_a = hire_autonomous_agent(&office, &root_team_id, &owner_id, "Cargo A", "cargo-a");
+    let emp_b = hire_autonomous_agent(&office, &root_team_id, &owner_id, "Cargo B", "cargo-b");
+
+    let home_a = office.ensure_private_home(&emp_a).unwrap();
+    let home_b = office.ensure_private_home(&emp_b).unwrap();
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let (_rt_a, tmp_a) = mgr.prepare_run_dirs(&emp_a).unwrap();
+    let (_rt_b, tmp_b) = mgr.prepare_run_dirs(&emp_b).unwrap();
+
+    // Worktree workspace is separate from agent home.
+    let ws_a = tempfile::tempdir().unwrap();
+    let ws_a_canon = ws_a.path().canonicalize().unwrap();
+    let ws_a_spec = SpecPath::try_from(ws_a_canon.to_str().unwrap()).unwrap();
+    let cfg_a = mgr
+        .build_employee_preset_cfg(
+            &emp_a,
+            PermissionPreset::AutonomousSandboxed,
+            true,
+            &ws_a_spec,
+            true,
+        )
+        .unwrap();
+    let writable_a: Vec<&str> = cfg_a
+        .sandbox
+        .writable_roots
+        .iter()
+        .map(SpecPath::as_str)
+        .collect();
+    let deny_read_a: Vec<&str> = cfg_a.sandbox.deny_read.iter().map(|p| p.as_str()).collect();
+
+    let expected_cargo_a = home_a.join(".cargo").canonicalize().unwrap();
+    let expected_target_a = home_a
+        .parent()
+        .unwrap()
+        .join("cache/cargo-target")
+        .canonicalize()
+        .unwrap();
+    assert!(writable_a.contains(&expected_cargo_a.to_str().unwrap()));
+    assert!(writable_a.contains(&expected_target_a.to_str().unwrap()));
+    assert!(!writable_a.iter().any(|p| p.contains(&emp_b)));
+    if let Some(host_home) = std::env::var_os("HOME") {
+        let host_home = std::path::PathBuf::from(host_home);
+        for host_ro in [host_home.join(".cargo"), host_home.join(".rustup")] {
+            let s = host_ro.to_string_lossy();
+            assert!(!writable_a.iter().any(|p| *p == s.as_ref()));
+        }
+    }
+    assert!(deny_read_a
+        .iter()
+        .any(|p| p.ends_with(&format!("/agents/{emp_b}/**"))));
+    let git_creds_glob = format!(
+        "{}/**",
+        office
+            .folder()
+            .join("git-credentials")
+            .canonicalize()
+            .unwrap_or_else(|_| office.folder().join("git-credentials"))
+            .display()
+    );
+    assert!(deny_read_a.iter().any(|p| *p == git_creds_glob));
+
+    for ro_preset in [
+        PermissionPreset::ReadOnly,
+        PermissionPreset::OperatorSandboxed,
+    ] {
+        let ro_cfg = mgr
+            .build_employee_preset_cfg(&emp_a, ro_preset, true, &ws_a_spec, false)
+            .unwrap();
+        assert!(ro_cfg.sandbox.writable_roots.is_empty());
+    }
+
+    let get = |env: &[(std::ffi::OsString, std::ffi::OsString)], key: &str| {
+        env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    };
+    let env_a = capture_cargo_env(&mgr, &home_a, &ws_a_canon, &tmp_a, &emp_a, true);
+    let env_b = capture_cargo_env(&mgr, &home_b, &ws_a_canon, &tmp_b, &emp_b, true);
+    let env_unsandboxed = capture_cargo_env(&mgr, &home_a, &ws_a_canon, &tmp_a, &emp_a, false);
+    assert_eq!(
+        get(&env_a, "CARGO_HOME").as_deref(),
+        Some(expected_cargo_a.as_os_str())
+    );
+    assert_eq!(
+        get(&env_a, "CARGO_TARGET_DIR").as_deref(),
+        Some(expected_target_a.as_os_str())
+    );
+    assert_eq!(
+        get(&env_a, "CARGO_NET_OFFLINE").as_deref(),
+        Some(std::ffi::OsStr::new("true"))
+    );
+    assert_ne!(get(&env_a, "CARGO_HOME"), get(&env_b, "CARGO_HOME"));
+    assert_ne!(
+        get(&env_a, "CARGO_TARGET_DIR"),
+        get(&env_b, "CARGO_TARGET_DIR")
+    );
+    assert!(get(&env_unsandboxed, "CARGO_NET_OFFLINE").is_none());
+}
+
+#[test]
+fn task135_concurrent_offline_cargo_check_with_readonly_host_cache() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let host_cargo = root.join("ro-host-cargo");
+    std::fs::create_dir_all(host_cargo.join("registry/index")).unwrap();
+    std::fs::create_dir_all(host_cargo.join("registry/cache")).unwrap();
+    std::fs::create_dir_all(host_cargo.join("git/db")).unwrap();
+
+    // Lock the synthetic host Cargo cache read-only (`0555`) to prove neither agent writes to it.
+    for ro in [
+        host_cargo.join("registry/index"),
+        host_cargo.join("registry/cache"),
+        host_cargo.join("registry"),
+        host_cargo.join("git/db"),
+        host_cargo.join("git"),
+        host_cargo.clone(),
+    ] {
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
+
+    // Build a self-contained offline Cargo workspace with a local path dependency (zero network).
+    let crate_dir = root.join("sample-app");
+    let dep_dir = root.join("sample-dep");
+    std::fs::create_dir_all(crate_dir.join("src")).unwrap();
+    std::fs::create_dir_all(dep_dir.join("src")).unwrap();
+    std::fs::write(
+        dep_dir.join("Cargo.toml"),
+        "[package]\nname = \"sample-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dep_dir.join("src/lib.rs"),
+        "pub fn answer() -> u32 { 42 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        crate_dir.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"sample-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsample-dep = {{ path = {:?} }}\n",
+            dep_dir
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        crate_dir.join("src/lib.rs"),
+        "#[test]\nfn works() { assert_eq!(sample_dep::answer(), 42); }\n",
+    )
+    .unwrap();
+
+    // Prepare two isolated agents pointing at the SAME read-only `host_cargo`.
+    let prepare_agent = |name: &str| {
+        let base = root.join(name);
+        let home = base.join("home");
+        org_platform::fs::create_owner_only_dir_all(&home).unwrap();
+        org_platform::fs::set_owner_only_dir(&base).unwrap();
+        org_platform::fs::set_owner_only_dir(&home).unwrap();
+        let mut env = vec![(
+            std::ffi::OsString::from("HOME"),
+            home.as_os_str().to_os_string(),
+        )];
+        crate::manager::append_rust_toolchain_env(
+            &mut env,
+            crate::manager::RustToolchainEnvInput {
+                agent_home: Some(&home),
+                agent_base: Some(&base),
+                rustup_explicit: std::env::var_os("RUSTUP_HOME"),
+                cargo_explicit: Some(host_cargo.as_os_str().to_os_string()),
+                host_home: std::env::var_os("HOME"),
+                forbidden: &[home.clone(), crate_dir.clone()],
+                sandbox_enabled: true,
+            },
+        );
+        (base, home, env)
+    };
+    let (base_a, home_a, env_a) = prepare_agent("agent-a");
+    let (base_b, home_b, env_b) = prepare_agent("agent-b");
+
+    let run_cargo = |env: Vec<(std::ffi::OsString, std::ffi::OsString)>| {
+        let crate_dir = crate_dir.clone();
+        std::thread::spawn(move || {
+            let mut cmd = std::process::Command::new("cargo");
+            cmd.args(["test", "--quiet"])
+                .current_dir(&crate_dir)
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+            for (k, v) in env {
+                cmd.env(k, v);
+            }
+            cmd.output().expect("run cargo test")
+        })
+    };
+    let t_a = run_cargo(env_a);
+    let t_b = run_cargo(env_b);
+    let out_a = t_a.join().unwrap();
+    let out_b = t_b.join().unwrap();
+
+    // Restore host_cargo perms so tempdir cleans up reliably even if an assertion fails.
+    for rw in [
+        host_cargo.clone(),
+        host_cargo.join("registry"),
+        host_cargo.join("registry/index"),
+        host_cargo.join("registry/cache"),
+        host_cargo.join("git"),
+        host_cargo.join("git/db"),
+    ] {
+        let _ = std::fs::set_permissions(&rw, std::fs::Permissions::from_mode(0o700));
+    }
+
+    assert!(
+        out_a.status.success(),
+        "agent A offline cargo test failed: {}",
+        String::from_utf8_lossy(&out_a.stderr)
+    );
+    assert!(
+        out_b.status.success(),
+        "agent B offline cargo test failed: {}",
+        String::from_utf8_lossy(&out_b.stderr)
+    );
+    // Each agent compiled into its own isolated `CARGO_TARGET_DIR` (never sharing `sample-app/target`).
+    assert!(!crate_dir.join("target").exists());
+    assert!(base_a.join("cache/cargo-target/debug").is_dir());
+    assert!(base_b.join("cache/cargo-target/debug").is_dir());
+    // Neither agent wrote any lock/cache file inside the read-only host Cargo dir.
+    assert!(!host_cargo.join(".package-cache").exists());
+    assert!(!host_cargo.join(".global-cache").exists());
+    assert!(home_a.join(".cargo").is_dir());
+    assert!(home_b.join(".cargo").is_dir());
+}

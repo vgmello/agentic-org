@@ -50,6 +50,7 @@ dependencies = [
  "syn 2.0.119",
  "tempfile",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -1416,7 +1417,9 @@ dependencies = [
 name = "org-git"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]

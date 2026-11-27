@@ -11,7 +11,7 @@ use org_proto::tasks::TaskStatus;
 use org_proto::{ApiError, ErrorCode};
 
 use super::credentials::resolve_remote_spec;
-use super::redaction::{map_git_error, map_office_error};
+use super::redaction::{map_office_error, map_remote_git_error};
 use super::GitService;
 
 impl GitService {
@@ -64,6 +64,7 @@ impl GitService {
         );
         let forbidden: BTreeSet<String> = ctx.forbidden_branches.into_iter().collect();
         let wt_path = PathBuf::from(&ws.worktree_path);
+        let repo_ref = repo.key.as_deref().unwrap_or(repo.id.as_str());
         let pushed = self
             .locks
             .with_lock(&bare_path, || -> Result<org_git::PushResult, GitError> {
@@ -78,7 +79,7 @@ impl GitService {
                     false,
                 )
             })
-            .map_err(map_git_error)?;
+            .map_err(|err| map_remote_git_error(err, &remote, repo_ref))?;
 
         {
             let mut state_guard = self.state.lock().unwrap_or_else(|e| e.into_inner());

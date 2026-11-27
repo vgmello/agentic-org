@@ -10,7 +10,8 @@ use org_proto::git::CacheStateWire;
 use org_proto::ApiError;
 
 use super::redaction::{
-    map_git_error, redact_git_error_for_log, sanitized_git_reason, scrub_git_log_text,
+    map_git_error, map_remote_git_error, redact_git_error_for_log, sanitized_remote_git_reason,
+    scrub_git_log_text,
 };
 use super::GitService;
 
@@ -33,6 +34,7 @@ pub(super) fn fetch_recording_state<T>(
     svc: &GitService,
     repo: &Repository,
     bare_path: &Path,
+    remote: Option<&RemoteSpec>,
     fetch: impl FnOnce() -> Result<T, GitError>,
 ) -> Result<FetchOutcome<T>, ApiError> {
     let usable = cache_is_usable(svc, repo, bare_path);
@@ -56,7 +58,7 @@ pub(super) fn fetch_recording_state<T>(
                 repo.id,
                 redact_git_error_for_log(&err)
             );
-            let reason = sanitized_git_reason(&err);
+            let reason = sanitized_remote_git_reason(&err, remote);
             record_cache_state(svc, repo, bare_path, CacheStateWire::Failed, Some(reason));
             Ok(FetchOutcome::Failed(err))
         }
@@ -122,7 +124,7 @@ pub(super) fn ensure_bare_cache_ready(
         }
         Err(err) => return Err(err.clone()),
     };
-    match fetch_recording_state(svc, repo, bare_path, || {
+    match fetch_recording_state(svc, repo, bare_path, Some(remote), || {
         fetch_cache(runner, bare_path, remote, false)
     })? {
         FetchOutcome::Fetched(()) => Ok(()),
@@ -134,6 +136,9 @@ pub(super) fn ensure_bare_cache_ready(
             );
             Ok(())
         }
-        FetchOutcome::Failed(err) => Err(map_git_error(err)),
+        FetchOutcome::Failed(err) => {
+            let repo_ref = repo.key.as_deref().unwrap_or(repo.id.as_str());
+            Err(map_remote_git_error(err, remote, repo_ref))
+        }
     }
 }

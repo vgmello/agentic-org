@@ -540,8 +540,10 @@ impl SessionManager {
         let binding_file = runtime_dir.join(format!("session-binding-{run_id}.v1"));
         let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id, &binding_file);
         write_owner_only_binding_file(&binding_file, binding.expose_token())?;
+        let agent_base = self.agent_base_dir(&emp_id);
         let env = self.build_environment(SessionEnvInput {
             home: &home,
+            agent_base: Some(&agent_base),
             workspace: &workspace_real,
             tmpdir: &tmpdir,
             employee_id: &emp_id,
