@@ -94,6 +94,21 @@ impl ShippedAttachment {
     pub fn max_bytes(&self) -> u64 {
         self.media.max_bytes()
     }
+
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn for_test(
+        record: super::records::AttachmentRecord,
+        media: super::media::MediaType,
+        origin_office: String,
+        present: bool,
+    ) -> Self {
+        Self {
+            record,
+            media,
+            origin_office,
+            present,
+        }
+    }
 }
 
 /// A shared attachment HQ serves a satellite's fetch from (`Office::attachment_peer_fetch`).

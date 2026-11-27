@@ -28,7 +28,7 @@ const PLATFORM_CRATES: [&str; 2] = ["crates/org-platform", "crates/org-platform-
 /// what is left: lower it in the change that removes one; never raise it or add a path.
 const ALLOWED_UNSAFE: [(&str, usize, usize, &str); 2] = [
     (
-        "crates/org-office/src/store/sqlite/references.rs",
+        "crates/org-office-sqlite/src/references.rs",
         1,
         1,
         "rusqlite has no safe sqlite3_db_status, the deferred-reference counter has no SQL \
@@ -44,7 +44,7 @@ const ALLOWED_UNSAFE: [(&str, usize, usize, &str); 2] = [
 ];
 
 /// Crate roots that may lower `forbid` to `deny` for their one allowance in [`ALLOWED_UNSAFE`].
-const DENY_ROOTS: [&str; 1] = ["crates/org-office/src/lib.rs"];
+const DENY_ROOTS: [&str; 1] = ["crates/org-office-sqlite/src/lib.rs"];
 
 /// Attributes that are unsafe without the keyword (edition 2021).
 const UNSAFE_ATTRIBUTES: [&str; 3] = ["no_mangle", "export_name", "link_section"];

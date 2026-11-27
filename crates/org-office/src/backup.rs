@@ -23,9 +23,6 @@ pub use crate::office::recorded::{recorded_office, RecordedOffice};
 /// check and keeps the durable root it replaced (`before-<suffix>`). It holds a full copy of
 /// office secrets, so agent sandboxes mask it like the durable root itself.
 pub const RESTORE_BACKUPS_DIR_NAME: &str = "restore-backups";
-pub use crate::store::sqlite::private_notes_copy::{
-    check_task_notes, check_user_space, snapshot_task_notes, snapshot_user_space,
-};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -33,10 +30,41 @@ use std::sync::{Arc, Mutex};
 use org_store::{CustodyError, JournalHead, OfficeIdentity, SystemClock, WriterAuthority};
 
 use crate::error::OfficeError;
+use crate::store::backend::installed_sqlite_backend;
 use crate::store::open::{
     open_accounting, open_budgets, open_providers, open_store, EmployeesList, EngineChoice,
     OfficeStore, OfficesCount, ProjectsList, StoreConfig,
 };
+
+/// Writes a transactionally consistent copy of `source` (`<durable>/private/task-notes.db`)
+/// to `target`, delegating to the installed SQLite storage backend.
+pub fn snapshot_task_notes(source: &Path, target: &Path) -> Result<(), OfficeError> {
+    installed_sqlite_backend()
+        .map_err(OfficeError::storage)?
+        .snapshot_task_notes(source, target)
+}
+
+/// Runs SQLite integrity and schema verification on a copied private task notes database.
+pub fn check_task_notes(path: &Path) -> Result<(), OfficeError> {
+    installed_sqlite_backend()
+        .map_err(OfficeError::storage)?
+        .check_task_notes(path)
+}
+
+/// Writes a transactionally consistent copy of `source` (`<durable>/private/user-space.db`)
+/// to `target`, delegating to the installed SQLite storage backend.
+pub fn snapshot_user_space(source: &Path, target: &Path) -> Result<(), OfficeError> {
+    installed_sqlite_backend()
+        .map_err(OfficeError::storage)?
+        .snapshot_user_space(source, target)
+}
+
+/// Runs SQLite integrity and schema verification on a copied private file space database.
+pub fn check_user_space(path: &Path) -> Result<(), OfficeError> {
+    installed_sqlite_backend()
+        .map_err(OfficeError::storage)?
+        .check_user_space(path)
+}
 
 /// What a disposable rebuild opens.
 #[derive(Clone, Debug)]
@@ -130,6 +158,7 @@ fn open_companions(spec: &DisposableRebuild) -> Result<(), OfficeError> {
     let runtime: &Path = &spec.runtime_root;
     drop(open_accounting(
         EngineChoice::Sqlite,
+        None,
         durable,
         runtime,
         office,
@@ -137,6 +166,7 @@ fn open_companions(spec: &DisposableRebuild) -> Result<(), OfficeError> {
     )?);
     drop(open_budgets(
         EngineChoice::Sqlite,
+        None,
         durable,
         runtime,
         office,
@@ -145,6 +175,7 @@ fn open_companions(spec: &DisposableRebuild) -> Result<(), OfficeError> {
     )?);
     drop(open_providers(
         EngineChoice::Sqlite,
+        None,
         durable,
         runtime,
         office,

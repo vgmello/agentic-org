@@ -40,6 +40,7 @@ dependencies = [
  "org-host-sqlite",
  "org-office",
  "org-office-launch",
+ "org-office-sqlite",
  "org-platform",
  "org-proto",
  "org-socket",
@@ -65,6 +66,7 @@ dependencies = [
  "org-office-launch",
  "org-office-server",
  "org-office-sessions",
+ "org-office-sqlite",
  "org-platform",
  "org-proto",
  "org-socket",
@@ -1262,6 +1264,7 @@ dependencies = [
  "flate2",
  "org-office",
  "org-office-launch",
+ "org-office-sqlite",
  "org-platform",
  "org-proto",
  "org-store",
@@ -1480,6 +1483,7 @@ dependencies = [
  "org-docs",
  "org-media",
  "org-office-launch",
+ "org-office-sqlite",
  "org-pki",
  "org-platform",
  "org-process",
@@ -1489,7 +1493,6 @@ dependencies = [
  "org-sync",
  "org-sync-proto",
  "proc-macro2",
- "rusqlite",
  "serde",
  "serde_json",
  "syn 2.0.119",
@@ -1524,6 +1527,7 @@ dependencies = [
  "org-office",
  "org-office-launch",
  "org-office-sessions",
+ "org-office-sqlite",
  "org-pki",
  "org-platform",
  "org-proto",
@@ -1574,6 +1578,29 @@ dependencies = [
  "subtle",
  "tempfile",
  "zeroize",
+]
+
+[[package]]
+name = "org-office-sqlite"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "image",
+ "org-media",
+ "org-office",
+ "org-office-sqlite",
+ "org-pki",
+ "org-platform",
+ "org-process",
+ "org-proto",
+ "org-reviews",
+ "org-store",
+ "org-sync",
+ "org-sync-proto",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

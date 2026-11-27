@@ -343,6 +343,47 @@ pub trait BudgetStore: Send + Sync {
     fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError>;
 }
 
+impl<S: BudgetStore + ?Sized> BudgetStore for std::sync::Arc<S> {
+    fn save_aggregate(
+        &self,
+        agg: &BudgetAggregate,
+        employee_kinds: &[(String, &'static str)],
+    ) -> Result<Result<(), ApiError>, OfficeError> {
+        (**self).save_aggregate(agg, employee_kinds)
+    }
+
+    fn get_by_id(
+        &self,
+        org_id: &str,
+        budget_id: &str,
+    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+        (**self).get_by_id(org_id, budget_id)
+    }
+
+    fn find_by_target(
+        &self,
+        org_id: &str,
+        scope_kind: BudgetScopeKind,
+        task_id: Option<&str>,
+        agent_id: Option<&str>,
+        release_id: Option<&str>,
+        period_kind: BudgetPeriodKind,
+    ) -> Result<Option<BudgetAggregate>, OfficeError> {
+        (**self).find_by_target(
+            org_id,
+            scope_kind,
+            task_id,
+            agent_id,
+            release_id,
+            period_kind,
+        )
+    }
+
+    fn list_all(&self, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
+        (**self).list_all(org_id)
+    }
+}
+
 /// Fail-closed read-only wrapper for satellite offices (`TASK-52` M-20): budget policy mutations
 /// are HQ-authoritative and must never be persisted on a satellite.
 pub struct SatelliteReadOnlyBudgetStore<S> {

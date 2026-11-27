@@ -8,11 +8,14 @@ use std::{
 };
 
 use org_store::{
-    Ack, Change, EngineError, FeedPosition, Files, FilesError, Id, Projector, Status, Store,
-    StoreError, StoreParts,
+    Ack, Change, FeedPosition, Files, FilesError, Id, Projector, Status, Store, StoreError,
+    StoreParts,
 };
 
-use super::super::sqlite::SqliteEngine;
+use super::super::{
+    backend::resolve_sqlite_backend,
+    erased::{DynOfficeEngine, OfficeEngineAdapter},
+};
 use super::{EngineChoice, OfficeEngine, ReadOp, StoreConfig, StoreOp};
 use crate::{
     attachments::projector::AttachmentFiles,
@@ -43,7 +46,7 @@ struct Opened<E: OfficeEngine> {
 }
 
 enum OfficeStoreInner {
-    Sqlite(Opened<SqliteEngine>),
+    Adapter(Opened<DynOfficeEngine>),
     #[cfg(any(test, feature = "testkit"))]
     Memory(Opened<org_store::testkit::MemoryEngine>),
 }
@@ -55,32 +58,16 @@ pub struct OfficeStore(OfficeStoreInner);
 macro_rules! on_store {
     ($office:expr, $opened:ident => $body:expr) => {
         match &$office.0 {
-            OfficeStoreInner::Sqlite($opened) => $body,
+            OfficeStoreInner::Adapter($opened) => $body,
             #[cfg(any(test, feature = "testkit"))]
             OfficeStoreInner::Memory($opened) => $body,
         }
     };
 }
 
-/// The SQLite projection of `config`'s office, in a folder only its owner can enter.
-pub(super) fn sqlite_engine(config: &StoreConfig) -> Result<SqliteEngine, StoreError> {
-    let path = config.projection_path();
-    let folder = path.parent().expect("the projection is in a folder");
-    let made =
-        std::fs::create_dir_all(folder).and_then(|()| org_platform::fs::set_owner_only_dir(folder));
-    made.map_err(|error| EngineError::new(format!("making the runtime folder: {error}")))?;
-    #[cfg(test)]
-    if let Some(ddl) = config.testing.extra_ddl {
-        let engine = SqliteEngine::open_with(&path, ddl)?;
-        return Ok(engine.for_organization(&config.identity.organization_id));
-    }
-    let engine = SqliteEngine::open(&path)?;
-    Ok(engine.for_organization(&config.identity.organization_id))
-}
-
 /// The memory projection: always empty when opened, so the store rebuilds it.
 #[cfg(any(test, feature = "testkit"))]
-pub(super) fn memory_engine() -> org_store::testkit::MemoryEngine {
+pub fn memory_engine() -> org_store::testkit::MemoryEngine {
     org_store::testkit::MemoryEngine::new()
 }
 
@@ -131,7 +118,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     );
     parts.excluded_prefixes = companion_store_exclusions(&here.office_id);
     parts.flush_interval = config.flush_interval;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     if let Some(flush_interval) = config.testing.flush_interval {
         parts.flush_interval = flush_interval;
     }
@@ -237,16 +224,28 @@ impl Marker {
 /// clean-stop marker is consumed: [`OfficeStore::stopped_cleanly`] reports it.
 pub fn open_store(config: &StoreConfig) -> Result<OfficeStore, StoreError> {
     match config.engine {
-        EngineChoice::Sqlite => Ok(OfficeStore(OfficeStoreInner::Sqlite(open_on(
-            config,
-            sqlite_engine(config)?,
-        )?))),
+        EngineChoice::Sqlite => {
+            let backend = resolve_sqlite_backend(config.backend.as_ref())?;
+            let adapter = backend.open_projection(config)?;
+            open_store_with_adapter(config, adapter)
+        }
         #[cfg(any(test, feature = "testkit"))]
         EngineChoice::Memory => Ok(OfficeStore(OfficeStoreInner::Memory(open_on(
             config,
             memory_engine(),
         )?))),
     }
+}
+
+/// Opens the office's store directly over an injected [`OfficeEngineAdapter`].
+pub fn open_store_with_adapter(
+    config: &StoreConfig,
+    adapter: Arc<dyn OfficeEngineAdapter>,
+) -> Result<OfficeStore, StoreError> {
+    Ok(OfficeStore(OfficeStoreInner::Adapter(open_on(
+        config,
+        DynOfficeEngine::new(adapter),
+    )?)))
 }
 
 impl OfficeStore {
@@ -332,12 +331,13 @@ impl OfficeStore {
         on_store!(self, opened => opened.store.with_consistent_materialized(f))
     }
 
-    /// The orderly stop. The SQLite projection's log is then folded into its file, and the
-    /// clean-stop marker is written last. A store that is dropped instead does no such
-    /// work and loses nothing by it, and the next opening is told the stop was not clean.
+    /// The orderly stop. The projection engine's close upkeep (such as folding a SQLite WAL)
+    /// runs after the store closes, and the clean-stop marker is written last. A store that is
+    /// dropped instead does no such work and loses nothing by it, and the next opening is told
+    /// the stop was not clean.
     pub fn close(self) -> Result<(), StoreError> {
         let marker = match self.0 {
-            OfficeStoreInner::Sqlite(opened) => {
+            OfficeStoreInner::Adapter(opened) => {
                 let (engine, marker) = opened.close_store()?;
                 engine.checkpoint()?;
                 marker
@@ -348,11 +348,11 @@ impl OfficeStore {
         marker.write()
     }
 
-    /// The digest of the DDL the SQLite projection is made from.
-    #[cfg(test)]
-    pub(crate) fn schema_digest(&self) -> Option<String> {
+    /// The digest of the DDL the projection is made from, when the engine tracks one.
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn schema_digest(&self) -> Option<String> {
         match &self.0 {
-            OfficeStoreInner::Sqlite(opened) => Some(opened.engine.schema_digest()),
+            OfficeStoreInner::Adapter(opened) => opened.engine.schema_digest(),
             OfficeStoreInner::Memory(_) => None,
         }
     }

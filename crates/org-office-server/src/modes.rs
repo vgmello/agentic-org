@@ -228,6 +228,7 @@ pub(crate) fn open_and_serve(
     };
     // The office checks the admission's organization and roots against its creation intent,
     // and binds the host-authoritative current organization owner (which may have been handed over).
+    org_office_sqlite::install();
     let opened = Office::open_as_owner(
         folder,
         key,

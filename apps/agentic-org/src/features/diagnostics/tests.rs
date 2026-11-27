@@ -312,6 +312,7 @@ fn org_integrity_accepts_valid_state_and_detects_syntax_key_link_and_symlink_fau
 
 #[test]
 fn sqlite_parity_matches_real_org_office_db_and_catches_drift_without_mutating() {
+    org_office_sqlite::install();
     let dir = tempfile::Builder::new()
         .prefix("sq")
         .tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())

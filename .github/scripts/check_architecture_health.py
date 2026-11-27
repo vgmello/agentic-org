@@ -28,7 +28,7 @@ in pure Python 3 stdlib (zero third-party dependencies, < 2s full-repo execution
 
 2. Shrink-Only Infrastructure Coupling Allowlist & Port `#[allow(dead_code)]` Ban:
    - Scans production `.rs` files (same test exclusions and `#[cfg(test)]` stripping):
-     a) `coupling.rusqlite`: `rusqlite` outside `crates/org-office/src/store/sqlite/`
+     a) `coupling.rusqlite`: `rusqlite` outside `crates/org-office-sqlite/src/`
         and `crates/org-host-sqlite/src/`.
      b) `coupling.unix_socket`: `UnixStream` / `UnixListener` / `UnixDatagram` /
         `std::os::unix::net` / `tokio::net::Unix*` outside `crates/org-platform/`,
@@ -118,7 +118,7 @@ ALL_SECTIONS = (SECTION_CRATE_LOC, *COUPLING_SECTIONS)
 
 # Designated adapter directory prefixes (repo-relative POSIX paths).
 RUSQLITE_ADAPTER_PREFIXES = (
-    "crates/org-office/src/store/sqlite/",
+    "crates/org-office-sqlite/src/",
     "crates/org-host-sqlite/src/",
 )
 UNIX_SOCKET_ADAPTER_PREFIXES = (

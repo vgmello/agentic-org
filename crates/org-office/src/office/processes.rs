@@ -301,7 +301,3 @@ impl<'a> ChainSources<'a> {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "processes_tests.rs"]
-mod tests;

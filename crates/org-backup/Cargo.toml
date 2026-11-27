@@ -7,9 +7,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# The office's side of a backup: recorded data roots, the private notes copy and check (the
-# SQLite adapter stays in org-office, ENG-1), the disposable rebuild and projection discard.
+# The office's side of a backup: recorded data roots, the disposable rebuild and projection discard.
 org-office = { path = "../org-office" }
+# SQLite storage adapter for private DB VACUUM INTO / integrity checks and disposable rebuilds (ENG-1, TASK-255).
+org-office-sqlite = { path = "../org-office-sqlite" }
 # The office folder layout and lock names the host and the server share.
 org-office-launch = { path = "../org-office-launch" }
 # The read-only journal inspection and the journal identity types.
@@ -29,6 +30,7 @@ flate2 = { version = "=1.1.11", default-features = false, features = ["rust_back
 
 [dev-dependencies]
 org-office = { path = "../org-office", features = ["testkit"] }
+org-office-sqlite = { path = "../org-office-sqlite", features = ["testkit"] }
 org-store = { path = "../org-store", features = ["testkit"] }
 org-proto = { path = "../org-proto" }
 tempfile.workspace = true
