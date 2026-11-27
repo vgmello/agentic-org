@@ -402,3 +402,122 @@ fn local_os_sandbox_prunes_absent_denies_only_when_plan_requests_it() {
     assert!(pruned_spec.policy.allow.is_empty());
     assert_eq!(pruned_spec.permission_mode, PermissionMode::Ask);
 }
+
+#[test]
+fn local_os_sandbox_recycles_idle_warm_session_when_cohosted_org_appears_and_masks_host_registry() {
+    let _ = org_platform::process::harden_self();
+    // `Office::for_test` already uses the host's real layout:
+    // `<root>/home/offices/<office_id>` and `<root>/data/<org_id>/{durable,runtime}`.
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let org_b = "0195a000-0000-7000-8000-00000000b001";
+    let office_home = office
+        .folder()
+        .parent()
+        .and_then(Path::parent)
+        .expect("office home")
+        .canonicalize()
+        .unwrap();
+    let data_root = office
+        .durable_root()
+        .parent()
+        .and_then(Path::parent)
+        .expect("data root")
+        .canonicalize()
+        .unwrap();
+    let run_o = office_home.join("run/o/00000000a0a0");
+    fs::create_dir_all(&run_o).unwrap();
+    let home_host_registry_db = office_home.join("host-registry.db");
+    fs::write(&home_host_registry_db, b"sqlite-header").unwrap();
+    let state_host_registry_db = data_root.join("office-state").join("host-registry.db");
+    fs::create_dir_all(state_host_registry_db.parent().unwrap()).unwrap();
+    fs::write(&state_host_registry_db, b"sqlite-header").unwrap();
+
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let (agent_id, _) = hire_agent_with_runtime(
+        &office,
+        &owner_id,
+        &root_team_id,
+        "anthropic",
+        "claude",
+        "cohost-agent",
+        "claude-sonnet-4-6",
+    );
+
+    let bin_dir = tempfile::tempdir().unwrap();
+    let script_path = bin_dir.path().join("warm-cohost-agent");
+    let script = "#!/bin/sh\necho '{\"kind\":\"ready\"}'\nwhile IFS= read -r line; do\n  printf '{\"kind\":\"reply\",\"text\":\"ack\"}\\n'\ndone\n";
+    fs::write(&script_path, script).unwrap();
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut registry = RuntimeRegistry::production();
+    registry.register(Arc::new(ScriptedRuntime), Some(script_path));
+
+    let mut cfg = SessionManagerConfig::production(run_o.join("office.sock"));
+    cfg.runtimes = registry;
+    cfg.helper_dir = Some(bin_dir.path().to_path_buf());
+    let mgr = SessionManager::new(Arc::clone(&office), cfg);
+
+    // TASK-246: host-registry.db* is masked in both `<office-home>` and `<data-root>/office-state/`
+    // while `<office-home>/run/o` remains reachable for office sockets.
+    let initial_denies: Vec<String> = mgr
+        .denied_office_globs_for(Some(&agent_id))
+        .into_iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    for db in [&home_host_registry_db, &state_host_registry_db] {
+        assert!(
+            initial_denies.contains(&db.display().to_string()),
+            "{} must be masked: {initial_denies:?}",
+            db.display()
+        );
+    }
+    assert!(
+        !initial_denies.iter().any(|p| {
+            let base = p.strip_suffix("/**").unwrap_or(p);
+            run_o.starts_with(base)
+        }),
+        "office-home/run/o must stay reachable: {initial_denies:?}"
+    );
+
+    // Turn 1 launches warm session with launch-time office-masks topology digest.
+    let first = mgr
+        .start_session(&owner_id, &start_params(&agent_id, "turn 1"))
+        .expect("turn 1 starts cleanly");
+    wait_for_idle(&mgr, &owner_id, &agent_id);
+    let plan_after_turn_1 = mgr
+        .registry
+        .lock()
+        .unwrap()
+        .live
+        .get(&agent_id)
+        .expect("live handle")
+        .sandbox_plan
+        .clone();
+    assert!(plan_after_turn_1.office_masks_digest().is_some());
+    assert!(!LocalOsSandbox.is_plan_stale(&office, &agent_id, &plan_after_turn_1));
+
+    // TASK-245: a co-hosted sibling organization created while warm flips staleness and forces a
+    // fresh launch (new run_id) whose deny list includes the new sibling organization.
+    let org_b_dir = data_root.join(org_b);
+    fs::create_dir_all(org_b_dir.join("durable/state")).unwrap();
+    assert!(LocalOsSandbox.is_plan_stale(&office, &agent_id, &plan_after_turn_1));
+
+    let second = mgr
+        .start_session(&owner_id, &start_params(&agent_id, "turn 2"))
+        .expect("turn 2 recycles stale warm session cleanly");
+    assert_ne!(
+        second.run_id, first.run_id,
+        "stale warm session must be recycled onto a fresh run when a co-hosted org appears"
+    );
+    let refreshed_denies: Vec<String> = mgr
+        .denied_office_globs_for(Some(&agent_id))
+        .into_iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    assert!(
+        refreshed_denies.contains(&org_b_dir.display().to_string()),
+        "refreshed session masks must deny newly created sibling org: {refreshed_denies:?}"
+    );
+    mgr.stop_all("test_done");
+}
