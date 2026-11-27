@@ -1,0 +1,241 @@
+/* Processes, standards, development processes and documentation (TASK-247). Tokens only; every rule carries at least
+   two classes or an id-free scope of its own, so the result does not depend on stylesheet order. Rows reuse the
+   Features list (.plan-row), groups reuse the Work group header, the panel reuses .side-panel. */
+
+/* Toolbar: kind tabs | search · Display | preview and New at the end */
+.proc-subbar .proc-toolbar { align-items: center; }
+.proc-toolbar .proc-toolbar-end { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-inline-start: auto; }
+.proc-toolbar .queue-tabs > a.queue-tab { text-decoration: none; }
+.settings-body .proc-note.desc { padding-block: 12px 8px; font-size: var(--fs-sm); }
+
+/* The Show select in the page header (PROC-33: stacks below the heading under 640 px) */
+.ph-actions .proc-show, .proc-panel-body .proc-show { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.proc-show > label { color: var(--gray-300); font-size: var(--fs-sm); font-weight: 600; }
+.proc-show > select.field { min-width: 12rem; max-width: 100%; }
+
+/* Context: the definition line, the lead, the resolution chain and the development process line */
+.proc-context { display: grid; gap: 8px; padding: 14px var(--gutter) 4px; max-width: 64rem; }
+.proc-context .proc-define, .proc-context .proc-devline, .proc-panel-body .proc-devline {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--gray-300); font-size: var(--fs-sm); line-height: 1.5;
+}
+.proc-context .proc-define .ic, .proc-context .proc-devline .ic { flex: none; margin-top: 2px; color: var(--gray-400); }
+.proc-context .proc-define b { color: var(--white); font-weight: 600; }
+.proc-context .proc-lead, .proc-panel .proc-lead, .doc-page .proc-lead { margin: 0; color: var(--gray-400); font-size: var(--fs-sm); line-height: 1.5; max-width: 52rem; }
+.proc-context .proc-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-xs); color: var(--gray-300); }
+.proc-chain > li { display: inline-flex; align-items: center; gap: 4px; }
+.proc-chain > li > .ic { color: var(--gray-400); }
+.proc-context .proc-devline { padding: 8px 12px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); }
+
+/* Groups and rows */
+.proc-results.plan-results > .proc-group { margin: 12px var(--gutter) 0; }
+.proc-results.plan-results > .proc-group + .proc-group { margin-top: 20px; }
+.proc-group .work-group-title { display: flex; align-items: center; gap: 8px; }
+.proc-group .work-group-title > .ic { color: var(--gray-400); }
+.proc-group .doc-sec-path { margin-inline-start: auto; font-weight: 400; }
+.proc-group .proc-group-note { margin: 6px 12px 2px; color: var(--gray-400); font-size: var(--fs-xs); line-height: 1.45; }
+.proc-group .plan-rows > li.proc-row { padding-inline: 12px; align-items: flex-start; }
+.plan-rows > li.proc-row .grow { display: grid; gap: 4px; }
+.proc-row .proc-row-ic { flex: none; display: inline-flex; margin-top: 1px; color: var(--gray-400); }
+.proc-row.is-problem .proc-row-ic { color: var(--tone-warn-ink); }
+.proc-row .rt .proc-open {
+  margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-align: start; cursor: pointer;
+}
+.proc-row .rt .proc-title { font-weight: 600; color: var(--white); }
+.proc-row .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 14px; }
+.proc-row .meta > * { display: inline-flex; align-items: center; gap: 4px; }
+.proc-row .dev-summary { margin: 0; color: var(--gray-300); font-size: var(--fs-sm); line-height: 1.45; max-width: 52rem; }
+.proc-row .proc-problem { margin: 2px 0 0; color: var(--tone-warn-ink); font-size: var(--fs-sm); line-height: 1.45; }
+.proc-row .proc-row-btn { position: relative; z-index: 2; flex: none; align-self: center; }
+.proc-row > .chev { align-self: center; }
+code.proc-key { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--gray-400); overflow-wrap: anywhere; }
+.proc-owner { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Badges: a word plus an icon, never colour alone (PROC-18) */
+.proc-badges { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; flex: 0 1 auto; max-width: 26rem; }
+.proc-badges .proc-badge, .proc-badges .pill { position: relative; z-index: 1; }
+.proc-badge {
+  display: inline-flex; flex: none; align-items: center; gap: 5px; padding: 2px 8px; border-radius: var(--radius-md);
+  font-size: var(--fs-xs); font-weight: 500; line-height: 18px; white-space: nowrap; color: var(--gray-300); box-shadow: inset 0 0 0 1px var(--line2);
+}
+.proc-badge > .ic { color: var(--gray-400); }
+.proc-badge.is-lock, .proc-badge.is-replace, .proc-badge.is-version { color: var(--tone-accent-ink); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); background: var(--tone-accent-soft); }
+.proc-badge.is-lock > .ic, .proc-badge.is-replace > .ic, .proc-badge.is-version > .ic { color: inherit; }
+.proc-badge.is-add, .proc-badge.is-ok { color: var(--tone-ok-ink); box-shadow: inset 0 0 0 1px var(--tone-ok-ring); background: var(--tone-ok-soft); }
+.proc-badge.is-add > .ic, .proc-badge.is-ok > .ic { color: inherit; }
+.proc-badge.is-warn { color: var(--tone-warn-ink); box-shadow: inset 0 0 0 1px var(--tone-warn-ring); background: var(--tone-warn-soft); }
+.proc-badge.is-warn > .ic { color: inherit; }
+
+/* States */
+.proc-callout.callout { margin: 12px var(--gutter) 0; }
+.proc-callout.is-warn > .ic { color: var(--tone-warn-ink); }
+.proc-panel-body .proc-callout.callout, .doc-page .proc-callout.callout { margin: 0; }
+.proc-loading .skel { padding: 12px var(--gutter); }
+.proc-empty.empty .btn .ic { margin-inline-end: 6px; }
+.proc-muted { color: var(--gray-400); }
+.proc-warn-ink { color: var(--tone-warn-ink); }
+
+/* The side panel: Work panel surface and edge shadow, sized for reading */
+.side-panel.proc-panel { --side-panel-width: 40rem; z-index: 85; }
+.side-panel.proc-panel[data-wide] { --side-panel-width: 46rem; }
+.side-panel.proc-panel .proc-panel-bar { --panel-header-gutter: 24px; }
+.proc-panel .proc-panel-eyebrow { display: inline-flex; align-items: center; gap: 6px; margin: 0; min-width: 0; color: var(--gray-400); font-size: var(--fs-sm); }
+.proc-panel .proc-panel-head { display: grid; gap: 10px; padding: 18px 24px 4px; }
+.proc-panel .proc-panel-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 600; line-height: 1.3; color: var(--white); overflow-wrap: anywhere; }
+.proc-panel .proc-panel-head h2:focus:not(:focus-visible) { outline: none; }
+.proc-panel .proc-panel-head .proc-badges { justify-content: flex-start; max-width: none; }
+.proc-panel .proc-panel-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.proc-panel .proc-inline-note { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
+.proc-panel .proc-panel-body { display: grid; gap: 18px; padding: 12px 24px 40px; min-width: 0; }
+.proc-panel-body .proc-sec, .doc-page .proc-sec { display: grid; gap: 8px; min-width: 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.proc-sec .proc-sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.proc-sec .proc-sec-h h3 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--white); }
+.proc-sec .proc-sec-h h3 .ic { color: var(--gray-400); }
+.proc-panel-body .proc-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 12px 20px; margin: 0; }
+.proc-facts > div { display: grid; gap: 2px; min-width: 0; }
+.proc-facts dt { color: var(--gray-400); font-size: var(--fs-xs); font-weight: 600; }
+.proc-facts dd { margin: 0; color: var(--gray-300); font-size: var(--fs-sm); line-height: 1.45; overflow-wrap: anywhere; }
+.proc-facts dd code, .proc-panel-body p code, .proc-panel-body li > code { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--gray-300); overflow-wrap: anywhere; }
+
+/* Why this one (process inspect --why) */
+.proc-panel-body .proc-why { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.proc-why .proc-why-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line); font-size: var(--fs-sm); color: var(--gray-300); }
+.proc-why .proc-why-row b { color: var(--white); font-weight: 600; }
+.proc-why .proc-why-word { font-size: var(--fs-xs); color: var(--gray-400); }
+.proc-why .proc-why-row[data-result="wins"] { box-shadow: inset 0 0 0 1px var(--tone-ok-ring); }
+.proc-why .proc-why-row[data-result="wins"] > .ic, .proc-why .proc-why-row[data-result="wins"] .proc-why-word { color: var(--tone-ok-ink); }
+.proc-why .proc-why-row[data-result="refused"] > .ic, .proc-why .proc-why-row[data-result="refused"] .proc-why-word { color: var(--tone-warn-ink); }
+.proc-panel-body .proc-cmd { margin: 0; }
+.proc-panel-body .proc-places { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.proc-places .proc-place { display: inline-flex; align-items: center; gap: 6px; min-height: 2rem; padding: 4px 10px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); color: var(--gray-300); font-size: var(--fs-sm); text-decoration: none; }
+.proc-places .proc-place:hover { background: var(--hover); color: var(--white); }
+
+/* Document text */
+.proc-md { display: grid; gap: 8px; min-width: 0; color: var(--gray-300); line-height: 1.6; font-size: var(--fs-sm); max-width: 46rem; }
+.proc-md :is(h3, h4, h5, h6) { margin: 6px 0 0; color: var(--white); font-size: var(--fs-sm); font-weight: 600; }
+.proc-md :is(ul, ol) { display: grid; gap: 4px; margin: 0; padding-inline-start: 20px; }
+.proc-md ul { list-style: disc; }
+.proc-md ol { list-style: decimal; }
+.proc-md code { font-family: var(--font-mono); font-size: 0.85em; padding: 1px 4px; border-radius: 4px; background: var(--hover); color: var(--white); }
+.proc-md pre, .doc-diagram pre { margin: 0; padding: 12px; overflow-x: auto; border-radius: var(--radius-md); background: var(--hover); font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6; color: var(--gray-300); }
+.proc-md pre code { padding: 0; background: none; }
+.doc-page .doc-md { font-size: var(--fs-md, 0.9375rem); }
+
+/* History and difference */
+.proc-history { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.proc-history > li { display: grid; grid-template-columns: 3.5rem auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 2.25rem; font-size: var(--fs-sm); color: var(--gray-300); }
+.proc-history .proc-rev { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--gray-400); }
+.proc-history .proc-hist-t { min-width: 0; overflow-wrap: anywhere; }
+.proc-history .proc-hist-t b { color: var(--white); font-weight: 600; }
+.proc-history time { color: var(--gray-400); font-size: var(--fs-xs); white-space: nowrap; }
+.proc-panel-body .proc-diff { display: grid; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); overflow: hidden; font-size: var(--fs-sm); }
+.proc-diff .proc-diff-row { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 8px; padding: 4px 10px; color: var(--gray-400); overflow-wrap: anywhere; }
+.proc-diff .proc-diff-op { font-size: var(--fs-xs); font-weight: 600; }
+.proc-diff .proc-diff-row[data-op="add"] { background: var(--tone-ok-soft); color: var(--tone-ok-ink); }
+.proc-diff .proc-diff-row[data-op="del"] { background: var(--tone-bad-soft); color: var(--tone-bad-ink); text-decoration: line-through; }
+
+/* What agents receive */
+.proc-panel-body .proc-agent-pick { flex-wrap: wrap; }
+.proc-panel-body .proc-instr-sub { margin: 0; color: var(--gray-400); font-size: var(--fs-xs); font-weight: 600; }
+.proc-panel-body .proc-instr-doc { border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
+.proc-instr-doc > summary { display: flex; flex-wrap: wrap; gap: 4px 8px; min-height: 2.75rem; align-items: center; padding: 6px 12px; cursor: pointer; color: var(--white); font-size: var(--fs-sm); font-weight: 600; }
+.proc-instr-doc > .proc-md { padding: 0 12px 12px; }
+.proc-panel-body .proc-instr-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.proc-instr-list > li { display: grid; gap: 2px; font-size: var(--fs-sm); color: var(--gray-300); }
+.proc-instr-list > li b { color: var(--white); font-weight: 600; }
+.proc-instr-list > li p { margin: 0; line-height: 1.45; }
+.proc-instr-list.is-compact { gap: 4px; }
+.proc-panel-body .proc-stages { display: grid; gap: 6px; margin: 0; padding-inline-start: 20px; list-style: decimal; font-size: var(--fs-sm); color: var(--gray-300); }
+.proc-stages b { color: var(--white); font-weight: 600; }
+.proc-panel-body .proc-meter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: var(--fs-xs); color: var(--gray-400); }
+.proc-meter .progress { flex: 1 1 10rem; max-width: 16rem; }
+.proc-panel-body .dev-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.dev-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: var(--fs-sm); color: var(--gray-300); }
+.dev-list > li b { color: var(--white); font-weight: 600; }
+
+/* Editor dialog */
+.sheet.dialog.plan-dialog.proc-dialog { width: min(44rem, calc(100% - 32px)); }
+.work-task-form.proc-form label, .work-task-form.doc-editor label { align-content: start; }
+.proc-form .proc-editor, .doc-editor .proc-editor { min-height: 14rem; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.55; resize: vertical; }
+.proc-form .proc-path { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0; }
+.proc-form select[aria-invalid="true"] { box-shadow: 0 0 0 2px var(--tone-warn-ring); }
+
+/* Documents */
+.doc-page .doc-editor { display: grid; gap: 12px; max-width: 52rem; }
+.doc-editor .doc-editor-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.doc-page .doc-versions { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.doc-versions .doc-version { display: grid; gap: 4px; padding: 12px 14px; border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--line2); font-size: var(--fs-sm); color: var(--gray-300); }
+.doc-version .doc-version-h { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.doc-version .doc-version-h b { color: var(--white); font-family: var(--font-mono); }
+.doc-version p { margin: 0; }
+.doc-page .doc-code { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.doc-code > li { display: grid; gap: 0; }
+.doc-page .doc-diagram { display: grid; gap: 8px; max-width: 46rem; }
+.proc-group .doc-sec-empty.plan-empty { margin: 8px 0 0; }
+
+/* A feature's definition */
+.plan-sec .feat-path { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: -2px 0 0; color: var(--gray-400); font-size: var(--fs-xs); }
+.plan-sec .feat-path code { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.plan-sec .feat-def { display: grid; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); gap: 12px; }
+.feat-def .feat-def-sec { display: grid; align-content: start; gap: 6px; padding: 12px 14px; min-width: 0; border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--line2); }
+.feat-def .feat-def-sec > h3 { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--white); }
+.plan-sec .feat-def-missing { margin: 0; font-size: var(--fs-xs); }
+.plan-sec .feat-support { margin-inline: -12px; }
+.plan-sec .feat-support > li.proc-row { padding-inline: 12px; }
+
+@media (max-width: 959px) {
+  .proc-row .proc-badges { max-width: 14rem; }
+}
+@media (max-width: 639px) {
+  .ph-actions .proc-show { width: 100%; }
+  .ph-actions .proc-show > select.field { flex: 1; min-width: 0; }
+  .proc-toolbar .proc-toolbar-end { width: 100%; margin-inline-start: 0; }
+  .proc-toolbar .proc-toolbar-end .btn { flex: 1 1 auto; }
+  .plan-rows > li.proc-row { flex-wrap: wrap; }
+  .plan-rows > li.proc-row > .grow { flex: 1 1 calc(100% - 3rem); }
+  .plan-rows > li.proc-row > .proc-badges { order: 1; justify-content: flex-start; max-width: none; margin-inline-start: 40px; }
+  .plan-rows > li.proc-row > .proc-row-btn { order: 2; margin-inline-start: 40px; }
+  .plan-rows > li.proc-row > .chev { display: none; }
+  .proc-group .doc-sec-path { display: none; }
+  .side-panel.proc-panel .proc-panel-head, .side-panel.proc-panel .proc-panel-body { padding-inline: 16px; }
+  .side-panel.proc-panel .proc-panel-bar { --panel-header-gutter: 16px; }
+  .proc-history > li { grid-template-columns: 3rem auto minmax(0, 1fr); }
+  .proc-history time { grid-column: 3; }
+  .side-panel.proc-panel { border-inline-start: 0; box-shadow: none; }
+}
+@media (max-width: 639px), (pointer: coarse) {
+  .proc-panel .proc-panel-actions .btn, .proc-row .proc-row-btn, .proc-places .proc-place, .proc-panel .proc-panel-bar .btn.icon { min-height: 2.75rem; }
+  .proc-panel .proc-panel-bar .btn.icon { min-width: 2.75rem; }
+  .proc-row .rt .proc-open, .doc-row .rt a, .dev-row .rt .proc-open { display: inline-flex; align-items: center; min-height: 2.75rem; }
+}
+@media (forced-colors: active) {
+  .proc-badge, .proc-why .proc-why-row, .feat-def .feat-def-sec, .doc-versions .doc-version, .proc-instr-doc { border: 1px solid CanvasText; }
+}
+
+/* Settings' left column is 220 px: a long section name ("Development processes") wraps instead of overflowing */
+.settings > .subnav > a[href="#/settings/dev-processes"] { white-space: normal; }
+
+/* In a project, Docs' Documents / Processes / Standards is the project's segmented control; these are links, so the
+   current one carries aria-current instead of aria-pressed */
+.project-header ~ .work-subbar-header.proc-subbar .primary-tab-row > .queue-tabs .queue-tab[aria-current="page"] {
+  background: var(--toolbar-seg-active-bg); border-color: var(--toolbar-seg-active-border);
+  box-shadow: var(--toolbar-seg-active-shadow); color: var(--toolbar-seg-active-ink, var(--white));
+}
+@media (max-width: 639px), (pointer: coarse) {
+  .project-header ~ .work-subbar-header.proc-subbar .primary-tab-row > .queue-tabs .queue-tab { min-height: 2.75rem; }
+}
+
+/* Development processes: row actions, import checks, choosing a project's process */
+.dev-row .dev-row-actions { display: flex; flex: none; align-items: center; gap: 4px; align-self: center; }
+.dev-checks { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.dev-checks > li { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-sm); line-height: 1.45; color: var(--gray-300); }
+.dev-checks > li > .ic { flex: none; margin-top: 2px; color: var(--tone-ok-ink); }
+.dev-checks > li.is-error, .dev-checks > li.is-error > .ic { color: var(--tone-bad-ink); }
+.dev-checks code { font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600; }
+.dev-import-result:not(:empty) { display: grid; gap: 12px; padding: 12px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); }
+.dev-import-result .dev-import-ok { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--gray-300); font-size: var(--fs-sm); }
+.dev-import-result .dev-import-ok > .ic { color: var(--tone-ok-ink); }
+.plan-form .dev-choose-facts { display: grid; gap: 14px; margin: 0; }
+.plan-form .dev-choose-facts > div { display: grid; gap: 4px; }
+@media (max-width: 639px) {
+  .plan-rows > li.dev-row > .dev-row-actions { order: 3; margin-inline-start: 40px; }
+}

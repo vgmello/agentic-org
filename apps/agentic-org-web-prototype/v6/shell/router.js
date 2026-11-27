@@ -9,6 +9,7 @@ import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
 import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
+import { processesTitle } from "../pages/processes.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
 import { boardPlace, fitTextarea, mountBoard, mountWorkToolbar, pageWork, restoreBoardPlace, setWorkPanelExpanded, settleWorkResults, showSidePanel, workPanelOpener } from "../pages/work.js";
@@ -112,7 +113,7 @@ const ROUTE_RENDERERS = {
   calendar: () => pageCalendar(),
   teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" || !r1 ? pageOrgChart() : r1 === "all" ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
   members: (r1, r2, r3) => (own(M, r1) ? pageMember(r1, r2, r3) : notFound()),
-  settings: (r1, r2) => (!r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
+  settings: (r1, r2) => (!r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, r1 === "processes" ? r2 : own(M, r2) ? r2 : null) : notFound()),
   preferences: () => pagePreferences(),
   search: () => pageSearch(qs().get("q") || ""),
 };
@@ -201,6 +202,7 @@ function syncActivityScopeState(r0, projectId) {
 
 function pageTitle(r0, r1) {
   if (r0 === "members" && own(M, r1)) return M[r1].name;
+  if (r0 === "settings" && r1 === "processes") return processesTitle(); /* "<place> · Processes" (PROC-32) */
   if (r0 === "chat") return chatDocTitle(r1); /* Chat resolves conversations and its Mentions and Threads views */
   return TITLES[r0] || "Not found";
 }

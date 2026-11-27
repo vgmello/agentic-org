@@ -2,9 +2,11 @@ import { M, OFFICES, officeName } from "../data.js";
 import { agentSetupFields } from "./teams.js";
 import { searchResults } from "../shell/cmdk.js";
 import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, FONT_OPTIONS, S, THEME_OPTIONS, getOrgName } from "../state.js";
+import { settingsProcesses } from "./processes.js";
+import { pageDevProcesses } from "./dev-processes.js";
 import { SEP, av, avStack, crumbs, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
-const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
+const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["dev-processes", "Development processes", "files"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
 const health = (a) => (M[a].offboarded ? "Offboarded" : M[a].setup.needs ? "Needs setup: " + M[a].setup.needs : M[a].paused ? "Paused" : "Ready");
 const healthMark = (a) => { const h = health(a); const [icon, tone] = h === "Ready" ? ["check-circle", "green"] : (h === "Paused" || h === "Offboarded") ? ["pause", "gray"] : ["wrench", "amber"]; return pill(h, tone, icon); };
 function settingsFrame(active, header, content) {
@@ -23,6 +25,7 @@ function settingsFrame(active, header, content) {
 }
 function pageSettings(sec = "general", sub) {
   if (sec === "appearance") return pagePreferences();
+  if (sec === "processes" || sec === "dev-processes") { const { header, body } = sec === "processes" ? settingsProcesses(sub) : pageDevProcesses(); return settingsFrame(sec, header, body); }
   const label = SET.find(([key]) => key === sec)[1];
   let header = hdr(label, "Organization settings"), body;
   const agents = Object.keys(M).filter((k) => M[k].kind === "agent");
@@ -51,7 +54,6 @@ function pageSettings(sec = "general", sub) {
   } else {
     const [icon, description] = {
       roles: ["id", "Roles define what each agent does."],
-      processes: ["refresh", "Processes define how work moves through the organization."],
       access: ["key", "Members and access manages who can use this organization."],
       updates: ["download", "Updates installs new versions of Agentic Org."],
     }[sec];
