@@ -72,17 +72,13 @@ fn prepare_split_registry(
         &resolved.join("cache"),
         forbidden_canon,
     );
-    if linked_cache || !resolved.join("src").is_dir() {
-        let _ = agent_reg.remove_symlink(OsStr::new("src"));
-        let has_writable_src = agent_reg
-            .open_or_create_child(OsStr::new("src"), office_uid)
-            .is_ok();
-        linked_index || linked_cache || has_writable_src
-    } else {
-        let linked_src =
-            link_readonly_cache(&agent_reg, "src", &resolved.join("src"), forbidden_canon);
-        linked_index || linked_src
-    }
+    // Never symlink host `registry/src`; every agent keeps a private writable `registry/src`
+    // regardless of whether host `registry/cache` is present or linkable (`TASK-135`).
+    let _ = agent_reg.remove_symlink(OsStr::new("src"));
+    let has_writable_src = agent_reg
+        .open_or_create_child(OsStr::new("src"), office_uid)
+        .is_ok();
+    linked_index || linked_cache || has_writable_src
 }
 
 /// Prepares `<agent_home>/.cargo/git` with a read-only symlink to `<host_cargo>/git/db` (when
@@ -231,7 +227,7 @@ pub(crate) fn append_rust_toolchain_env(
             target_dir.into_os_string(),
         ));
     }
-    if input.sandbox_enabled && (cargo_home.is_some() || host_cargo.is_some()) {
+    if input.sandbox_enabled {
         captured.push((OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")));
     }
 }

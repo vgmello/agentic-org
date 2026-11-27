@@ -549,4 +549,64 @@ fn task135_git_runner_isolates_host_gitconfig_and_never_inherits_host_credential
         helpers.lines().all(|line| line.trim().is_empty()),
         "credential.helper must stay empty when GitCredential::None is active: {helpers:?}"
     );
+    let follow = runner
+        .run_checked(
+            None,
+            None,
+            AllowedProtocol::Https,
+            &crate::GitCredential::None,
+            &["config", "--get", "http.followRedirects"],
+        )
+        .unwrap();
+    assert_eq!(
+        follow.trim(),
+        "false",
+        "GitRunner must disable HTTP redirects to prevent credential replay"
+    );
+}
+
+#[test]
+fn task135_canonical_https_repo_scope_rejects_widening_traversal_and_bad_ports() {
+    assert_eq!(
+        crate::canonical_https_repo_scope("https://GitHub.COM:443/Acme/App.git/").unwrap(),
+        "https://github.com:443/Acme/App.git"
+    );
+    for bad in [
+        "https://github.com",
+        "https://github.com/",
+        "https://github.com/acme/..",
+        "https://github.com/acme/repo/..",
+        "https://github.com/acme/./repo",
+        "https://github.com/acme//repo",
+        "https://github.com/acme/%2e%2e/other",
+        "https://github.com/acme/%2Fother",
+        "https://github.com/acme/%5cother",
+        "https://github.com:0/acme/repo",
+        "https://github.com:99999/acme/repo",
+        "https://github.com:abc/acme/repo",
+        "https://user@github.com/acme/repo",
+        "http://github.com/acme/repo",
+    ] {
+        assert!(
+            crate::canonical_https_repo_scope(bad).is_err(),
+            "expected `{bad}` to be rejected"
+        );
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let runner = GitRunner::new(tmp.path().join("clean-home")).unwrap();
+    let bad_cred = crate::GitCredential::HttpsToken {
+        username: "user@host".into(),
+        token: zeroize::Zeroizing::new("tok".into()),
+        scope_url: "https://github.com/acme/repo.git".into(),
+    };
+    assert!(runner
+        .run_checked(
+            None,
+            None,
+            AllowedProtocol::Https,
+            &bad_cred,
+            &["--version"]
+        )
+        .is_err());
 }

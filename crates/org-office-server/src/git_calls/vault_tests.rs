@@ -372,3 +372,75 @@ fn task135_actionable_https_auth_error_and_secret_redaction() {
     assert!(!scrubbed.contains(basic), "leaked basic header: {scrubbed}");
     assert!(!scrubbed.contains(secret), "leaked secret: {scrubbed}");
 }
+
+#[test]
+fn task135_vault_enforces_strict_scope_and_token_size_boundaries() {
+    org_office_sqlite::install();
+    let office = Arc::new(Office::for_test(TestOffice {
+        engine: EngineChoice::Sqlite,
+    }));
+    org_platform::fs::set_owner_only_dir(office.folder()).unwrap();
+    let owner = office.owner_member_id().to_owned();
+    let live = Arc::new(LiveEvents::for_owner(Box::new(|| {}), owner.clone()));
+    let svc = GitService::new(Arc::clone(&office), live);
+    let repo_id = uuid(401);
+    register_https_repo(
+        &svc,
+        &owner,
+        &repo_id,
+        "boundary",
+        "https://GitHub.COM/acme/boundary.git",
+    );
+    let repo = office
+        .resolve_repository(&repo_id)
+        .unwrap()
+        .expect("registered boundary repo");
+
+    // Host-only & traversal scopes fail closed.
+    for bad in [
+        "https://github.com",
+        "https://github.com/",
+        "https://github.com/acme/..",
+        "https://github.com/acme/%2e%2e/other",
+    ] {
+        assert!(
+            vault::canonical_https_repo_scope(bad).is_err(),
+            "expected `{bad}` to fail"
+        );
+    }
+
+    // Username with `@` rejected cleanly.
+    let bad_user = vault::store_repo_https_token(&office, &repo, Some("bot@acme"), "tok-ok")
+        .expect_err("username with @ must fail");
+    assert_eq!(bad_user.code, ErrorCode::InvalidRequest);
+
+    // 2048-byte token succeeds and round-trips cleanly.
+    let max_tok = "a".repeat(2048);
+    vault::store_repo_https_token(&office, &repo, Some("x-access-token"), &max_tok)
+        .expect("2048-byte token should encrypt cleanly");
+    let loaded = vault::load_repo_https_token(
+        &office,
+        repo.id.as_str(),
+        "https://GitHub.COM/acme/boundary.git",
+    )
+    .unwrap()
+    .expect("stored token");
+    assert!(matches!(
+        loaded,
+        GitCredential::HttpsToken { ref scope_url, .. }
+            if scope_url == "https://github.com/acme/boundary.git"
+    ));
+
+    // 2049-byte token rejected cleanly as InvalidRequest.
+    let over_tok = "a".repeat(2049);
+    let over_err = vault::store_repo_https_token(&office, &repo, None, &over_tok)
+        .expect_err("2049-byte token must fail");
+    assert_eq!(over_err.code, ErrorCode::InvalidRequest);
+
+    // Worst-case JSON-escaped 2048-byte token (> 4096 serialized bytes) returns InvalidRequest,
+    // never StorageError.
+    let escaped_tok = "\"".repeat(2048);
+    let esc_err = vault::store_repo_https_token(&office, &repo, None, &escaped_tok)
+        .expect_err("escaped payload > MAX_KEY_BYTES must fail with InvalidRequest");
+    assert_eq!(esc_err.code, ErrorCode::InvalidRequest);
+}

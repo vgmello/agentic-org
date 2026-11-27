@@ -223,11 +223,23 @@ pub struct WorktreePrepareParams {
     pub base_branch: Option<String>,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreePrepareResult {
     pub worktree: WorktreeRecordWire,
     pub writable_roots: Vec<String>,
     pub fixed_write_denies: Vec<String>,
+    /// `true` when the caller's active sandboxed session launched before this worktree existed
+    /// and needs a post-turn sandbox recycle (automatically scheduled by the office) before
+    /// OS-sandboxed `git` commands can access the bare cache (`TASK-160`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sandbox_refresh_required: bool,
+    /// Actionable guidance returned when `sandbox_refresh_required` is `true` (`TASK-160`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_refresh_hint: Option<String>,
 }
 
 /// `git.push` params (`doc-35` G1, `doc-28` §3.6 `repo push`). Branch is never caller-supplied.

@@ -1362,3 +1362,39 @@ fn managed_session_environment_exports_agent_os_format_json() {
         "managed runtime env must export AGENT_OS_FORMAT: {debug_names}"
     );
 }
+
+#[test]
+fn task135_split_cargo_registry_never_symlinks_host_src_even_if_cache_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let host_cargo = root.join("host-cargo");
+    let agent_home = root.join("agent-home");
+    std::fs::create_dir_all(host_cargo.join("registry/index")).unwrap();
+    std::fs::create_dir_all(host_cargo.join("registry/src")).unwrap();
+    org_platform::fs::create_owner_only_dir_all(&agent_home).unwrap();
+
+    // Case 1: host `registry/cache` is absent while host `registry/src` exists.
+    let cargo_home =
+        super::rust_toolchain::link_host_rust_caches(&agent_home, None, Some(&host_cargo), &[])
+            .expect("split cargo home");
+    let src_path = cargo_home.join("registry/src");
+    let meta = std::fs::symlink_metadata(&src_path).expect("registry/src exists");
+    assert!(
+        meta.file_type().is_dir() && !meta.file_type().is_symlink(),
+        "agent registry/src must be a real writable directory, never a symlink to host src"
+    );
+
+    // Case 2: host `registry/cache` exists, but agent plants a regular file at
+    // `<agent_home>/.cargo/registry/cache` to make cache linking return false.
+    std::fs::create_dir_all(host_cargo.join("registry/cache")).unwrap();
+    let planted = cargo_home.join("registry/cache");
+    let _ = std::fs::remove_file(&planted);
+    std::fs::write(&planted, b"planted-by-agent").unwrap();
+    let _ = super::rust_toolchain::link_host_rust_caches(&agent_home, None, Some(&host_cargo), &[])
+        .expect("re-prepare split cargo home");
+    let meta2 = std::fs::symlink_metadata(&src_path).expect("registry/src still exists");
+    assert!(
+        meta2.file_type().is_dir() && !meta2.file_type().is_symlink(),
+        "planted registry/cache file must never trigger fallback symlinking of host registry/src"
+    );
+}

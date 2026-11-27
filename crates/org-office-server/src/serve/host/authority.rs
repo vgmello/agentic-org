@@ -88,6 +88,9 @@ fn requires_owner(method: &str) -> bool {
             | "cost.subscription_usage.collect"
             | "cost.subscription_usage.credential_set"
             | "cost.subscription_usage.credential_revoke"
+            | "repo.credential_set"
+            | "repo.credential_status"
+            | "repo.credential_revoke"
     )
 }
 

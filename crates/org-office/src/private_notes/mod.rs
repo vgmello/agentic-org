@@ -12,7 +12,9 @@
 pub mod content;
 pub mod memory;
 pub mod query;
+mod satellite;
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use org_proto::private_notes::{PrivateNoteField, PrivateNoteKind, PrivateNoteWire};
@@ -26,6 +28,7 @@ pub use content::{
     NotePatch,
 };
 pub use query::{FieldSet, NoteCursor, NotePage, NoteQuery};
+pub use satellite::SatelliteRefusedPrivateNotesStore;
 
 /// One row of `private_notes` with its `private_note_tags` (`private-notes-schema.sql`).
 #[derive(Clone, PartialEq, Eq)]
@@ -230,30 +233,21 @@ pub enum PublishAttempt {
     },
 }
 
+/// Shorthand result type returned by mutating [`PrivateNotesStore`] operations.
+pub type NoteResult = Result<Result<PrivateNoteRecord, ApiError>, OfficeError>;
+
 /// Consumer-owned adapter boundary for the isolated private notes database (`doc-8`, `ENG-1`).
 /// Every engine enforces `ADR-0031` itself: an agent reads only its own notes.
 pub trait PrivateNotesStore: Send + Sync {
-    /// Whether this office holds private notes at all. `false` only on a satellite, where every
-    /// `tasks.notes.*` call fails closed with `Unavailable` before reaching the store.
+    /// Whether this office holds private notes at all. `false` only on a satellite.
     fn available(&self) -> bool {
         true
     }
-
-    fn create_note(
-        &self,
-        cmd: CreateNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError>;
-
-    fn edit_note(
-        &self,
-        cmd: EditNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError>;
-
-    fn delete_note(
-        &self,
-        cmd: DeleteNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError>;
-
+    fn create_note(&self, cmd: CreateNoteCmd<'_>) -> NoteResult;
+    /// Atomically upserts the caller's single pinned `"checkpoint"` note on `cmd.task_id`.
+    fn upsert_checkpoint_note(&self, cmd: CreateNoteCmd<'_>) -> NoteResult;
+    fn edit_note(&self, cmd: EditNoteCmd<'_>) -> NoteResult;
+    fn delete_note(&self, cmd: DeleteNoteCmd<'_>) -> NoteResult;
     fn get_note(
         &self,
         org_id: &str,
@@ -261,15 +255,19 @@ pub trait PrivateNotesStore: Send + Sync {
         caller_is_person: bool,
         note_id: &str,
     ) -> Result<Option<PrivateNoteRecord>, OfficeError>;
-
     /// One newest-first page of the caller's visible active notes matching `query`.
     fn list_notes(&self, query: &NoteQuery<'_>) -> Result<NotePage, OfficeError>;
-
+    /// Batch lookup of `author_id`'s own latest active private note per task ID (`ADR-0031`).
+    fn latest_author_notes_for_tasks(
+        &self,
+        org_id: &str,
+        author_id: &str,
+        task_ids: &[String],
+    ) -> Result<BTreeMap<String, PrivateNoteRecord>, OfficeError>;
     fn begin_publish(
         &self,
         cmd: BeginPublishCmd<'_>,
     ) -> Result<Result<PublishAttempt, ApiError>, OfficeError>;
-
     fn finish_publish(
         &self,
         org_id: &str,
@@ -278,89 +276,8 @@ pub trait PrivateNotesStore: Send + Sync {
         error_code: Option<&str>,
         now: &str,
     ) -> Result<(), OfficeError>;
-
     /// Mirrors a shared task deletion into `private_note_tasks.is_deleted = 1` (`PN-06`).
     fn mark_task_deleted(&self, org_id: &str, task_id: &str) -> Result<(), OfficeError>;
-}
-
-/// Fail-closed private-notes adapter for satellite offices (`doc-79`, `TASK-52` / `ARCH-02`).
-/// Satellites never open or create `<durable>/private/task-notes.db`; private notes live
-/// exclusively at HQ.
-#[derive(Debug, Default)]
-pub struct SatelliteRefusedPrivateNotesStore;
-
-impl SatelliteRefusedPrivateNotesStore {
-    /// The refusal every `tasks.notes.*` call receives on a satellite: the notes exist only at
-    /// HQ, so the request must go there (`Unavailable`, never an authorization answer).
-    pub fn refused() -> ApiError {
-        ApiError::new(
-            ErrorCode::Unavailable,
-            "private notes are stored only at HQ and are unavailable on a satellite office",
-        )
-    }
-}
-
-impl PrivateNotesStore for SatelliteRefusedPrivateNotesStore {
-    fn available(&self) -> bool {
-        false
-    }
-
-    fn create_note(
-        &self,
-        _cmd: CreateNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
-        Ok(Err(Self::refused()))
-    }
-
-    fn edit_note(
-        &self,
-        _cmd: EditNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
-        Ok(Err(Self::refused()))
-    }
-
-    fn delete_note(
-        &self,
-        _cmd: DeleteNoteCmd<'_>,
-    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
-        Ok(Err(Self::refused()))
-    }
-
-    fn get_note(
-        &self,
-        _org_id: &str,
-        _caller_id: &str,
-        _caller_is_person: bool,
-        _note_id: &str,
-    ) -> Result<Option<PrivateNoteRecord>, OfficeError> {
-        Ok(None)
-    }
-
-    fn list_notes(&self, _query: &NoteQuery<'_>) -> Result<NotePage, OfficeError> {
-        Ok(NotePage::default())
-    }
-
-    fn begin_publish(
-        &self,
-        _cmd: BeginPublishCmd<'_>,
-    ) -> Result<Result<PublishAttempt, ApiError>, OfficeError> {
-        Ok(Err(Self::refused()))
-    }
-
-    fn finish_publish(
-        &self,
-        _org_id: &str,
-        _author_id: &str,
-        _operation_id: &str,
-        _error_code: Option<&str>,
-        _now: &str,
-    ) -> Result<(), OfficeError> {
-        Ok(())
-    }
-
-    fn mark_task_deleted(&self, _org_id: &str, _task_id: &str) -> Result<(), OfficeError> {
-        Ok(())
-    }
 }
 
 /// Computes the canonical lowercase 64-hex SHA-256 request digest stored in

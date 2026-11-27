@@ -33,6 +33,7 @@ pub(super) fn stub_live_handle(
         private_home: format!("/tmp/home-{emp_id}"),
         permission_preset: "workspace_edits".into(),
         sandbox_enabled: true,
+        allow_host_auth: false,
         spec_hash: "h".into(),
         watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
         recovery_required: false,

@@ -273,7 +273,7 @@ fn a_caller_named_by_its_user_alone_passes_only_as_this_hosts_user() {
 /// differs by system expects exactly the outcome this names.
 fn named_by_user_alone() -> bool {
     use org_platform_host::admission::ImageIdentity;
-    match crate::test_programs::image_identity() {
+    match crate::test_programs_tests::image_identity() {
         ImageIdentity::VerifiedBytes => true,
         ImageIdentity::CodeSignature => false,
     }

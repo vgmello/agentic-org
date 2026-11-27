@@ -1,4 +1,5 @@
 [
+  {"method":"agent.resume","policy":"refuse"},
   {"method":"attachment.attach","policy":"serve"},
   {"method":"attachment.inspect","policy":"serve"},
   {"method":"attachment.list","policy":"serve"},

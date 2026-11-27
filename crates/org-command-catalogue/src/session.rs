@@ -358,4 +358,8 @@ pub const INSPECT_COMMANDS: &[Command] = &[
 ];
 
 /// All command row slices in the session domain.
-pub const ALL: &[&[Command]] = &[CONTEXT_COMMANDS, INSPECT_COMMANDS];
+pub const ALL: &[&[Command]] = &[
+    CONTEXT_COMMANDS,
+    crate::session_resume::RESUME_COMMANDS,
+    INSPECT_COMMANDS,
+];

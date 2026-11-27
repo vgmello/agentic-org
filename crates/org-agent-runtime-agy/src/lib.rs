@@ -123,6 +123,7 @@ impl AgentRuntime for AgyRuntime {
             uses_host_oauth_token_injection: false,
             uses_mount_mask_sandbox: false,
             needs_explicit_sandbox_ro_dirs: true,
+            sandbox_settings_file: None,
         }
     }
 

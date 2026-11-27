@@ -12,12 +12,13 @@
 mod cache;
 mod credentials;
 mod fetch;
+mod preprepare;
 mod push;
 mod redaction;
 mod vault;
 mod worktree;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::live::LiveEvents;
 use org_git::{ls_remote_heads, GitRunner, RepoLocks};
@@ -32,6 +33,7 @@ use org_proto::git::{
     RepoStatusParams, RepoStatusResult, RepositoryKindWire, RepositoryRecordWire, WorktreeList,
     WorktreeListParams, WorktreeListResult, WorktreePrepare,
 };
+use org_proto::resume::ResumeWorktreeItem;
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use self::credentials::{
@@ -64,6 +66,10 @@ pub(crate) struct GitService {
     state: Mutex<OfficeGitState>,
     runner: Mutex<Option<GitRunner>>,
     fetch_gate: FetchGate,
+    /// Weak session-manager handle for live mid-turn sandbox refresh notifications (`TASK-160`).
+    /// Weak breaks any reference cycle when `SessionManager` holds `Arc<GitService>` as its
+    /// [`org_office_sessions::TaskWorktreePreparer`].
+    sessions: Option<Weak<org_office_sessions::SessionManager>>,
 }
 
 impl GitService {
@@ -80,7 +86,20 @@ impl GitService {
             state: Mutex::new(loaded),
             runner: Mutex::new(None),
             fetch_gate: FetchGate::new(FETCH_COOLDOWN),
+            sessions: None,
         }
+    }
+
+    pub(crate) fn with_sessions(
+        mut self,
+        sessions: Weak<org_office_sessions::SessionManager>,
+    ) -> Self {
+        self.sessions = Some(sessions);
+        self
+    }
+
+    pub(super) fn sessions(&self) -> Option<Arc<org_office_sessions::SessionManager>> {
+        self.sessions.as_ref().and_then(Weak::upgrade)
     }
 
     pub(crate) fn dispatch(&self, member: Option<&str>, request: &Request) -> Option<Response> {
@@ -399,6 +418,37 @@ impl GitService {
         vault::revoke_repo_https_token(&self.office, &repo)?;
         inspect_repo_credential_status(&self.office, &repo)
     }
+
+    /// Returns caller-owned active worktrees for `agent.resume`, strictly scoped to
+    /// `w.employee_id == member` and bounded by `limit` (`TASK-220`).
+    pub(crate) fn active_worktrees_for_member(
+        &self,
+        member: &str,
+        limit: usize,
+    ) -> Vec<ResumeWorktreeItem> {
+        let state_guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut items: Vec<ResumeWorktreeItem> = state_guard
+            .workspaces
+            .values()
+            .filter(|w| w.state == "active" && w.employee_id == member)
+            .map(|w| ResumeWorktreeItem {
+                task_id: w.task_id.clone(),
+                task_key: w.task_key.clone(),
+                repository_id: w.repository_id.clone(),
+                repository_key: w.repository_key.clone(),
+                branch: w.branch.clone(),
+                worktree_path: w.worktree_path.clone(),
+                pushed_head: w.pushed_head.clone(),
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            a.task_key
+                .cmp(&b.task_key)
+                .then_with(|| a.repository_id.cmp(&b.repository_id))
+        });
+        items.truncate(limit);
+        items
+    }
 }
 
 fn to_repo_wire(
@@ -448,6 +498,8 @@ fn run_call<C: Call>(
 
 #[cfg(test)]
 mod fetch_tests;
+#[cfg(test)]
+mod preprepare_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

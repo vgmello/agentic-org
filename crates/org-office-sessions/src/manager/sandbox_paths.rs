@@ -534,10 +534,16 @@ impl SessionManager {
             out
         } else {
             let mut out = Vec::new();
-            for candidate in [home.join(".cargo"), base.join("cache").join("cargo-target")] {
-                let is_symlink =
+            let cache_dir = base.join("cache");
+            for (parent, candidate) in [
+                (&home, home.join(".cargo")),
+                (&cache_dir, cache_dir.join("cargo-target")),
+            ] {
+                let parent_symlink =
+                    std::fs::symlink_metadata(parent).is_ok_and(|m| m.file_type().is_symlink());
+                let leaf_symlink =
                     std::fs::symlink_metadata(&candidate).is_ok_and(|m| m.file_type().is_symlink());
-                if !is_symlink {
+                if !parent_symlink && !leaf_symlink {
                     out.push(canonicalize_with_tail(&candidate));
                 }
             }

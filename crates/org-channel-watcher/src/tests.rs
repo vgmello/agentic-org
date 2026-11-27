@@ -120,6 +120,112 @@ fn watcher_store_persists_watches_watermarks_bounded_notices_and_usage() {
 }
 
 #[test]
+fn watcher_store_enforces_owner_only_permissions_and_rejects_symlink_traps() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = WatcherStore::open(dir.path(), "office-perm");
+    let watcher_dir = dir
+        .path()
+        .join("local")
+        .join("offices")
+        .join("office-perm")
+        .join("watcher");
+    for ancestor in [
+        dir.path().join("local"),
+        dir.path().join("local").join("offices"),
+        dir.path().join("local").join("offices").join("office-perm"),
+        watcher_dir.clone(),
+    ] {
+        let mode = std::fs::symlink_metadata(&ancestor)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(mode, 0o700, "expected 0700 on {}", ancestor.display());
+    }
+
+    // Plant a predictable `.tmp` symlink before writing watches; atomic writes must ignore it.
+    let outside = dir.path().join("outside-target.txt");
+    std::fs::write(&outside, b"untouched").unwrap();
+    org_platform::fs::create_symlink(&outside, &watcher_dir.join("watches.v1.tmp")).unwrap();
+
+    store
+        .write_watches(&WatchesFile {
+            version: 1,
+            watches: Vec::new(),
+        })
+        .unwrap();
+    store
+        .write_watermarks(&WatermarksFile {
+            version: 1,
+            channels: Default::default(),
+        })
+        .unwrap();
+    store
+        .append_notices(&[WatchEndNotice {
+            employee_id: "emp-1".into(),
+            conversation_id: "conv-1".into(),
+            question_id: "q-1".into(),
+            reason: "done".into(),
+            recorded_at_ms: 1,
+        }])
+        .unwrap();
+    let usage = UsageLedgerEntry {
+        id: "u-perm".into(),
+        consumer_kind: "one_off".into(),
+        employee_id: None,
+        organization_id: "org-1".into(),
+        project_id: None,
+        conversation_id: "conv-1".into(),
+        feature: "channel.watch".into(),
+        model_profile_id: None,
+        question_ids: vec![],
+        outcome: "ok".into(),
+        input_tokens: None,
+        output_tokens: None,
+        duration_ms: 5,
+        recorded_at: "2026-11-27T00:00:00.000Z".into(),
+    };
+    store.append_usage(&usage).unwrap();
+
+    assert_eq!(std::fs::read(&outside).unwrap(), b"untouched");
+    for file in [
+        "watches.v1.json",
+        "watermarks.v1.json",
+        "watch-notices.v1.json",
+        "usage-one-off.v1.jsonl",
+    ] {
+        let path = watcher_dir.join(file);
+        let mode = std::fs::symlink_metadata(&path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(mode, 0o600, "expected 0600 on {}", path.display());
+    }
+
+    // Loose pre-existing usage ledger is tightened to 0600 on append.
+    let usage_path = watcher_dir.join("usage-one-off.v1.jsonl");
+    std::fs::set_permissions(&usage_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    store.append_usage(&usage).unwrap();
+    assert_eq!(
+        std::fs::symlink_metadata(&usage_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+
+    // Symlink at usage ledger path fails closed (O_NOFOLLOW) without touching target.
+    std::fs::remove_file(&usage_path).unwrap();
+    org_platform::fs::create_symlink(&outside, &usage_path).unwrap();
+    assert!(store.append_usage(&usage).is_err());
+    assert_eq!(std::fs::read(&outside).unwrap(), b"untouched");
+}
+
+#[test]
 fn cli_watcher_runtime_provider_fails_closed_when_unconfigured_or_disabled() {
     let provider = CliWatcherRuntimeProvider::new(RuntimeRegistry::empty());
     let meta = Meta::created(&By::System, Timestamp(1_700_000_000_000));

@@ -43,6 +43,7 @@ dependencies = [
  "org-office-sqlite",
  "org-platform",
  "org-proto",
+ "org-redact",
  "org-socket",
  "serde",
  "serde_json",
@@ -1406,32 +1407,26 @@ name = "org-host"
 version = "0.0.0"
 dependencies = [
  "argon2",
- "base64",
  "caseless",
- "flate2",
  "hmac",
  "libc",
  "org-host-control",
+ "org-host-release",
+ "org-host-tls",
  "org-office-launch",
  "org-pki",
  "org-platform",
  "org-platform-host",
  "org-proto",
- "org-release",
  "org-socket",
  "proc-macro2",
- "rcgen",
  "ring",
- "rustls",
  "serde",
  "serde_json",
  "sha2",
  "syn 2.0.119",
- "tar",
  "tempfile",
- "time",
  "unicode-normalization",
- "x509-parser",
  "zeroize",
 ]
 
@@ -1443,6 +1438,25 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "org-host-release"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "libc",
+ "org-host-control",
+ "org-platform",
+ "org-platform-host",
+ "org-proto",
+ "org-release",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
 ]
 
 [[package]]
@@ -1483,10 +1497,28 @@ dependencies = [
  "org-platform",
  "org-proto",
  "rusqlite",
- "serde",
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "org-host-tls"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "libc",
+ "org-host-control",
+ "org-platform",
+ "rcgen",
+ "ring",
+ "rustls",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "time",
+ "x509-parser",
+ "zeroize",
 ]
 
 [[package]]
@@ -1685,7 +1717,6 @@ name = "org-process"
 version = "0.0.0"
 dependencies = [
  "org-docs",
- "serde_json",
 ]
 
 [[package]]

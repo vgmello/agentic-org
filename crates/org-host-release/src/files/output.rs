@@ -1,5 +1,6 @@
 //! Private release-store output primitives. Only authenticated names reach these
 //! methods; every mutation is relative to a retained no-follow directory.
+
 use std::ffi::OsStr;
 use std::fs::File;
 use std::fs::{Permissions, TryLockError};
@@ -10,24 +11,27 @@ use std::path::Path;
 use org_platform::posix;
 
 use super::{component, identity, open_at, owned_at, Directory};
-use crate::release::Error;
+use crate::Error;
 
 #[cfg(test)]
-thread_local! {static FLUSH_COUNTS:std::cell::RefCell<[usize;3]>=const {std::cell::RefCell::new([0;3])};}
+thread_local! {static FLUSH_COUNTS: std::cell::RefCell<[usize; 3]> = const { std::cell::RefCell::new([0; 3]) };}
+
 #[cfg(test)]
-pub(in crate::release) fn take_flush_counts() -> [usize; 3] {
+pub(crate) fn take_flush_counts() -> [usize; 3] {
     FLUSH_COUNTS.with(|v| v.replace([0; 3]))
 }
 
-pub(in crate::release) struct Lock(File);
+pub(crate) struct Lock(File);
+
 impl Drop for Lock {
     fn drop(&mut self) {
         // Closing alone does not release a lock inherited across fork.
         let _ = self.0.unlock();
     }
 }
+
 impl Lock {
-    pub(in crate::release) fn verify(&self, directory: &Directory) -> Result<(), Error> {
+    pub(crate) fn verify(&self, directory: &Directory) -> Result<(), Error> {
         if identity(&self.0)? != identity(&directory.file("store.lock")?)? {
             return Err(Error::UnsafeInput);
         }
@@ -35,7 +39,7 @@ impl Lock {
     }
 }
 
-pub(in crate::release) fn flush(file: &File) -> Result<(), Error> {
+pub(crate) fn flush(file: &File) -> Result<(), Error> {
     #[cfg(test)]
     let before = org_platform::fs::testing::full_sync_counts();
     // Full device flush of our retained regular-file descriptor.
@@ -58,12 +62,14 @@ impl Directory {
         FLUSH_COUNTS.with(|v| v.borrow_mut()[2] += 1);
         Ok(())
     }
-    pub(in crate::release) fn duplicate_output(&self) -> Result<Self, Error> {
+
+    pub(crate) fn duplicate_output(&self) -> Result<Self, Error> {
         // The module-owned '.' addresses this held directory only.
         let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         Ok(Self(owned_at(&self.0, c".", flags, 0)?))
     }
-    pub(in crate::release) fn create_store(path: &Path) -> Result<Self, Error> {
+
+    pub(crate) fn create_store(path: &Path) -> Result<Self, Error> {
         let parent = Self::open(path.parent().ok_or(Error::UnsafeInput)?)?;
         let name = path.file_name().ok_or(Error::UnsafeInput)?;
         let cname = component(name)?;
@@ -78,21 +84,24 @@ impl Directory {
         Ok(root)
     }
 
-    pub(in crate::release) fn require_mode(&self, mode: u32) -> Result<(), Error> {
+    pub(crate) fn require_mode(&self, mode: u32) -> Result<(), Error> {
         let m = self.0.metadata()?;
-        if !m.is_dir() || m.uid() != crate::home::euid() || m.mode() & 0o7777 != mode {
+        if !m.is_dir()
+            || m.uid() != org_platform::posix::effective_uid()
+            || m.mode() & 0o7777 != mode
+        {
             return Err(Error::UnsafeInput);
         }
         Ok(())
     }
 
-    pub(in crate::release) fn same_directory(&self, other: &Self) -> Result<bool, Error> {
+    pub(crate) fn same_directory(&self, other: &Self) -> Result<bool, Error> {
         let a = self.0.metadata()?;
         let b = other.0.metadata()?;
         Ok(a.dev() == b.dev() && a.ino() == b.ino())
     }
 
-    pub(in crate::release) fn lock(&self) -> Result<Lock, Error> {
+    pub(crate) fn lock(&self) -> Result<Lock, Error> {
         let file = match self.new_file("store.lock") {
             Err(Error::Io(io::ErrorKind::AlreadyExists)) => self.file("store.lock")?,
             result => result?,
@@ -107,7 +116,7 @@ impl Directory {
         }
     }
 
-    pub(in crate::release) fn output_child(&self, name: &str, create: bool) -> Result<Self, Error> {
+    pub(crate) fn output_child(&self, name: &str, create: bool) -> Result<Self, Error> {
         if create {
             let cname = component(OsStr::new(name))?;
             // Create only a checked component under a retained directory.
@@ -129,7 +138,7 @@ impl Directory {
         Ok(result)
     }
 
-    pub(in crate::release) fn claim_output(&self, name: &str) -> Result<Self, Error> {
+    pub(crate) fn claim_output(&self, name: &str) -> Result<Self, Error> {
         let name = component(OsStr::new(name))?;
         // An exclusive claim of a checked, module-generated component.
         posix::make_directory_at(&self.0, &name, 0o700)?;
@@ -137,7 +146,7 @@ impl Directory {
         self.output_child(name.to_str().map_err(|_| Error::UnsafeInput)?, false)
     }
 
-    pub(in crate::release) fn new_file(&self, name: &str) -> Result<File, Error> {
+    pub(crate) fn new_file(&self, name: &str) -> Result<File, Error> {
         let name = component(OsStr::new(name))?;
         // A retained directory, a checked single name, create-new no-follow.
         let flags =
@@ -147,7 +156,7 @@ impl Directory {
         Ok(file)
     }
 
-    pub(in crate::release) fn seal_file(&self, file: &File, executable: bool) -> Result<(), Error> {
+    pub(crate) fn seal_file(&self, file: &File, executable: bool) -> Result<(), Error> {
         file.set_permissions(Permissions::from_mode(if executable {
             0o500
         } else {
@@ -158,13 +167,13 @@ impl Directory {
         Ok(())
     }
 
-    pub(in crate::release) fn seal_directory(&self) -> Result<(), Error> {
+    pub(crate) fn seal_directory(&self) -> Result<(), Error> {
         self.0.set_permissions(Permissions::from_mode(0o500))?;
         self.sync_directory()?;
         Ok(())
     }
 
-    pub(in crate::release) fn publish_directory(
+    pub(crate) fn publish_directory(
         &self,
         name: &str,
         target: &Self,
@@ -182,11 +191,7 @@ impl Directory {
         Ok(())
     }
 
-    pub(in crate::release) fn publish_control(
-        &self,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<(), Error> {
+    pub(crate) fn publish_control(&self, name: &str, bytes: &[u8]) -> Result<(), Error> {
         let temp = format!(".pending-{}", crate::ids::generate()?);
         let mut file = self.new_file(&temp)?;
         file.write_all(bytes)?;
@@ -197,7 +202,7 @@ impl Directory {
 
     /// Iterate without an accumulated-state memory cap. Each name is bounded by
     /// the filesystem, validated by the caller, and never used as a parsed path.
-    pub(in crate::release) fn visit_names(
+    pub(crate) fn visit_names(
         &self,
         mut visit: impl FnMut(&str) -> Result<(), Error>,
     ) -> Result<(), Error> {
@@ -224,9 +229,6 @@ mod tests {
         let after = org_platform::fs::testing::full_sync_counts();
         let counts = take_flush_counts();
         assert_eq!(counts[0], 2);
-        // What this module counted is what the platform counted, and it is exactly the device
-        // flushes this system makes for two file flushes (its fixed fact: one each on macOS,
-        // none on GNU/Linux).
         assert_eq!(counts[1] as u64, after.device_flush - before.device_flush);
         let per_flush = org_platform::fs::testing::device_flushes_per_full_sync().unwrap();
         assert_eq!(counts[1] as u64, 2 * per_flush);

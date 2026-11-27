@@ -281,3 +281,41 @@ pub(super) fn attachments_rpc(
         ),
     ))
 }
+
+pub(super) fn resume_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if !crate::resume_calls::is_resume_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    let session_mode = match binding {
+        Binding::External { .. } => Some(org_proto::external_auth::SessionMode::External),
+        Binding::Member {
+            via_grant: false, ..
+        } => Some(org_proto::external_auth::SessionMode::Managed),
+        Binding::Member {
+            via_grant: true, ..
+        }
+        | Binding::Anonymous => None,
+    };
+    if let Some(handler) = shared.ports.resume.as_ref() {
+        if let Some(response) = handler(Some(member), session_mode, request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use org_git::{validate_remote_url, AllowedProtocol, GitCredential};
+use org_git::GitCredential;
 use org_office::organization_family::records::{Repository, RepositoryKind};
 use org_office::Office;
 use org_pki::wrap::{
@@ -29,7 +29,7 @@ const VAULT_RECORD_VERSION: u32 = 1;
 const CREDENTIAL_FILE_NAME: &str = "credential.v1.json";
 const DEFAULT_HTTPS_USERNAME: &str = "x-access-token";
 const MAX_USERNAME_BYTES: usize = 128;
-const MAX_TOKEN_BYTES: usize = 4096;
+const MAX_TOKEN_BYTES: usize = 2048;
 const MAX_VAULT_FILE_BYTES: u64 = 16 * 1024;
 
 /// Non-secret envelope persisted at `<office.folder()>/git-credentials/repos/<repo_id>/credential.v1.json`.
@@ -68,29 +68,15 @@ impl Drop for GitTokenSecret {
 impl ZeroizeOnDrop for GitTokenSecret {}
 
 /// Validates and canonicalizes an HTTPS remote URL into a repository-exact credential scope
-/// (`https://<host>[:<port>]/<path>`, trimmed of trailing `/`, rejecting embedded credentials,
-/// wildcards, queries, fragments, and option/config-injection characters).
+/// (`https://<lowercase-host>[:<port>]/<path>`, rejecting host-only URLs, traversal segments,
+/// embedded credentials, wildcards, queries, fragments, and option/config-injection characters).
 pub(super) fn canonical_https_repo_scope(url: &str) -> Result<String, ApiError> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let protocol = validate_remote_url(trimmed).map_err(|_| {
+    org_git::canonical_https_repo_scope(url).map_err(|err| {
         ApiError::new(
             ErrorCode::InvalidRequest,
-            "repository credential requires a valid https:// remote_url",
+            format!("scoped vault tokens require a valid canonical https:// repository URL: {err}"),
         )
-    })?;
-    if protocol != AllowedProtocol::Https {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            "scoped vault tokens apply only to https:// repositories",
-        ));
-    }
-    if trimmed.contains(['?', '#', '=', '*', '\'', '"', ';', '\\']) {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            "HTTPS remote_url contains disallowed characters for scoped credentials",
-        ));
-    }
-    Ok(trimmed.to_owned())
+    })
 }
 
 fn validate_username(raw: Option<&str>) -> Result<String, ApiError> {
@@ -103,11 +89,11 @@ fn validate_username(raw: Option<&str>) -> Result<String, ApiError> {
     if effective.len() > MAX_USERNAME_BYTES
         || effective
             .chars()
-            .any(|c| c.is_control() || c.is_whitespace() || c == ':')
+            .any(|c| c.is_control() || c.is_whitespace() || matches!(c, ':' | '@'))
     {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
-            "username must be 1..=128 characters without whitespace, control chars, or `:`",
+            "username must be 1..=128 characters without whitespace, control chars, `:` or `@`",
         ));
     }
     Ok(effective.to_owned())
@@ -121,7 +107,7 @@ fn validate_token(raw: &str) -> Result<Zeroizing<String>, ApiError> {
     {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
-            "repository token must be 1..=4096 bytes with no control characters",
+            "repository token must be 1..=2048 bytes with no control characters",
         ));
     }
     Ok(Zeroizing::new(trimmed.to_owned()))
@@ -351,6 +337,12 @@ pub(super) fn store_repo_https_token(
             "could not serialize repository git credential payload",
         )
     })?);
+    if plaintext.len() > org_pki::wrap::MAX_KEY_BYTES {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "repository git credential exceeds maximum encrypted payload size",
+        ));
+    }
     let info = office.info();
     let binding = GitCredentialBinding {
         organization_id: &info.org_id,
@@ -502,6 +494,15 @@ pub(super) fn revoke_repo_https_token(office: &Office, repo: &Repository) -> Res
             }
         }
     }
+    let uid = effective_uid_or_err()?;
+    org_platform::fs::verify_owner_only_ancestors(&repo_dir, office.folder(), uid).map_err(
+        |_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                "office git-credentials directory hierarchy failed owner-only verification",
+            )
+        },
+    )?;
     let cred_path = repo_dir.join(CREDENTIAL_FILE_NAME);
     match fs::symlink_metadata(&cred_path) {
         Ok(meta) if meta.file_type().is_file() => {

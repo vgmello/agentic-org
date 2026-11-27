@@ -16,7 +16,9 @@ use crate::peer::AuditToken;
 use crate::server_check::ServerCheck;
 use crate::server_check::{NoAdmission, Pin, Scripted, Step};
 use crate::sync::lock;
-use crate::test_programs::{image_identity, recorded_starts, recorded_stdin, recording_worker};
+use crate::test_programs_tests::{
+    image_identity, recorded_starts, recorded_stdin, recording_worker,
+};
 use crate::timings::Timings;
 
 use super::create::CreateOutcome;

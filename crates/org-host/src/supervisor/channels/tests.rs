@@ -21,7 +21,7 @@ fn stand_in(pid: u32) -> io::Result<(Admission, Child)> {
     // A real program: an adapter that executes verified bytes reads it when the admission
     // is built.
     let admission = crate::server_check::ServerCheck::Skip
-        .admission(&crate::test_programs::recording_worker())?;
+        .admission(&crate::test_programs_tests::recording_worker())?;
     let child = org_platform_host::testing::admission::unowned_child(pid, None)?;
     Ok((admission, child))
 }

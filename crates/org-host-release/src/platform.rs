@@ -1,14 +1,7 @@
 //! Static payload checks precede publication. Loaded process identity remains a
 //! separate check before any secret handoff (the platform's admission).
-//!
-//! What vouches for a release executable is decided by the platform of the verified manifest,
-//! which is the platform of this build (`release::policy`): a release for macOS is signed
-//! code, and each executable's signature is established here; a release for Linux has no code
-//! signature, so the publisher's whole statement about an executable is its SHA-256 in the
-//! signed manifest, which every copy and every reopening of the release checks byte for byte
-//! (`release::store`), and which the host's admission checks again on the bytes it executes
-//! (Linux host design, section 3.1).
-use super::{files, Error};
+
+use super::{files, signing, Error};
 use org_platform_host::admission::{StaticImageError, StaticSignature};
 use org_release::{Architecture, FileEntry, Platform, VerifiedManifest};
 use std::{
@@ -74,29 +67,21 @@ fn header(file: &mut File, platform: Platform, architecture: Architecture) -> Re
 
 /// What a release executable must be, per file: signed with the app team's Developer ID
 /// under its own signing identifier, hardened, with the manifest's exact CodeDirectory hash,
-/// and (but for the host) without a Keychain access group. The platform establishes the
-/// signature of the held file; a build target without such a check is outside the release
-/// profile.
+/// and (but for the host) without a Keychain access group.
 fn platform_signature(file: &File, entry: &FileEntry) -> Result<(), Error> {
     let images = org_platform_host::admission::static_images()
         .map_err(|_refused| Error::UnsupportedTarget)?;
     let team = option_env!("ORG_APP_TEAM_ID").ok_or(Error::PlatformAdmission)?;
     let requirement = match entry.path() {
-        "agentic-org" => {
-            crate::code_signing::developer_id_requirement(crate::HOST_SIGNING_ID, team)
-        }
-        "agentic-org-office" => {
-            crate::code_signing::developer_id_requirement(crate::OFFICE_SIGNING_ID, team)
-        }
-        "agentic-org-web" => {
-            crate::code_signing::developer_id_requirement(crate::WEB_SIGNING_ID, team)
-        }
+        "agentic-org" => signing::developer_id_requirement(signing::HOST_SIGNING_ID, team),
+        "agentic-org-office" => signing::developer_id_requirement(signing::OFFICE_SIGNING_ID, team),
+        "agentic-org-web" => signing::developer_id_requirement(signing::WEB_SIGNING_ID, team),
         "agent-os" => {
             // No existing agent-os identifier grants host authority. The signed
             // manifest binds its exact hash; require the selected Developer ID.
-            crate::code_signing::developer_id_requirement(crate::HOST_SIGNING_ID, team).map(|s| {
+            signing::developer_id_requirement(signing::HOST_SIGNING_ID, team).map(|s| {
                 s.replacen(
-                    &format!("identifier \"{}\" and ", crate::HOST_SIGNING_ID),
+                    &format!("identifier \"{}\" and ", signing::HOST_SIGNING_ID),
                     "",
                     1,
                 )
@@ -116,7 +101,7 @@ fn platform_signature(file: &File, entry: &FileEntry) -> Result<(), Error> {
             StaticImageError::Path => Error::UnsafeInput,
             StaticImageError::Refused => Error::PlatformAdmission,
         })?;
-    if !crate::code_signing::hardened_and_clean(&signing)
+    if !signing::hardened_and_clean(&signing)
         || entry.macos_cdhash() != Some(&hash)
         || (entry.path() != "agentic-org"
             && signing

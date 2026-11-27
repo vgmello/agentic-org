@@ -31,7 +31,7 @@ agent-os task-note list --task <task>
 agent-os task-note update --id <note-id> --if-match <revision> --input-file <path>
 ```
 
-Use the note for the plan, open questions and the choices that are not obvious. Do not record routine steps. Publish a copy to the task only when the people on it need it: `agent-os task-note publish --id <note-id> --if-match <revision>`.
+Use the note for the plan, open questions and the choices that are not obvious. Keep notes strictly sparse and optional: do not record routine steps or create notes for straightforward tasks. Before pausing complex work or switching context, you may upsert one pinned working checkpoint (`agent-os task-note add --task <task> --checkpoint --text <text>`) so `agent-os resume` brings back your next step in one call. Publish a copy to the task only when the people on it need it: `agent-os task-note publish --id <note-id> --if-match <revision>`.
 
 ## 4. Start
 

@@ -86,6 +86,7 @@ pub(crate) struct TaskService {
     office: Arc<Office>,
     live: Arc<LiveEvents>,
     sessions: Option<Arc<org_office_sessions::SessionManager>>,
+    git: Option<Arc<crate::git_calls::GitService>>,
     sync_wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -99,8 +100,14 @@ impl TaskService {
             office,
             live,
             sessions,
+            git: None,
             sync_wake: None,
         }
+    }
+
+    pub(crate) fn with_git_service(mut self, git: Arc<crate::git_calls::GitService>) -> Self {
+        self.git = Some(git);
+        self
     }
 
     pub(crate) fn with_sync_wake(mut self, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
@@ -400,6 +407,11 @@ impl TaskService {
         let Some(agent_id) = outcome.newly_assigned_agent.as_ref() else {
             return;
         };
+        // Auto-pre-prepare any repository-linked task worktrees BEFORE waking Turn 1 so the
+        // initial sandbox launch already holds exact doc-35 bare-cache grants (`TASK-135` AC #4).
+        if let Some(git) = self.git.as_ref() {
+            let _ = git.preprepare_task_worktrees_for_assignee(agent_id.as_str(), &outcome.task.id);
+        }
         let Some(sessions) = self.sessions.as_ref() else {
             return;
         };

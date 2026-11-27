@@ -26,7 +26,7 @@ use crate::completers;
 use crate::error::CliError;
 use crate::selection;
 
-const MAX_TOKEN_BYTES: u64 = 4096;
+const MAX_TOKEN_BYTES: u64 = 2048;
 
 const ABOUT: &str = "Store a scoped per-repository HTTPS token in an office's encrypted vault\n\
 Use when: authorizing an HQ or satellite office to clone, fetch, or push a private HTTPS \
@@ -167,13 +167,13 @@ fn read_token_from_terminal() -> Result<Zeroizing<String>, CliError> {
 }
 
 fn normalize_token(raw: &str) -> Result<Zeroizing<String>, CliError> {
-    let trimmed = raw.trim_end_matches(['\r', '\n']);
+    let trimmed = raw.trim();
     if trimmed.is_empty()
         || trimmed.len() as u64 > MAX_TOKEN_BYTES
         || trimmed.chars().any(char::is_control)
     {
         return Err(CliError::usage(
-            "Repository HTTPS token must be non-empty and contain no control characters.",
+            "Repository HTTPS token must be 1..=2048 bytes and contain no control characters.",
         ));
     }
     Ok(Zeroizing::new(trimmed.to_owned()))

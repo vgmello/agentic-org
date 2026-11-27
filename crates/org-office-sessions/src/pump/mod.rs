@@ -176,6 +176,7 @@ pub(crate) struct SessionRuntimeState {
     pub private_home: String,
     pub permission_preset: String,
     pub sandbox_enabled: bool,
+    pub allow_host_auth: bool,
     pub spec_hash: String,
     pub watchdog: StallWatchdog,
     pub recovery_required: bool,

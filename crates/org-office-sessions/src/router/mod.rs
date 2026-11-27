@@ -24,9 +24,11 @@ mod warm_permit;
 
 use warm_permit::compute_route_digest;
 
-pub(crate) use warm_permit::{acquire_warm_permit_for_office, WarmPermitOutcome};
 #[cfg(test)]
-pub(crate) use warm_permit::{compute_route_digest_with_wt, compute_worktree_sandbox_digest};
+pub(crate) use warm_permit::compute_route_digest_with_wt;
+pub(crate) use warm_permit::{
+    acquire_warm_permit_for_office, compute_worktree_sandbox_digest, WarmPermitOutcome,
+};
 
 pub(crate) struct AdmittedRoute {
     pub adapter: Arc<dyn AgentRuntime>,

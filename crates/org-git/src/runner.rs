@@ -239,6 +239,7 @@ impl GitRunner {
             "submodule.recurse=false",
             "protocol.allow=never",
             "http.sslVerify=true",
+            "http.followRedirects=false",
         ] {
             cmd.arg("-c").arg(kv);
         }
@@ -331,21 +332,122 @@ fn apply_credential(
 }
 
 const MAX_HTTPS_USERNAME_BYTES: usize = 128;
-const MAX_HTTPS_TOKEN_BYTES: usize = 4096;
+const MAX_HTTPS_TOKEN_BYTES: usize = 2048;
+
+fn invalid_https_authority() -> GitError {
+    GitError::SecurityViolation(
+        "HTTPS token scope_url must have a valid canonical host and optional port".into(),
+    )
+}
+
+fn is_valid_dns_host(host: &str) -> bool {
+    !host.is_empty()
+        && !host.starts_with('.')
+        && !host.starts_with('-')
+        && !host.ends_with('.')
+        && !host.contains("..")
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
+}
+
+fn parse_https_host_port(authority: &str) -> Result<(String, Option<&str>), GitError> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (addr, after) = rest.split_once(']').ok_or_else(invalid_https_authority)?;
+        let port = match after {
+            "" => None,
+            s if s.starts_with(':') => Some(&s[1..]),
+            _ => return Err(invalid_https_authority()),
+        };
+        if !addr.contains(':') || addr.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(invalid_https_authority());
+        }
+        return Ok((format!("[{}]", addr.to_ascii_lowercase()), port));
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) => (h.to_ascii_lowercase(), Some(p)),
+        None => (authority.to_ascii_lowercase(), None),
+    };
+    if !is_valid_dns_host(&host) {
+        return Err(invalid_https_authority());
+    }
+    Ok((host, port))
+}
+
+fn parse_https_port(port_str: &str) -> Result<u16, GitError> {
+    if port_str.is_empty() || !port_str.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid_https_authority());
+    }
+    let port: u16 = port_str.parse().map_err(|_| invalid_https_authority())?;
+    (port != 0)
+        .then_some(port)
+        .ok_or_else(invalid_https_authority)
+}
+
+fn canonicalize_https_authority(authority: &str) -> Result<String, GitError> {
+    if authority.is_empty() || authority.contains('@') {
+        return Err(invalid_https_authority());
+    }
+    let (host, port_opt) = parse_https_host_port(authority)?;
+    match port_opt {
+        Some(port_str) => Ok(format!("{host}:{}", parse_https_port(port_str)?)),
+        None => Ok(host),
+    }
+}
+
+/// Validates and canonicalizes an HTTPS remote URL into a repository-exact credential scope
+/// (`https://<lowercase-host>[:<port>]/<path>`). Rejects host-only URLs, empty/dot/dotdot
+/// segments, percent-encoded path traversal (`%2e`, `%2f`, `%5c`, `%00`), embedded credentials,
+/// queries, fragments, wildcards, and Git config-injection characters.
+pub fn canonical_https_repo_scope(url: &str) -> Result<String, GitError> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if validate_remote_url(trimmed)? != AllowedProtocol::Https
+        || trimmed.contains(['?', '#', '=', '*', '\'', '"', ';', '\\', '@'])
+    {
+        return Err(GitError::SecurityViolation(
+            "HTTPS token scope_url must be a valid canonical https:// repository URL".into(),
+        ));
+    }
+    let rest = trimmed.strip_prefix("https://").ok_or_else(|| {
+        GitError::SecurityViolation("HTTPS token scope_url must start with https://".into())
+    })?;
+    let Some((authority, repo_path)) = rest.split_once('/') else {
+        return Err(GitError::SecurityViolation(
+            "HTTPS token scope_url must include a repository path".into(),
+        ));
+    };
+    let canon_authority = canonicalize_https_authority(authority)?;
+    let lower_path = repo_path.to_ascii_lowercase();
+    if repo_path.is_empty()
+        || lower_path.contains("%2e")
+        || lower_path.contains("%2f")
+        || lower_path.contains("%5c")
+        || lower_path.contains("%00")
+        || repo_path
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Err(GitError::SecurityViolation(
+            "HTTPS token scope_url must not contain empty, dot, or encoded traversal segments"
+                .into(),
+        ));
+    }
+    Ok(format!("https://{canon_authority}/{repo_path}"))
+}
 
 fn validate_https_token_parts(
     username: &str,
     token: &str,
     scope_url: &str,
-) -> Result<(), GitError> {
+) -> Result<String, GitError> {
     if username.is_empty()
         || username.len() > MAX_HTTPS_USERNAME_BYTES
         || username
             .chars()
-            .any(|c| c.is_control() || c.is_whitespace() || c == ':')
+            .any(|c| c.is_control() || c.is_whitespace() || matches!(c, ':' | '@'))
     {
         return Err(GitError::InvalidInput(
-            "HTTPS token username must be non-empty without whitespace, control chars, or `:`"
+            "HTTPS token username must be non-empty without whitespace, control chars, `:` or `@`"
                 .into(),
         ));
     }
@@ -357,14 +459,7 @@ fn validate_https_token_parts(
             "HTTPS token must be non-empty, bounded, and contain no control characters".into(),
         ));
     }
-    if validate_remote_url(scope_url)? != AllowedProtocol::Https
-        || scope_url.contains(['?', '#', '=', '*', '\'', '"', ';', '\\'])
-    {
-        return Err(GitError::SecurityViolation(
-            "HTTPS token scope_url must be a valid canonical https:// URL".into(),
-        ));
-    }
-    Ok(())
+    canonical_https_repo_scope(scope_url)
 }
 
 fn apply_https_token(
@@ -373,11 +468,10 @@ fn apply_https_token(
     token: &Zeroizing<String>,
     scope_url: &str,
 ) -> Result<(), GitError> {
-    validate_https_token_parts(username, token.as_str(), scope_url)?;
+    let trimmed_scope = validate_https_token_parts(username, token.as_str(), scope_url)?;
     let user_pass = Zeroizing::new(format!("{username}:{}", token.as_str()));
     let encoded = Zeroizing::new(BASE64.encode(user_pass.as_bytes()));
     let header = Zeroizing::new(format!("Authorization: Basic {}", encoded.as_str()));
-    let trimmed_scope = scope_url.trim().trim_end_matches('/');
     // Inject strictly through `GIT_CONFIG_COUNT` env vars (Git >= 2.31; MIN_GIT_VERSION is 2.35.2),
     // never via CLI `-c` argv (`ps` exposure) and never persisted to `.git/config`.
     if trimmed_scope.ends_with(".git") {

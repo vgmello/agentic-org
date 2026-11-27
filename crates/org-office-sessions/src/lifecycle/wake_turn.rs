@@ -9,13 +9,17 @@ use org_proto::ApiError;
 
 use crate::wake::{compose_coalesced_wake_objective, PendingWakeItem, SuspendedAskEntry, WakeKind};
 
-/// The distinct, non-empty task references of the batch's task assignments, in queue order.
+/// The distinct, non-empty task references of the batch's task assignments and sandbox-refresh
+/// continuations, in queue order (used for task-scoped budget holds, Turn-2 route admission, and
+/// task process context).
 pub(super) fn assigned_task_refs(items: &[PendingWakeItem]) -> Vec<&str> {
     let mut refs: Vec<&str> = Vec::new();
     for item in items {
         let task_ref = item.source_id.as_str();
-        if item.kind == WakeKind::TaskAssignment
-            && !task_ref.is_empty()
+        if matches!(
+            item.kind,
+            WakeKind::TaskAssignment | WakeKind::SandboxRefresh
+        ) && !task_ref.is_empty()
             && !refs.contains(&task_ref)
         {
             refs.push(task_ref);

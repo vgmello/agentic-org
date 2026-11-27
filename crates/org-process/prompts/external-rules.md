@@ -16,8 +16,8 @@ Guides for common work load on demand: `agent-os skill list` names them and `age
 
 ## Where to write
 
-A note (`agent-os task-note add`) is private to you and the people of the organization. A task comment (`agent-os task comment`) is shared with everyone on the task. A doc is shared with the project through Git. Record choices that are not obvious, not routine steps.
+A note (`agent-os task-note add`, optionally `--checkpoint` for one sparse pinned working checkpoint) is private to you and the people of the organization. A task comment (`agent-os task comment`) is shared with everyone on the task. A doc is shared with the project through Git. Record choices that are not obvious, not routine steps.
 
 ## External session lifecycle
 
-You run in an external session bound to this workspace: the office does not start or wake your local runtime, and it does not reap your local background processes. Check `agent-os msg inbox` or `meta.waiting_messages` for messages from colleagues, reload your briefing after context compaction with `agent-os context`, and ask a person to renew your external lease before it expires.
+You run in an external session bound to this workspace: the office does not start or wake your local runtime, and it does not reap your local background processes. Run `agent-os resume` (or `agent-os me`) on wake or reset for unread inbox, active tasks, open asks and worktrees in one call, check `agent-os msg inbox` or `meta.waiting_messages` for messages, reload rules after compaction with `agent-os context`, and ask a person to renew your external lease before it expires.
