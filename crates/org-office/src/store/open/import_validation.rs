@@ -8,7 +8,7 @@ use super::OfficeEngine;
 use crate::{
     attachments::projector::AttachmentFiles, organization::projector::OrganizationFiles,
     processes::projector::ProcessFiles, projects::projector::ProjectFiles,
-    tasks::projector::TaskFiles,
+    reviews::files::ReviewFiles, tasks::projector::TaskFiles,
 };
 
 fn structure_doc_id_from_path(path: &org_store::DurablePath) -> Option<Id> {
@@ -38,6 +38,7 @@ fn apply_imported_to_engine<E: OfficeEngine>(
         Box::new(TaskFiles::shared(organization_id.clone())),
         Box::new(ProcessFiles::new()),
         Box::new(AttachmentFiles::new()),
+        Box::new(ReviewFiles::shared()),
     ];
     engine
         .replace(&mut |tx| {

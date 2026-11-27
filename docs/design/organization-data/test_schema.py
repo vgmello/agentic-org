@@ -734,6 +734,9 @@ class DraftSchemaTests(unittest.TestCase):
         self.turn("finished", "succeeded")
         self.turn("resumed", "failed", started_by_kind="resume")
         self.turn("bg-wake", "succeeded", started_by_kind="background_wake")
+        self.turn("rev-req", "succeeded", started_by_kind="review_requested", started_by_employee_id="reporter")
+        self.turn("rev-verdict", "succeeded", started_by_kind="review_verdict", started_by_employee_id="ana")
+        self.turn("rev-reply", "succeeded", started_by_kind="review_reply", started_by_employee_id="reporter")
         self.process("old", "gone")
         self.process("live", "starting")
         self.db.commit()
@@ -2897,6 +2900,135 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
                         with self.subTest(schema=sql_file.name, generated=col_ref):
                             self.assertIn(col_ref, coverage,
                                           f"ENG-5: generated column {col_ref} from {sql_file.name} missing in doc-74 schema coverage")
+
+    def test_universal_reviews_strict_tables_triggers_and_indexes(self):
+        seed_task(self.db)
+        expected_tables = (
+            "office_review_counters",
+            "reviews",
+            "review_rounds",
+            "review_reviewers",
+            "review_findings",
+            "review_finding_replies",
+            "review_events",
+        )
+        for tbl in expected_tables:
+            row = self.db.execute(
+                "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (tbl,)
+            ).fetchone()
+            self.assertIsNotNone(row, f"missing table {tbl}")
+            self.assertTrue(row[0].rstrip().endswith("STRICT"), f"{tbl} must be STRICT")
+
+        insert(self.db, "office_review_counters", organization_id="org",
+               office_id="numbering-a", office_code="A", next_number=2)
+        oid1 = "a" * 40
+        oid2 = "b" * 40
+        sha = "c" * 64
+        insert(self.db, "reviews", organization_id="org", id="rev-1",
+               office_id="numbering-a", office_code="A", number=1,
+               schema_version=1, revision=1, project_id="project", task_id="task",
+               target_kind="code", repository_id="org-repository", branch="task/T-A42",
+               kind_slug="code-review", category_slug="security",
+               title="Review login fix", body_markdown="Please review.",
+               independent=1, status="open", current_round=1, session_mode="fresh",
+               guidance_refs_json='["doc-35"]', criteria_json='["No secrets"]',
+               created_by="reporter",
+               created_at="2026-11-27T10:00:00.000Z", updated_at="2026-11-27T10:00:00.000Z")
+        insert(self.db, "review_rounds", organization_id="org", review_id="rev-1",
+               round_number=1, base_oid=oid1, head_oid=oid2, session_mode="fresh",
+               submitted_by="reporter", submitted_at="2026-11-27T10:00:00.000Z", note_markdown="")
+        insert(self.db, "review_reviewers", organization_id="org", review_id="rev-1",
+               round_number=1, reviewer_id="ana", routing="explicit",
+               session_mode="fresh", assigned_by="reporter",
+               assigned_at="2026-11-27T10:00:00.000Z", removed=0)
+        insert(self.db, "review_findings", organization_id="org", id="find-1",
+               review_id="rev-1", number=1, round_number=1, author_id="ana",
+               severity="blocker", status="open", anchor_kind="file_line",
+               anchor_json=canonical({
+                   "kind": "file_line", "path": "src/auth.rs",
+                   "start_line": 10, "end_line": 12, "anchor_snippet_sha256": sha,
+               }),
+               body_markdown="Token logged.", attachment_ids_json="[]", revision=1,
+               created_at="2026-11-27T10:05:00.000Z", updated_at="2026-11-27T10:05:00.000Z")
+        insert(self.db, "review_finding_replies", organization_id="org", id="rep-1",
+               finding_id="find-1", review_id="rev-1", round_number=1, author_id="reporter",
+               body_markdown="Fixed.", set_status="resolved", attachment_ids_json="[]",
+               created_at="2026-11-27T10:10:00.000Z")
+        insert(self.db, "review_events", organization_id="org", review_id="rev-1",
+               revision=1, event_type="review_requested", actor_id="reporter",
+               operation_id="op-1", payload_json='{"round":1}', payload_sha256=sha,
+               created_at="2026-11-27T10:00:00.000Z")
+        self.db.commit()
+
+        # Generated display key RV-<OFFICE_CODE><N>.
+        key = self.db.execute("SELECT key FROM reviews WHERE id='rev-1'").fetchone()[0]
+        self.assertEqual(key, "RV-A1")
+
+        # Monotonic counter cannot decrease.
+        assert_refused(self, self.db, "office review counter cannot decrease",
+                       "UPDATE office_review_counters SET next_number=1 WHERE office_code='A'")
+
+        # Independent review refuses assigning the author as reviewer.
+        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+                       lambda: insert(self.db, "review_reviewers", organization_id="org",
+                                      review_id="rev-1", round_number=1, reviewer_id="reporter",
+                                      routing="explicit", session_mode="fresh",
+                                      assigned_by="reporter", assigned_at="2026-11-27T10:01:00.000Z",
+                                      removed=0))
+
+        # Immutability triggers on review_rounds, review_finding_replies, and review_events
+        # (including INSERT OR REPLACE with recursive_triggers ON and OFF).
+        for table, update_sql, msg in (
+            ("review_rounds", "UPDATE review_rounds SET note_markdown='tampered'", "review rounds are immutable"),
+            ("review_finding_replies", "UPDATE review_finding_replies SET body_markdown='tampered'", "review finding replies are immutable"),
+            ("review_events", "UPDATE review_events SET event_type='tampered'", "review events are immutable"),
+        ):
+            assert_refused(self, self.db, msg, update_sql)
+            assert_refused(self, self.db, "must be retained", f"DELETE FROM {table}")
+            assert_refused(self, self.db, msg, f"INSERT OR REPLACE INTO {table} SELECT * FROM {table}")
+            self.db.execute("PRAGMA recursive_triggers = OFF")
+            try:
+                assert_refused(self, self.db, msg, f"INSERT OR REPLACE INTO {table} SELECT * FROM {table}")
+            finally:
+                self.db.execute("PRAGMA recursive_triggers = ON")
+
+        # Anchor kind mismatch in review_findings is rejected.
+        assert_refused(self, self.db, "CHECK constraint failed", lambda: insert(
+            self.db, "review_findings", organization_id="org", id="find-bad",
+            review_id="rev-1", number=2, round_number=1, author_id="ana",
+            severity="minor", status="open", anchor_kind="file_line",
+            anchor_json='{"kind":"general"}', body_markdown="Mismatch.",
+            attachment_ids_json="[]", revision=1,
+            created_at="2026-11-27T10:06:00.000Z", updated_at="2026-11-27T10:06:00.000Z"))
+
+        # Empty reply without set_status is rejected.
+        assert_refused(self, self.db, "CHECK constraint failed", lambda: insert(
+            self.db, "review_finding_replies", organization_id="org", id="rep-bad",
+            finding_id="find-1", review_id="rev-1", round_number=1, author_id="reporter",
+            body_markdown="", set_status=None, attachment_ids_json="[]",
+            created_at="2026-11-27T10:11:00.000Z"))
+
+        # Hot-path review indexes resolve cleanly in EXPLAIN QUERY PLAN.
+        for idx, sql, params in (
+            ("reviews_by_project_status",
+             "SELECT id FROM reviews WHERE organization_id=? AND project_id=? AND status=? ORDER BY updated_at DESC",
+             ("org", "project", "open")),
+            ("reviews_by_task",
+             "SELECT id FROM reviews WHERE organization_id=? AND task_id=?",
+             ("org", "task")),
+            ("review_reviewers_by_reviewer",
+             "SELECT review_id FROM review_reviewers WHERE organization_id=? AND reviewer_id=? AND removed=0",
+             ("org", "ana")),
+            ("review_findings_by_review_status",
+             "SELECT id FROM review_findings WHERE organization_id=? AND review_id=? AND status='open'",
+             ("org", "rev-1")),
+            ("review_finding_replies_by_finding",
+             "SELECT id FROM review_finding_replies WHERE organization_id=? AND finding_id=? ORDER BY created_at",
+             ("org", "find-1")),
+        ):
+            plan = "\n".join(r[3] for r in self.db.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall())
+            self.assertIn(idx, plan, f"{idx} not used: {plan}")
+        self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
 
 if __name__ == "__main__":

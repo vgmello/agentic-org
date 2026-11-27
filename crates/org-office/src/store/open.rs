@@ -23,6 +23,7 @@ mod office_store;
 mod operations;
 pub(crate) mod process_ops;
 pub(crate) mod project_doc_ops;
+pub(crate) mod review_ops;
 pub(crate) mod search_ops;
 pub(crate) mod task_ops;
 #[cfg(test)]
@@ -68,6 +69,7 @@ pub use operations::{
 
 use crate::attachments::ports::{AttachmentsEngine, AttachmentsRead};
 use crate::project_docs::ports::{ProjectDocsEngine, ProjectDocsRead};
+use crate::reviews::ports::{ReviewsEngine, ReviewsRead};
 use crate::search::ports::{SearchEngine, SearchRead};
 use crate::tasks::ports::{TasksEngine, TasksRead};
 
@@ -166,10 +168,13 @@ impl StoreConfig {
 
 /// An engine every family of the office runs on. It grows by one bound per family (and one
 /// for search, which reads them all).
-pub trait OfficeEngine: TasksEngine + AttachmentsEngine + ProjectDocsEngine + SearchEngine {}
+pub trait OfficeEngine:
+    TasksEngine + AttachmentsEngine + ProjectDocsEngine + ReviewsEngine + SearchEngine
+{
+}
 
 impl<E> OfficeEngine for E where
-    E: TasksEngine + AttachmentsEngine + ProjectDocsEngine + SearchEngine
+    E: TasksEngine + AttachmentsEngine + ProjectDocsEngine + ReviewsEngine + SearchEngine
 {
 }
 
@@ -182,7 +187,7 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: TasksRead + AttachmentsRead + ProjectDocsRead + SearchRead>(
+    fn read<S: TasksRead + AttachmentsRead + ProjectDocsRead + ReviewsRead + SearchRead>(
         self,
         snapshot: &S,
     ) -> Result<Self::Out, StoreError>;
