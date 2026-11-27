@@ -1,0 +1,84 @@
+/* Chat: closing a DM (the row's ×, the DM header's menu) and creating a channel (the Channels heading's +, New
+   message's "Create a channel", the create and Add members dialogs, a new channel's intro). Theme tokens only. Every
+   rule is scoped (.chat … / .chat-channel-dialog …) above the base rules it adjusts, so none depends on stylesheet
+   order. */
+
+/* ---------------------------------------------------------------- close a DM */
+#main .chat .chlist li.chat-dm-row { position: relative; }
+#main .chat .chlist .chat-dm-close {
+  position: absolute; inset-block: 0; inset-inline-end: 4px; margin-block: auto;
+  display: inline-grid; place-items: center; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0;
+  border-radius: calc(var(--radius-md) - 2px); color: var(--gray-400); opacity: 0; pointer-events: none;
+}
+/* Hover or keyboard focus anywhere in the row shows ×; the row's end (status word, request count, unread dot) steps
+   aside under it without moving the name. */
+#main .chat .chlist li.chat-dm-row:is(:hover, :focus-within) > .chat-dm-close { opacity: 1; pointer-events: auto; }
+#main .chat .chlist li.chat-dm-row:is(:hover, :focus-within) > a :is(.chat-row-word, .chat-row-attn, .chat-row-dot) { visibility: hidden; }
+#main .chat .chlist .chat-dm-close:hover { color: var(--white); background: var(--hover); }
+#main .chat .chlist .chat-dm-close:focus-visible { opacity: 1; }
+/* The open DM's header menu (…) holds Close conversation. */
+#main .chat .chhead .chat-head-menu { display: inline-flex; }
+#main .chat .chhead .chat-head-menu .menu { inset-inline-end: 0; inset-inline-start: auto; }
+
+/* ---------------------------------------------------------------- new channel entry points */
+#main .chat .chlist .chat-group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px 0 4px 8px; }
+#main .chat .chlist .chat-group-head > h2 { padding: 0; }
+#main .chat .chlist .chat-group-add { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 0; justify-content: center; color: var(--gray-400); }
+#main .chat .chlist .chat-group-add:hover { color: var(--white); background: var(--hover); }
+#main .chat .chlist .chat-create-channel { margin-block-end: 4px; }
+#main .chat .chlist .chat-create-ic { display: inline-grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: var(--radius-md); background: var(--hover); color: var(--gray-300); }
+
+/* Touch: every new control is a 44 px target. The selected DM's × stays shown, as there is no hover. */
+@media (pointer: coarse) {
+  #main .chat .chlist li.chat-dm-row > a { min-height: 44px; }
+  #main .chat .chlist .chat-dm-close { width: 44px; min-width: 44px; height: 44px; min-height: 44px; inset-inline-end: 0; }
+  #main .chat .chlist li.chat-dm-row:has(> a[aria-current="page"]) > .chat-dm-close { opacity: 1; pointer-events: auto; }
+  #main .chat .chlist li.chat-dm-row:has(> a[aria-current="page"]) > a :is(.chat-row-word, .chat-row-attn, .chat-row-dot) { visibility: hidden; }
+  #main .chat .chlist .chat-group-add { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  #main .chat .chlist .chat-group-head { padding-block: 8px 0; }
+  #main .chat .chlist .chat-create-channel { min-height: 44px; }
+}
+
+/* ---------------------------------------------------------------- create channel and Add members dialogs */
+.work-task-dialog.chat-channel-dialog { width: min(32rem, calc(100% - 2rem)); }
+.chat-channel-dialog .chat-channel-form { gap: 16px; }
+.chat-channel-dialog .chat-channel-field { display: grid; gap: 4px; min-width: 0; }
+.chat-channel-dialog .chat-channel-field > label { font-weight: 500; }
+.chat-channel-dialog .chat-channel-opt { font-weight: 400; color: var(--gray-400); }
+.chat-channel-dialog .chat-channel-name { position: relative; display: flex; align-items: center; }
+.chat-channel-dialog .chat-channel-hash { position: absolute; inset-inline-start: 12px; z-index: 1; color: var(--gray-400); font-weight: 600; pointer-events: none; }
+.chat-channel-dialog .chat-channel-name > .field { padding-inline-start: 26px; }
+.chat-channel-dialog .field[aria-invalid="true"] { border-color: var(--tone-bad); box-shadow: 0 0 0 1px var(--tone-bad-ring); }
+.chat-channel-dialog .chat-channel-hint { font-size: var(--fs-xs); color: var(--gray-400); }
+.chat-channel-dialog .chat-channel-error { font-size: var(--fs-sm); font-weight: 500; color: var(--tone-bad-ink); }
+.chat-channel-dialog .chat-channel-error:empty { display: none; }
+.chat-channel-dialog .chat-channel-members { display: grid; gap: 4px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.chat-channel-dialog .chat-channel-members > legend { padding: 0; margin-block-end: 4px; font-weight: 500; }
+.chat-channel-dialog .chat-channel-who {
+  display: grid; gap: 2px; max-height: 13rem; overflow-y: auto; margin-block-start: 4px; padding: 4px;
+  border: 1px solid var(--line2); border-radius: var(--radius-md);
+}
+.chat-channel-dialog .chat-channel-member { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 8px; border-radius: var(--radius-md); font-weight: 500; color: var(--gray-300); cursor: pointer; }
+.chat-channel-dialog .chat-channel-member:hover { background: var(--hover); color: var(--white); }
+.chat-channel-dialog .chat-channel-member .chat-row-name { flex: 1 1 auto; min-width: 0; }
+.chat-channel-dialog .chat-channel-member .chat-row-word { flex: none; font-size: var(--fs-xs); color: var(--gray-400); }
+.chat-channel-dialog .chat-channel-member input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--tone-accent-solid); }
+.chat-channel-dialog .chat-channel-member:has(input:disabled) { cursor: default; }
+.chat-channel-dialog .chat-channel-private { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.chat-channel-dialog .chat-channel-private-text { display: grid; gap: 2px; font-weight: 500; }
+@media (pointer: coarse) {
+  .chat-channel-dialog .chat-channel-member { min-height: 44px; }
+  .chat-channel-dialog .chat-channel-private .switch { position: relative; }
+  .chat-channel-dialog .chat-channel-private .switch::before { content: ""; position: absolute; inset: -10px 0; }
+  .chat-channel-dialog .actions .btn { min-height: 44px; }
+}
+@media (max-width: 639px) {
+  .chat-channel-dialog .chat-channel-who { max-height: 10rem; }
+}
+
+/* ---------------------------------------------------------------- a channel's intro (no messages yet) */
+#main .chat .chat-channel-intro { gap: 6px; padding-block: 24px 8px; }
+#main .chat .chat-channel-intro-ic { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius-md); background: var(--hover); color: var(--gray-300); }
+#main .chat .chat-channel-intro > h2 { font-size: 1.125rem; }
+#main .chat .chat-channel-intro-desc { color: var(--gray-300); }
+#main .chat .chat-channel-intro > .actions { margin-block-start: 6px; }
