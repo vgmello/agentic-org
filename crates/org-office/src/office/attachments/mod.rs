@@ -1,23 +1,30 @@
 //! The office's attachment facade (`TASK-98.1`, ADR-0037): the nine `attachment.*` calls
-//! (`upload.rs`, `attach.rs`, `read.rs`) over the stores in [`crate::attachments`], each
-//! decided by [`AuthorizationPolicy`] and nothing else.
+//! (`upload.rs`, `attach.rs`, `read.rs`) over the stores in [`crate::attachments`], and the
+//! files of messages, asks and answers (`messages.rs`, `TASK-98.2`), each decided by
+//! [`AuthorizationPolicy`] and nothing else.
+//!
+//! Across offices (`TASK-98.6`): a satellite's new shared files wait in its outbox and ship to
+//! HQ (`shipping.rs`); HQ checks, stores and binds them and serves shared bytes to satellites
+//! (`custody.rs`); a satellite reads its outbox, its cache, or pulls from HQ (`local_blobs.rs`).
 //!
 //! Every call names the caller by employee ID (the connection's binding, never the wire), and
 //! answers `Ok(Err(..))` for a caller's mistake or refusal and `Err(..)` only for storage.
 
 mod attach;
+mod custody;
+mod local_blobs;
+mod messages;
 mod read;
+mod shipping;
 mod upload;
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use org_proto::attachments::AttachmentTargetKind;
 use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Sha256};
 
 use super::{storage, Office};
-use crate::attachments::blobs::BlobStore;
 use crate::attachments::records::AttachmentRecord;
 use crate::authz::{
     AuthorizationPolicy, Denied, ParentFacts, PrincipalContext, ResourceFacts, ResourceRef,
@@ -36,7 +43,10 @@ struct OfficeFacts<'a>(&'a Office);
 
 impl ResourceFacts for OfficeFacts<'_> {
     fn facts(&self, resource: &ResourceRef) -> Result<ParentFacts, OfficeError> {
-        let read = ResourceFactsRead(resource.clone());
+        let read = ResourceFactsRead {
+            resource: resource.clone(),
+            owner: self.0.effective_owner_for_ops(),
+        };
         Ok(self.0.store.read(read).map_err(storage)?.0)
     }
 }
@@ -49,11 +59,12 @@ fn not_found() -> ApiError {
     ApiError::new(ErrorCode::NotFound, "attachment not found")
 }
 
-/// A shared write on a satellite: not in this phase (its journal does not replicate to HQ).
+/// An edit of a file's details on a satellite: HQ owns every shared record once it holds it,
+/// so edits are made there.
 fn hq_only() -> ApiError {
     ApiError::new(
         ErrorCode::Unavailable,
-        "attachments are uploaded and attached at HQ; this satellite office serves reads only",
+        "a file's details are edited at HQ; this satellite office uploads, attaches and reads files",
     )
 }
 
@@ -180,18 +191,12 @@ impl Office {
         if let Some(record) = self.store.read(AttachmentById(id)).map_err(storage)?.0 {
             return Ok(Some(record));
         }
+        if let Some(record) = self.message_file_record(attachment_id)? {
+            return Ok(Some(record));
+        }
         self.attachments
             .user_space
             .get(&self.info.org_id, attachment_id)
-    }
-
-    /// The blob store a record's bytes are in, if this office holds it.
-    fn blobs_for(&self, record: &AttachmentRecord) -> Option<Arc<dyn BlobStore>> {
-        if record.target_kind == AttachmentTargetKind::UserPrivate {
-            self.attachments.private.clone()
-        } else {
-            Some(Arc::clone(&self.attachments.shared))
-        }
     }
 
     /// Removes every expired staged upload now; returns how many went.
@@ -219,6 +224,18 @@ impl Office {
     #[cfg(any(test, feature = "testkit"))]
     pub fn attachment_staging_root(&self) -> std::path::PathBuf {
         self.attachments.staging.root().to_path_buf()
+    }
+
+    /// The satellite's outbox folder (tests and diagnostics).
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn attachment_outbox_root(&self) -> std::path::PathBuf {
+        self.outbox().root().to_path_buf()
+    }
+
+    /// The satellite's blob cache (tests and diagnostics).
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn attachment_blob_cache(&self) -> crate::attachments::cache::BlobCache {
+        self.blob_cache()
     }
 }
 

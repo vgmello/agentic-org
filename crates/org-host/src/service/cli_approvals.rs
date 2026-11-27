@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::accounts::identity::AccountId;
-use crate::service::listener::Connection;
+use crate::control_listener::Connection;
 
 /// 10-minute approval link lifetime (`doc-48` §4a.2 / `SIGN-40`).
 pub(crate) const APPROVAL_TTL_MS: i64 = 10 * 60 * 1000;

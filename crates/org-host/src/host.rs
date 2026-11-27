@@ -9,10 +9,10 @@ use org_platform_host::credentials::ReleaseRoot;
 
 use crate::broadcast::Broadcast;
 use crate::config::{harden, Config};
+use crate::control_listener::{self, BindError, Listener};
 use crate::error::HostError;
 use crate::home::{HostLock, Layout};
 use crate::offices::Offices;
-use crate::service::listener::{self, BindError, Listener};
 use crate::service::Service;
 use crate::startup::{
     instance_error, maybe_init_local_authless, startup_app_policy, startup_authentication,
@@ -21,7 +21,7 @@ use crate::startup::{
 };
 use crate::supervisor::{Supervisor, SupervisorConfig};
 use crate::{
-    host_log, host_secrets, instance, provisioning, recovery, release, service, sync, web, web_tls,
+    host_log, host_secrets, instance, provisioning, recovery, release, sync, web, web_tls,
     THREAD_END_MARGIN,
 };
 
@@ -50,7 +50,7 @@ pub struct Host {
     pub(crate) listener: Option<Listener>,
     pub(crate) lock: Option<HostLock>,
     pub(crate) instance: Option<Arc<instance::registry::Instance>>,
-    pub(crate) authentication_lifecycle: Option<service::authentication::Lifecycle>,
+    pub(crate) authentication_lifecycle: Option<crate::authentication::Lifecycle>,
     pub(crate) web: Option<web::Supervisor>,
     /// The renewal of an `https` listener's own certificate while the host runs.
     pub(crate) tls_renewal: Option<web_tls::Renewal>,
@@ -159,7 +159,7 @@ impl Host {
         // again and goes when the composition returns.
         let authentication_lifecycle = authentication
             .as_ref()
-            .map(service::authentication::Lifecycle::start)
+            .map(crate::authentication::Lifecycle::start)
             .transpose()
             .map_err(io("starting session lifecycle"))?;
         // Before any office or web process starts: an `https` instance whose pair cannot be
@@ -178,7 +178,7 @@ impl Host {
         };
         // Bound first, so nothing has started when binding fails; clients that connect before
         // the listener starts (moments later) wait in the backlog.
-        let bound = listener::bind(&layout.host_socket).map_err(|e| match e {
+        let bound = control_listener::bind(&layout.host_socket).map_err(|e| match e {
             BindError::NotASocket => HostError::SocketInTheWay {
                 path: layout.host_socket.clone(),
             },

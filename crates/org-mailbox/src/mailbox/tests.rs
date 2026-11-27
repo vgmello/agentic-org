@@ -315,6 +315,7 @@ fn concurrent_defers_leave_the_timer_at_the_stores_deadline() {
         body: "hello".into(),
         meta: Meta::new(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     };
     mailbox.send(PAT_ID, sent).unwrap();
 
@@ -452,6 +453,7 @@ fn unsnooze_and_release_all_due_snoozes_resurface_and_emit_events() {
                 body: "hello".into(),
                 meta: Meta::new(),
                 reply_to: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -608,6 +610,7 @@ fn unsnooze_refuses_non_snoozed_and_read_racing_defer_keeps_timer() {
                 body: "hello".into(),
                 meta: Meta::new(),
                 reply_to: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -727,6 +730,7 @@ fn release_all_due_snoozes_restores_timers_and_propagates_store_error() {
                 body: "hi".into(),
                 meta: Meta::new(),
                 reply_to: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -750,5 +754,58 @@ fn release_all_due_snoozes_restores_timers_and_propagates_store_error() {
         mb.next_snooze_deadline_ms(),
         Some(epoch_ms(NOW_MS + 1_000)),
         "failed check_notify must restore timers for retry"
+    );
+}
+
+#[test]
+fn the_bare_mailbox_binds_no_file_and_refuses_a_message_that_says_nothing() {
+    let store = Arc::new(InMemoryStore::new());
+    let mailbox = Mailbox::new(
+        store.clone(),
+        Arc::new(InMemoryDirectory::new(members(), POSITION)),
+        identity(),
+        Arc::new(ManualClock::new(NOW_MS)),
+        Arc::new(NoMessageEvents),
+    );
+    let params = |n: u32, body: &str, files: Vec<String>| MsgSendParams {
+        id: msg_id(n),
+        to: ADA_ID.into(),
+        kind: KIND_MSG.into(),
+        priority: None,
+        subject: None,
+        body: body.into(),
+        meta: Meta::new(),
+        reply_to: None,
+        attachment_ids: files,
+    };
+    for (n, body, files) in [
+        (1, "", Vec::new()),
+        (2, " \n\t", Vec::new()),
+        (3, "with a file", vec![msg_id(90)]),
+        (4, "", vec![msg_id(91)]),
+    ] {
+        assert_eq!(
+            mailbox.send(PAT_ID, params(n, body, files)).unwrap_err(),
+            MailboxError::InvalidRequest,
+            "message {n}"
+        );
+        assert!(store.get_message(&msg_id(n)).unwrap().is_none());
+    }
+    let sent = mailbox
+        .send(PAT_ID, params(5, "hello", Vec::new()))
+        .unwrap();
+    // A reply passes its files on, so the bare mailbox refuses it the same way.
+    let reply = org_proto::msg::MsgReplyParams {
+        id: msg_id(6),
+        to_id: sent.id,
+        priority: None,
+        subject: None,
+        body: "thanks".into(),
+        meta: Meta::new(),
+        attachment_ids: vec![msg_id(92)],
+    };
+    assert_eq!(
+        mailbox.reply(ADA_ID, reply).unwrap_err(),
+        MailboxError::InvalidRequest
     );
 }

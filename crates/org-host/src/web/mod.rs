@@ -1,6 +1,6 @@
 //! Host-owned browser process. Its private control authority is constructed only
 //! after suspended-image, actual-reader, sandbox and descriptor-receipt checks.
-use crate::{service::listener::Handler, sync::lock};
+use crate::{control_listener::Handler, sync::lock};
 use org_host_control::{listen::ListenMode, WebState};
 use std::{
     io,

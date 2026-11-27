@@ -225,7 +225,7 @@ fn run_claude_live_turn(env: &RuntimeEnv<'_>, prompt: &str) -> String {
         .node
         .sessions
         .bindings()
-        .issue(env.employee_id, &run_id, &sess_id, 1)
+        .issue(env.employee_id, &run_id, &sess_id, 1, None)
         .unwrap();
     let token = binding.expose_token().to_owned();
     let (_cfg_dir, agents_path, mcp_path, settings_path) = write_claude_live_config(env);
@@ -418,7 +418,7 @@ fn run_codex_live_turn(env: &RuntimeEnv<'_>, prompt: &str) -> String {
         .node
         .sessions
         .bindings()
-        .issue(env.employee_id, &run_id, &sess_id, 1)
+        .issue(env.employee_id, &run_id, &sess_id, 1, None)
         .unwrap();
     let token = binding.expose_token().to_owned();
     let ws = env.workspace.canonicalize().unwrap();
@@ -467,7 +467,7 @@ fn run_agy_live_turn(env: &RuntimeEnv<'_>, prompt: &str) -> String {
         .node
         .sessions
         .bindings()
-        .issue(env.employee_id, &run_id, &sess_id, 1)
+        .issue(env.employee_id, &run_id, &sess_id, 1, None)
         .unwrap();
     let token = binding.expose_token().to_owned();
 
@@ -634,6 +634,7 @@ fn live_three_runtimes_claude_codex_and_agy_cross_office_a2a_ring() {
                 reply_to: None,
                 also_in_channel: false,
                 reason: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()

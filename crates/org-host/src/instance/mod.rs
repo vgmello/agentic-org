@@ -27,11 +27,14 @@ pub(crate) enum Error {
     Invalid(&'static str),
     Unsafe(&'static str),
     Conflict(&'static str),
+    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     RebindUnconfirmed,
+    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     RebindRecoveryRequired {
         name: String,
         path: PathBuf,
     },
+    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     RebindChanged {
         name: String,
         path: PathBuf,

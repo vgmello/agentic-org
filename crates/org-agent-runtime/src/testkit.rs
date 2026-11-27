@@ -24,6 +24,13 @@
 
 use std::time::{Duration, Instant};
 
+mod operator;
+
+pub use operator::{
+    agent_os_prefix, malformed_operator_specs, operator_ctx, operator_spec, OPERATOR_DENIED,
+    OPERATOR_HOME, OPERATOR_SOCKET,
+};
+
 use crate::{
     ApprovalId, Capabilities, Control, ControlError, Decision, ExitInfo, LaunchContext, LaunchPlan,
     MidTurnDelivery, Output, Session, SessionEvent, SessionSpec, MAX_LINE_BYTES,

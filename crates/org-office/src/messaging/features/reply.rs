@@ -9,6 +9,7 @@ use org_proto::ErrorCode;
 use org_store::{Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::{
+    files::MessageFiles,
     ports::{MessagingRead, MessagingWrite},
     records::{ConversationRecord, SenderKind},
 };
@@ -147,12 +148,17 @@ fn mark_reply_parent_read(
 /// conversation (DM, GroupDM, or Channel), commits a threaded reply through [`decide_chat_send`]
 /// (enforcing HR access, mentions, idempotency, and cross-office relay), and atomically marks the
 /// answered message `Read` for `caller` when it was `Unread` or `Snoozed`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "reply decision takes explicit transaction, identity, caller, params, files, and clock inputs"
+)]
 pub fn decide_chat_reply<E>(
     uow: &UnitOfWork<'_, E>,
     here: &OfficeIdentity,
     owner: &Id,
     caller: &Id,
     params: &MsgReplyParams,
+    files: &MessageFiles,
     org_seq: u64,
     now_utc: &str,
 ) -> Result<(Change, ChatSendCommitted), Refusal>
@@ -172,9 +178,18 @@ where
         reply_to: Some(params.to_id.clone()),
         also_in_channel: false,
         reason: None,
+        attachment_ids: params.attachment_ids.clone(),
     };
-    let (mut change, committed) =
-        decide_chat_send(uow, here, owner, caller, &send_params, org_seq, now_utc)?;
+    let (mut change, committed) = decide_chat_send(
+        uow,
+        here,
+        owner,
+        caller,
+        &send_params,
+        files,
+        org_seq,
+        now_utc,
+    )?;
     if committed.inserted {
         change = mark_reply_parent_read(
             uow.view(),

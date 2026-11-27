@@ -315,7 +315,8 @@ impl Source for BudgetInboxSource {
                 && query.kinds.is_none_or(|kinds| kinds.contains(&item.kind))
                 && query.project.is_none()
                 && query.team.is_none()
-                && query.after.is_none_or(|after| after.admits(&item));
+                && query.after.is_none_or(|after| after.admits(&item))
+                && query.admits_files(&item);
             if include {
                 items.push(item);
             }
@@ -436,5 +437,6 @@ fn build_budget_inbox_item(
         clears: InboxClears::Answered,
         dismissable: false,
         actions,
+        attachments: Vec::new(),
     }
 }

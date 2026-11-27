@@ -90,6 +90,16 @@ pub(super) fn attach_waiting_messages_hint(
     else {
         return;
     };
+    // The Chief of Staff's count spans every caller's messages to her: never a side channel
+    // into how many another member sent (`TASK-80.1`).
+    if shared
+        .ports
+        .delegation
+        .as_deref()
+        .is_some_and(|port| port.is_chief_of_staff(member))
+    {
+        return;
+    }
     let count = match cached {
         Some((id, counter)) if id == member => counter.load(Ordering::Relaxed),
         _ => {
@@ -108,7 +118,15 @@ fn try_chat_override(request: &Request, shared: &Shared, binding: &Binding) -> O
     let Some(chat) = &shared.ports.chat else {
         return None;
     };
-    if request.is::<org_proto::msg::MsgDone>() || request.is::<org_proto::msg::MsgReply>() {
+    // `msg.send` naming files goes as `chat.send` does: the bare mailbox binds none (`TASK-98.2`).
+    let sends_files = request.is::<org_proto::msg::MsgSend>()
+        && request
+            .params::<org_proto::msg::MsgSend>()
+            .is_ok_and(|params| !params.attachment_ids.is_empty());
+    if request.is::<org_proto::msg::MsgDone>()
+        || request.is::<org_proto::msg::MsgReply>()
+        || sends_files
+    {
         return chat(
             binding.member(),
             binding.via_grant(),
@@ -158,8 +176,9 @@ pub(super) fn answer_message(
         });
     }
     // When `ports.chat` is active, let `ChatService` handle `msg.done` (closing asker-owned
-    // channel watches) and `msg.reply` (native conversation-aware reply with wakes & cross-office
-    // relay); when `ports.chat` is `None`, preserve the `msg_calls::answer` fallback.
+    // channel watches), `msg.reply` (native conversation-aware reply with wakes & cross-office
+    // relay) and `msg.send` with files; when `ports.chat` is `None`, preserve the
+    // `msg_calls::answer` fallback.
     if let Some(resp) = try_chat_override(request, shared, binding) {
         return Some(resp);
     }

@@ -283,6 +283,11 @@ pub fn classify_replicated_snapshot_path(path: &str) -> SnapshotPathClass {
     let Ok(dp) = DurablePath::parse(path) else {
         return SnapshotPathClass::DependentExecutionDocsAndBudgets;
     };
+    // A shared file's record names its project and its uploader: applied after both
+    // (`TASK-98.6`).
+    if crate::attachments::records::kind_of(&dp).is_some() {
+        return SnapshotPathClass::DependentExecutionDocsAndBudgets;
+    }
     if let Some(tk) = crate::tasks::records::kind_of(&dp) {
         return match tk {
             crate::tasks::records::Kind::Task(_) => SnapshotPathClass::WorkCore,

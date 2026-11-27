@@ -255,6 +255,7 @@ fn send_params() -> MsgSendParams {
         body: BODY.into(),
         meta: Meta::new(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     }
 }
 
@@ -318,6 +319,7 @@ fn reply_params() -> MsgReplyParams {
         subject: None,
         body: BODY.into(),
         meta: meta(),
+        attachment_ids: Vec::new(),
     }
 }
 
@@ -355,6 +357,7 @@ fn ask_params() -> MsgAskParams {
         meta: meta(),
         ttl_ms: None,
         wait_ms: 3_600_000,
+        attachment_ids: Vec::new(),
     }
 }
 
@@ -1060,6 +1063,7 @@ fn a_message_at_every_limit_fits_in_a_frame() {
         body: body.clone(),
         meta: meta.clone(),
         reply_to: Some(id),
+        attachment_ids: Vec::new(),
     };
     let line = serde_json::to_string(&Request::new::<MsgSend>(u64::MAX, &params).unwrap()).unwrap();
     assert!(line.len() <= MAX_FRAME_BYTES, "{}", line.len());

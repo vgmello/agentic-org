@@ -4,9 +4,10 @@
 //! temporary directory, or `()`).
 
 use crate::{
-    change::{Ack, Actor, DurablePath, Outcome, Receipt, Sha256, Timestamp},
+    change::{Ack, Actor, Outcome, Receipt, Sha256, Timestamp},
     engine::{CorePort, CoreRead, Cursor, Engine},
     error::StoreError,
+    path::DurablePath,
     sequences::{FeedPosition, HighWaters},
     testkit::id,
 };

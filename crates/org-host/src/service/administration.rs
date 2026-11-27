@@ -9,9 +9,9 @@ use org_proto::{ApiError, ErrorCode, Request, Response};
 
 use crate::peer::Received;
 
-use super::listener::Connection;
 use super::reply::{answer, not_authorized, ok, params_dont_fit, secret_response};
 use super::Service;
+use crate::control_listener::Connection;
 
 impl Service {
     /// `tls.renew` to the web process: its pair was replaced or renewed, and it fetches it

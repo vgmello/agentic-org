@@ -54,6 +54,7 @@ fn test_pump_ctx(
         suspended_since: None,
         pending_wake_count: 0,
         pending_wake_reason: None,
+        queued_turns: 0,
     }));
     PumpContext {
         employee_id: "emp-1".into(),
@@ -90,6 +91,7 @@ fn test_pump_ctx(
             is_bwrap_topology_stale: None,
         },
         stop_epoch: 0,
+        partition: None,
     }
 }
 
@@ -342,4 +344,143 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
         ),
         other => panic!("a tool outside the allowlist must be auto-denied: {other:?}"),
     }
+}
+
+#[test]
+fn a_partitioned_run_records_its_conversation_usage_and_partition_on_failover() {
+    use crate::partition::{PartitionHandle, PartitionKey, PartitionLedger};
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = PartitionLedger::new();
+    let key = PartitionKey::tess_ask("owner-1");
+    ledger.begin_turn("emp-1", &key);
+    let mut ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+    ctx.partition = Some(PartitionHandle::new(ledger.clone(), "emp-1", key.clone()));
+    let mut loop_state = PumpLoopState::new(false);
+
+    // The conversation is the partition's the moment the runtime names it.
+    let started = org_agent_runtime::SessionEvent::SessionStarted {
+        runtime_session_id: org_agent_runtime::SessionId::try_from("conv-owner").unwrap(),
+    };
+    super::events::handle_event(&started, &ctx, &mut loop_state);
+    let state = ledger.state("emp-1", &key).unwrap();
+    assert_eq!(state.runtime_session_id.as_deref(), Some("conv-owner"));
+
+    // Each turn's input is how full the conversation is.
+    let mut usage = org_agent_runtime::Usage::new(
+        org_agent_runtime::UsageScope::TurnDelta,
+        org_agent_runtime::UsageScope::TurnDelta,
+    );
+    usage.input = 90_000;
+    usage.cache_read = 30_000;
+    super::events::handle_event(
+        &org_agent_runtime::SessionEvent::Usage(usage),
+        &ctx,
+        &mut loop_state,
+    );
+    let state = ledger.state("emp-1", &key).unwrap();
+    assert_eq!(state.context_tokens, 120_000);
+    assert!(state.needs_rotation(), "60% of the assumed window");
+
+    // A failover of the run serves the same partition, so acts for the same caller.
+    loop_state.current_objective = "owner turn".into();
+    loop_state.turn_reply = Some("API Error: 401 OAuth token has expired".into());
+    let mut st = ctx.state.lock().unwrap();
+    evaluate_turn_failover(
+        &mut st,
+        &mut loop_state,
+        &ctx,
+        &org_agent_runtime::TurnOutcome::Completed,
+        &[],
+    );
+    drop(st);
+    let req = loop_state.failover_pending.as_ref().expect("a failover");
+    assert_eq!(req.partition, Some(key));
+    assert_eq!(req.acting_for_caller_id(), Some("owner-1"));
+    let stale = super::commands::build_stale_failover_request(&ctx, "queued".into());
+    assert_eq!(stale.acting_for_caller_id(), Some("owner-1"));
+}
+
+#[test]
+fn a_turn_queued_behind_the_ending_one_keeps_the_session_busy() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_pump_ctx(dir.path(), None, None);
+    let mut loop_state = PumpLoopState::new(false);
+    let mut st = ctx.state.lock().unwrap();
+    st.queued_turns = 1;
+    super::events::handle_turn_ended(
+        &mut st,
+        &mut loop_state,
+        &ctx,
+        &org_agent_runtime::TurnOutcome::Completed,
+        &[],
+    );
+    assert_eq!(st.state, SessionState::Running, "turn two is still queued");
+    st.dequeue_turns(1);
+    super::events::handle_turn_ended(
+        &mut st,
+        &mut loop_state,
+        &ctx,
+        &org_agent_runtime::TurnOutcome::Completed,
+        &[],
+    );
+    assert_eq!(st.state, SessionState::Idle);
+}
+
+#[test]
+fn queue_turn_counts_and_marks_busy_before_sending_and_undoes_both_for_a_dead_pump() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_pump_ctx(dir.path(), None, None);
+    ctx.state.lock().unwrap().state = SessionState::Idle;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    assert!(super::queue_turn(&ctx.state, &tx, "one".into()));
+    {
+        let st = ctx.state.lock().unwrap();
+        assert_eq!((st.state, st.queued_turns), (SessionState::Running, 1));
+    }
+    drop(rx);
+    assert!(!super::queue_turn(&ctx.state, &tx, "two".into()));
+    {
+        // The live turn keeps the session busy; only the undelivered one is forgotten.
+        let st = ctx.state.lock().unwrap();
+        assert_eq!((st.state, st.queued_turns), (SessionState::Running, 1));
+    }
+
+    let idle_ctx = test_pump_ctx(dir.path(), None, None);
+    idle_ctx.state.lock().unwrap().state = SessionState::Idle;
+    assert!(!super::queue_turn(&idle_ctx.state, &tx, "lost".into()));
+    let st = idle_ctx.state.lock().unwrap();
+    assert_eq!((st.state, st.queued_turns), (SessionState::Idle, 0));
+}
+
+#[test]
+fn a_refused_permit_forgets_every_queued_turn_and_settles_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+    ctx.hooks.on_permit_acquire = Some(Arc::new(|_, _| Err("POOL_EXHAUSTED: [busy]".into())));
+    let mut loop_state = PumpLoopState::new(false);
+    loop_state.pending_turns = vec!["a".into(), "b".into()];
+    ctx.state.lock().unwrap().queued_turns = 2;
+    assert!(matches!(
+        ensure_permit_for_turn(&ctx, &mut loop_state),
+        PermitCheck::Refused
+    ));
+    assert!(loop_state.pending_turns.is_empty());
+    let st = ctx.state.lock().unwrap();
+    assert_eq!((st.state, st.queued_turns), (SessionState::Idle, 0));
+
+    // A turn queued since (still on the channel) keeps the session busy for the next dispatch.
+    drop(st);
+    {
+        let mut st = ctx.state.lock().unwrap();
+        st.state = SessionState::Running;
+        st.queued_turns = 2;
+    }
+    loop_state.pending_turns = vec!["c".into()];
+    assert!(matches!(
+        ensure_permit_for_turn(&ctx, &mut loop_state),
+        PermitCheck::Refused
+    ));
+    let st = ctx.state.lock().unwrap();
+    assert_eq!((st.state, st.queued_turns), (SessionState::Running, 1));
 }

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 
-use org_office::organization_family::records::EmployeeStatus;
+use org_office::organization_family::records::{BuiltinKey, EmployeeStatus};
 use org_office::Office;
 use org_proto::sessions::SessionState;
 
@@ -208,10 +208,10 @@ pub(super) fn commit_wake_send_locked(
     objective: String,
 ) -> (bool, Option<String>) {
     let reg = registry.lock().unwrap_or_else(|p| p.into_inner());
-    let still_live = !reg.draining
-        && !reg.shutting_down
-        && !reg.starting.contains(employee_id)
-        && reg.live.get(employee_id).is_some_and(|handle| {
+    let live = (!reg.draining && !reg.shutting_down && !reg.starting.contains(employee_id))
+        .then(|| reg.live.get(employee_id))
+        .flatten()
+        .filter(|handle| {
             handle
                 .state
                 .lock()
@@ -220,9 +220,9 @@ pub(super) fn commit_wake_send_locked(
                 .as_deref()
                 == Some(run_id)
         });
-    if !still_live {
+    let Some(handle) = live else {
         return (false, acquired_permit.map(|(pid, _)| pid));
-    }
+    };
     let (installed_pid, redundant_pid) = match acquired_permit {
         Some(p) => {
             let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
@@ -236,7 +236,9 @@ pub(super) fn commit_wake_send_locked(
         }
         None => (None, None),
     };
-    if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+    // Counted and marked busy before the send, in the `registry` critical section that checked
+    // the run is still live (`TASK-80.1`).
+    if crate::pump::queue_turn(&handle.state, tx, objective) {
         return (true, redundant_pid);
     }
     let rollback_pid = installed_pid.and_then(|pid| {
@@ -398,7 +400,9 @@ pub(super) fn claim_live_drain_batch(
         return None;
     }
     let emp = ctx.office.load_employee(employee_id).ok().flatten()?;
-    if emp.status != EmployeeStatus::Active {
+    // The Chief of Staff's live process acts for the member whose turn it ran: a wake never
+    // drains into it (`TASK-80.1`); her queue starts through the partition-checked path.
+    if emp.status != EmployeeStatus::Active || emp.builtin_key == Some(BuiltinKey::ChiefOfStaff) {
         return None;
     }
     let ts = now_ms();

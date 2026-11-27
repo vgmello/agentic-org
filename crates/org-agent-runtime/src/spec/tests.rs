@@ -74,6 +74,7 @@ fn sample_spec() -> SessionSpec {
             ToolName::try_from("Bash").unwrap(),
             ToolName::try_from("Edit").unwrap(),
         ]),
+        operator_shell_prefixes: Vec::new(),
     }
 }
 
@@ -197,6 +198,7 @@ fn spec_hash_changes_when_any_field_changes() {
         sandbox: _,
         mcp_servers: _,
         tools: _,
+        operator_shell_prefixes: _,
     } = &base;
     type Mutation = (&'static str, fn(&mut SessionSpec));
     let mutations: Vec<Mutation> = vec![
@@ -250,6 +252,9 @@ fn spec_hash_changes_when_any_field_changes() {
             s.mcp_servers.get_mut(&mcp("office")).unwrap().args.clear()
         }),
         ("tools", |s| s.tools = None),
+        ("operator_shell_prefixes", |s| {
+            s.operator_shell_prefixes = vec![CommandPrefix::try_from("agent-os").unwrap()]
+        }),
         ("tools list", |s| {
             s.tools = Some(vec![ToolName::try_from("Bash").unwrap()])
         }),

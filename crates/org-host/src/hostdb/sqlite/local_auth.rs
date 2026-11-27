@@ -229,7 +229,7 @@ mod tests {
         let local_key = LoginKey::new(LOCAL_OWNER_LOGIN).unwrap();
         assert!(db1.account_credentials(&local_key).unwrap().is_none());
 
-        let verifier = crate::service::authentication::hash_password(
+        let verifier = crate::authentication::hash_password(
             &org_host_control::Password::new("synthetic test password".into()).unwrap(),
         )
         .unwrap();

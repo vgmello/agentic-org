@@ -12,10 +12,12 @@ use crate::messaging::features::{
     append_send_recipient_states, build_mention_candidates, check_hr_access,
     effective_auto_members, is_active_employee, refusal, resolve_send_target,
 };
+use crate::messaging::files::{Binding, MessageFiles, MESSAGE_SCOPE};
 use crate::messaging::mentions::extract_mentions;
 use crate::messaging::ports::{MessagingRead, MessagingWrite};
 use crate::messaging::records::{
-    self, ConversationMembership, MessageRecord, SenderKind, SCHEMA_VERSION,
+    self, ConversationMembership, MessageAttachmentRecord, MessageRecord, SenderKind,
+    SCHEMA_VERSION,
 };
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
@@ -35,6 +37,8 @@ fn non_card_meta(meta: &BTreeMap<String, serde_json::Value>) -> BTreeMap<&str, &
 }
 
 struct AskReplayExpected<'a> {
+    organization_id: &'a Id,
+    files: &'a MessageFiles,
     sender_id: &'a Id,
     conv_id: &'a Id,
     params: &'a ChatAskParams,
@@ -56,6 +60,13 @@ fn ask_replay_matches(
         && existing.subject == expected.params.subject
         && existing.body_markdown == expected.body
         && non_card_meta(&existing.metadata) == non_card_meta(&expected.params.meta)
+        && expected.files.matches(
+            &existing.attachments,
+            expected.organization_id,
+            MESSAGE_SCOPE,
+            &existing.id,
+            &existing.created_at,
+        )
         && existing_card.is_some_and(|c| {
             c.questions == expected.questions
                 && c.required == expected.params.required
@@ -155,12 +166,17 @@ fn collect_ask_recipient_reasons(
     reasons
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "ask decision takes explicit transaction, identity, caller, params, files, and clock inputs"
+)]
 pub fn decide_msg_ask<E>(
     uow: &UnitOfWork<'_, E>,
     here: &OfficeIdentity,
     owner: &Id,
     caller: &Id,
     params: &ChatAskParams,
+    files: &MessageFiles,
     org_seq: u64,
     now_ms: u64,
 ) -> Result<(Change, AskCommitted), Refusal>
@@ -218,6 +234,8 @@ where
     )?;
 
     let expected = AskReplayExpected {
+        organization_id: &here.organization_id,
+        files,
         sender_id: &sender.id,
         conv_id: &conv.id,
         params,
@@ -261,6 +279,14 @@ where
         );
     }
     check_hr_access(uow.view(), &employees, owner, &sender.id, hr_targets)?;
+    let attachments = files.bind(&Binding {
+        organization_id: &here.organization_id,
+        conversation: &conv,
+        members: &active_members,
+        scope: MESSAGE_SCOPE,
+        key: &params.id,
+        created_at: &now_utc,
+    })?;
 
     let wait_until = time::format_rfc3339_ms(now_ms.saturating_add(wait_ms));
     let card = build_ask_card(
@@ -284,6 +310,7 @@ where
         body,
         card,
         reasons,
+        attachments,
         org_seq,
         now_ms,
         &now_utc,
@@ -306,6 +333,7 @@ fn commit_ask_record(
     body: String,
     card: AskCard,
     reasons: BTreeMap<Id, DeliveredBecause>,
+    attachments: Vec<MessageAttachmentRecord>,
     org_seq: u64,
     now_ms: u64,
     now_utc: &str,
@@ -371,7 +399,7 @@ fn commit_ask_record(
         org_epoch: 1,
         org_sequence: org_seq,
         content_sha256: String::new(),
-        attachments: Vec::new(),
+        attachments,
         mailbox_content_hash: None,
     };
     record.content_sha256 = record.compute_content_sha256();

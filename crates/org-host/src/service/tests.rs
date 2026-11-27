@@ -18,7 +18,7 @@ fn the_wired_web_eligibility_needs_authentication_and_registration_but_no_office
     let bare = Arc::new(service(home.path()));
     assert!(!bare.web_eligible(), "no authentication");
     assert!(!(bare.web_eligibility())(), "wired: no authentication");
-    let (_root, authentication, _connection) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _connection) = crate::authentication::tests::fixture();
     let authentication = Arc::new(authentication);
     let unregistered =
         Arc::new(service(home.path()).with_authentication(Some(Arc::clone(&authentication))));
@@ -56,8 +56,8 @@ fn web_ready_needs_authentication_registration_and_a_serving_web() {
 use super::dispatch::OpenOperation;
 use super::*;
 use crate::broadcast::Broadcast;
+use crate::control_listener::{self, Connection, Handler};
 use crate::offices::Offices;
-use listener::{Connection, Handler};
 use org_host_control::{Administrator, Hello, InstanceStatus, WebState};
 use org_proto::{Call, ErrorCode, Request};
 use std::path::Path;
@@ -109,7 +109,7 @@ fn status_reports_whether_an_administrator_exists() {
     let unregistered = service(home.path());
     assert_eq!(unregistered.administrator().unwrap(), Administrator::None);
     unregistered.offices.shutdown();
-    let (_root, auth, _connection) = authentication::tests::fixture();
+    let (_root, auth, _connection) = crate::authentication::tests::fixture();
     let registered = service(home.path()).with_authentication(Some(Arc::new(auth)));
     // The fixture seeds an administrator account.
     assert_eq!(registered.administrator().unwrap(), Administrator::Present);
@@ -153,11 +153,23 @@ pub(crate) fn web_handler(home: &Path) -> (Arc<Service>, Arc<Offices>) {
     (Arc::new(service), offices)
 }
 
+/// A registered service fixture (an instance id) answering for `authentication`, as the
+/// host.sock handler the authentication tests sign in through, and its offices for shutdown.
+pub(crate) fn registered_handler(
+    home: &Path,
+    authentication: Arc<crate::authentication::Authentication>,
+) -> (Arc<Service>, Arc<Offices>) {
+    let mut service = service(home).with_authentication(Some(authentication));
+    service.instance_id = Some(crate::ids::uuid_v7().unwrap());
+    let offices = service.offices.clone();
+    (Arc::new(service), offices)
+}
+
 /// The real handler on an admitted web process control connection, plus its peer end.
 fn web_peer(
     home: &Path,
 ) -> (
-    listener::WebConnection,
+    control_listener::WebConnection,
     std::io::BufReader<std::os::unix::net::UnixStream>,
     Arc<Offices>,
 ) {
@@ -172,7 +184,7 @@ fn web_peer_on(
     home: &Path,
     listen: &str,
 ) -> (
-    listener::WebConnection,
+    control_listener::WebConnection,
     std::io::BufReader<std::os::unix::net::UnixStream>,
     Arc<Offices>,
 ) {
@@ -184,7 +196,7 @@ pub(crate) fn web_peer_for(
     mut service: Service,
     listen: &str,
 ) -> (
-    listener::WebConnection,
+    control_listener::WebConnection,
     std::io::BufReader<std::os::unix::net::UnixStream>,
     Arc<Offices>,
 ) {
@@ -195,7 +207,8 @@ pub(crate) fn web_peer_for(
         .unwrap();
     let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
     let listen = serde_json::from_str(listen).unwrap();
-    let web = listener::WebConnection::start(host, transfer, listen, Arc::new(service)).unwrap();
+    let web =
+        control_listener::WebConnection::start(host, transfer, listen, Arc::new(service)).unwrap();
     (web, std::io::BufReader::new(peer), offices)
 }
 
@@ -214,7 +227,7 @@ fn refused(response: Option<org_proto::Response>, code: ErrorCode) -> bool {
         Some(org_proto::Outcome::Error(error)) if error.code == code)
 }
 
-fn wait_closed(web: &listener::WebConnection) {
+fn wait_closed(web: &control_listener::WebConnection) {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while web.live() && std::time::Instant::now() < until {
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -446,7 +459,7 @@ fn web_serving_from_a_local_connection_is_not_authorized() {
     let offices = service.offices.clone();
     let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
     // Every host.sock connection is `Local`.
-    let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+    let local = control_listener::LocalConnection::start(host, Arc::new(service)).unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
     let mut peer = std::io::BufReader::new(peer);
@@ -488,7 +501,7 @@ fn browser_session_end_pushes_session_ended_before_its_reply_on_the_web_connecti
         SessionValidateParams, SESSION_ENDED,
     };
     let home = tempfile::tempdir().unwrap();
-    let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _c) = crate::authentication::tests::fixture();
     let service = service(home.path()).with_authentication(Some(Arc::new(authentication)));
     let (web, mut peer, offices) = web_peer_for(
         service,
@@ -542,7 +555,7 @@ fn instance_view_is_served_only_on_the_web_connection_after_the_name_is_installe
     use org_host_control::browser::{InstanceView, InstanceViewResult};
     use org_host_control::{Administrator, InstanceMode, WebState};
     let home = tempfile::tempdir().unwrap();
-    let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _c) = crate::authentication::tests::fixture();
     let authentication = Arc::new(authentication);
     let mut service = service(home.path()).with_authentication(Some(authentication.clone()));
     service.instance_id = Some(crate::ids::uuid_v7().unwrap());
@@ -555,9 +568,13 @@ fn instance_view_is_served_only_on_the_web_connection_after_the_name_is_installe
         r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
     )
     .unwrap();
-    let web =
-        listener::WebConnection::start(host, transfer, listen, service.clone() as Arc<dyn Handler>)
-            .unwrap();
+    let web = control_listener::WebConnection::start(
+        host,
+        transfer,
+        listen,
+        service.clone() as Arc<dyn Handler>,
+    )
+    .unwrap();
     let mut peer = std::io::BufReader::new(peer);
     exchange::<Hello>(&mut peer, 1, &Default::default())
         .unwrap()
@@ -618,8 +635,8 @@ fn instance_view_is_served_only_on_the_web_connection_after_the_name_is_installe
     drop(web);
 
     let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let local =
-        listener::LocalConnection::start(host, service.clone() as Arc<dyn Handler>).unwrap();
+    let local = control_listener::LocalConnection::start(host, service.clone() as Arc<dyn Handler>)
+        .unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
     let mut peer = std::io::BufReader::new(peer);
@@ -644,13 +661,13 @@ fn browser_session_ops_off_the_web_connection_are_refused() {
         LinkRegister, SessionSignIn, SessionValidate, SessionValidateParams,
     };
     let home = tempfile::tempdir().unwrap();
-    let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _c) = crate::authentication::tests::fixture();
     let authentication = Arc::new(authentication);
     let mut service = service(home.path()).with_authentication(Some(authentication.clone()));
     service.instance_id = Some(crate::ids::uuid_v7().unwrap());
     let offices = service.offices.clone();
     let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+    let local = control_listener::LocalConnection::start(host, Arc::new(service)).unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
     let mut peer = std::io::BufReader::new(peer);
@@ -722,7 +739,7 @@ fn browser_session_ops_off_the_web_connection_are_refused() {
     offices.shutdown();
     // Nothing was stored: no session for the served digests, and the login
     // and address still have their whole budget.
-    let now = i64::try_from(authentication::wall_ms().unwrap()).unwrap();
+    let now = i64::try_from(crate::authentication::wall_ms().unwrap()).unwrap();
     let mut ended = Vec::new();
     assert_eq!(
         authentication
@@ -744,11 +761,12 @@ fn browser_session_ops_off_the_web_connection_are_refused() {
 fn tls_set_needs_the_administrators_session_on_host_sock() {
     use org_host_control::ops::{AccountVerify, AccountVerifyParams, TlsSet, TlsSetParams};
     use org_host_control::{HostOpResult, Password, SessionHandle, TlsPrivateKey};
-    let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _c) = crate::authentication::tests::fixture();
     let authentication = Arc::new(authentication);
-    let verifier =
-        authentication::hash_password(&Password::new("synthetic test password".into()).unwrap())
-            .unwrap();
+    let verifier = crate::authentication::hash_password(
+        &Password::new("synthetic test password".into()).unwrap(),
+    )
+    .unwrap();
     authentication
         .provisioning_storage()
         .0
@@ -799,7 +817,7 @@ fn tls_set_needs_the_administrators_session_on_host_sock() {
         service.instance_id = Some(crate::ids::uuid_v7().unwrap());
         let offices = service.offices.clone();
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
-        let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+        let local = control_listener::LocalConnection::start(host, Arc::new(service)).unwrap();
         peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .unwrap();
         let mut peer = std::io::BufReader::new(peer);
@@ -918,7 +936,7 @@ fn admin_calls_are_unavailable_before_install_admin() {
     assert!(service.admin().is_none());
     let offices = service.offices.clone();
     let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+    let local = control_listener::LocalConnection::start(host, Arc::new(service)).unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
     let mut peer = std::io::BufReader::new(peer);
@@ -1041,8 +1059,7 @@ fn local_access_and_tls_enable_refused_off_web_and_on_https() {
     use org_host_control::Password;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_auth_root, authentication) =
-        crate::service::authentication::tests::fixture_without_accounts();
+    let (_auth_root, authentication) = crate::authentication::tests::fixture_without_accounts();
     let auth = Arc::new(authentication);
     let (db, _) = auth.provisioning_storage();
     assert!(db.init_local_authless_if_empty(1000).unwrap().is_some());
@@ -1059,7 +1076,7 @@ fn local_access_and_tls_enable_refused_off_web_and_on_https() {
     local_svc.instance_id = Some(crate::ids::uuid_v7().unwrap());
     let local_offices = local_svc.offices.clone();
     let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let local = listener::LocalConnection::start(host, Arc::new(local_svc)).unwrap();
+    let local = control_listener::LocalConnection::start(host, Arc::new(local_svc)).unwrap();
     peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
     let mut local_peer = std::io::BufReader::new(peer);

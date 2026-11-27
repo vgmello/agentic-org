@@ -22,9 +22,9 @@ use super::{
     wait_until, web_pids, Launched, Reply, Seed, PASSWORD,
 };
 use crate::{
+    control_listener::Connection,
     enc1_process_tests::{contains, encodings, files, unhex},
     recovery::TestPresence,
-    service::listener::Connection,
     Host,
 };
 use org_host_control::{ops, recovery as dto};

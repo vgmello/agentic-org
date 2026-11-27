@@ -797,7 +797,7 @@ fn operation_get_decodes_kind_and_id_before_dispatch_and_sanitizes_storage_error
 }
 
 /// The grant key the test offices launch with.
-fn launch_key() -> org_proto::GrantKey {
+pub(super) fn launch_key() -> org_proto::GrantKey {
     crate::test_support::grant_key()
 }
 
@@ -875,6 +875,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         sessions: None,
         run_binding_verify: None,
         run_binding_active: None,
+        delegation: None,
         external_auth: None,
         record_agent_command: None,
         waiting_messages_counter: None,
@@ -1338,6 +1339,7 @@ fn serving(
             sessions: None,
             run_binding_verify: None,
             run_binding_active: None,
+            delegation: None,
             external_auth: None,
             record_agent_command: None,
             waiting_messages_counter: None,
@@ -1822,6 +1824,7 @@ fn following_with(
                 sessions: None,
                 run_binding_verify: None,
                 run_binding_active: None,
+                delegation: None,
                 external_auth: None,
                 record_agent_command: None,
                 waiting_messages_counter: None,
@@ -2324,6 +2327,7 @@ fn asking(
             sessions: None,
             run_binding_verify: None,
             run_binding_active: None,
+            delegation: None,
             external_auth: None,
             record_agent_command: None,
             waiting_messages_counter: None,
@@ -2486,6 +2490,7 @@ fn send_params(n: u32, to: &str, body: &str) -> MsgSendParams {
         body: body.to_owned(),
         meta: Default::default(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     }
 }
 
@@ -3763,5 +3768,95 @@ fn a_pass_that_could_not_decide_is_repeated_on_a_quiet_log() {
     assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
     stop.store(true, Ordering::SeqCst);
     drop(ada);
+    server.join().unwrap();
+}
+
+/// `TASK-80.1` pass 2: the calls a connection answers before the dispatcher (`auth.whoami`, a
+/// held `msg.wait`, `subscribe`) meet the Chief of Staff's gate too, and a failed read of her
+/// delegation refuses rather than letting the call through.
+#[test]
+fn her_run_for_a_deactivated_member_gets_no_whoami_wait_or_subscription() {
+    use super::delegation::tests::FakePort;
+    use super::delegation::DELEGATION_DENIED;
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("d.sock");
+    let active = org_office::CallerAuthority {
+        active: true,
+        is_person: true,
+        is_owner: false,
+        may_hire: false,
+    };
+    // The run bound as `ada` is the Chief of Staff's, acting for an active member at first.
+    let port = Arc::new(FakePort::new(
+        org_mailbox::testkit::fixture::ADA_ID,
+        Delegation {
+            caller_id: Some("member".into()),
+            caller: active.clone(),
+        },
+    ));
+    let mut office_ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    office_ports.delegation = Some(Arc::clone(&port) as Arc<dyn ChiefOfStaffPort>);
+    let shared = Arc::new(Shared::new(&test_info(), &path, office_ports, launch_key()));
+    let (stop, server) = start(&path, &shared);
+    let mut stream = connect_bound(&path);
+    let mut ask = |request: Request| {
+        frame::write_message(&mut stream, &request).unwrap();
+        frame::read_message::<Response>(&mut BufReader::new(&stream))
+            .unwrap()
+            .unwrap()
+            .outcome
+    };
+    let whoami = |id| Request {
+        id,
+        method: "auth.whoami".into(),
+        principal: None,
+        params: serde_json::json!({}),
+    };
+    let wait = |id| {
+        Request::new::<org_proto::msg::MsgWait>(
+            id,
+            &org_proto::msg::MsgWaitParams {
+                timeout_ms: 1,
+                from: None,
+                urgent_only: false,
+            },
+        )
+        .unwrap()
+    };
+    let subscribe = |id| Request {
+        id,
+        method: "subscribe".into(),
+        principal: None,
+        params: serde_json::json!({}),
+    };
+    let denied = |outcome: &org_proto::Outcome| matches!(outcome, org_proto::Outcome::Error(e) if e.message == DELEGATION_DENIED);
+    // Acting for an active member: `auth.whoami` and `subscribe` pass the gate (and are then
+    // answered by their own rules); `msg.wait` is never hers.
+    assert!(!denied(&ask(whoami(1))));
+    assert!(!denied(&ask(subscribe(2))));
+    assert!(denied(&ask(wait(3))));
+    // The member is deactivated while the run lives: all three are refused at once.
+    *port.current.lock().unwrap() = Delegation {
+        caller_id: Some("member".into()),
+        caller: org_office::CallerAuthority {
+            active: false,
+            ..active
+        },
+    };
+    assert!(denied(&ask(whoami(4))));
+    assert!(denied(&ask(wait(5))));
+    assert!(denied(&ask(subscribe(6))));
+    // The office cannot read her delegation: refused, never let through.
+    port.broken.store(true, Ordering::SeqCst);
+    for outcome in [ask(whoami(7)), ask(subscribe(8))] {
+        assert!(
+            matches!(outcome, org_proto::Outcome::Error(ref e) if e.code == ErrorCode::Unavailable),
+            "{outcome:?}"
+        );
+    }
+    drop(ask);
+    stop.store(true, Ordering::SeqCst);
+    drop(stream);
     server.join().unwrap();
 }

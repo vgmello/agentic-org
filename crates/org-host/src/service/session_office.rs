@@ -5,8 +5,8 @@ use org_proto::{ApiError, ErrorCode, Request};
 
 use crate::hostdb::{accounts::Account, Error as DbError};
 
-use super::listener::Connection;
 use super::Authentication;
+use crate::control_listener::Connection;
 
 pub(super) fn journal_error(error: DbError) -> ApiError {
     match error {

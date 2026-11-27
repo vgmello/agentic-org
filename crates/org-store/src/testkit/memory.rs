@@ -13,9 +13,10 @@ use std::{
 };
 
 use crate::{
-    change::{DurablePath, Id, Receipt, Sha256},
+    change::{Id, Receipt, Sha256},
     engine::{CorePort, CoreRead, Cursor, Engine, Mark},
     error::{EngineError, StoreError},
+    path::DurablePath,
     testkit::Dump,
 };
 

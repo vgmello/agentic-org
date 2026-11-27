@@ -309,6 +309,7 @@ impl WatcherFixture {
                 blocks: None,
                 approval: false,
                 addressed_to: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -338,6 +339,7 @@ impl WatcherFixture {
                 reply_to: None,
                 also_in_channel: false,
                 reason: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -363,6 +365,8 @@ impl WatcherFixture {
                 thread_id: None,
                 cursor: None,
                 limit: Some(50),
+                has_file: None,
+                has_image: None,
             },
         )
         .unwrap();

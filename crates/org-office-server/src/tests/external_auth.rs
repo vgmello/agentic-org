@@ -180,6 +180,7 @@ fn an_office_socket_agent_can_never_approve_list_or_revoke_external_sessions() {
             "run-ben",
             "sess-ben",
             std::process::id() as libc::pid_t,
+            None,
         )
         .unwrap();
     let conn = target(&w).connect().unwrap();
@@ -295,6 +296,7 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
             "run-ben",
             "sess-ben",
             std::process::id() as libc::pid_t,
+            None,
         )
         .unwrap();
     let ben = token_binding(&w, &w.ben, run.expose_token());
@@ -592,6 +594,7 @@ fn bound_external_commands_do_no_disk_io_and_stay_within_the_hot_path_budget() {
             "run-ben",
             "sess-ben",
             std::process::id() as libc::pid_t,
+            None,
         )
         .unwrap();
     let managed = bound_client(&w, &w.ben, run.expose_token());

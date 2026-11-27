@@ -642,3 +642,143 @@ fn create_hq_task(hq: &Office, owner: &str, team_id: &str, title: &str) -> Strin
     .unwrap();
     task_id
 }
+
+/// `TASK-80.1` pass 2: an organization exported before the built-in Chief of Staff existed gets
+/// her during `import_hq` itself (not only at the next open), with the same derived ID, once.
+#[test]
+fn an_organization_imported_without_its_chief_of_staff_gets_her_at_import() {
+    let hq = Office::for_test_with_real_ca(TestOffice {
+        engine: org_office::EngineChoice::Sqlite,
+    });
+    let owner = hq.owner_member_id().to_owned();
+    let org_id = hq.info().org_id.clone();
+    let tess = hq.chief_of_staff().unwrap().expect("Tess");
+    hq.forget_chief_of_staff_for_test().unwrap();
+    assert!(
+        hq.chief_of_staff().unwrap().is_none(),
+        "an older organization"
+    );
+    let imported = org_office::import::validate_state_dir(
+        &hq.durable_root().join("state"),
+        "https://example.com/acme-org.git",
+        "main",
+    )
+    .unwrap();
+    assert!(!imported
+        .summary
+        .people
+        .iter()
+        .any(|p| p.id == tess.id.as_str()));
+    let rep_hq_id = "0195b000-0000-7000-8000-0000000000a9";
+    let rep_op_id = "0195b000-0000-7000-8000-0000000000a8";
+    let rep_dir = tempfile::tempdir().unwrap();
+    let rep_root = rep_dir.path().canonicalize().unwrap();
+    let rep_roots = DataRoots {
+        durable: rep_root.join("data").join(&org_id).join("durable"),
+        runtime: rep_root.join("data").join(&org_id).join("runtime"),
+    };
+    std::fs::create_dir_all(&rep_roots.durable).unwrap();
+    std::fs::create_dir_all(&rep_roots.runtime).unwrap();
+    let rep_key = Key::from_bytes([0x78; 32]);
+    let rep_key_wrap = rep_key.clone();
+    let rep_org_id = org_id.clone();
+    let rep_custody = Custody {
+        identity: OfficeIdentity {
+            instance_id: Id::parse("0195b000-0000-7000-8000-0000000000a0").unwrap(),
+            organization_id: Id::parse(&org_id).unwrap(),
+            office_id: Id::parse(rep_hq_id).unwrap(),
+            journal_incarnation: Id::parse("0195b000-0000-7000-8000-0000000000a1").unwrap(),
+            writer_epoch: 1,
+            machine_id: Id::parse("0195b000-0000-7000-8000-0000000000a2").unwrap(),
+        },
+        authority: Arc::new(FakeCustody::new()) as Arc<dyn WriterAuthority>,
+    };
+    let creator = imported
+        .summary
+        .people
+        .iter()
+        .find(|p| p.id == owner)
+        .expect("imported owner person")
+        .clone();
+    let binding = org_office::hq_creation::Binding {
+        operation_id: rep_op_id.into(),
+        owner_member_id: owner.clone(),
+        bootstrap: org_proto::selected_bootstrap::PreparedV1 {
+            plan: org_proto::selected_bootstrap::PlanV1 {
+                version: 1,
+                name: hq.info().org_name.clone(),
+                slug: imported.summary.slug.clone(),
+                repository_remote_url: "https://example.com/acme-org.git".into(),
+                state_branch: "main".into(),
+            },
+            organization_id: org_id.clone(),
+            office_id: rep_hq_id.into(),
+            repository_id: "0195b000-0000-7000-8000-0000000000a3".into(),
+            home_team_id: "0195b000-0000-7000-8000-0000000000a4".into(),
+            hr_employee_id: "0195b000-0000-7000-8000-0000000000a5".into(),
+            creator: org_proto::selected_bootstrap::CreatorV1 {
+                employee_id: owner.clone(),
+                name: creator.name.clone(),
+                handle: creator.handle.clone(),
+            },
+        },
+    };
+    let replacement = Office::import_hq(
+        rep_root.join("home/offices").join(rep_hq_id),
+        &NewOffice {
+            office_id: rep_hq_id.into(),
+            office_name: "Imported HQ".into(),
+            role: OfficeRole::Hq,
+            org_id: org_id.clone(),
+            org_name: hq.info().org_name.clone(),
+        },
+        rep_key,
+        &binding,
+        rep_roots,
+        rep_custody,
+        move || Ok((imported, None)),
+        move |prior| {
+            if let Some(p) = prior {
+                return Ok(p);
+            }
+            let ca = SigningKey::generate().expect("replacement CA key");
+            let pub_key = ca.public_key();
+            let code = org_pki::Code::generate().expect("recovery code");
+            let pkg = ca.seal(&rep_org_id, &code).expect("seal replacement CA");
+            let wrapped = org_pki::wrap::wrap(
+                rep_key_wrap.expose_bytes(),
+                &org_pki::wrap::WrapBinding {
+                    organization_id: &rep_org_id,
+                    office_id: rep_hq_id,
+                    purpose: org_pki::wrap::WrapPurpose::OrganizationCa,
+                },
+                ca.local_der(),
+            )
+            .expect("wrap replacement CA");
+            org_office::hq_creation::LocalRecord::new(
+                rep_org_id,
+                rep_op_id.into(),
+                pub_key,
+                pkg,
+                wrapped,
+            )
+        },
+    )
+    .unwrap();
+    // She is there the moment the import returns: same derived ID, her default handle, once.
+    let again = replacement
+        .chief_of_staff()
+        .unwrap()
+        .expect("Tess at import");
+    assert_eq!(again.id, tess.id);
+    assert_eq!(again.handle, "tess");
+    let count = replacement
+        .list_employees()
+        .unwrap()
+        .iter()
+        .filter(|e| e.builtin_key == tess.builtin_key)
+        .count();
+    assert_eq!(count, 1);
+    assert_eq!(replacement.ensure_chief_of_staff().unwrap(), None);
+    replacement.close().unwrap();
+}

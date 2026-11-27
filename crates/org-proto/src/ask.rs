@@ -5,6 +5,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::attachments::AttachmentMeta;
 use crate::calls::Call;
 use crate::msg::Meta;
 
@@ -93,6 +94,9 @@ pub struct AskAnswerRecord {
     pub option_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// The answer's files (`TASK-98.2`): readable by the ask's conversation members.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 impl fmt::Debug for AskAnswerRecord {
@@ -103,6 +107,7 @@ impl fmt::Debug for AskAnswerRecord {
             .field("answers_len", &self.answers.len())
             .field("option_id", &self.option_id)
             .field("has_text", &self.text.is_some())
+            .field("attachments", &self.attachments.len())
             .finish()
     }
 }
@@ -163,6 +168,10 @@ pub struct ChatAskParams {
     pub addressed_to: Option<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub meta: Meta,
+    /// Up to [`crate::attachments::MESSAGE_ATTACHMENTS_MAX`] of the caller's committed staged
+    /// uploads (`TASK-98.2`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 impl fmt::Debug for ChatAskParams {
@@ -174,6 +183,7 @@ impl fmt::Debug for ChatAskParams {
             .field("required", &self.required)
             .field("wait_ms", &self.wait_ms)
             .field("hold_ms", &self.hold_ms)
+            .field("attachments", &self.attachment_ids.len())
             .finish()
     }
 }
@@ -228,6 +238,10 @@ pub struct ChatAnswerParams {
     pub option_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Up to [`crate::attachments::MESSAGE_ATTACHMENTS_MAX`] of the caller's committed staged
+    /// uploads (`TASK-98.2`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 impl fmt::Debug for ChatAnswerParams {
@@ -237,6 +251,7 @@ impl fmt::Debug for ChatAnswerParams {
             .field("answers_len", &self.answers.len())
             .field("option_id", &self.option_id)
             .field("has_text", &self.text.is_some())
+            .field("attachments", &self.attachment_ids.len())
             .finish()
     }
 }
@@ -351,6 +366,7 @@ mod tests {
             approval: false,
             addressed_to: None,
             meta: Meta::new(),
+            attachment_ids: Vec::new(),
         };
         assert!(!format!("{params:?}").contains("SECRET-PROMPT-BODY"));
         let decoded: ChatAskParams =
@@ -366,6 +382,7 @@ mod tests {
             }],
             option_id: None,
             text: None,
+            attachment_ids: Vec::new(),
         };
         assert!(!format!("{ans:?}").contains("SECRET-ANSWER-TEXT"));
     }

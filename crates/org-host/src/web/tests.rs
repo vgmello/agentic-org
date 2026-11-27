@@ -17,8 +17,8 @@ use super::stderr::{
 use super::supervise::{supervise, Serving, Timing, MAX_STARTS, SERVING_DEADLINE};
 use super::*;
 use crate::cloexec::SPAWN_LOCK;
+use crate::control_listener::{Connection, Handler, WebConnection};
 use crate::server_check::ServerCheck;
-use crate::service::listener::{Connection, Handler, WebConnection};
 use crate::sync::lock;
 use crate::test_programs::{fake_web, image_identity, sibling_program};
 use org_host_control::listen::ListenConfig;

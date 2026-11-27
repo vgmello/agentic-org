@@ -5,6 +5,7 @@
 
 mod support;
 
+mod blob_outbox;
 mod hostile;
 mod private_space;
 mod refusals;
