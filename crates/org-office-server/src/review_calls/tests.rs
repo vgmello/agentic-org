@@ -5,10 +5,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use org_git::RepoLocks;
 use org_office::rules::OrgCommand;
 use org_office::{EngineChoice, Office, TestOffice};
 use org_office_sessions::{SessionManager, SessionManagerConfig, WakeKind};
+use org_proto::attachments::{
+    AttachmentAttachParams, AttachmentTargetKind, AttachmentUploadBeginParams,
+    AttachmentUploadChunkParams, AttachmentUploadRef,
+};
+use org_proto::chat::{ChatSendParams, DmOpenParams};
 use org_proto::git::{
     RepoAttach, RepoAttachParams, RepoRegister, RepoRegisterParams, RepositoryKindWire,
     WorktreePrepare, WorktreePrepareParams, WorktreePrepareResult,
@@ -856,4 +862,689 @@ fn round_five_escalation_advisory_notice_triggers_on_resubmit_and_verdict() {
         .find(|i| i.kind == WakeKind::ReviewVerdict)
         .expect("verdict wake");
     assert!(v5_wake.summary.contains("Advisory escalation notice"));
+}
+
+fn stage_upload(office: &Office, actor: &str, name: &str, bytes: &[u8]) -> String {
+    let begun = office
+        .attachment_upload_begin(
+            actor,
+            AttachmentUploadBeginParams {
+                filename: name.into(),
+                mime_type: "text/plain".into(),
+                byte_count: bytes.len() as u64,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let uid = begun.upload.upload_id;
+    let _ = office
+        .attachment_upload_chunk(
+            actor,
+            AttachmentUploadChunkParams {
+                upload_id: uid.clone(),
+                offset: 0,
+                data_base64: STANDARD.encode(bytes),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let _ = office
+        .attachment_upload_commit(
+            actor,
+            AttachmentUploadRef {
+                upload_id: uid.clone(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    uid
+}
+
+#[test]
+fn pass1_p0_2_dirty_private_worktree_never_leaked_before_auth() {
+    let fx = setup_fixture();
+    let snap = fx._office.org_snapshot().unwrap();
+    let team_b = snap
+        .teams
+        .iter()
+        .find(|t| t.name == "Outsiders")
+        .unwrap()
+        .id
+        .clone();
+
+    // Create Private Project B owned by team_b with its own repo and DIRTY worktree.
+    let proj_b = uuid(300);
+    fx._office
+        .submit_org(
+            &fx.owner,
+            OrgCommand::ProjectCreate(ProjectCreateParams {
+                command_id: uuid(301),
+                project_id: proj_b.clone(),
+                name: "Secret B".into(),
+                key: None,
+                description: None,
+                teams: vec![],
+                general_area_id: String::new(),
+                general_area_name: None,
+                repo: None,
+                integration_branch: None,
+                slug: Some("secret-b".into()),
+                owner_team_id: Some(team_b.clone()),
+                create_team_id: None,
+                parent_team_id: None,
+                contributing_team_ids: vec![],
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let task_b = fx
+        ._office
+        .task_create(
+            &fx.owner,
+            TasksCreateParams {
+                command_id: uuid(302),
+                task_id: uuid(303),
+                title: "Secret task".into(),
+                body_markdown: String::new(),
+                project_id: Some(proj_b.clone()),
+                team_id: Some(team_b),
+                assigned_team_id: None,
+                assignee_id: Some(fx.outsider_agent.clone()),
+                task_type: None,
+                work_type: None,
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .task;
+    let origin_b_tmp = tempfile::tempdir().unwrap();
+    let bare_b = seed_origin(origin_b_tmp.path());
+    let repo_b = uuid(304);
+    let _ = git_ok::<RepoRegister>(
+        &fx._git_svc,
+        &fx.owner,
+        &RepoRegisterParams {
+            command_id: uuid(305),
+            repository_id: repo_b.clone(),
+            key: Some("secret-repo".into()),
+            kind: RepositoryKindWire::Local,
+            remote_url: None,
+            origin_path: Some(bare_b.to_string_lossy().into_owned()),
+        },
+    );
+    let _ = git_ok::<RepoAttach>(
+        &fx._git_svc,
+        &fx.owner,
+        &RepoAttachParams {
+            command_id: uuid(306),
+            project: proj_b,
+            repository: repo_b.clone(),
+            integration_branch: "main".into(),
+        },
+    );
+    let prep_b: WorktreePrepareResult = git_ok::<WorktreePrepare>(
+        &fx._git_svc,
+        &fx.outsider_agent,
+        &WorktreePrepareParams {
+            command_id: uuid(307),
+            task: task_b.id,
+            repository: repo_b.clone(),
+            base_branch: Some("main".into()),
+        },
+    );
+    // Make Private Project B's worktree DIRTY!
+    std::fs::write(
+        PathBuf::from(&prep_b.worktree.worktree_path).join("lib.rs"),
+        "// dirty secret change\n",
+    )
+    .unwrap();
+
+    // Member of Project A probing Private Project B's repo with project_id=Some(proj_a):
+    // MUST get InvalidRequest BEFORE git runs (never Conflict from dirty worktree!).
+    let req_with_proj_a = ReviewRequestParams {
+        command_id: uuid(310),
+        review_id: uuid(311),
+        target_kind: ReviewTargetKind::Code,
+        title: "Cross-project probe".into(),
+        body_markdown: String::new(),
+        kind_slug: "code-review".into(),
+        category_slug: None,
+        project_id: Some(fx.project_id.clone()),
+        task_id: None,
+        repository_id: Some(repo_b.clone()),
+        branch: Some(prep_b.worktree.branch.clone()),
+        target_ref: None,
+        base_oid: None,
+        expected_head_oid: None,
+        independent: false,
+        routing: Some(ReviewRoutingSpec {
+            mode: RoutingMode::Explicit,
+            reviewer_ids: vec![fx.reviewer_agent.clone()],
+            team_id: None,
+        }),
+        session_mode: None,
+        guidance_refs: vec![],
+        criteria: vec![],
+    };
+    assert_eq!(
+        call_err::<ReviewRequest>(&fx.review_svc, &fx.author_agent, &req_with_proj_a),
+        ErrorCode::InvalidRequest
+    );
+
+    // Member of Project A probing Private Project B's repo with project_id=None:
+    // MUST get NotFound BEFORE git runs (never Conflict from dirty worktree!).
+    let mut req_no_proj = req_with_proj_a;
+    req_no_proj.command_id = uuid(312);
+    req_no_proj.review_id = uuid(313);
+    req_no_proj.project_id = None;
+    assert_eq!(
+        call_err::<ReviewRequest>(&fx.review_svc, &fx.author_agent, &req_no_proj),
+        ErrorCode::NotFound
+    );
+}
+
+#[test]
+fn pass1_p1_1_attachments_scope_and_no_staged_mutation_on_rejected_calls() {
+    let fx = setup_fixture();
+    run_git(
+        &fx.worktree_dir,
+        &[
+            "-c",
+            "user.name=Author",
+            "-c",
+            "user.email=author@example.test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "r1",
+        ],
+    );
+    let head = run_git(&fx.worktree_dir, &["rev-parse", "HEAD"]);
+    let created: ReviewRoundResult = call_ok::<ReviewRequest>(
+        &fx.review_svc,
+        &fx.author_agent,
+        &ReviewRequestParams {
+            command_id: uuid(400),
+            review_id: uuid(401),
+            target_kind: ReviewTargetKind::Code,
+            title: "Attachment ACL test".into(),
+            body_markdown: String::new(),
+            kind_slug: "code-review".into(),
+            category_slug: None,
+            project_id: Some(fx.project_id.clone()),
+            task_id: Some(fx.task_id.clone()),
+            repository_id: Some(fx.repo_id.clone()),
+            branch: Some(fx.branch.clone()),
+            target_ref: None,
+            base_oid: None,
+            expected_head_oid: Some(head.clone()),
+            independent: false,
+            routing: Some(ReviewRoutingSpec {
+                mode: RoutingMode::Explicit,
+                reviewer_ids: vec![fx.reviewer_agent.clone()],
+                team_id: None,
+            }),
+            session_mode: Some(ReviewSessionMode::Warm),
+            guidance_refs: vec![],
+            criteria: vec![],
+        },
+    );
+
+    // 1. DM attachment cannot be linked to a review finding.
+    let _dm = fx
+        ._office
+        .dm_open(
+            &fx.owner,
+            DmOpenParams {
+                participants: vec![fx.reviewer_agent.clone()],
+                name: None,
+                conversation_id: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let dm_up = stage_upload(&fx._office, &fx.owner, "dm-secret.txt", b"dm only");
+    let dm_msg = fx
+        ._office
+        .chat_send(
+            &fx.owner,
+            ChatSendParams {
+                id: uuid(402),
+                to: fx.reviewer_agent.clone(),
+                kind: org_proto::msg::KIND_MSG.into(),
+                priority: None,
+                subject: None,
+                body: "dm file".into(),
+                attachment_ids: vec![dm_up],
+                meta: Default::default(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let dm_att_id = dm_msg.message.attachments[0].id.clone();
+
+    // Mixed batch [staged_upload, dm_att_id] must reject DM AND leave staged_upload unbound!
+    let staged_mixed = stage_upload(&fx._office, &fx.reviewer_agent, "mix.txt", b"mix");
+    assert_eq!(
+        call_err::<ReviewFinding>(
+            &fx.review_svc,
+            &fx.reviewer_agent,
+            &ReviewFindingParams {
+                command_id: uuid(403),
+                review: created.review.key.clone(),
+                op: ReviewFindingOp::Add(ReviewFindingDraft {
+                    finding_id: uuid(404),
+                    severity: FindingSeverity::Minor,
+                    anchor: FindingAnchor::general(),
+                    body_markdown: "DM leak attempt".into(),
+                    attachment_ids: vec![staged_mixed.clone(), dm_att_id],
+                }),
+            },
+        ),
+        ErrorCode::NotAuthorized
+    );
+    // Proves staged_mixed was NOT bound/consumed by the rejected call!
+    assert!(fx
+        ._office
+        .attachment_attach(
+            &fx.reviewer_agent,
+            AttachmentAttachParams {
+                command_id: uuid(405),
+                upload_id: Some(staged_mixed),
+                source_attachment_id: None,
+                target_kind: AttachmentTargetKind::Organization,
+                target_id: None,
+                title: None,
+                description: None,
+                artifact_status: None,
+            },
+        )
+        .unwrap()
+        .is_ok());
+
+    // 2. Rejected review.verdict by unauthorized non-reviewer must NOT bind staged upload!
+    let staged_unauth = stage_upload(&fx._office, &fx.author_agent, "unauth.txt", b"unauth");
+    assert_eq!(
+        call_err::<ReviewVerdictCall>(
+            &fx.review_svc,
+            &fx.author_agent,
+            &ReviewVerdictParams {
+                command_id: uuid(406),
+                review: created.review.key.clone(),
+                round_number: 1,
+                head_oid: Some(head.clone()),
+                verdict: ReviewVerdict::Approve,
+                summary_markdown: "Unauthorized verdict".into(),
+                findings: vec![],
+                attachment_ids: vec![staged_unauth.clone()],
+            },
+        ),
+        ErrorCode::NotAuthorized
+    );
+    assert!(fx
+        ._office
+        .attachment_attach(
+            &fx.author_agent,
+            AttachmentAttachParams {
+                command_id: uuid(407),
+                upload_id: Some(staged_unauth),
+                source_attachment_id: None,
+                target_kind: AttachmentTargetKind::Organization,
+                target_id: None,
+                title: None,
+                description: None,
+                artifact_status: None,
+            },
+        )
+        .unwrap()
+        .is_ok());
+
+    // 3. Rejected review.verdict on stale round must NOT bind staged upload!
+    let staged_stale = stage_upload(&fx._office, &fx.reviewer_agent, "stale.txt", b"stale");
+    assert_eq!(
+        call_err::<ReviewVerdictCall>(
+            &fx.review_svc,
+            &fx.reviewer_agent,
+            &ReviewVerdictParams {
+                command_id: uuid(408),
+                review: created.review.key.clone(),
+                round_number: 99,
+                head_oid: Some(head),
+                verdict: ReviewVerdict::Comment,
+                summary_markdown: "Stale round".into(),
+                findings: vec![],
+                attachment_ids: vec![staged_stale.clone()],
+            },
+        ),
+        ErrorCode::Conflict
+    );
+    assert!(fx
+        ._office
+        .attachment_attach(
+            &fx.reviewer_agent,
+            AttachmentAttachParams {
+                command_id: uuid(409),
+                upload_id: Some(staged_stale),
+                source_attachment_id: None,
+                target_kind: AttachmentTargetKind::Organization,
+                target_id: None,
+                title: None,
+                description: None,
+                artifact_status: None,
+            },
+        )
+        .unwrap()
+        .is_ok());
+
+    // 4. Rejected review.finding on closed review must NOT bind staged upload!
+    let _closed: ReviewMutationResult = call_ok::<ReviewClose>(
+        &fx.review_svc,
+        &fx.owner,
+        &ReviewCloseParams {
+            command_id: uuid(410),
+            review: created.review.key.clone(),
+            expected_revision: created.review.revision,
+            reason: Some("done".into()),
+        },
+    );
+    let staged_closed = stage_upload(&fx._office, &fx.reviewer_agent, "closed.txt", b"closed");
+    assert_eq!(
+        call_err::<ReviewFinding>(
+            &fx.review_svc,
+            &fx.reviewer_agent,
+            &ReviewFindingParams {
+                command_id: uuid(411),
+                review: created.review.key,
+                op: ReviewFindingOp::Add(ReviewFindingDraft {
+                    finding_id: uuid(412),
+                    severity: FindingSeverity::Minor,
+                    anchor: FindingAnchor::general(),
+                    body_markdown: "Closed review finding".into(),
+                    attachment_ids: vec![staged_closed.clone()],
+                }),
+            },
+        ),
+        ErrorCode::InvalidRequest
+    );
+    assert!(fx
+        ._office
+        .attachment_attach(
+            &fx.reviewer_agent,
+            AttachmentAttachParams {
+                command_id: uuid(413),
+                upload_id: Some(staged_closed),
+                source_attachment_id: None,
+                target_kind: AttachmentTargetKind::Organization,
+                target_id: None,
+                title: None,
+                description: None,
+                artifact_status: None,
+            },
+        )
+        .unwrap()
+        .is_ok());
+}
+
+#[test]
+fn pass1_p1_3_warm_resume_never_resurrects_pre_fresh_session_and_p2_1_verdict_wakes() {
+    let fx = setup_fixture();
+    run_git(
+        &fx.worktree_dir,
+        &[
+            "-c",
+            "user.name=Author",
+            "-c",
+            "user.email=author@example.test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "r1",
+        ],
+    );
+    let head = run_git(&fx.worktree_dir, &["rev-parse", "HEAD"]);
+    let created: ReviewRoundResult = call_ok::<ReviewRequest>(
+        &fx.review_svc,
+        &fx.author_agent,
+        &ReviewRequestParams {
+            command_id: uuid(500),
+            review_id: uuid(501),
+            target_kind: ReviewTargetKind::Code,
+            title: "Session affinity and multi-verdict test".into(),
+            body_markdown: String::new(),
+            kind_slug: "code-review".into(),
+            category_slug: None,
+            project_id: Some(fx.project_id.clone()),
+            task_id: Some(fx.task_id.clone()),
+            repository_id: Some(fx.repo_id.clone()),
+            branch: Some(fx.branch.clone()),
+            target_ref: None,
+            base_oid: None,
+            expected_head_oid: Some(head.clone()),
+            independent: false,
+            routing: Some(ReviewRoutingSpec {
+                mode: RoutingMode::Explicit,
+                reviewer_ids: vec![fx.reviewer_agent.clone()],
+                team_id: None,
+            }),
+            session_mode: Some(ReviewSessionMode::Warm),
+            guidance_refs: vec![],
+            criteria: vec![],
+        },
+    );
+
+    // P2-1: Three updated verdicts in Round 1 (Comment -> ChangesRequested -> Approve)
+    // must ALL enqueue distinct ReviewVerdict wakes (none dropped by seen_item_ids)!
+    let mut rev = created.review.revision;
+    for (idx, verdict) in [
+        ReviewVerdict::Comment,
+        ReviewVerdict::ChangesRequested,
+        ReviewVerdict::Approve,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let res: ReviewVerdictResult = call_ok::<ReviewVerdictCall>(
+            &fx.review_svc,
+            &fx.reviewer_agent,
+            &ReviewVerdictParams {
+                command_id: uuid(510 + idx as u64),
+                review: created.review.key.clone(),
+                round_number: 1,
+                head_oid: Some(head.clone()),
+                verdict,
+                summary_markdown: format!("Verdict #{idx}"),
+                findings: vec![],
+                attachment_ids: vec![],
+            },
+        );
+        rev = res.review.revision;
+    }
+    let author_wakes = fx
+        .sessions
+        .store()
+        .read_pending_wakes(&fx.author_agent)
+        .unwrap()
+        .expect("verdict wakes queued");
+    let verdict_wakes: Vec<_> = author_wakes
+        .items
+        .iter()
+        .filter(|i| i.kind == WakeKind::ReviewVerdict)
+        .collect();
+    assert_eq!(
+        verdict_wakes.len(),
+        3,
+        "updated verdicts in same round must not be dropped by seen_item_ids"
+    );
+
+    // P1-3: Record runtime_session_id "sess-1" on Round 1 -> Round 2 --fresh (no session) ->
+    // Round 3 Warm MUST have resume_runtime_session_id == None (never resurrects "sess-1")!
+    let v_sess = fx
+        ._office
+        .review_verdict_with_session(
+            &fx.reviewer_agent,
+            ReviewVerdictParams {
+                command_id: uuid(520),
+                review: created.review.key.clone(),
+                round_number: 1,
+                head_oid: Some(head.clone()),
+                verdict: ReviewVerdict::ChangesRequested,
+                summary_markdown: "Stamped sess-1".into(),
+                findings: vec![],
+                attachment_ids: vec![],
+            },
+            Some(rev),
+            Some("sess-1".into()),
+        )
+        .unwrap()
+        .unwrap();
+
+    // Round 2: --fresh (resets carried runtime_session_id to None).
+    let r2: ReviewRoundResult = call_ok::<ReviewResubmit>(
+        &fx.review_svc,
+        &fx.author_agent,
+        &ReviewResubmitParams {
+            command_id: uuid(521),
+            review: created.review.key.clone(),
+            expected_revision: v_sess.review.revision,
+            expected_head_oid: Some(head.clone()),
+            session_mode: None,
+            fresh: true,
+            note_markdown: "Round 2 fresh".into(),
+        },
+    );
+    assert_eq!(r2.round.round_number, 2);
+    assert_eq!(r2.round.session_mode, ReviewSessionMode::Fresh);
+
+    // Round 3: Warm (without any Round 2 verdict session recorded).
+    let r3: ReviewRoundResult = call_ok::<ReviewResubmit>(
+        &fx.review_svc,
+        &fx.author_agent,
+        &ReviewResubmitParams {
+            command_id: uuid(522),
+            review: created.review.key,
+            expected_revision: r2.review.revision,
+            expected_head_oid: Some(head),
+            session_mode: Some(ReviewSessionMode::Warm),
+            fresh: false,
+            note_markdown: "Round 3 warm".into(),
+        },
+    );
+    assert_eq!(r3.round.round_number, 3);
+    assert_eq!(r3.round.session_mode, ReviewSessionMode::Warm);
+
+    let wakes = fx
+        .sessions
+        .store()
+        .read_pending_wakes(&fx.reviewer_agent)
+        .unwrap()
+        .unwrap();
+    let r3_wake = wakes
+        .items
+        .iter()
+        .find(|i| i.item_id.contains(":r3:"))
+        .expect("round 3 wake present");
+    let aff = r3_wake
+        .session_affinity
+        .as_ref()
+        .expect("round 3 affinity set");
+    assert!(!aff.fresh);
+    assert_eq!(
+        aff.resume_runtime_session_id, None,
+        "Round 3 Warm after Round 2 --fresh must NEVER resurrect Round 1 sess-1"
+    );
+}
+
+#[test]
+fn pass1_p2_2_git_branch_mismatch_detached_head_and_no_cross_employee_fallback() {
+    let fx = setup_fixture();
+    run_git(
+        &fx.worktree_dir,
+        &[
+            "-c",
+            "user.name=Author",
+            "-c",
+            "user.email=author@example.test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "r1",
+        ],
+    );
+    let head = run_git(&fx.worktree_dir, &["rev-parse", "HEAD"]);
+
+    let mk_req =
+        |cid: u64, rid: u64, task_id: Option<String>, exp: Option<String>| ReviewRequestParams {
+            command_id: uuid(cid),
+            review_id: uuid(rid),
+            target_kind: ReviewTargetKind::Code,
+            title: "Branch check".into(),
+            body_markdown: String::new(),
+            kind_slug: "code-review".into(),
+            category_slug: None,
+            project_id: Some(fx.project_id.clone()),
+            task_id,
+            repository_id: Some(fx.repo_id.clone()),
+            branch: Some(fx.branch.clone()),
+            target_ref: None,
+            base_oid: None,
+            expected_head_oid: exp,
+            independent: false,
+            routing: Some(ReviewRoutingSpec {
+                mode: RoutingMode::Explicit,
+                reviewer_ids: vec![fx.owner.clone()],
+                team_id: None,
+            }),
+            session_mode: None,
+            guidance_refs: vec![],
+            criteria: vec![],
+        };
+
+    // 1. Detached HEAD must be rejected with Conflict!
+    run_git(&fx.worktree_dir, &["checkout", "--detach", "HEAD"]);
+    assert_eq!(
+        call_err::<ReviewRequest>(
+            &fx.review_svc,
+            &fx.author_agent,
+            &mk_req(600, 601, Some(fx.task_id.clone()), Some(head.clone())),
+        ),
+        ErrorCode::Conflict
+    );
+
+    // 2. Checked out on a different branch must be rejected with Conflict!
+    run_git(&fx.worktree_dir, &["checkout", "-b", "wrong-branch"]);
+    assert_eq!(
+        call_err::<ReviewRequest>(
+            &fx.review_svc,
+            &fx.author_agent,
+            &mk_req(602, 603, Some(fx.task_id.clone()), Some(head)),
+        ),
+        ErrorCode::Conflict
+    );
+
+    // 3. Back on expected branch, dirty author_agent's worktree; another employee with task_id=None
+    // MUST NOT fall back across employees into author_agent's dirty worktree (gets NotFound, not Conflict)!
+    run_git(&fx.worktree_dir, &["checkout", &fx.branch]);
+    std::fs::write(fx.worktree_dir.join("lib.rs"), "// author dirty\n").unwrap();
+    assert_eq!(
+        call_err::<ReviewRequest>(
+            &fx.review_svc,
+            &fx.reviewer_agent,
+            &mk_req(604, 605, None, None),
+        ),
+        ErrorCode::NotFound
+    );
 }

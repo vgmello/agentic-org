@@ -47,36 +47,37 @@ impl ReviewInspectSelection {
         let mut parts = trimmed.split('.');
         let root = parts.next().unwrap_or(trimmed);
         let sub = parts.next();
-        match root {
-            "review" => match sub {
-                None => {
-                    self.body = true;
-                    Ok(())
-                }
-                Some("body" | "body_markdown") => {
-                    self.body = true;
-                    Ok(())
-                }
-                Some(field) if is_review_view_field(field) => Ok(()),
-                Some(_) => Err(format!("unknown review field `{trimmed}`")),
-            },
-            "body" | "body_markdown" => {
+        if parts.next().is_some() {
+            return Err(format!("unknown review inspect field `{trimmed}`"));
+        }
+        match (root, sub) {
+            ("review", None) => {
                 self.body = true;
                 Ok(())
             }
-            "rounds" => {
+            ("review", Some("body" | "body_markdown")) => {
+                self.body = true;
+                Ok(())
+            }
+            ("review", Some(field)) if is_review_view_field(field) => Ok(()),
+            ("review", Some(_)) => Err(format!("unknown review field `{trimmed}`")),
+            ("body" | "body_markdown", None) => {
+                self.body = true;
+                Ok(())
+            }
+            ("rounds", None) => {
                 self.rounds = true;
                 Ok(())
             }
-            "reviewers" => {
+            ("reviewers", None) => {
                 self.reviewers = true;
                 Ok(())
             }
-            "findings" => {
+            ("findings", None) => {
                 self.findings = true;
                 Ok(())
             }
-            other if is_review_view_field(other) && sub.is_none() => Ok(()),
+            (other, None) if is_review_view_field(other) => Ok(()),
             _ => Err(format!("unknown review inspect field `{trimmed}`")),
         }
     }

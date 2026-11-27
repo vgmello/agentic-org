@@ -11,13 +11,22 @@ use std::collections::BTreeSet;
 use org_office::Office;
 use org_proto::attachments::{
     AttachmentAttachParams, AttachmentInspectParams, AttachmentScope, AttachmentTargetKind,
+    AttachmentView,
 };
 use org_proto::reviews::{ReviewView, REVIEW_MAX_ATTACHMENTS};
 use org_proto::{ApiError, ErrorCode};
 use sha2::{Digest, Sha256};
 
+use super::scope::{caller_allowed_teams, is_project_visible};
+
+enum ClassifiedAttachment {
+    Existing(String),
+    Staged(String),
+}
+
 /// Validates and resolves `attachment_ids` for `caller` on `review`, returning canonical bound
-/// shared attachment IDs.
+/// shared attachment IDs. Every existing attachment across the slice is validated BEFORE any
+/// staged upload is bound.
 pub(super) fn resolve_review_attachments(
     office: &Office,
     caller: &str,
@@ -25,44 +34,84 @@ pub(super) fn resolve_review_attachments(
     review: &ReviewView,
     raw_ids: &[String],
 ) -> Result<Vec<String>, ApiError> {
-    if raw_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    if raw_ids.len() > REVIEW_MAX_ATTACHMENTS {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!("at most {REVIEW_MAX_ATTACHMENTS} attachments are allowed"),
-        ));
-    }
-    let mut seen = BTreeSet::new();
-    let mut resolved = Vec::with_capacity(raw_ids.len());
-    for raw in raw_ids {
-        let trimmed = raw.trim();
-        if !org_proto::is_uuid_v7(trimmed) {
-            return Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "attachment_ids must contain canonical lowercase UUIDv7 values",
-            ));
-        }
-        if !seen.insert(trimmed.to_owned()) {
-            return Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "attachment_ids must not contain duplicates",
-            ));
-        }
-        let bound_id = resolve_one_attachment(office, caller, command_id, review, trimmed)?;
-        resolved.push(bound_id);
-    }
-    Ok(resolved)
+    let mut batches =
+        resolve_review_attachment_batches(office, caller, command_id, review, &[raw_ids])?;
+    Ok(batches.pop().unwrap_or_default())
 }
 
-fn resolve_one_attachment(
+/// Two-phase batch resolver for verdict + findings attachments: validates ALL slices and existing
+/// attachment ACL/scope rules BEFORE binding ANY staged upload.
+pub(super) fn resolve_review_attachment_batches(
     office: &Office,
     caller: &str,
     command_id: &str,
     review: &ReviewView,
+    batches: &[&[String]],
+) -> Result<Vec<Vec<String>>, ApiError> {
+    if batches.iter().all(|b| b.is_empty()) {
+        return Ok(batches.iter().map(|_| Vec::new()).collect());
+    }
+    let allowed_teams = caller_allowed_teams(office, caller)?;
+    let mut classified_batches = Vec::with_capacity(batches.len());
+    for raw_ids in batches {
+        if raw_ids.len() > REVIEW_MAX_ATTACHMENTS {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                format!("at most {REVIEW_MAX_ATTACHMENTS} attachments are allowed"),
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        let mut classified = Vec::with_capacity(raw_ids.len());
+        for raw in *raw_ids {
+            let trimmed = raw.trim();
+            if !org_proto::is_uuid_v7(trimmed) {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "attachment_ids must contain canonical lowercase UUIDv7 values",
+                ));
+            }
+            if !seen.insert(trimmed.to_owned()) {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "attachment_ids must not contain duplicates",
+                ));
+            }
+            classified.push(classify_one_attachment(
+                office,
+                caller,
+                allowed_teams.as_ref(),
+                review,
+                trimmed,
+            )?);
+        }
+        classified_batches.push(classified);
+    }
+
+    let mut out = Vec::with_capacity(classified_batches.len());
+    for batch in classified_batches {
+        let mut resolved = Vec::with_capacity(batch.len());
+        for item in batch {
+            match item {
+                ClassifiedAttachment::Existing(id) => resolved.push(id),
+                ClassifiedAttachment::Staged(upload_id) => {
+                    resolved.push(bind_staged_upload(
+                        office, caller, command_id, review, &upload_id,
+                    )?);
+                }
+            }
+        }
+        out.push(resolved);
+    }
+    Ok(out)
+}
+
+fn classify_one_attachment(
+    office: &Office,
+    caller: &str,
+    allowed_teams: Option<&BTreeSet<String>>,
+    review: &ReviewView,
     id: &str,
-) -> Result<String, ApiError> {
+) -> Result<ClassifiedAttachment, ApiError> {
     match office
         .attachment_inspect(
             caller,
@@ -73,19 +122,108 @@ fn resolve_one_attachment(
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "the office could not answer"))?
     {
         Ok(res) => {
-            if res.attachment.scope != AttachmentScope::Shared {
-                return Err(ApiError::new(
-                    ErrorCode::NotAuthorized,
-                    "private attachments cannot be linked to shared reviews",
-                ));
-            }
-            Ok(res.attachment.id)
+            verify_existing_attachment_scope(office, allowed_teams, review, &res.attachment)?;
+            Ok(ClassifiedAttachment::Existing(res.attachment.id))
         }
         Err(refusal) if refusal.code == ErrorCode::NotFound => {
-            bind_staged_upload(office, caller, command_id, review, id)
+            Ok(ClassifiedAttachment::Staged(id.to_owned()))
         }
         Err(refusal) => Err(refusal),
     }
+}
+
+fn verify_existing_attachment_scope(
+    office: &Office,
+    allowed_teams: Option<&BTreeSet<String>>,
+    review: &ReviewView,
+    att: &AttachmentView,
+) -> Result<(), ApiError> {
+    if att.scope != AttachmentScope::Shared {
+        return Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "private attachments cannot be linked to shared reviews",
+        ));
+    }
+    match att.target_kind {
+        AttachmentTargetKind::Organization => {
+            if att.target_id.is_some() {
+                return Err(ApiError::new(ErrorCode::NotFound, "attachment not found"));
+            }
+            Ok(())
+        }
+        AttachmentTargetKind::Project => {
+            let Some(att_pid) = att.target_id.as_deref() else {
+                return Err(ApiError::new(ErrorCode::NotFound, "attachment not found"));
+            };
+            verify_attachment_project_scope(office, allowed_teams, review, att_pid)
+        }
+        AttachmentTargetKind::Task => {
+            let Some(tid) = att.target_id.as_deref() else {
+                return Err(ApiError::new(ErrorCode::NotFound, "attachment not found"));
+            };
+            let task = office
+                .task_inspect(tid)
+                .map_err(|_| ApiError::new(ErrorCode::StorageError, "the office could not answer"))?
+                .map_err(|_| ApiError::new(ErrorCode::NotFound, "attachment not found"))?;
+            if let Some(att_pid) = task.task.project_id.as_deref() {
+                verify_attachment_project_scope(office, allowed_teams, review, att_pid)?;
+            }
+            Ok(())
+        }
+        AttachmentTargetKind::TaskComment => {
+            let Some(cid) = att.target_id.as_deref() else {
+                return Err(ApiError::new(ErrorCode::NotFound, "attachment not found"));
+            };
+            let Some(rtid) = review.task_id.as_deref() else {
+                return Err(ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "attachment belongs to a different project scope than this review",
+                ));
+            };
+            let comments = office
+                .task_comments(rtid)
+                .map_err(|_| ApiError::new(ErrorCode::StorageError, "the office could not answer"))?
+                .map_err(|_| ApiError::new(ErrorCode::NotFound, "attachment not found"))?;
+            if comments.comments.iter().any(|c| c.id == cid) {
+                Ok(())
+            } else {
+                Err(ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "attachment belongs to a different project scope than this review",
+                ))
+            }
+        }
+        AttachmentTargetKind::Message | AttachmentTargetKind::AskAnswer => Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "conversation attachments cannot be linked to shared reviews",
+        )),
+        _ => Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "only shared organization, project, or task attachments may be linked to reviews",
+        )),
+    }
+}
+
+fn verify_attachment_project_scope(
+    office: &Office,
+    allowed_teams: Option<&BTreeSet<String>>,
+    review: &ReviewView,
+    att_pid: &str,
+) -> Result<(), ApiError> {
+    let proj = office
+        .inspect_project(att_pid)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "the office could not answer"))?
+        .map_err(|_| ApiError::new(ErrorCode::NotFound, "attachment not found"))?;
+    if !is_project_visible(&proj, allowed_teams) {
+        return Err(ApiError::new(ErrorCode::NotFound, "attachment not found"));
+    }
+    if review.project_id.as_deref() != Some(att_pid) {
+        return Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "attachment belongs to a different project scope than this review",
+        ));
+    }
+    Ok(())
 }
 
 fn bind_staged_upload(

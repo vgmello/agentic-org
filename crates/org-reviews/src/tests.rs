@@ -27,6 +27,31 @@ fn key_path_and_event_hash_parsing_unit_checks() {
         );
     }
     assert!(super::validation::validate_ref_token("task/T-A42", true, "branch").is_ok());
+    // Doc/artifact target_ref must also refuse leading `-` and `..` traversal (P1-2).
+    for bad_ref in [
+        "-flag",
+        "--option",
+        "-",
+        " -padded",
+        "../secret.md",
+        "docs/../etc/passwd",
+        "..",
+    ] {
+        assert!(
+            super::validation::validate_ref_token(bad_ref, false, "target_ref").is_err(),
+            "target_ref {bad_ref} must be rejected"
+        );
+    }
+    for good_ref in [
+        "docs/design-v1.md",
+        "attachments/report-v1.pdf",
+        "Design Doc v2",
+    ] {
+        assert!(
+            super::validation::validate_ref_token(good_ref, false, "target_ref").is_ok(),
+            "target_ref {good_ref} must be accepted"
+        );
+    }
 
     let rid = Id::parse(SAMPLE_ID).unwrap();
     assert_eq!(

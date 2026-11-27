@@ -305,6 +305,44 @@ fn request_list_and_inspect_round_trip() {
     );
     assert!(ReviewInspectSelection::try_from_fields(Some(&[])).is_err());
     assert!(ReviewInspectSelection::try_from_fields(Some(&["unknown_section".into()])).is_err());
+    // Trailing dotted segments and unvalidated nested paths must fail closed (P2-3).
+    for bad in [
+        "review.status.extra",
+        "review.body.extra",
+        "review.body_markdown.extra",
+        "body.extra",
+        "body_markdown.extra",
+        "rounds.extra",
+        "reviewers.extra",
+        "findings.extra",
+        "status.extra",
+        "review.",
+        ".status",
+        "review..status",
+    ] {
+        assert!(
+            ReviewInspectSelection::try_from_fields(Some(&[bad.into()])).is_err(),
+            "field path `{bad}` must be rejected"
+        );
+    }
+    for good in [
+        "review",
+        "review.status",
+        "review.body",
+        "review.body_markdown",
+        "body",
+        "body_markdown",
+        "rounds",
+        "reviewers",
+        "findings",
+        "status",
+        "pin_stale",
+    ] {
+        assert!(
+            ReviewInspectSelection::try_from_fields(Some(&[good.into()])).is_ok(),
+            "field path `{good}` must be accepted"
+        );
+    }
 }
 
 #[test]

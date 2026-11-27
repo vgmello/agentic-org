@@ -270,8 +270,8 @@ pub(super) fn on_review_verdict(
     for target in targets {
         let item = PendingWakeItem {
             item_id: format!(
-                "rev-verdict:{}:r{}:{}:{target}",
-                review.id, verdict.round_number, actor_id
+                "rev-verdict:{}:r{}:rev{}:{}:{target}",
+                review.id, verdict.round_number, review.revision, actor_id
             ),
             kind: WakeKind::ReviewVerdict,
             sender_id: actor_id.to_owned(),
@@ -318,10 +318,16 @@ pub(super) fn on_review_resubmitted(
     let prev_round = round.round_number.saturating_sub(1).max(1);
     let summary = build_resubmit_summary(review, round, prev_round, inter_round_stat);
 
+    let sid_by_reviewer: BTreeMap<&str, Option<&str>> = active_for_round
+        .iter()
+        .map(|r| (r.reviewer_id.as_str(), r.runtime_session_id.as_deref()))
+        .collect();
+
     for target in targets {
         let prior_sid = (round.session_mode == ReviewSessionMode::Warm)
-            .then(|| prior_runtime_session_id(reviewer_records, &target, round.round_number))
-            .flatten();
+            .then(|| sid_by_reviewer.get(target.as_str()).copied().flatten())
+            .flatten()
+            .map(str::to_owned);
         let affinity = match round.session_mode {
             ReviewSessionMode::Fresh => WakeSessionAffinity {
                 resume_runtime_session_id: None,
@@ -352,23 +358,6 @@ pub(super) fn on_review_resubmitted(
         };
         let _ = sessions.enqueue_wake(&target, item);
     }
-}
-
-fn prior_runtime_session_id(
-    records: &[ReviewReviewerRecord],
-    reviewer_id: &str,
-    new_round: u32,
-) -> Option<String> {
-    records
-        .iter()
-        .filter(|r| {
-            r.reviewer_id.as_str() == reviewer_id
-                && r.round_number <= new_round
-                && !r.removed
-                && r.runtime_session_id.is_some()
-        })
-        .max_by_key(|r| r.round_number)
-        .and_then(|r| r.runtime_session_id.clone())
 }
 
 fn build_resubmit_summary(

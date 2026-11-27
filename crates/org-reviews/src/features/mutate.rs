@@ -13,15 +13,15 @@ use serde_json::json;
 
 use crate::time::format_rfc3339_ms;
 
-use super::super::ports::{ReviewContextRead, ReviewsRead};
+use super::super::ports::{ReviewActorInfo, ReviewContextRead, ReviewsRead};
 use super::super::records::{
     compute_review_status, has_open_blocker, reviewers_to_views, round_to_view, ResolvedCodePin,
     ReviewReviewerRecord, ReviewRoundRecord,
 };
 use super::super::validation::{
-    bad_req, check_resolved_code_pin, effective_session_mode, refuse, resolve_routing,
+    bad_req, check_resolved_code_pin, effective_session_mode, not_found, refuse, resolve_routing,
     storage_refusal, unauth, validate_close_reason, validate_oid, validate_text_limit,
-    ResolvedRouting,
+    ResolvedRouting, PROJECT_NOT_FOUND,
 };
 use super::{build_event, commit_doc, load_mutable_review, LoadedReview};
 
@@ -95,12 +95,13 @@ fn is_round_submitter(loaded: &LoadedReview, actor: &Id) -> bool {
             .is_some_and(|r| r.submitted_by == *actor)
 }
 
-fn check_route_independent_dissent(
+fn check_route_independent_dissent<C: ReviewContextRead>(
+    view: &C,
+    caller: &ReviewActorInfo,
     loaded: &LoadedReview,
-    caller_id: &Id,
     next_reviewers: &[Id],
 ) -> Result<(), Refusal> {
-    if !loaded.review.independent || !is_round_submitter(loaded, caller_id) {
+    if !loaded.review.independent {
         return Ok(());
     }
     let rn = loaded.review.current_round;
@@ -111,12 +112,20 @@ fn check_route_independent_dissent(
             && r.verdict == Some(ReviewVerdict::ChangesRequested)
             && !next.contains(&r.reviewer_id)
     });
-    if drops_dissenter {
-        return Err(unauth(
-            "author or round submitter cannot remove a dissenting reviewer on an independent review",
-        ));
+    if !drops_dissenter {
+        return Ok(());
     }
-    Ok(())
+    if caller.is_person {
+        return Ok(());
+    }
+    if !is_round_submitter(loaded, &caller.id)
+        && is_accountable_team_lead(view, &caller.id, loaded)?
+    {
+        return Ok(());
+    }
+    Err(unauth(
+        "only a person or non-submitter accountable team lead may remove a dissenting reviewer on an independent review",
+    ))
 }
 
 pub fn decide_route<V: ReviewsRead + ReviewContextRead>(
@@ -135,14 +144,14 @@ pub fn decide_route<V: ReviewsRead + ReviewContextRead>(
         "cannot route a closed review",
         false,
     )?;
-    let project = loaded
-        .review
-        .project_id
-        .as_ref()
-        .map(|pid| view.project_info(pid))
-        .transpose()
-        .map_err(storage_refusal)?
-        .flatten();
+    let project = match loaded.review.project_id.as_ref() {
+        Some(pid) => Some(
+            view.project_info(pid)
+                .map_err(storage_refusal)?
+                .ok_or_else(|| not_found(PROJECT_NOT_FOUND))?,
+        ),
+        None => None,
+    };
     let mode = effective_session_mode(
         loaded.review.independent,
         p.session_mode,
@@ -162,7 +171,7 @@ pub fn decide_route<V: ReviewsRead + ReviewContextRead>(
         loaded.review.independent,
         loaded.review.number.saturating_add(loaded.review.revision),
     )?;
-    check_route_independent_dissent(&loaded, &caller.id, &res.reviewer_ids)?;
+    check_route_independent_dissent(view, &caller, &loaded, &res.reviewer_ids)?;
     let (at, rn) = (format_rfc3339_ms(now_ms), loaded.review.current_round);
     apply_round_routing(&mut loaded, &res, mode, &caller.id, &at);
     let active: Vec<_> = loaded

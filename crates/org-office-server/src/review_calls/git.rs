@@ -100,6 +100,12 @@ impl ReviewGit {
             let head =
                 resolve_worktree_head(&cache, &ws.admin_dir_name, Path::new(&ws.worktree_path))
                     .map_err(map_git_error)?;
+            if head.branch.as_deref() != Some(q.branch.trim()) {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "worktree HEAD is detached or checked out on a different branch than requested",
+                ));
+            }
             if head.dirty {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
@@ -315,9 +321,13 @@ impl ReviewGit {
         else {
             return false;
         };
-        let Some(ws) =
-            find_active_workspace(state, repo_id, branch, review.task_id.as_deref(), None)
-        else {
+        let Some(ws) = find_active_workspace(
+            state,
+            repo_id,
+            branch,
+            review.task_id.as_deref(),
+            Some(review.created_by.as_str()),
+        ) else {
             return false;
         };
         let (Ok(bare), Ok(runner)) = (
@@ -472,6 +482,7 @@ fn find_active_workspace<'a>(
             return Some(own);
         }
     }
+    task_id?;
     state.workspaces.values().find(matches)
 }
 
