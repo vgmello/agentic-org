@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use http_body_util::{BodyExt, Full};
 use hyper::{body::Bytes, header, Method, Request, StatusCode};
+use org_host_control::browser::{BrowserAuth, BrowserOrigin};
 use org_host_control::listen::{ListenMode, ListenOrigin};
-use org_host_control::organization::BrowserAuth;
 use org_proto::tess::{
     SuggestionApplyReceipt, SuggestionApplyResult, SuggestionAttribution, SuggestionListResult,
     SuggestionStatus, SuggestionView, TessAskResult, TessAskStatus, TessSessionResetResult,
@@ -396,7 +396,7 @@ fn standard_tess_office_transport() -> Arc<FakeOfficeTransport> {
                     },
                     receipt: SuggestionApplyReceipt {
                         summary: "Update task title".into(),
-                        entity_href: Some("/tasks/T-A1".into()),
+                        entity_href: Some("/work/T-A1".into()),
                         entity_label: Some("T-A1".into()),
                         applied_at: "2026-11-27T00:01:00.000Z".into(),
                     },
@@ -440,7 +440,7 @@ fn tess_http_ask_cancel_and_reset_routes_work() {
                 &format!("/api/v1/organizations/{ORG_ID}/tess/ask"),
                 Some(json!({
                     "prompt": "Summarize blockers",
-                    "viewport_context": {"route": "/tasks/T-A1", "entity_id": "T-A1"}
+                    "viewport_context": {"route": "/work/T-A1", "entity_id": "T-A1"}
                 })),
             ))
             .await;
@@ -787,5 +787,221 @@ fn tess_sse_stream_closes_promptly_on_session_ended() {
             ended_text.contains("event: session.ended\n"),
             "{ended_text}"
         );
+    });
+}
+
+fn empty_turn_batch(turn_id: &str, head_seq: u64, done: bool) -> TessTurnEventsResult {
+    TessTurnEventsResult {
+        turn_id: turn_id.to_owned(),
+        partition: "tess:ask:owner-1".into(),
+        events: Vec::new(),
+        head_seq,
+        done,
+        lagged: false,
+    }
+}
+
+#[test]
+fn tess_sse_keepalive_fires_across_empty_poll_batches_and_closes_on_turn_done() {
+    use super::stream::{open_turn_sse, TurnStreamSetup};
+
+    run_async(async {
+        let mut queue = VecDeque::new();
+        for _ in 0..5 {
+            queue.push_back(empty_turn_batch("turn-keepalive", 1, false));
+        }
+        queue.push_back(TessTurnEventsResult {
+            turn_id: "turn-keepalive".into(),
+            partition: "tess:ask:owner-1".into(),
+            events: vec![TessTurnEvent {
+                seq: 2,
+                at: "2026-11-27T00:00:02.000Z".into(),
+                event: TessTurnEventKind::TurnDone {
+                    turn_id: "turn-keepalive".into(),
+                    outcome: TessTurnOutcome::Completed,
+                    follow_ups: Vec::new(),
+                },
+            }],
+            head_seq: 2,
+            done: true,
+            lagged: false,
+        });
+        let batches = Arc::new(Mutex::new(queue));
+        let q = Arc::clone(&batches);
+        let office = Arc::new(FakeOfficeTransport::new(move |method, _params, _opts| {
+            assert_eq!(method, "tess.turn_events");
+            let next = q
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| empty_turn_batch("turn-keepalive", 2, true));
+            Ok(serde_json::to_value(next).unwrap())
+        }));
+
+        let bus = Arc::new(ChannelBus::default());
+        let initial = TessTurnEventsResult {
+            turn_id: "turn-keepalive".into(),
+            partition: "tess:ask:owner-1".into(),
+            events: vec![TessTurnEvent {
+                seq: 1,
+                at: "2026-11-27T00:00:00.000Z".into(),
+                event: TessTurnEventKind::TurnStarted {
+                    turn_id: "turn-keepalive".into(),
+                },
+            }],
+            head_seq: 1,
+            done: false,
+            lagged: false,
+        };
+        let resp = open_turn_sse(
+            TurnStreamSetup {
+                events: bus.subscribe(),
+                offices: Arc::clone(&office) as Arc<dyn OfficeTransport>,
+                session_id: SESSION_ID.to_owned(),
+                auth: BrowserAuth::local_authless(BrowserOrigin {
+                    scheme: "http".into(),
+                    host: "127.0.0.1".into(),
+                    port: 8080,
+                }),
+                office_id: OFFICE_ID.to_owned(),
+                turn_id: "turn-keepalive".into(),
+                initial,
+            },
+            Duration::from_millis(45),
+        );
+
+        let bytes = tokio::time::timeout(Duration::from_secs(2), resp.into_body().collect())
+            .await
+            .expect("stream shuts down cleanly after turn.done")
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        let keepalives = text.matches(": keepalive\n\n").count();
+        assert!(
+            keepalives >= 2,
+            "expected >= 2 keepalive frames across 5 empty 25 ms poll batches (45 ms heartbeat), got {keepalives}; body:\n{text}"
+        );
+        assert!(text.contains("id: 1\nevent: turn.started\n"), "{text}");
+        assert!(text.contains("id: 2\nevent: turn.done\n"), "{text}");
+        assert!(
+            office.calls().len() >= 6,
+            "expected 5 empty polls + 1 terminal poll, got {}",
+            office.calls().len()
+        );
+    });
+}
+
+async fn recv_frame(rx: &mut mpsc::Receiver<Bytes>, timeout: Duration, label: &str) -> String {
+    let bytes = tokio::time::timeout(timeout, rx.recv())
+        .await
+        .expect(label)
+        .expect("stream open");
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+#[test]
+fn tess_sse_keepalive_resets_only_on_emitted_frames() {
+    use super::stream::{write_sse_loop, TurnStreamMsg};
+
+    run_async(async {
+        let (body_tx, mut body_rx) = mpsc::channel::<Bytes>(32);
+        let (msg_tx, msg_rx) = mpsc::channel::<TurnStreamMsg>(32);
+        let loop_task = tokio::spawn(write_sse_loop(
+            body_tx,
+            msg_rx,
+            empty_turn_batch("turn-hb", 1, false),
+            Duration::from_millis(60),
+        ));
+
+        // Two empty batches at 20 ms and 40 ms must NOT reset `last_heartbeat`.
+        for _ in 0..2 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            msg_tx
+                .send(TurnStreamMsg::Batch(empty_turn_batch("turn-hb", 1, false)))
+                .await
+                .unwrap();
+        }
+        let first = recv_frame(
+            &mut body_rx,
+            Duration::from_millis(250),
+            "keepalive fires across empty batches",
+        )
+        .await;
+        assert_eq!(first, ": keepalive\n\n");
+
+        // Emitting a real `resync` frame resets `last_heartbeat` (no keepalive within 25 ms).
+        let mut resync_batch = empty_turn_batch("turn-hb", 5, false);
+        resync_batch.lagged = true;
+        msg_tx
+            .send(TurnStreamMsg::Batch(resync_batch))
+            .await
+            .unwrap();
+        let resync = recv_frame(&mut body_rx, Duration::from_millis(200), "resync frame").await;
+        assert!(resync.starts_with("event: resync\n"), "{resync}");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), body_rx.recv())
+                .await
+                .is_err(),
+            "heartbeat timer must reset after emitting resync frame"
+        );
+
+        drop(msg_tx);
+        loop_task.await.unwrap();
+    });
+}
+
+#[test]
+fn tess_sse_keepalive_closes_cleanly_on_turn_error() {
+    use super::stream::{write_sse_loop, TurnStreamMsg};
+
+    run_async(async {
+        let (body_tx, mut body_rx) = mpsc::channel::<Bytes>(32);
+        let (msg_tx, msg_rx) = mpsc::channel::<TurnStreamMsg>(32);
+        let loop_task = tokio::spawn(write_sse_loop(
+            body_tx,
+            msg_rx,
+            empty_turn_batch("turn-err", 1, false),
+            Duration::from_millis(40),
+        ));
+
+        let keepalive = recv_frame(
+            &mut body_rx,
+            Duration::from_millis(250),
+            "keepalive before turn.error",
+        )
+        .await;
+        assert_eq!(keepalive, ": keepalive\n\n");
+
+        msg_tx
+            .send(TurnStreamMsg::Batch(TessTurnEventsResult {
+                turn_id: "turn-err".into(),
+                partition: "tess:ask:owner-1".into(),
+                events: vec![TessTurnEvent {
+                    seq: 6,
+                    at: "2026-11-27T00:00:06.000Z".into(),
+                    event: TessTurnEventKind::TurnError {
+                        message: "runtime disconnected".into(),
+                    },
+                }],
+                head_seq: 6,
+                done: true,
+                lagged: false,
+            }))
+            .await
+            .unwrap();
+        let mut saw_error = false;
+        while let Some(frame) = tokio::time::timeout(Duration::from_secs(1), body_rx.recv())
+            .await
+            .expect("stream closes cleanly on turn.error")
+        {
+            if std::str::from_utf8(&frame)
+                .unwrap()
+                .contains("event: turn.error\n")
+            {
+                saw_error = true;
+            }
+        }
+        assert!(saw_error, "expected terminal turn.error frame");
+        loop_task.await.unwrap();
     });
 }
