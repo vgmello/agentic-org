@@ -383,7 +383,7 @@ const CH = {
     { id: "g2", who: "you", time: "Nov 10, 16:20", text: "Yes, later. Leaving it unrouted for now." } ] },
   "agency-v1": { name: "agentic-org-v1", kind: "channel", topic: "Shipping the first release", proj: "agency-v1",
     members: ["you", "ada", "maya", "tomas", "kai", "jules", "avery", "noor"], msgs: [
-    { id: "m1", who: "ada", time: "09:12", text: "Morning. Codec split is in review; CSP gates next. I am re-planning the nav slices for IA v2 today." },
+    { id: "m1", who: "ada", time: "09:12", text: "Morning. Codec split is in review; CSP gates next. I am re-planning the nav slices for IA v2 today: compare [Image 1] with [Image 2]." },
     { id: "m2", who: "tomas", time: "09:40", text: "READY on Kai's 0a520e5b for T-A121. It needs the owner's go to merge (tier A).", needs: "in1", thread: [
       { who: "kai", time: "09:41", text: "Thanks. I'll merge as soon as it's approved." },
       { who: "ada", time: "09:43", text: "Approved on my side. Waiting on the owner.", mentions: ["you"] },
