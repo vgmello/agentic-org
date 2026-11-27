@@ -482,6 +482,8 @@ html[data-theme="report"] {
 }
 .work-layout-toggle .queue-tab[aria-pressed="true"]:hover { background: var(--toolbar-seg-active-bg); }
 /* No outline on the List/Board toggle (no border lines). View controls stay left, right after the tabs (owner). */
+/* Project and team Work tabs: New task ends the toolbar row, at the right edge (owner) */
+#main .work-subbar-header .work-toolbar > #work-new-task { margin-inline-start: auto; }
 #main .work-layout-toggle { box-shadow: none; }
 #main .work-layout-toggle .queue-tab[aria-pressed="true"] { border-color: transparent; }
 

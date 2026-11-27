@@ -244,10 +244,10 @@ function scopedWorkToolbar(type, id, items) {
             data-k="scopedWorkView" data-v="${value}" aria-pressed="${activeView === value}" aria-controls="work-results"${value === "mine" ? mineHint : ""}>${label}<span data-scoped-work-count="${value}">${visibleCount(scopedWorkPresetItems(base, value, type, id), value, S.scopedWorkLayout)}</span></button>`).join("")}
         </div>
       </div>
-      ${type === "project" || type === "team" ? workNewTaskButton() : ""}
       ${workLayoutToggle("scopedWorkLayout")}
       ${scopedWorkMenus(type, items, query)}
       ${workArchivedChip(S.scopedWorkLayout)}
+      ${type === "project" || type === "team" ? workNewTaskButton() : ""}
     </div>
   </div>`;
 }
