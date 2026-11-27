@@ -57,14 +57,18 @@
 	let progress = $state<AddProgress | undefined>();
 	let issued = $state<Issued | undefined>();
 	let nameInput = $state<HTMLInputElement | null>(null);
-	let timer: ReturnType<typeof setInterval> | undefined;
-	let ended = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let watchSeq = 0;
+	let destroyed = false;
 	function stopWatching() {
-		ended = true;
-		clearInterval(timer);
+		watchSeq += 1;
+		clearTimeout(timer);
 		timer = undefined;
 	}
-	onDestroy(stopWatching);
+	onDestroy(() => {
+		destroyed = true;
+		stopWatching();
+	});
 
 	function resetOnOpen(event: Event) {
 		// Only opening resets the form: a list that reloads behind the dialog must not clear what was typed.
@@ -97,33 +101,50 @@
 		return check.ok ? undefined : check.message;
 	}
 
+	function isCurrentWatch(seq: number, id: string): boolean {
+		return !destroyed && seq === watchSeq && operationId === id;
+	}
+
+	async function applyProgress(next: AddProgress): Promise<boolean> {
+		progress = next;
+		if (next.phase === 'waiting') {
+			stage = 'waiting';
+			return true;
+		}
+		if (next.phase === 'creating' || next.phase === 'synchronizing') {
+			stage = 'working';
+			return true;
+		}
+		stopWatching();
+		if (next.phase === 'ready') {
+			open = false;
+			toast.success(`${name} added. It's starting.`);
+		} else if (next.phase === 'failed') {
+			error = next.reason;
+			stage = 'failed';
+		} else {
+			note = `${name} wasn't added.`;
+			stage = 'form';
+		}
+		await onchanged();
+		return false;
+	}
+
 	function watch(id: string) {
-		ended = false;
-		clearInterval(timer);
+		if (destroyed) return;
+		stopWatching();
+		const seq = watchSeq;
 		const poll = async () => {
-			if (ended) return;
+			if (!isCurrentWatch(seq, id)) return;
 			try {
 				const next = await officesApi.addProgress(organizationId, id);
-				if (ended || operationId !== id) return;
-				progress = next;
-				if (next.phase === 'waiting') stage = 'waiting';
-				else if (next.phase === 'creating' || next.phase === 'synchronizing') stage = 'working';
-				else {
-					stopWatching();
-					if (next.phase === 'ready') {
-						open = false;
-						toast.success(`${name} added. It's starting.`);
-					} else if (next.phase === 'failed') {
-						error = next.reason;
-						stage = 'failed';
-					} else {
-						note = `${name} wasn't added.`;
-						stage = 'form';
-					}
-					await onchanged();
+				if (!isCurrentWatch(seq, id)) return;
+				const keepPolling = await applyProgress(next);
+				if (keepPolling && isCurrentWatch(seq, id)) {
+					timer = setTimeout(poll, 700);
 				}
 			} catch (e) {
-				if (ended || operationId !== id) return;
+				if (!isCurrentWatch(seq, id)) return;
 				// Reading the progress failed, not the add: it may still be running at HQ. Keep the operation and offer
 				// to check it again; never a new add (§6.2: an idempotent retry).
 				stopWatching();
@@ -132,7 +153,19 @@
 			}
 		};
 		void poll();
-		timer = setInterval(poll, 700);
+	}
+
+	function applySubmitFailure(e: unknown) {
+		const failure = toAppError(e);
+		if (failure.code === 'not_administrator') {
+			stage = 'refused';
+			error = failure.message;
+		} else if (failure.code === 'already_exists' || failure.code === 'invalid_name') {
+			nameError = failure.message;
+			nameInput?.focus();
+		} else {
+			error = failure.message;
+		}
 	}
 
 	async function submit(event: SubmitEvent) {
@@ -145,24 +178,19 @@
 		try {
 			if (where === 'machine') {
 				issued = await officesApi.invite(organizationId, trimmed);
+				if (destroyed) return;
 				stage = 'invitation';
 				await onchanged();
 			} else {
 				const started = await officesApi.addOnInstance(organizationId, trimmed);
+				if (destroyed) return;
 				operationId = started.operationId;
 				stage = 'working';
 				progress = { phase: 'creating' };
 				watch(started.operationId);
 			}
 		} catch (e) {
-			const failure = toAppError(e);
-			if (failure.code === 'not_administrator') {
-				stage = 'refused';
-				error = failure.message;
-			} else if (failure.code === 'already_exists' || failure.code === 'invalid_name') {
-				nameError = failure.message;
-				nameInput?.focus();
-			} else error = failure.message;
+			if (!destroyed) applySubmitFailure(e);
 		} finally {
 			busy = false;
 		}

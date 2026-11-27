@@ -103,4 +103,44 @@ describe('appSession store', () => {
 		capturedChanged!({ kind: 'signed-out', reason: 'signed-out' } as SessionState);
 		expect(ended).toHaveBeenCalledTimes(2);
 	});
+
+	it('preserves session object identity across duplicate reauth events and rotates identity on fresh sign-in', async () => {
+		vi.stubGlobal('location', { origin: 'http://127.0.0.1:5173' });
+		vi.stubGlobal('indexedDB', {});
+		vi.stubGlobal('navigator', { locks: {} });
+		vi.stubGlobal(
+			'BroadcastChannel',
+			class FakeBroadcastChannel {
+				close() {}
+			}
+		);
+
+		const { appSession } = await import('./app-session.svelte');
+		appSession.controller();
+
+		// Matches session-controller.ts: publish() freezes every SessionState object.
+		const s1 = Object.freeze(signedIn('inst-1', 'acct-1'));
+		const s1ExpiredA = Object.freeze({ ...s1, reauth: 'session_ended' }) as SessionState;
+		const s1ExpiredB = Object.freeze({ ...s1, reauth: 'session_ended' }) as SessionState;
+
+		capturedChanged!(s1ExpiredA);
+		expect(appSession.state.kind).toBe('signed-in');
+		const firstToken = appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+		expect(firstToken).toBeDefined();
+
+		// Duplicate reauth on the same expired session keeps the same token so "Not now" dismissal holds.
+		capturedChanged!(s1ExpiredB);
+		const dupToken = appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+		expect(dupToken).toBe(firstToken);
+
+		// A fresh sign-in followed by a later expiry mints a distinct session reference so the modal reopens.
+		const s2 = Object.freeze(signedIn('inst-1', 'acct-1'));
+		capturedChanged!(s2);
+		const s2Expired = Object.freeze({ ...s2, reauth: 'session_ended' }) as SessionState;
+		capturedChanged!(s2Expired);
+		const secondToken =
+			appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+		expect(secondToken).toBeDefined();
+		expect(secondToken).not.toBe(firstToken);
+	});
 });

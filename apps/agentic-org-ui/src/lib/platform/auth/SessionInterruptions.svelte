@@ -45,7 +45,7 @@
 	const showConfirm = $derived(
 		signOutFlow.confirming && !elsewhere && current.kind === 'signed-in'
 	);
-	let dismissedReauth = $state<unknown>(undefined);
+	let dismissedReauth = $state.raw<unknown>(undefined);
 	const dismissed = $derived(reauthToken !== undefined && dismissedReauth === reauthToken);
 	let editable = $state(false);
 	let password = $state('');

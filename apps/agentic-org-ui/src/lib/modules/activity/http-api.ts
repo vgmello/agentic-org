@@ -323,6 +323,7 @@ export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
 			deps.inboxApi.list(organizationId, signal),
 			readChatFeed(deps.http, organizationId, viewerId, signal)
 		]);
+		if (signal?.aborted) signal.throwIfAborted();
 
 		const people = actorMap(snapshot);
 		const rows: ActivityRow[] = [];
