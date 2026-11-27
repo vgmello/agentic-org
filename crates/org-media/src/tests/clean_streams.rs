@@ -8,9 +8,9 @@ use image::codecs::png::PngEncoder;
 use image::codecs::webp::WebPEncoder;
 use image::{Delay, DynamicImage, Frame, GrayImage, Luma, Rgba, RgbaImage};
 
-use super::super::{check_clean, MediaType};
 use super::clean::{kept, refused, spliced};
-use super::fixtures::{gif, jpeg_with_exif, webp};
+use crate::testkit::{gif, jpeg_with_exif, webp};
+use crate::{check_clean, MediaType};
 
 /// A deterministic picture of flat bands and noise, so encoders write long and short codes,
 /// runs, back-references and full LZW tables alike.

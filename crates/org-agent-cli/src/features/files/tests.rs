@@ -671,7 +671,7 @@ fn negative_exfiltration_guard_blocks_all_forbidden_paths_and_types() {
 #[test]
 fn file_roots_reject_global_temp_system_roots_symlinks_and_untrusted_env_wideners() {
     let dir = tempfile::tempdir().unwrap();
-    let valid_home = dir.path().join("agent-home");
+    let valid_home = dir.path().join("agents/agent-1/home");
     let valid_tmp = dir.path().join("session-tmp");
     fs::create_dir_all(&valid_home).unwrap();
     fs::create_dir_all(&valid_tmp).unwrap();
@@ -761,6 +761,7 @@ fn file_roots_reject_global_temp_system_roots_symlinks_and_untrusted_env_widener
         Some(valid_home.clone()),
         Some(valid_tmp.clone()),
     );
+    assert!(without_agent.self_agent_id.is_none());
     assert!(without_agent.private_home.is_none());
     assert!(without_agent.session_tmpdir.is_some());
 
@@ -856,6 +857,11 @@ fn linked_git_worktrees_and_case_insensitive_prefix_stripping_work_cleanly() {
     fs::write(
         main_git.join("worktrees/wt-b/gitdir"),
         format!("{}\n", wt_b.join(".git").display()),
+    )
+    .unwrap();
+    fs::write(
+        wt_b.join(".git"),
+        format!("gitdir: {}\n", main_git.join("worktrees/wt-b").display()),
     )
     .unwrap();
     // Poisoned worktree pointing at `/tmp/.git` must still be rejected by forbidden-root screening.

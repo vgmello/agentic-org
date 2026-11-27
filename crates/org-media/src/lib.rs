@@ -1,28 +1,42 @@
-//! What an attachment may be (`TASK-98.1`, ADR-0037): a closed allowlist of media types, each
-//! checked against its bytes and its file name, and turned into the bytes the office keeps.
+//! Canonical attachment media allowlist, magic-byte sniffer, and optional image/document
+//! sanitizer (`TASK-98.1`, `TASK-252`, ADR-0037).
 //!
-//! - Images (`image/png`, `image/jpeg`, `image/webp`, `image/gif`, at most 10 MiB) are decoded
-//!   and encoded again ([`image`]): EXIF, GPS, ICC and every other metadata block is dropped
-//!   and the orientation applied, before the content hash is taken.
-//! - Documents (at most 25 MiB) are checked structurally, never rendered: PDF ([`pdf`]),
-//!   `.docx`/`.xlsx` ([`ooxml`]), and UTF-8 text, CSV, Markdown and JSON ([`text`]).
-//! - Everything else is refused: HTML, SVG, scripts, executables, `multipart/form-data`,
-//!   `application/octet-stream`, and any file whose magic bytes say something other than its
-//!   declared type ([`sniff`]).
+//! Default features pull **zero** codec or compression crates (depends strictly on `org-proto`),
+//! providing the single security choke-point for filename classification, MIME parsing, and
+//! magic-byte / HTML / SVG / executable sniffing shared by `agent-os` and `org-office`.
+//!
+//! Enabling the `sanitize` feature adds:
+//! - Image decoding and re-encoding ([`image`]) that strips EXIF/GPS/XMP/ICC metadata, applies
+//!   orientation, enforces pixel/frame/allocation bounds, and produces bounded model derivatives.
+//! - Clean-image verification ([`clean`]) for bytes shipped across offices.
+//! - Structural document checks ([`pdf`], [`ooxml`], [`text`]).
 
+#![forbid(unsafe_code)]
+
+#[cfg(feature = "sanitize")]
 pub mod clean;
+#[cfg(feature = "sanitize")]
 pub mod image;
+#[cfg(feature = "sanitize")]
 pub mod ooxml;
+#[cfg(feature = "sanitize")]
 pub mod pdf;
 pub mod sniff;
+#[cfg(all(feature = "sanitize", any(test, feature = "testkit")))]
+pub mod testkit;
+#[cfg(feature = "sanitize")]
 pub mod text;
+
+use std::path::Path;
 
 use org_proto::attachments::{
     ATTACHMENT_DOCUMENT_MAX_BYTES, ATTACHMENT_FILENAME_MAX_BYTES, ATTACHMENT_IMAGE_MAX_BYTES,
 };
 use org_proto::{ApiError, ErrorCode};
 
+#[cfg(feature = "sanitize")]
 pub use self::clean::check_clean;
+#[cfg(feature = "sanitize")]
 pub use self::image::{model_derivative, ModelDerivative};
 
 /// One allowed media type.
@@ -40,6 +54,9 @@ pub enum MediaType {
     Csv,
     Json,
 }
+
+/// Alias for [`MediaType`] representing the closed attachment media allowlist.
+pub type AllowedMedia = MediaType;
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -100,11 +117,18 @@ impl MediaType {
         ALL.into_iter().find(|media| media.mime() == mime)
     }
 
+    /// The type a lowercase file extension (without leading dot) names, if allowed.
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        let lower = ext.to_ascii_lowercase();
+        ALL.into_iter()
+            .find(|media| media.extensions().contains(&lower.as_str()))
+    }
+
     pub const fn is_image(self) -> bool {
         matches!(self, Self::Png | Self::Jpeg | Self::Webp | Self::Gif)
     }
 
-    const fn is_text(self) -> bool {
+    pub const fn is_text(self) -> bool {
         matches!(
             self,
             Self::Markdown | Self::PlainText | Self::Csv | Self::Json
@@ -174,6 +198,42 @@ impl MediaType {
     }
 }
 
+/// Validates a local file path's leaf filename and classifies it into an allowlisted
+/// [`MediaType`] by extension (plain non-hidden UTF-8 name, 1..=255 bytes, no path separators or
+/// control characters).
+pub fn classify_filename(path: &Path) -> Result<(String, MediaType), ApiError> {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "File name must be valid UTF-8.",
+        ));
+    };
+    if name.is_empty()
+        || name.len() > ATTACHMENT_FILENAME_MAX_BYTES
+        || matches!(name, "." | "..")
+        || name.starts_with('.')
+        || name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '\\'))
+    {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "Filename must be a single plain non-hidden filename.",
+        ));
+    }
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let media = MediaType::from_extension(&ext).ok_or_else(|| {
+        unsupported(format!(
+            "File extension `.{}` is not in the attachment allowlist.",
+            printable(&ext)
+        ))
+    })?;
+    Ok((name.to_owned(), media))
+}
+
 /// A file name as a caller gives it: one plain name, at most 255 bytes, no folder, no control
 /// character, with an extension of the declared type.
 pub fn check_filename(name: &str, media: MediaType) -> Result<String, ApiError> {
@@ -228,6 +288,7 @@ pub fn check_kept_filename(name: &str, media: MediaType) -> Result<(), ApiError>
 }
 
 /// A file the office accepted, as it keeps it.
+#[cfg(feature = "sanitize")]
 #[derive(Clone, PartialEq, Eq)]
 pub struct ValidatedFile {
     /// What the bytes are now (an animated WebP is kept as an animated GIF).
@@ -238,6 +299,7 @@ pub struct ValidatedFile {
     pub page_count: Option<u32>,
 }
 
+#[cfg(feature = "sanitize")]
 impl std::fmt::Debug for ValidatedFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ValidatedFile")
@@ -252,6 +314,7 @@ impl std::fmt::Debug for ValidatedFile {
 
 /// Checks `raw` against `declared` and returns what the office keeps: re-encoded images,
 /// structurally checked documents. Nothing here writes anywhere.
+#[cfg(feature = "sanitize")]
 pub fn validate(declared: MediaType, raw: Vec<u8>) -> Result<ValidatedFile, ApiError> {
     if raw.is_empty() {
         return Err(ApiError::new(
@@ -282,6 +345,7 @@ pub fn validate(declared: MediaType, raw: Vec<u8>) -> Result<ValidatedFile, ApiE
     }
 }
 
+#[cfg(feature = "sanitize")]
 fn document(media: MediaType, bytes: Vec<u8>, page_count: Option<u32>) -> ValidatedFile {
     ValidatedFile {
         media,
@@ -292,15 +356,15 @@ fn document(media: MediaType, bytes: Vec<u8>, page_count: Option<u32>) -> Valida
     }
 }
 
-pub(crate) fn unsupported(message: impl Into<String>) -> ApiError {
+pub fn unsupported(message: impl Into<String>) -> ApiError {
     ApiError::new(ErrorCode::Unsupported, message)
 }
 
-pub(crate) fn corrupt(message: impl Into<String>) -> ApiError {
+pub fn corrupt(message: impl Into<String>) -> ApiError {
     ApiError::new(ErrorCode::InvalidRequest, message)
 }
 
-pub(crate) fn too_large(media: MediaType) -> ApiError {
+pub fn too_large(media: MediaType) -> ApiError {
     ApiError::new(
         ErrorCode::TooLarge,
         format!(
@@ -317,4 +381,4 @@ fn printable(text: &str) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

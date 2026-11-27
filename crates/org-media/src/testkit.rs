@@ -10,10 +10,10 @@ use image::codecs::webp::WebPEncoder;
 use image::{Delay, DynamicImage, Frame, ImageEncoder, Rgb, RgbImage, Rgba, RgbaImage};
 
 /// The bytes no sanitized image may still hold.
-pub(crate) const GPS_MARKER: &str = "GPS-SECRET-48.8584N-2.2945E";
+pub const GPS_MARKER: &str = "GPS-SECRET-48.8584N-2.2945E";
 
 /// A `width` x `height` image whose left half is red and right half blue.
-pub(crate) fn halves(width: u32, height: u32) -> RgbImage {
+pub fn halves(width: u32, height: u32) -> RgbImage {
     RgbImage::from_fn(width, height, |x, _| {
         if x < width / 2 {
             Rgb([220, 20, 20])
@@ -23,7 +23,7 @@ pub(crate) fn halves(width: u32, height: u32) -> RgbImage {
     })
 }
 
-pub(crate) fn png(width: u32, height: u32) -> Vec<u8> {
+pub fn png(width: u32, height: u32) -> Vec<u8> {
     let mut out = Vec::new();
     DynamicImage::ImageRgb8(halves(width, height))
         .write_with_encoder(PngEncoder::new(&mut out))
@@ -31,7 +31,7 @@ pub(crate) fn png(width: u32, height: u32) -> Vec<u8> {
     out
 }
 
-pub(crate) fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+pub fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
     let mut crc = flate2::Crc::new();
     crc.update(kind);
     crc.update(data);
@@ -43,7 +43,7 @@ pub(crate) fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
 }
 
 /// A PNG with a `tEXt` chunk holding `marker`, before `IEND`.
-pub(crate) fn png_with_text(width: u32, height: u32, marker: &str) -> Vec<u8> {
+pub fn png_with_text(width: u32, height: u32, marker: &str) -> Vec<u8> {
     let mut bytes = png(width, height);
     let iend = bytes.len() - 12;
     let mut text = b"Comment\0".to_vec();
@@ -54,7 +54,7 @@ pub(crate) fn png_with_text(width: u32, height: u32, marker: &str) -> Vec<u8> {
 }
 
 /// A PNG that declares `width` x `height` and holds no real pixel data.
-pub(crate) fn png_header_only(width: u32, height: u32) -> Vec<u8> {
+pub fn png_header_only(width: u32, height: u32) -> Vec<u8> {
     let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut ihdr = width.to_be_bytes().to_vec();
     ihdr.extend_from_slice(&height.to_be_bytes());
@@ -94,7 +94,7 @@ fn exif(orientation: u16, marker: &str) -> Vec<u8> {
 }
 
 /// A JPEG of [`halves`] with an EXIF block carrying `orientation` and `marker`.
-pub(crate) fn jpeg_with_exif(width: u32, height: u32, orientation: u16, marker: &str) -> Vec<u8> {
+pub fn jpeg_with_exif(width: u32, height: u32, orientation: u16, marker: &str) -> Vec<u8> {
     let mut plain = Vec::new();
     JpegEncoder::new_with_quality(&mut plain, 95)
         .write_image(
@@ -115,7 +115,7 @@ pub(crate) fn jpeg_with_exif(width: u32, height: u32, orientation: u16, marker: 
 }
 
 /// A GIF of `frames` frames, each a different shade.
-pub(crate) fn gif(width: u32, height: u32, frames: usize) -> Vec<u8> {
+pub fn gif(width: u32, height: u32, frames: usize) -> Vec<u8> {
     let mut out = Vec::new();
     {
         let mut encoder = GifEncoder::new_with_speed(&mut out, 30);
@@ -132,7 +132,7 @@ pub(crate) fn gif(width: u32, height: u32, frames: usize) -> Vec<u8> {
     out
 }
 
-pub(crate) fn webp(width: u32, height: u32) -> Vec<u8> {
+pub fn webp(width: u32, height: u32) -> Vec<u8> {
     let mut out = Vec::new();
     DynamicImage::ImageRgb8(halves(width, height))
         .write_with_encoder(WebPEncoder::new_lossless(&mut out))
@@ -141,7 +141,7 @@ pub(crate) fn webp(width: u32, height: u32) -> Vec<u8> {
 }
 
 /// How many frames an encoded GIF holds.
-pub(crate) fn gif_frame_count(bytes: &[u8]) -> usize {
+pub fn gif_frame_count(bytes: &[u8]) -> usize {
     use image::AnimationDecoder;
     image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
         .unwrap()
@@ -150,7 +150,7 @@ pub(crate) fn gif_frame_count(bytes: &[u8]) -> usize {
 }
 
 /// A PDF of `pages` pages with a correct `startxref`.
-pub(crate) fn pdf(pages: usize) -> Vec<u8> {
+pub fn pdf(pages: usize) -> Vec<u8> {
     let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
     let mut body = String::from("%PDF-1.7\n%\u{e2}\u{e3}\u{cf}\u{d3}\n");
     body.push_str("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
@@ -174,13 +174,13 @@ pub(crate) fn pdf(pages: usize) -> Vec<u8> {
 }
 
 /// A PDF whose page tree is only inside a compressed object stream.
-pub(crate) fn pdf_with_object_stream(pages: usize) -> Vec<u8> {
+pub fn pdf_with_object_stream(pages: usize) -> Vec<u8> {
     pdf_with_object_stream_named(pages, 0, 0)
 }
 
 /// [`pdf_with_object_stream`] whose stream's dictionary names `/ObjStm` `extra` more times,
 /// and whose inflated objects carry `padding` more bytes of white space.
-pub(crate) fn pdf_with_object_stream_named(pages: usize, extra: usize, padding: usize) -> Vec<u8> {
+pub fn pdf_with_object_stream_named(pages: usize, extra: usize, padding: usize) -> Vec<u8> {
     let inner = format!(
         "2 0 << /Type /Pages /Kids [] /Count {pages} >>{}",
         " ".repeat(padding)
@@ -205,13 +205,13 @@ pub(crate) fn pdf_with_object_stream_named(pages: usize, extra: usize, padding: 
 }
 
 /// One entry of [`zip`]; `declared` overrides the uncompressed size the headers claim.
-pub(crate) struct ZipEntry<'a> {
+pub struct ZipEntry<'a> {
     pub name: &'a str,
     pub data: &'a [u8],
     pub declared: Option<u32>,
 }
 
-pub(crate) fn entry<'a>(name: &'a str, data: &'a [u8]) -> ZipEntry<'a> {
+pub fn entry<'a>(name: &'a str, data: &'a [u8]) -> ZipEntry<'a> {
     ZipEntry {
         name,
         data,
@@ -220,7 +220,7 @@ pub(crate) fn entry<'a>(name: &'a str, data: &'a [u8]) -> ZipEntry<'a> {
 }
 
 /// A ZIP of stored entries, written field by field.
-pub(crate) fn zip(entries: &[ZipEntry<'_>]) -> Vec<u8> {
+pub fn zip(entries: &[ZipEntry<'_>]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     for e in entries {
@@ -265,14 +265,14 @@ pub(crate) fn zip(entries: &[ZipEntry<'_>]) -> Vec<u8> {
     out
 }
 
-pub(crate) fn content_types(main: &str) -> String {
+pub fn content_types(main: &str) -> String {
     format!(
         "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
          <Override PartName=\"/main.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.{main}.main+xml\"/></Types>"
     )
 }
 
-pub(crate) fn docx() -> Vec<u8> {
+pub fn docx() -> Vec<u8> {
     let types = content_types("wordprocessingml.document");
     zip(&[
         entry("[Content_Types].xml", types.as_bytes()),
@@ -281,7 +281,7 @@ pub(crate) fn docx() -> Vec<u8> {
     ])
 }
 
-pub(crate) fn xlsx() -> Vec<u8> {
+pub fn xlsx() -> Vec<u8> {
     let types = content_types("spreadsheetml.sheet");
     zip(&[
         entry("[Content_Types].xml", types.as_bytes()),
@@ -290,7 +290,7 @@ pub(crate) fn xlsx() -> Vec<u8> {
 }
 
 /// Where one frame of a hand-made GIF sits on its canvas, and its size.
-pub(crate) struct GifRect {
+pub struct GifRect {
     pub left: u16,
     pub top: u16,
     pub width: u16,
@@ -328,7 +328,7 @@ impl GifBits {
 /// one solid colour. The LZW data is written uncompressed (a clear code before every two
 /// pixels keeps every code 3 bits wide). Without `pixels`, each frame's data is only a clear
 /// code and the end code: a decoder that tried to fill the frame from it would fail.
-pub(crate) fn gif_frames(width: u16, height: u16, frames: &[GifRect], pixels: bool) -> Vec<u8> {
+pub fn gif_frames(width: u16, height: u16, frames: &[GifRect], pixels: bool) -> Vec<u8> {
     const CLEAR: u16 = 4;
     const END: u16 = 5;
     let mut out = b"GIF89a".to_vec();

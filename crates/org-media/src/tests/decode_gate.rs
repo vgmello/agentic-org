@@ -7,9 +7,9 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-use super::super::image::{model_derivative, DecodeGate, DECODES, MAX_CONCURRENT_IMAGE_DECODES};
-use super::super::{validate, MediaType};
-use super::fixtures::png;
+use crate::image::{model_derivative, DecodeGate, DECODES, MAX_CONCURRENT_IMAGE_DECODES};
+use crate::testkit::png;
+use crate::{validate, MediaType};
 
 /// Long enough for a caller that could get a permit to get one.
 const WAIT: Duration = Duration::from_millis(250);
