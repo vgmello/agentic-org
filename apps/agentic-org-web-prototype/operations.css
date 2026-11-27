@@ -350,7 +350,8 @@
   /* The muted line, lifted toward the muted text so a 1px rule still reads on every theme surface */
   --page-subtitle-divider: color-mix(in srgb, var(--gray-400) 45%, var(--line2));
   --toolbar-group-gap: 16px;
-  --toolbar-divider-color: var(--line2);
+  /* Lifted toward the muted text so the 1px separator reads on every theme (owner: "I can almost not see it") */
+  --toolbar-divider-color: color-mix(in srgb, var(--gray-400) 70%, var(--line2));
   --toolbar-seg-bg: rgb(6 13 25 / .44);
   --toolbar-seg-border: var(--line2);
   --toolbar-seg-active-bg: var(--ocean-selected, rgb(255 255 255 / .12));
