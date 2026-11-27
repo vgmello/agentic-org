@@ -171,22 +171,29 @@ function streamHtml(id) {
 }
 
 /* ---------------------------------------------------------------- composers */
-function shortcutHint() {
+/* The main composer's idle hint also says what @ and / open; it steps aside once the owner starts typing. */
+const toolsHint = `<span class="chat-hint-tools"><kbd>@</kbd> Mention · <kbd>/</kbd> Commands</span>`;
+function shortcutHint(tools = false) {
   const keys = { either: "Ctrl/⌘", control: "Ctrl", command: "⌘" }[S.chatSend] || "Ctrl/⌘";
-  return `<span class="sr-only">Enter adds a new line. ${CHAT_SEND_SHORTCUTS[S.chatSend].label} sends.</span><span aria-hidden="true"><kbd>${keys}</kbd> <kbd>Enter</kbd> to send · <kbd>Enter</kbd> new line</span>`;
+  return `${tools ? toolsHint : ""}<span class="sr-only">Enter adds a new line. ${CHAT_SEND_SHORTCUTS[S.chatSend].label} sends.</span><span class="chat-hint-keys" aria-hidden="true"><kbd>${keys}</kbd> <kbd>Enter</kbd> to send · <kbd>Enter</kbd> new line</span>`;
 }
 /* While the main composer holds a / command, its submit button names what the command does next. */
-/* Phones keep the verb ("Review"); the button's name is always the whole label. */
-const COMMAND_SUBMIT = { assign: ["Review", " assignment"], task: ["Create", " task"], ask: ["Send", " question"], files: ["Show", " files"] };
+/* Phones keep the verb ("Create"), except "Review assignment", which keeps its whole label; the button's name is
+   always the whole label. */
+const COMMAND_SUBMIT = { assign: ["Review assignment", ""], task: ["Create", " task"], ask: ["Send", " question"], files: ["Show", " files"] };
 function submitLabel(text, base) {
   const cmd = base === "Send" && parseCommand(text || "");
   return (cmd && !cmd.unknown && COMMAND_SUBMIT[cmd.name]) || [base, ""];
 }
+/* A label phones show whole ("Review assignment"): on a narrow composer the field takes its own line above it. */
+const isLongSubmit = ([verb]) => verb.length > 8;
 const submitInner = ([verb, rest]) => (rest ? `${verb}<span class="chat-long">${rest}</span>` : verb);
 function syncSubmitLabel(field) {
+  field.form?.classList.toggle("has-text", Boolean(field.value));
   const label = field.form?.querySelector(".chat-submit-label");
   if (!label) return;
   const parts = submitLabel(field.value, "Send");
+  field.form.classList.toggle("has-long-submit", isLongSubmit(parts));
   label.innerHTML = submitInner(parts);
   if (parts[1]) label.parentElement.setAttribute("aria-label", parts.join(""));
   else label.parentElement.removeAttribute("aria-label");
@@ -198,7 +205,8 @@ function submitButton(o, shortcut) {
 /* Main and thread composers share markup, the send hint and empty-send validation. */
 function composerHtml(o) {
   const shortcut = CHAT_SEND_SHORTCUTS[S.chatSend];
-  return `<form class="compose chat-compose${o.cls || ""}" data-form="${o.form}" data-id="${esc(o.id)}"${o.ch ? ` data-ch="${esc(o.ch)}"` : ""}>
+  const long = isLongSubmit(submitLabel(o.draft, o.submit)) ? " has-long-submit" : "";
+  return `<form class="compose chat-compose${o.cls || ""}${o.draft ? " has-text" : ""}${long}" data-form="${o.form}" data-id="${esc(o.id)}"${o.ch ? ` data-ch="${esc(o.ch)}"` : ""}>
     ${o.before || ""}${o.note ? `<p class="chat-compose-note" id="${o.field}-note">${o.note}</p>` : ""}
     ${trayHtml(o.attach)}
     <div class="chat-compose-row">
@@ -208,7 +216,7 @@ function composerHtml(o) {
 ${esc(o.draft || "")}</textarea>
       ${submitButton(o, shortcut)}
     </div>
-    <p class="chat-compose-hint" id="${o.field}-help" aria-live="polite">${shortcutHint()}</p>
+    <p class="chat-compose-hint" id="${o.field}-help" aria-live="polite">${shortcutHint(o.form === "send")}</p>
     ${o.after || ""}
   </form>`;
 }
@@ -254,7 +262,7 @@ function resetHint(form) {
   form.classList.remove("is-confirming");
   const hint = form.querySelector(".chat-compose-hint");
   hint.classList.remove("is-error", "is-confirm");
-  hint.innerHTML = shortcutHint();
+  hint.innerHTML = shortcutHint(form.dataset.form === "send");
 }
 function showEmptySendHint(form, field, text = "Write a message or attach a file first.") {
   const hint = form.querySelector(".chat-compose-hint");
@@ -285,13 +293,12 @@ function clearComposer(id, field) {
   fitTextarea(field);
   syncSubmitLabel(field);
 }
-/* /task what to do: a task whose prompt is those words, with this conversation's latest messages as context (the
-   task-context excerpt). The composer keeps "/task …" until the task is created, so cancelling loses nothing. */
+/* /task what to do: a task whose prompt is those words. The conversation's latest messages are offered as context,
+   not attached: free text may be about something else, so the owner opts in ("Add the latest messages"). Turn into
+   task, on a chosen message, attaches that message instead. The composer keeps "/task …" until the task is created,
+   so cancelling loses nothing. */
 function taskFromConversation(id, field, text = "") {
-  const ch = CH[id], last = [...ch.msgs].reverse().find((m) => !m.pending);
-  const opts = { prompt: text, proj: ch.proj, onCreated: () => clearComposer(id, field) };
-  if (last) opts.excerpt = { ch: id, mid: last.id };
-  openSmartTaskComposer(field, opts);
+  openSmartTaskComposer(field, { prompt: text, proj: CH[id].proj, onCreated: () => clearComposer(id, field) });
 }
 /* /files opens the Files panel; any words after it stay in the composer. */
 function filesCommand(id, field, text = "") {
@@ -587,8 +594,9 @@ function readOnlyFoot(id, ch) {
   const buttons = ch.pair.map((k) => `<button class="btn outline sm" type="button" data-act="chat-dm" data-id="${k}" data-v="${esc(id)}">${ic("chat", "ic16")}DM ${esc(M[k].name)}</button>`).join("");
   return `<div class="readfoot"><p>${ic("eye", "ic16")}You can't reply here. To weigh in, message ${ch.pair.map((k) => esc(M[k].name)).join(" or ")}.</p><div class="actions">${buttons}</div></div>`;
 }
-const askJump = () => `<div class="chat-asks-jump"><button class="btn sm" type="button" data-act="chat-asks-jump" hidden>${ic("bell", "ic16")}<span></span>${ic("chev-down", "ic16 chat-up")}</button></div>`;
-const latestJump = () => `<div class="chat-latest-jump"><button class="btn sm" type="button" data-act="chat-latest-jump" aria-label="Jump to latest" hidden>${ic("chev-down", "ic16")}<span><span class="chat-jump-long">Jump to latest</span><span class="chat-jump-short">Latest</span></span></button></div>`;
+/* Earlier asks: a row above the stream naming the nearest one; newer messages: a row below it counting them. */
+const askJump = () => `<div class="chat-asks-jump"><button class="btn sm" type="button" data-act="chat-asks-jump" hidden>${ic("bell", "ic16")}<span class="chat-jump-label"><span class="chat-jump-count"></span><span class="chat-jump-what"></span></span>${ic("chev-down", "ic16 chat-up")}</button></div>`;
+const latestJump = () => `<div class="chat-latest-jump"><button class="btn sm" type="button" data-act="chat-latest-jump" hidden>${ic("chev-down", "ic16")}<span class="chat-jump-n"></span></button></div>`;
 
 /* ---------------------------------------------------------------- page */
 /* A source link (#/chat/<ch>/<msg>) opens the unfiltered stream on that exact message, once per navigation: every

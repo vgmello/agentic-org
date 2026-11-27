@@ -19,13 +19,18 @@ function rowLead(ch) {
   if (ch.kind === "channel") return ic("hash", "ic16");
   return ch.kind === "dm" ? av(ch.with, 24) : ic("eye", "ic16");
 }
+/* A DM's presence word, under or beside the name; a row with requests shows its count instead. */
+function rowWord(ch) {
+  if (ch.kind !== "dm" || openAsks(ch).length) return "";
+  const word = M[ch.with].kind === "person" ? "Person" : PRESENCE_WORD[presence(ch.with)];
+  return word ? `<span class="chat-row-word">${word}</span>` : "";
+}
+/* The row's end: its last-active time, then two fixed slots (the request count, the unread dot), so dots and counts
+   line up from row to row whichever of them a row has. */
 function rowTrail(ch, unread, when = "") {
   const needs = openAsks(ch).length;
-  const dot = (when ? `<time class="chat-row-when">${esc(when)}</time>` : "") + (unread ? unreadDot : "");
-  if (needs) return dot + needsCount(needs);
-  if (ch.kind !== "dm") return dot;
-  const word = M[ch.with].kind === "person" ? "Person" : PRESENCE_WORD[presence(ch.with)];
-  return (word ? `<span class="chat-row-word">${word}</span>` : "") + dot;
+  const time = when ? `<time class="chat-row-when">${esc(when)}</time>` : "";
+  return `${time}<span class="chat-row-attn">${needs ? needsCount(needs) : ""}</span><span class="chat-row-dot">${unread ? unreadDot : ""}</span>`;
 }
 /* `why`: while finding, what matched when the name doesn't show it (a project, a task id, a message's words). */
 function chatLinkHtml(k, activeId, why = "", when = "") {
@@ -33,7 +38,7 @@ function chatLinkHtml(k, activeId, why = "", when = "") {
   const attrs = (k === activeId ? ' aria-current="page"' : "") + (unread ? ' class="is-unread"' : "");
   const unreadText = unread ? `<span class="sr-only">, ${plural(ch.unread, "unread message", "unread messages")}</span>` : "";
   const reason = why ? `<span class="chat-row-why"><span class="sr-only">, </span>${esc(why)}</span>` : "";
-  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${unreadText}${rowTrail(ch, unread, when)}</a></li>`;
+  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-main"><span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${rowWord(ch)}</span>${unreadText}${rowTrail(ch, unread, when)}</a></li>`;
 }
 function groupHtml(kind, label, rows, activeId, q) {
   if (kind === "a2a" && !q) return rows.length ? a2aSectionHtml(rows, activeId, (k, when) => chatLinkHtml(k, activeId, "", when)) : "";

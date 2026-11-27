@@ -2026,6 +2026,7 @@ const a2aInView = (page: Page) => page.evaluate(() => {
 });
 async function checkA2AFilter(page: Page) {
   assert.equal(await page.locator("#chat-a2a-day").getAttribute("aria-pressed"), "true", "The default date scope is named");
+  assert.equal(await page.locator("#chat-a2a-filter-btn").innerText(), "Filter by agent", "The agent filter is labelled on screen");
   await page.locator("#chat-a2a-filter-btn").click();
   const field = page.locator("#chat-a2a-q");
   assert.equal(await activeAttr(page, "id"), "chat-a2a-q", "Opening the filter focuses the agent search");
@@ -2035,10 +2036,16 @@ async function checkA2AFilter(page: Page) {
   assert.equal(await field.getAttribute("aria-expanded"), "true");
   assert.deepEqual(await page.locator("#chat-a2a-options [role=option]").allInnerTexts(), ["Rowan"], "Search narrows the agents");
   await page.keyboard.press("Enter");
-  assert.deepEqual(await a2aRows(page), ["a2a-kai-rowan", "a2a-rowan-sage", "a2a-ada-rowan"], "One agent: every conversation it is in");
-  assert.equal(await page.locator("#chat-a2a-all").getAttribute("aria-pressed"), "true", "Picking an agent shows all dates, visibly");
+  assert.equal(await page.locator("#chat-a2a-day").getAttribute("aria-pressed"), "true", "Picking an agent keeps the date scope");
+  assert.deepEqual(await a2aRows(page), [], "Rowan has no conversation in the last 24 hours");
   assert.deepEqual(await page.locator(".chat-a2a-token").allInnerTexts(), ["Rowan"], "The picked agent shows by name");
   assert.equal(await activeAttr(page, "id"), "chat-a2a-q", "Focus stays in the picker");
+  assert.match(await page.locator(".chat-a2a-empty").innerText(), /No conversations with Rowan in the last 24 hours\.\s*Search all dates/, "An empty window says so and offers all dates");
+  await page.getByRole("button", { name: "Search all dates" }).click();
+  assert.deepEqual(await a2aRows(page), ["a2a-kai-rowan", "a2a-rowan-sage", "a2a-ada-rowan"], "One agent, all dates: every conversation it is in");
+  assert.equal(await page.locator("#chat-a2a-all").getAttribute("aria-pressed"), "true", "The scope control shows the change");
+  assert.equal(await activeAttr(page, "id"), "chat-a2a-all", "Focus moves to the scope it set");
+  await page.locator("#chat-a2a-q").focus();
   assert.ok(await a2aInView(page), "At 1440×900 the picked name and its conversations are in view without scrolling");
   await page.keyboard.press("ArrowDown");
   const partners = await page.locator("#chat-a2a-options [role=option]").allInnerTexts();
@@ -2054,7 +2061,10 @@ async function checkA2AFilter(page: Page) {
   assert.equal(await activeAttr(page, "id"), "chat-a2a-q");
   await page.keyboard.press("Backspace");
   assert.equal(await page.locator(".chat-a2a-token").count(), 0, "Backspace in the empty field removes the last name");
+  assert.equal((await a2aRows(page)).length, 8, "Clearing agents keeps the owner's All dates");
+  await page.locator("#chat-a2a-day").click();
   assert.equal((await a2aRows(page)).length, 4);
+  await page.locator("#chat-a2a-q").focus();
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("#chat-a2a-filter").count(), 0, "Esc closes the picker");
   assert.equal(await activeAttr(page, "id"), "chat-a2a-filter-btn");
@@ -2150,7 +2160,8 @@ async function checkSlashCommands(page: Page) {
   await page.keyboard.press("Enter");
   const dlg = page.locator("#work-task-dialog");
   await dlg.waitFor();
-  assert.match(await dlg.locator(".stc-ctx-title").innerText(), /Conversation excerpt · #agentic-org-v1/, "/task attaches the conversation excerpt");
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 0, "/task attaches nothing by default");
+  assert.match(await dlg.locator(".stc-ctx-offer").innerText(), /^Add the latest messages as context: Conversation excerpt · #agentic-org-v1/, "/task offers the latest messages, opt-in");
   await page.keyboard.press("Escape");
   await dlg.waitFor({ state: "detached" });
   await field.fill("");
@@ -2203,7 +2214,7 @@ async function checkSlashProse(page: Page) {
     assert.equal(await page.locator("#chat-files").count(), 0, "and opens nothing");
   }
 }
-/* "/task what to do" carries the words into the task prompt, keeps the excerpt, and leaves the composer only once
+/* "/task what to do" carries the words into the task prompt, offers the latest messages (opt-in), and leaves the composer only once
    the task exists; cancelling keeps them. */
 async function checkSlashTaskText(page: Page) {
   const field = page.locator("#compose"), dlg = page.locator("#work-task-dialog");
@@ -2211,7 +2222,9 @@ async function checkSlashTaskText(page: Page) {
   await field.press("Control+Enter");
   await dlg.waitFor();
   assert.equal(await dlg.locator("#stc-prompt").inputValue(), "Finish the rollout", "The words become the task prompt");
-  assert.match(await dlg.locator(".stc-ctx-title").innerText(), /Conversation excerpt · #general/, "with the excerpt attached");
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 0, "Free text attaches no messages by default");
+  await dlg.locator(".stc-ctx-offer").click();
+  assert.match(await dlg.locator(".stc-ctx-title").innerText(), /Conversation excerpt · #general/, "Add the latest messages attaches the excerpt");
   await page.evaluate(() => (document.getElementById("work-task-dialog") as HTMLDialogElement).close());
   await dlg.waitFor({ state: "detached" });
   assert.equal(await field.inputValue(), "/task Finish the rollout", "Cancelling keeps the text");
@@ -2414,7 +2427,27 @@ async function checkNoSliver(page: Page) {
   });
   assert.ok(shown === 0 || shown > 56, `Thumbnails are hidden or clearly shown, never a sliver (${shown}px)`);
 }
-/* At 375 px both jumps share one row and the composer placeholder is one line. */
+/* Earlier asks and newer messages each keep a row of their own (above and below the stream), never over it; the earlier
+   row names the nearest ask; the composer placeholder is one line. */
+async function jumpRows(page: Page) {
+  return page.evaluate(async () => {
+    const s = document.querySelector(".chmain .msgs[data-ch]") as HTMLElement;
+    const btns = () => [...document.querySelectorAll('[data-act="chat-asks-jump"], [data-act="chat-latest-jump"]')] as HTMLElement[];
+    for (let y = 0; y <= s.scrollHeight; y += 24) {
+      s.scrollTop = y;
+      s.dispatchEvent(new Event("scroll"));
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (btns().every((b) => !b.hidden)) {
+        const st = s.getBoundingClientRect(), [ask, latest] = btns().map((b) => b.getBoundingClientRect());
+        const count = document.querySelector(".chat-jump-count") as HTMLElement;
+        return { askAbove: ask.bottom <= st.top + 1, latestBelow: latest.top >= st.bottom - 1, inView: [ask, latest].every((r) => r.left >= 0 && r.right <= innerWidth),
+          count: count.textContent, countWhole: count.scrollWidth <= count.clientWidth + 1, what: document.querySelector(".chat-jump-what")!.textContent,
+          latest: btns()[1].textContent!.trim() };
+      }
+    }
+    return null;
+  });
+}
 async function checkPhoneJumpRow(page: Page) {
   await viewport(page, 375, 667);
   await navTo(page, "#/chat/agency-v1");
@@ -2422,18 +2455,10 @@ async function checkPhoneJumpRow(page: Page) {
   await field.waitFor();
   assert.equal(await field.getAttribute("placeholder"), "Message", "A one-line placeholder");
   assert.equal(await field.getAttribute("aria-label") ?? await page.locator('label[for="compose"]').innerText(), "Message #agentic-org-v1", "The label keeps the full name");
-  const both = await page.evaluate(async () => {
-    const s = document.querySelector(".chmain .msgs[data-ch]") as HTMLElement;
-    const btns = () => [...document.querySelectorAll('[data-act="chat-asks-jump"], [data-act="chat-latest-jump"]')] as HTMLElement[];
-    for (let y = 0; y <= s.scrollHeight; y += 24) {
-      s.scrollTop = y;
-      s.dispatchEvent(new Event("scroll"));
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      if (btns().every((b) => !b.hidden)) return btns().map((b) => b.getBoundingClientRect().top);
-    }
-    return null;
-  });
-  assert.ok(both && Math.abs(both[0] - both[1]) < 1, `Both jumps share one row (${both})`);
+  const rows = await jumpRows(page);
+  assert.ok(rows && rows.askAbove && rows.latestBelow && rows.inView, `Each jump has its own row, off the stream (${JSON.stringify(rows)})`);
+  assert.ok(rows!.countWhole && /^\d+ earlier requests?$/.test(rows!.count!) && rows!.what!.length > 10, `The earlier row counts and names the ask (${JSON.stringify(rows)})`);
+  assert.match(rows!.latest, /^(\d+ newer messages?|Jump to latest)$/, "The newer row says what is below");
   await page.screenshot({ path: resolve(import.meta.dir, "../../.playwright", "poc-chat-375-jump-row.png") });
   await viewport(page, 1440, 900);
 }
@@ -2593,34 +2618,17 @@ async function checkA2APicker(page: Page) {
   assert.match(await active.innerText(), /Rowan/, "The picked agent stays named in the heading");
   await active.getByRole("button", { name: "Clear the agent filter" }).click();
   assert.equal(await page.locator("#chat-a2a-head .chat-a2a-who").count(), 0);
-  assert.equal(await page.locator("#chat-a2a-day").getAttribute("aria-pressed"), "true", "Clearing restores the date scope");
+  assert.equal(await page.locator("#chat-a2a-day").getAttribute("aria-pressed"), "true", "The date scope never changed");
   assert.equal(await activeAttr(page, "id"), "chat-a2a-filter-btn", "Clear returns focus to Filter");
 }
-/* 320–375: jumps are as wide as their labels, share one row at 320 ("Latest") and never clip; Jules's scope, risk and action are in the first
-   view at 375; the thread's resize edge is a 24 px target with a slim grip. */
-async function bothJumps(page: Page) {
-  return page.evaluate(async () => {
-    const s = document.querySelector(".chmain .msgs[data-ch]") as HTMLElement;
-    const btns = () => [...document.querySelectorAll('[data-act="chat-asks-jump"], [data-act="chat-latest-jump"]')] as HTMLElement[];
-    for (let y = 0; y <= s.scrollHeight; y += 24) {
-      s.scrollTop = y;
-      s.dispatchEvent(new Event("scroll"));
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      if (btns().every((b) => !b.hidden)) {
-        return btns().map((b) => { const r = b.getBoundingClientRect(), t = b.querySelector("span")!; return { top: r.top, left: r.left, right: r.right, clipped: t.scrollWidth > t.clientWidth + 1 }; });
-      }
-    }
-    return null;
-  });
-}
+/* 320–375: each jump keeps its row and its count; Jules's scope, risk and action are in the first view at 375; the
+   thread's resize edge is a 24 px target with a slim grip. */
 async function checkNarrowRound9(page: Page) {
   await viewport(page, 320, 700);
   await navTo(page, "#/chat/agency-v1");
   await page.locator("#compose").waitFor();
-  const at320 = await bothJumps(page);
-  assert.ok(at320, "Both jumps show at 320");
-  assert.ok(at320!.every((b) => !b.clipped && b.left >= 0 && b.right <= 320), `No label is clipped at 320 (${JSON.stringify(at320)})`);
-  assert.ok(Math.abs(at320![0].top - at320![1].top) < 1 && at320![0].right <= at320![1].left, `Both jumps fit one row at 320 (${JSON.stringify(at320)})`);
+  const at320 = await jumpRows(page);
+  assert.ok(at320 && at320.askAbove && at320.latestBelow && at320.inView && at320.countWhole, `Both jumps keep their rows and counts at 320 (${JSON.stringify(at320)})`);
   const head = await page.locator("#main .chat > .chhead").evaluate((h) => [...h.querySelectorAll(".chat-list-btn, .chat-actions > .btn")]
     .filter((b) => (b as HTMLElement).offsetParent).map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }));
   assert.ok(head.every(([l, r], i) => l >= 0 && r <= 320 && (i === 0 || l >= head[i - 1][1] - 1)), `Header controls never overlap at 320 (${JSON.stringify(head)})`);

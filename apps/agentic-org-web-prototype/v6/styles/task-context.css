@@ -142,3 +142,5 @@
 }
 .stc-dialog .stc-ctx-include:hover { background: var(--stc-chip-hover); }
 .stc-dialog .stc-sends + .stc-foot { border-top: 0; padding-top: 6px; }
+/* The Work excerpt's toggle says what it does next, as in the task composer. */
+.work-panel .work-ctx .work-ctx-msgs:not([open]) .work-ctx-hide, .work-panel .work-ctx .work-ctx-msgs[open] .work-ctx-show { display: none; }
