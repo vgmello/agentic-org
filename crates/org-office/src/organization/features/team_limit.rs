@@ -101,10 +101,7 @@ fn validate_team_and_limit(team: &Team, max_members: u64) -> Result<(), Refusal>
         return reject(RejectCode::InvalidRequest, "the team is archived");
     }
     if !(1..=100).contains(&max_members) {
-        return reject(
-            RejectCode::InvalidRequest,
-            "max_members must be between 1 and 100",
-        );
+        return reject(RejectCode::InvalidRequest, "max_members must be 1..=100");
     }
     Ok(())
 }
@@ -122,10 +119,8 @@ fn load_team_and_chain(view: &impl OrganizationRead, id: &Id) -> Result<(Team, V
 fn parse_reason(raw: &str, label: &str) -> Result<String, Refusal> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || !records::is_line(trimmed) {
-        return reject(
-            RejectCode::InvalidRequest,
-            format!("{label} must be a non-empty single line of text"),
-        );
+        let msg = format!("{label} must be a non-empty single line of text");
+        return reject(RejectCode::InvalidRequest, msg);
     }
     Ok(trimmed.to_owned())
 }
@@ -181,29 +176,30 @@ fn resolve_limit_approver(
     requester: &Employee,
     chain: &[Id],
 ) -> Result<Option<Id>, StoreError> {
-    if let Some(mgr) = find_person_in_reports_to(
+    let mgr = find_person_in_reports_to(
         view,
         &requester.id,
         requester.reports_to_employee_id.clone(),
         |_| true,
-    )? {
-        return Ok(Some(mgr));
+    )?;
+    if mgr.is_some() {
+        return Ok(mgr);
     }
-    for ancestor_id in chain[..chain.len().saturating_sub(1)].iter().rev() {
-        if let Some(lead_id) = view.team(ancestor_id)?.and_then(|t| t.lead_employee_id) {
-            if lead_id != requester.id
-                && view
-                    .employee(&lead_id)?
-                    .is_some_and(|e| is_active_person(&e))
-            {
-                return Ok(Some(lead_id));
-            }
+    for anc in chain[..chain.len().saturating_sub(1)].iter().rev() {
+        let Some(lead_id) = view.team(anc)?.and_then(|t| t.lead_employee_id) else {
+            continue;
+        };
+        if lead_id != requester.id
+            && view
+                .employee(&lead_id)?
+                .is_some_and(|e| is_active_person(&e))
+        {
+            return Ok(Some(lead_id));
         }
     }
-    if requester.id != *owner && view.employee(owner)?.is_some_and(|e| is_active_person(&e)) {
-        return Ok(Some(owner.clone()));
-    }
-    Ok(None)
+    let owner_ok =
+        requester.id != *owner && view.employee(owner)?.is_some_and(|e| is_active_person(&e));
+    Ok(owner_ok.then(|| owner.clone()))
 }
 
 /// Whether `actor` may approve or deny `req` right now (live hierarchy check; fail closed).
@@ -225,7 +221,17 @@ pub(crate) fn may_decide_limit_request(
     if is_person_ancestor_lead(view, actor, &req.team_id, false)? {
         return Ok(true);
     }
-    is_person_in_reports_to_chain(view, &req.requested_by_employee_id, &actor.id)
+    let req_by = &req.requested_by_employee_id;
+    let leads = view
+        .team(&req.team_id)?
+        .is_some_and(|t| t.is_active() && t.lead_employee_id.as_ref() == Some(req_by));
+    let active = view
+        .employee(req_by)?
+        .is_some_and(|e| e.status == EmployeeStatus::Active);
+    if !leads || !active {
+        return Ok(false);
+    }
+    is_person_in_reports_to_chain(view, req_by, &actor.id)
 }
 
 /// Whether `actor` may inspect `req` in `team.limit_request.list`.
@@ -295,6 +301,10 @@ where
         .reply(reply))
 }
 
+fn direct_set_limit_hint(team: &Team, requested: u64) -> String {
+    format!("Raise the limit directly with `team set-limit --team {} --max-members {requested} --if-match {}`.", team.id, team.meta.revision)
+}
+
 fn decide_request<E: Engine>(
     uow: &mut UnitOfWork<'_, E>,
     here: &OfficeIdentity,
@@ -323,15 +333,20 @@ where
             ),
         );
     }
+    let hint = direct_set_limit_hint(&team, command.requested_max_members);
+    if is_owner(owner, &admitted.actor) {
+        return reject_with_hint(
+            RejectCode::InvalidRequest,
+            "organization owner does not need approval to raise max_members",
+            hint,
+        );
+    }
     let reason = parse_reason(&command.reason, "reason")?;
     let Some(approver_id) = resolve_limit_approver(view, owner, &admitted.actor, &chain)? else {
         return reject_with_hint(
             RejectCode::InvalidRequest,
             "no higher manager exists to approve this limit request",
-            format!(
-                "Raise the limit directly with `team set-limit --team {} --max-members {} --if-match {}`.",
-                team.id, command.requested_max_members, team.meta.revision
-            ),
+            hint,
         );
     };
     if id_in_use(view, &admitted.organization, &command.id)? {
@@ -411,7 +426,7 @@ where
     if req.state.is_terminal() {
         return reject(
             RejectCode::Conflict,
-            "this team limit request is already decided",
+            "team limit request is already decided",
         );
     }
     check_revision(req.revision, command.expected_revision)?;
@@ -422,10 +437,9 @@ where
         .transpose()?;
     let (team, chain) = load_team_and_chain(view, &req.team_id)?;
     let now_text = records::time_text(admitted.now);
-    let state = if command.approve {
-        TeamLimitRequestState::Approved
-    } else {
-        TeamLimitRequestState::Denied
+    let state = match command.approve {
+        true => TeamLimitRequestState::Approved,
+        false => TeamLimitRequestState::Denied,
     };
     let updated_req = TeamLimitRequest {
         revision: req.revision + 1,
@@ -441,21 +455,12 @@ where
     let change = Change::new(Op::DecideTeamLimitRequest.ack())
         .put(req_path, records::encode_team_limit_request(&updated_req));
     let (change, team_revision) = if command.approve {
-        let (c, rev) = apply_approved_limit(
-            change,
-            team,
-            &chain,
-            updated_req.requested_max_members,
-            &admitted.by,
-            admitted.now,
-        )?;
+        let max = updated_req.requested_max_members;
+        let (c, rev) = apply_approved_limit(change, team, &chain, max, &admitted.by, admitted.now)?;
         (c, Some(rev))
     } else {
         (change, None)
     };
-    Ok(change.reply(limit_reply(
-        &updated_req,
-        team_revision,
-        admitted.generation,
-    )))
+    let out = limit_reply(&updated_req, team_revision, admitted.generation);
+    Ok(change.reply(out))
 }

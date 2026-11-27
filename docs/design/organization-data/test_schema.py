@@ -2204,6 +2204,39 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             self.refused(lambda: self.hire("bad", **fields))
         self.refused(lambda: self.hire("twice", state="hired", employee_id="marlowe", **confirmed))
 
+    def test_team_limit_requests_enforce_bounds_state_parity_and_terminal_immutability(self):
+        base = dict(organization_id="org", id="tlr-1", schema_version=1, revision=1, state="pending",
+                    team_id="payments", requested_by_employee_id="ana", approver_employee_id="reporter",
+                    current_max_members=6, requested_max_members=12, reason="Growth",
+                    created_at="2026-11-27T10:00:00Z", updated_at="2026-11-27T10:00:00Z")
+        insert(self.db, "team_limit_requests", **base)
+        self.db.commit()
+        # Pending -> approved transition is allowed; subsequent updates are refused by trigger.
+        self.db.execute(
+            "UPDATE team_limit_requests SET state='approved', revision=2, decided_by_employee_id='reporter', "
+            "decided_at='2026-11-27T10:05:00Z', decision_reason='Approved', updated_at='2026-11-27T10:05:00Z' "
+            "WHERE organization_id='org' AND id='tlr-1'"
+        )
+        self.db.commit()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "terminal team limit request is immutable"):
+            self.db.execute(
+                "UPDATE team_limit_requests SET decision_reason='tampered' WHERE organization_id='org' AND id='tlr-1'"
+            )
+        self.db.rollback()
+        # Invalid bounds & pending/decided null-parity CHECKs fail closed.
+        for bad in (
+            dict(id="tlr-le", current_max_members=6, requested_max_members=6),
+            dict(id="tlr-max", current_max_members=6, requested_max_members=101),
+            dict(id="tlr-empty-reason", reason=""),
+            dict(id="tlr-pend-decider", state="pending", decided_by_employee_id="reporter"),
+            dict(id="tlr-pend-reason", state="pending", decision_reason="premature"),
+            dict(id="tlr-app-missing", state="approved"),
+            dict(id="tlr-bad-state", state="withdrawn"),
+        ):
+            row = dict(base)
+            row.update(bad)
+            self.refused(lambda r=row: insert(self.db, "team_limit_requests", **r))
+
     def test_a_task_is_in_the_releases_of_its_milestone_and_of_release_contents(self):
         for release in ("r1", "r2"):
             insert(self.db, "releases", organization_id="org", id=release, schema_version=1, revision=1,
@@ -2533,6 +2566,12 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             (self.db, "hire_requests_by_team_state",
              "SELECT id FROM hire_requests WHERE organization_id=? AND home_team_id=? AND state=?",
              ("org", "payments", "hiring")),
+            (self.db, "team_limit_requests_by_team_state",
+             "SELECT id FROM team_limit_requests WHERE organization_id=? AND team_id=? AND state=?",
+             ("org", "payments", "pending")),
+            (self.db, "team_limit_requests_by_approver",
+             "SELECT id FROM team_limit_requests WHERE organization_id=? AND approver_employee_id=? AND state=?",
+             ("org", "reporter", "pending")),
             (self.db, "usage_by_release_time",
              "SELECT id FROM usage_records WHERE organization_id=? AND release_id=? ORDER BY occurred_at",
              ("org", "rel")),

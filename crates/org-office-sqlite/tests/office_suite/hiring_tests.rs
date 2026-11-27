@@ -1986,7 +1986,9 @@ fn task210_full_team_hire_and_move_surface_actionable_hints_without_leaking_unau
             !ada_hint.contains("Secret Sibling") && !ada_hint.contains(TEAM_B),
             "must NEVER leak unauthorized sibling team to non-owner lead: {ada_hint}"
         );
-        assert!(ada_hint.contains(&format!("team create --parent-team-id {TEAM_A}")));
+        assert!(ada_hint.contains(&format!(
+            "Ask the organization owner to create a sub-team: `team create --parent-team-id {TEAM_A}"
+        )));
         assert!(ada_hint.contains(&format!("team request-limit --team {TEAM_A}")));
 
         // 3. Moving an existing agent from TEAM_SUB into full TEAM_A also returns actionable hint.
@@ -2028,5 +2030,281 @@ fn task210_full_team_hire_and_move_surface_actionable_hints_without_leaking_unau
         );
         assert!(move_hint.contains(&format!("team create --parent-team-id {TEAM_A}")));
         assert!(move_hint.contains(&format!("team set-limit --team {TEAM_A}")));
+    }
+}
+
+/// TASK-210 Pass-2 adversarial tests:
+/// - Removed lead reassigned to unrelated manager Bob -> Bob gets `NotAuthorized` (no lateral escalation).
+/// - Offboarded lead -> former `reports_to` manager gets `NotAuthorized`.
+/// - `reports_to` manager switched from Bob to Carol -> Bob gets `NotAuthorized`, Carol succeeds.
+/// - Owner submitting `team.limit_request.create` is rejected with direct `team set-limit` hint.
+/// - Approved `team.limit_request.decide` emits `OrgChange::TeamUpserted` on `OrgFeed`.
+#[test]
+fn task210_limit_request_stale_reports_to_owner_submit_and_org_feed() {
+    org_office_sqlite::install();
+    const PERSON_CAROL: &str = "01900000-0000-7000-8000-000000000777";
+    const LIMIT_REQ_A: &str = "01900000-0000-7000-8000-000000000771";
+    const LIMIT_REQ_B: &str = "01900000-0000-7000-8000-000000000772";
+    const LIMIT_REQ_C: &str = "01900000-0000-7000-8000-000000000773";
+    const LIMIT_REQ_OWNER: &str = "01900000-0000-7000-8000-000000000774";
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        for (n, tid, name) in [(700, TEAM_A, "Alpha"), (701, TEAM_B, "Beta")] {
+            org_write(
+                &office,
+                CREATOR,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: cmd_id(n),
+                    team_id: tid.into(),
+                    name: name.into(),
+                    owner_team_id: Some(TOP_TEAM.into()),
+                }),
+            );
+        }
+        for (n, mid, name, handle, team) in [
+            (702, PERSON_ADA, "Ada", "ada", TEAM_A),
+            (703, PERSON_BOB, "Bob", "bob", TEAM_B),
+            (704, PERSON_CAROL, "Carol", "carol", TEAM_B),
+        ] {
+            org_write(
+                &office,
+                CREATOR,
+                OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                    command_id: cmd_id(n),
+                    member_id: mid.into(),
+                    name: name.into(),
+                    handle: Some(handle.into()),
+                    home_team_id: Some(team.into()),
+                    contact: None,
+                }),
+            );
+        }
+        org_write(
+            &office,
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: cmd_id(705),
+                team_id: TEAM_A.into(),
+                expected_version: 1,
+                lead_member_id: Some(PERSON_ADA.into()),
+            }),
+        );
+        // 1. Owner cannot submit a self-limit request on a team they lead (`TOP_TEAM`).
+        org_write(
+            &office,
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: cmd_id(706),
+                team_id: TOP_TEAM.into(),
+                expected_version: 1,
+                lead_member_id: Some(CREATOR.into()),
+            }),
+        );
+        let owner_req_err = call_c2::<TeamLimitRequestCreate>(
+            &office,
+            CREATOR,
+            &TeamLimitRequestCreateParams {
+                command_id: cmd_id(707),
+                request_id: LIMIT_REQ_OWNER.into(),
+                team_id: TOP_TEAM.into(),
+                requested_max_members: 10,
+                reason: "Owner direct".into(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(owner_req_err.code, ErrorCode::InvalidRequest);
+        assert!(owner_req_err
+            .hint()
+            .is_some_and(|h| h.contains("team set-limit")));
+
+        // 2. Ada reports to Bob and opens LIMIT_REQ_A; then manager switches Bob -> Carol.
+        org_write(
+            &office,
+            CREATOR,
+            OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+                command_id: cmd_id(708),
+                member_id: PERSON_ADA.into(),
+                expected_version: 1,
+                reports_to_member_id: Some(PERSON_BOB.into()),
+            }),
+        );
+        call_c2::<TeamLimitRequestCreate>(
+            &office,
+            PERSON_ADA,
+            &TeamLimitRequestCreateParams {
+                command_id: cmd_id(709),
+                request_id: LIMIT_REQ_A.into(),
+                team_id: TEAM_A.into(),
+                requested_max_members: 10,
+                reason: "Switch manager test".into(),
+            },
+        )
+        .unwrap();
+        org_write(
+            &office,
+            CREATOR,
+            OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+                command_id: cmd_id(710),
+                member_id: PERSON_ADA.into(),
+                expected_version: 2,
+                reports_to_member_id: Some(PERSON_CAROL.into()),
+            }),
+        );
+        // Former manager Bob must now be refused; live manager Carol succeeds and emits TeamUpserted.
+        let bob_err = call_c2::<TeamLimitRequestDecide>(
+            &office,
+            PERSON_BOB,
+            &TeamLimitRequestDecideParams {
+                command_id: cmd_id(711),
+                request_id: LIMIT_REQ_A.into(),
+                expected_version: 1,
+                approve: true,
+                reason: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(bob_err.code, ErrorCode::NotAuthorized);
+        let feed_before = office
+            .org_changes_after(0, 100)
+            .unwrap()
+            .last()
+            .map_or(0, |c| c.position.seq);
+        call_c2::<TeamLimitRequestDecide>(
+            &office,
+            PERSON_CAROL,
+            &TeamLimitRequestDecideParams {
+                command_id: cmd_id(712),
+                request_id: LIMIT_REQ_A.into(),
+                expected_version: 1,
+                approve: true,
+                reason: Some("Live manager approved".into()),
+            },
+        )
+        .unwrap();
+        let new_changes = office.org_changes_after(feed_before, 100).unwrap();
+        assert!(
+            new_changes
+                .iter()
+                .any(|ev| ev.changes.iter().any(|c| matches!(
+                    c,
+                    org_proto::org::OrgChange::TeamUpserted { team }
+                        if team.id == TEAM_A && team.version == 3
+                ))),
+            "approved limit decision must emit TeamUpserted on OrgFeed: {new_changes:?}"
+        );
+
+        // 3. Ada opens LIMIT_REQ_B, then loses TEAM_A lead and reports to Bob -> Bob MUST be refused.
+        call_c2::<TeamLimitRequestCreate>(
+            &office,
+            PERSON_ADA,
+            &TeamLimitRequestCreateParams {
+                command_id: cmd_id(713),
+                request_id: LIMIT_REQ_B.into(),
+                team_id: TEAM_A.into(),
+                requested_max_members: 14,
+                reason: "Removed lead test".into(),
+            },
+        )
+        .unwrap();
+        org_write(
+            &office,
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: cmd_id(714),
+                team_id: TEAM_A.into(),
+                expected_version: 3,
+                lead_member_id: None,
+            }),
+        );
+        org_write(
+            &office,
+            CREATOR,
+            OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+                command_id: cmd_id(715),
+                member_id: PERSON_ADA.into(),
+                expected_version: 3,
+                reports_to_member_id: Some(PERSON_BOB.into()),
+            }),
+        );
+        let stale_bob = call_c2::<TeamLimitRequestDecide>(
+            &office,
+            PERSON_BOB,
+            &TeamLimitRequestDecideParams {
+                command_id: cmd_id(716),
+                request_id: LIMIT_REQ_B.into(),
+                expected_version: 1,
+                approve: true,
+                reason: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(stale_bob.code, ErrorCode::NotAuthorized);
+
+        // 4. Agent lead opens LIMIT_REQ_C while reporting to Bob, then is offboarded -> Bob refused.
+        call_c2::<HrHire>(
+            &office,
+            CREATOR,
+            &HrHireParams {
+                command_id: cmd_id(717),
+                request_id: REQ_1.into(),
+                employee_id: AGENT_1.into(),
+                home_team_id: TEAM_A.into(),
+                role_id: None,
+                proposal: HireProposalWire {
+                    name: "Lead Bot".into(),
+                    handle: "leadbot".into(),
+                    reports_to_employee_id: Some(PERSON_BOB.into()),
+                    ..HireProposalWire::default()
+                },
+                reason: "Agent lead".into(),
+            },
+        )
+        .unwrap();
+        org_write(
+            &office,
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: cmd_id(718),
+                team_id: TEAM_A.into(),
+                expected_version: 4,
+                lead_member_id: Some(AGENT_1.into()),
+            }),
+        );
+        call_c2::<TeamLimitRequestCreate>(
+            &office,
+            AGENT_1,
+            &TeamLimitRequestCreateParams {
+                command_id: cmd_id(719),
+                request_id: LIMIT_REQ_C.into(),
+                team_id: TEAM_A.into(),
+                requested_max_members: 18,
+                reason: "Offboarded lead test".into(),
+            },
+        )
+        .unwrap();
+        call_c2::<AgentOffboard>(
+            &office,
+            CREATOR,
+            &AgentOffboardParams {
+                command_id: cmd_id(720),
+                member_id: AGENT_1.into(),
+                expected_version: 1,
+            },
+        )
+        .unwrap();
+        let offboard_bob = call_c2::<TeamLimitRequestDecide>(
+            &office,
+            PERSON_BOB,
+            &TeamLimitRequestDecideParams {
+                command_id: cmd_id(721),
+                request_id: LIMIT_REQ_C.into(),
+                expected_version: 1,
+                approve: true,
+                reason: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(offboard_bob.code, ErrorCode::NotAuthorized);
     }
 }

@@ -144,16 +144,17 @@ pub(crate) fn check_team_capacity(
         team.max_members
     );
     let (open_teams, extra_open_count) = authorized_open_teams(view, owner, actor, &team.id, op)?;
+    let owner_caller = is_owner(owner, actor);
     let can_set_directly = actor.kind == EmployeeKind::Person
-        && (is_owner(owner, actor) || is_person_ancestor_lead(view, actor, &team.id, true)?);
-    let can_request_increase =
-        team.lead_employee_id.as_ref() == Some(&actor.id) && !is_owner(owner, actor);
+        && (owner_caller || is_person_ancestor_lead(view, actor, &team.id, true)?);
+    let can_request_increase = team.lead_employee_id.as_ref() == Some(&actor.id) && !owner_caller;
     let hint = format_team_full_hint(&TeamFullHintInput {
         team_id: team.id.as_str(),
         current_max: team.max_members,
         team_revision: team.meta.revision,
         open_teams: &open_teams,
         extra_open_count,
+        is_owner: owner_caller,
         can_set_directly,
         can_request_increase,
     });

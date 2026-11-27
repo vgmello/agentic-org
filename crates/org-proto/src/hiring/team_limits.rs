@@ -106,6 +106,7 @@ pub struct TeamFullHintInput<'a> {
     /// Caller-authorized teams with open slots: `(name, id, active_count, max_members)`.
     pub open_teams: &'a [(String, String, u64, u64)],
     pub extra_open_count: usize,
+    pub is_owner: bool,
     pub can_set_directly: bool,
     pub can_request_increase: bool,
 }
@@ -127,10 +128,17 @@ pub fn format_team_full_hint(input: &TeamFullHintInput<'_>) -> String {
         };
         format!("Teams with open capacity: {}{more}.", listed.join(", "))
     };
-    let subteam_part = format!(
-        "Create a sub-team: `team create --parent-team-id {} --name <name>`.",
-        input.team_id
-    );
+    let subteam_part = if input.is_owner {
+        format!(
+            "Create a sub-team: `team create --parent-team-id {} --name <name>`.",
+            input.team_id
+        )
+    } else {
+        format!(
+            "Ask the organization owner to create a sub-team: `team create --parent-team-id {} --name <name>`.",
+            input.team_id
+        )
+    };
     let limit_part = format_limit_step(input);
     format!("{open_part} {subteam_part} {limit_part}")
 }

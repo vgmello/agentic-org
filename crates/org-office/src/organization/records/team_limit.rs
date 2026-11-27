@@ -61,33 +61,27 @@ pub fn team_limit_request_path(chain: &[Id], request: &Id) -> Result<DurablePath
     if chain.is_empty() {
         return Err(StoreError::invalid("a team limit request names a team"));
     }
-    DurablePath::parse(&format!(
-        "{}/limit-requests/{request}.yaml",
-        team_folder(chain)
-    ))
+    let dir = team_folder(chain);
+    DurablePath::parse(&format!("{dir}/limit-requests/{request}.yaml"))
 }
 
 pub fn encode_team_limit_request(r: &TeamLimitRequest) -> Vec<u8> {
-    let decided_by = r.decided_by_employee_id.as_ref().map(Id::as_str);
+    let req_by = r.requested_by_employee_id.as_str();
+    let app = r.approver_employee_id.as_str();
+    let dec_by = r.decided_by_employee_id.as_ref().map(Id::as_str);
     let fields: Fields = [
         ("schema_version", json!(SCHEMA_VERSION)),
         ("revision", json!(r.revision)),
         ("id", json!(r.id.as_str())),
         ("state", json!(r.state.as_str())),
         ("team_id", json!(r.team_id.as_str())),
-        (
-            "requested_by_employee_id",
-            json!(r.requested_by_employee_id.as_str()),
-        ),
-        (
-            "approver_employee_id",
-            json!(r.approver_employee_id.as_str()),
-        ),
+        ("requested_by_employee_id", json!(req_by)),
+        ("approver_employee_id", json!(app)),
         ("current_max_members", json!(r.current_max_members)),
         ("requested_max_members", json!(r.requested_max_members)),
         ("reason", json!(r.reason)),
         ("decision_reason", json!(r.decision_reason)),
-        ("decided_by_employee_id", json!(decided_by)),
+        ("decided_by_employee_id", json!(dec_by)),
         ("decided_at", json!(r.decided_at)),
         ("created_at", json!(r.created_at)),
         ("updated_at", json!(r.updated_at)),
@@ -99,23 +93,20 @@ pub fn encode_team_limit_request(r: &TeamLimitRequest) -> Vec<u8> {
 }
 
 fn check_invariants(reader: &yaml::Reader, r: &TeamLimitRequest) -> Result<(), RecordError> {
-    let valid_range =
-        (1..=100).contains(&r.current_max_members) && (1..=100).contains(&r.requested_max_members);
-    if !valid_range {
-        return Err(reader.error("requested_max_members", "outside 1..=100"));
+    let err = |field, msg| Err(reader.error(field, msg));
+    let in_bounds = |n| (1..=100).contains(&n);
+    if !in_bounds(r.current_max_members) || !in_bounds(r.requested_max_members) {
+        return err("requested_max_members", "outside 1..=100");
     }
     if r.requested_max_members <= r.current_max_members {
-        return Err(reader.error("requested_max_members", "must exceed current_max_members"));
+        return err("requested_max_members", "must exceed current_max_members");
     }
     let decided = r.state.is_terminal();
     if decided != r.decided_by_employee_id.is_some() || decided != r.decided_at.is_some() {
-        return Err(reader.error(
-            "decided_by_employee_id",
-            "decision metadata required iff state is approved or denied",
-        ));
+        return err("decided_by_employee_id", "decision metadata parity failed");
     }
     if !decided && r.decision_reason.is_some() {
-        return Err(reader.error("decision_reason", "only allowed after decision"));
+        return err("decision_reason", "only allowed after decision");
     }
     Ok(())
 }
