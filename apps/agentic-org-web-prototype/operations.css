@@ -301,8 +301,53 @@
   border-block-end: 0;
   padding-block-end: 4px;
 }
+/* Page header "Title | subtitle" in every theme (TASK-242). The summary follows the title on its line, after a thin
+   divider centred in the 25px gap, and takes the width left before the header actions. A long summary wraps under
+   itself rather than truncating. When a narrow header drops the summary to a line of its own, its divider falls
+   outside the row's start edge and the horizontal clip hides it, so no line ever leads a row.
+   Selectors start at #main so they win in any stylesheet order. */
+#main .ph-t, #main .prof h1 {
+  align-items: center;
+  column-gap: 25px;
+  overflow-x: clip;
+  overflow-clip-margin: 4px;
+}
+#main .ph-t > h1 { flex: 0 1 auto; min-width: 0; }
+#main .ph-t > :is(.cnt, .queue-count) {
+  position: relative;
+  display: block;
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  color: var(--gray-400);
+  font-size: var(--fs-base);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+#main .ph-t > :is(.cnt, .queue-count)::before,
+#main .prof h1 > .role::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -13px;
+  top: .3em;
+  width: 1px;
+  height: .9em;
+  background: var(--page-subtitle-divider);
+}
+/* Narrow: a short summary stays beside the title; one too long for the rest of the line goes under it, full width */
+@media (max-width: 639px) {
+  #main .ph-t > :is(.cnt, .queue-count) { flex-basis: auto; }
+}
+/* The divider replaces the accent dot the Inbox, Work and Activity counts used to lead with */
+#main .ph-t > .queue-count > i { display: none; }
+/* A person's role on their profile title reads the same way: "Ada | Engineering Manager" */
+#main .prof h1 > .role { position: relative; min-width: 0; line-height: 1.5; overflow-wrap: anywhere; }
 /* Unified Work / Scoped Work toolbar tokens across themes (Cozy overrides live in cozy.css) */
 :root {
+  /* The muted line, lifted toward the muted text so a 1px rule still reads on every theme surface */
+  --page-subtitle-divider: color-mix(in srgb, var(--gray-400) 45%, var(--line2));
   --toolbar-group-gap: 16px;
   --toolbar-divider-color: var(--line2);
   --toolbar-seg-bg: rgb(6 13 25 / .44);
@@ -3064,15 +3109,22 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
 .assembly-table thead th { background: var(--workspace-secondary-surface, var(--hover)); }
 .assembly-table tbody tr:not(.assembly-milestone):hover { background: var(--hover); }
 .assembly-table small { display: block; color: var(--gray-400); font-size: var(--fs-xs); font-weight: 400; }
+/* Assembly rows read like the Work list (TASK-242): a feature is a task title (size, weight, colour) over a muted
+   line, and a milestone is a group header ("To do 7"): semibold small text with its muted progress beside it. */
+.assembly-table tbody tr:not(.assembly-milestone) > th { color: var(--white); font-size: var(--fs-md); font-weight: var(--fw-item); line-height: 1.4; }
+.assembly-table tbody tr:not(.assembly-milestone) > th > small { margin-block-start: 2px; line-height: 1.5; }
 .assembly-table .assembly-milestone th {
-  color: var(--tone-accent-ink);
+  color: var(--white);
   background: var(--tone-accent-soft);
   border-block: 1px solid var(--line2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.5;
 }
 /* Classic and Report Night: the purple accent tint fought the table; milestone rows stay neutral */
-html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-table .assembly-milestone th { color: var(--white); background: var(--hover); }
-html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink { color: inherit; text-decoration: none; }
-html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink:hover { text-decoration: underline; }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-table .assembly-milestone th { background: var(--hover); }
+.assembly-table .assembly-milestone .alink { color: inherit; text-decoration: none; }
+.assembly-table .assembly-milestone .alink:hover { text-decoration: underline; }
 .assembly-milestone th > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .assembly-progress { display: grid; justify-items: start; gap: 2px; color: var(--gray-400); font-size: var(--fs-xs); white-space: nowrap; }
 .assembly-milestone .assembly-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-weight: 400; white-space: normal; }

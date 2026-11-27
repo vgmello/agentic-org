@@ -28,7 +28,33 @@ const SWEEP_ROUTES = [
 
 const ALL_THEMES = ["ocean", "classic", "report", "report-dark", "graphite", "graphite-light", "cozy"];
 
+/* Page headers read "Title | subtitle": the summary sits on the title line after a 1px divider, centred with the
+   title, muted and regular weight, and it wraps rather than truncating (TASK-242) */
+async function checkPageSubtitle(page: Page) {
+  const header = await page.locator("#main .ph-t").first().evaluate((row) => {
+    const title = row.querySelector("h1")!.getBoundingClientRect();
+    const sub = row.querySelector(":scope > :is(.cnt, .queue-count)")!;
+    const box = sub.getBoundingClientRect();
+    const rule = getComputedStyle(sub, "::before");
+    const style = getComputedStyle(sub);
+    return {
+      sameLine: Math.abs((title.top + title.bottom) / 2 - (box.top + box.bottom) / 2) <= 2,
+      after: box.left > title.right,
+      rule: [rule.content, rule.width, rule.position].join(" "),
+      dotHidden: [...sub.querySelectorAll(":scope > i")].every((dot) => getComputedStyle(dot).display === "none"),
+      weight: style.fontWeight,
+      wraps: style.whiteSpace === "normal" && style.textOverflow !== "ellipsis",
+    };
+  });
+  assert.ok(header.sameLine && header.after, "The subtitle follows the title on its line, vertically centred");
+  assert.equal(header.rule, '"" 1px absolute', "A 1px divider separates title and subtitle");
+  assert.ok(header.dotHidden, "The divider replaces the count's dot");
+  assert.equal(header.weight, "400");
+  assert.ok(header.wraps, "A long subtitle wraps instead of truncating");
+}
+
 async function checkInbox(page: Page) {
+  await checkPageSubtitle(page);
   const categories = page.getByRole("group", { name: "Inbox queue controls" });
   const category = (name: RegExp) => categories.getByRole("button", { name });
   const searchToggle = page.getByRole("button", { name: "Search inbox" });
