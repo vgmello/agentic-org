@@ -3,7 +3,7 @@ import type { WorkAccepted } from '$lib/proto';
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { WorkApi } from './api';
-import type { WorkCall } from './engine';
+import type { WorkCall } from './types';
 import { createHttpWorkApi } from './http-api';
 
 function signedInSession() {

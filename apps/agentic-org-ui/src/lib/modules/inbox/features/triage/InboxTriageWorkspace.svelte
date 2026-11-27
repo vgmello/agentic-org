@@ -54,8 +54,8 @@
 	import InlineSearchRow from '$lib/components/InlineSearchRow.svelte';
 	import InlineSearchToggle from '$lib/components/InlineSearchToggle.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { executeDecisionAction } from '$lib/home/actions';
-	import { isDenyAction } from '$lib/home/model';
+	import { executeDecisionAction } from '../../decisions';
+	import { isDenyAction } from '../../spotlight';
 	import { accountZone } from '$lib/modules/preferences';
 	import { toAppError } from '$lib/proto';
 	import NotificationsButton from '$lib/platform/shell/NotificationsButton.svelte';

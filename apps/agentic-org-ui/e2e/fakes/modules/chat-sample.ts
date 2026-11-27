@@ -6,7 +6,7 @@ import {
 	syncAuto,
 	type ChatContext,
 	type ChatMember
-} from '../../../src/lib/modules/messaging/engine';
+} from '../../../src/lib/modules/messaging/testing/chat-engine';
 import type {
 	ChatMessage,
 	ChatState,

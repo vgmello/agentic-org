@@ -30,7 +30,7 @@
 	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
 	import { formatDate } from '$lib/modules/preferences/time';
 	import { toAppError } from '$lib/proto';
-	import { projectFrame } from '$lib/modules/projects';
+	import { projectFrame } from '$lib/platform/shell/project-frame';
 	import { releasesApi } from '../../api';
 	import {
 		RELEASE_STATUS_TONE,

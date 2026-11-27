@@ -2,7 +2,7 @@
 // and bug rules (engine.ts) and the request rules (requests.ts) build on these.
 import type { ApiErrorCode, AppError, ChecklistStep, NewStep } from '$lib/proto';
 import { WORK_LIMITS } from '$lib/proto';
-import type { StoredTask, WorkState } from './engine';
+import type { StoredTask, WorkState } from './types';
 
 export function fail(code: ApiErrorCode, message: string): never {
 	const error: AppError = { source: 'api', code, message };

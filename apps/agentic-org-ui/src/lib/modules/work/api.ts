@@ -6,7 +6,7 @@ import type {
 	WorkItemSummary,
 	WorkPosition
 } from '$lib/proto';
-import type { WorkCall } from './engine';
+import type { WorkCall } from './types';
 
 /**
  * What the work screens need from an office: `work.snapshot`, `work.get` and the item calls.

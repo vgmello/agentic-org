@@ -7,16 +7,12 @@ import { STATUS_WORD, TYPE_WORD, isOpen } from '$lib/modules/workitems/present';
 import type { TaskRow } from '$lib/modules/workitems/types';
 import type { ActivityEntry, BugCounts, ConversationRow, TaskCounts } from './types';
 
-type Rec = Record<string, unknown>;
+import { asRec, asStr, type Rec } from '$lib/platform/http/decode';
 
 export interface ProjectWorkTotals {
 	tasks: TaskCounts;
 	bugs: BugCounts;
 }
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
 function asIso(v: unknown): string {
 	if (typeof v === 'string' && v) return v;

@@ -17,7 +17,7 @@
 	import { gutters, mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { deriveActivityCommandCenter } from '$lib/modules/activity/features/command-center/assembly-model';
+	import { deriveProjectDeliverySummary } from '../../delivery-summary';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { toAppError } from '$lib/proto';
 	import { costsApi } from '../../api';
@@ -149,16 +149,12 @@
 			return undefined;
 		}
 		if (shellData.workError || !shellData.snapshot) return undefined;
-		return deriveActivityCommandCenter({
+		return deriveProjectDeliverySummary({
 			snapshot: shellData.snapshot,
-			organizationName: projectName,
+			projectId,
 			workItems: shellData.workItems,
 			inboxItems: shellData.inboxItems,
-			activityRows: [],
-			projectScope: projectId,
-			ownerId: shellData.ownerId,
-			workPhase: 'ready',
-			inboxPhase: 'ready'
+			ownerId: shellData.ownerId
 		});
 	});
 
@@ -200,9 +196,7 @@
 		];
 	});
 
-	const readinessTracks = $derived(
-		deliveryModel ? deliveryModel.milestones.flatMap((m) => m.lanes) : []
-	);
+	const readinessTracks = $derived(deliveryModel ? deliveryModel.tracks : []);
 
 	let exporting = $state(false);
 	let exportError = $state<string | undefined>();
