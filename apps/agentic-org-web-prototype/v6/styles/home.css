@@ -1056,7 +1056,8 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-cos-expand .ic { width: 14px; height: 14px; transition: transform .18s ease; }
 .hb-cos-expand[aria-expanded="true"] .ic { transform: rotate(180deg); }
 @media (min-width: 1121px) {
-  .hb-stage:not(.is-single) .hb-catchup { height: 0; min-height: 100%; overflow: hidden; }
+  /* Both columns size to the taller one's content (no clipping, no stretch to the fold) */
+  .hb-stage:not(.is-single) .hb-catchup { height: auto; min-height: 0; overflow: visible; }
 }
 @media (max-width: 1120px) {
   .hb-cos-scroll {

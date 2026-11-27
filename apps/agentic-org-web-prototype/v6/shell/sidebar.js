@@ -240,12 +240,14 @@ function renderBanner(r0) {
 }
 
 let stopHomeProjectHint;
+/* Owner: Home's panels size to their content and the next section follows right after; no stretching to the
+   fold and no "Scroll for more" hint. */
 function mountHomeProjectHint() {
   stopHomeProjectHint?.();
   stopHomeProjectHint = null;
   const hint = document.getElementById("home-scroll-hint");
   hint.hidden = true;
-  if (S.homeState !== "filled") return;
+  return;
 
   const projects = document.getElementById("hb-projects");
   if (!projects) return;
