@@ -2,6 +2,9 @@
    a client-side upload state and size validation. Pending attachments are kept per composer (like drafts)
    while the page stays loaded, so a re-render never loses them. */
 import { LIMIT_TEXT, PICKER_ACCEPT, altOf, fileFacts, fileIcon, isImage, rejectReason } from "./chat-attach-files.js";
+import {
+  bindRefHighlight, deleteTokenBeforeCaret, insertTokens, labelledIds, markFieldUsed, refLabels, refTag, relabelMap, rewriteTokens,
+} from "./chat-attach-refs.js";
 import { esc, ic, plural } from "../ui.js";
 
 const pending = new Map(); /* composer key -> { items: [{ id, name, size, type, url, status, progress }], errors: [] } */
@@ -9,6 +12,7 @@ let seq = 0;
 
 /* The main composer is keyed by conversation, a thread composer by its root message. */
 const composerKey = (form) => (form.dataset.form === "thread-send" ? `t:${form.dataset.ch}:${form.dataset.id}` : `c:${form.dataset.id}`);
+const isComposerField = (t) => t?.matches?.("form.chat-compose textarea[name=message]");
 const stateOf = (key) => {
   if (!pending.has(key)) pending.set(key, { items: [], errors: [] });
   return pending.get(key);
@@ -21,20 +25,21 @@ const attachButton = (field) => `<button class="btn ghost icon chat-attach-btn" 
 function statusText(it) {
   return it.status === "ready" ? "Ready" : `Uploading… ${Math.round(it.progress)}%`;
 }
-function trayItem(it, key) {
+function trayItem(it, key, label) {
   const thumb = isImage(it) ? `<img src="${esc(it.url)}" alt="">` : fileIcon(it);
   const ready = it.status === "ready";
   return `<li class="chat-att-item${ready ? "" : " is-uploading"}" data-att="${esc(it.id)}">
     <span class="chat-att-thumb">${thumb}</span>
-    <span class="chat-att-meta"><span class="chat-att-name" title="${esc(it.name)}">${esc(it.name)}</span>
+    <span class="chat-att-meta"><span class="chat-att-line">${refTag(label)}<span class="chat-att-name" title="${esc(it.name)}">${esc(it.name)}</span></span>
       <span class="chat-att-sub">${esc(fileFacts(it))} · <span data-att-status>${statusText(it)}</span></span>
       <span class="chat-att-bar" role="progressbar" aria-label="Uploading ${esc(it.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(it.progress)}"${ready ? " hidden" : ""}><span style="--p:${it.progress}%"></span></span></span>
-    <button class="btn ghost icon chat-att-remove" type="button" data-act="chat-att-remove" data-id="${esc(it.id)}" data-v="${esc(key)}" aria-label="Remove ${esc(it.name)}" title="Remove">${ic("x", "ic16")}</button>
+    <button class="btn ghost icon chat-att-remove" type="button" data-act="chat-att-remove" data-id="${esc(it.id)}" data-v="${esc(key)}" aria-label="Remove ${esc(it.name)}, ${esc(label)}" title="Remove">${ic("x", "ic16")}</button>
   </li>`;
 }
 function trayInner(key) {
   const st = stateOf(key);
-  const items = st.items.length ? `<ul class="chat-att-tray" aria-label="Attachments to send">${st.items.map((it) => trayItem(it, key)).join("")}</ul>` : "";
+  const labels = refLabels(st.items);
+  const items = st.items.length ? `<ul class="chat-att-tray" aria-label="Attachments to send">${st.items.map((it, i) => trayItem(it, key, labels[i])).join("")}</ul>` : "";
   const errors = st.errors.map((e) => `<p class="chat-att-error">${ic("warn", "ic14")}<span>${esc(e)}</span></p>`).join("");
   return `${items}<div class="chat-att-errors" role="alert">${errors}</div><span class="sr-only" aria-live="polite" data-att-live></span>`;
 }
@@ -85,18 +90,25 @@ function addFiles(form, files) {
   const added = [...files].map((f) => addOne(key, f)).filter(Boolean);
   redrawTray(form);
   added.forEach((it) => simulateUpload(key, it));
-  if (added.length) announce(form, `${plural(added.length, "file", "files")} attached. Uploading…`);
+  if (!added.length) return;
+  /* Each new attachment is referenced where the owner was writing: "[Image 1]" at the caret. */
+  const labels = labelledIds(st.items).filter((x) => added.some((it) => it.id === x.id)).map((x) => x.label);
+  insertTokens(form.elements.message, labels);
+  announce(form, `${plural(added.length, "file", "files")} attached as ${labels.join(", ")}. Uploading…`);
 }
 function removeAttachment(key, id) {
   const st = stateOf(key), i = st.items.findIndex((it) => it.id === id);
   if (i < 0) return;
+  const before = labelledIds(st.items);
   const [it] = st.items.splice(i, 1);
   URL.revokeObjectURL(it.url);
   st.errors = [];
   const form = document.querySelector(`.chat-att-wrap[data-att-key="${CSS.escape(key)}"]`)?.closest("form");
   if (!form) return;
+  /* Its token leaves the text, and later ones renumber with the tray (Image 3 becomes Image 2). */
+  rewriteTokens(form.elements.message, relabelMap(before, labelledIds(st.items)));
   redrawTray(form);
-  announce(form, `Removed ${it.name}.`);
+  announce(form, `Removed ${before[i].label}, ${it.name}.`);
   /* Focus moves to the next attachment's Remove, else the previous one, else the message field. */
   const buttons = form.querySelectorAll(".chat-att-remove");
   (buttons[Math.min(i, buttons.length - 1)] || form.elements.message).focus();
@@ -128,6 +140,7 @@ function onPaste(e) {
   const form = e.target.closest?.("form.chat-compose");
   const files = [...(e.clipboardData?.files || [])];
   if (!form || !files.length) return;
+  if (isComposerField(e.target)) markFieldUsed(e.target); /* a paste lands at the caret */
   if (!e.clipboardData.types.includes("text/plain")) e.preventDefault();
   addFiles(form, files);
 }
@@ -171,10 +184,26 @@ function bindDrop(root) {
   root.addEventListener("dragover", (e) => onDragOver(root, e));
   root.addEventListener("drop", (e) => onDrop(root, st, e));
 }
+/* Deleting a token un-links its attachment, which stays in the tray and still sends; the tray's Remove drops it. */
+function onTokenBackspace(e) {
+  if (e.key !== "Backspace" || e.isComposing || e.defaultPrevented || !isComposerField(e.target)) return;
+  const field = e.target, form = field.form, labels = refLabels(stateOf(composerKey(form)).items);
+  const before = field.value.slice(0, field.selectionStart);
+  if (!labels.some((l) => before.endsWith(`[${l}]`))) return;
+  e.preventDefault();
+  const label = deleteTokenBeforeCaret(field);
+  if (label) announce(form, `${label} is no longer referenced in your message. It still sends; remove it from the attachments to leave it out.`);
+}
 function bindAttachments(root) {
   root.addEventListener("change", onPickerChange);
   root.addEventListener("paste", onPaste);
+  root.addEventListener("keydown", onTokenBackspace);
+  /* The caret counts once the owner has typed or clicked in the field. */
+  const used = (e) => { if (isComposerField(e.target)) markFieldUsed(e.target); };
+  root.addEventListener("pointerdown", used);
+  root.addEventListener("keyup", used);
   bindDrop(root);
+  bindRefHighlight(root);
 }
 
 const ATTACH_CLICKS = {
