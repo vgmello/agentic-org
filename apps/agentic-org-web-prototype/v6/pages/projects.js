@@ -1,3 +1,4 @@
+import { openNewChannel } from "./chat-channel-new.js";
 import { CH, IN, KIND, M, OPEN, P, TEAMS, W, needsMe } from "../data.js";
 import { pageActivity, projectReleaseSummary } from "./activity.js";
 import { calendarHtml } from "./calendar.js";
@@ -79,12 +80,11 @@ function pageProject(id, tab, sub) {
     ["", "Overview"],
     ["activity", "Activity"],
     ["work", "Work", `${ws.filter(OPEN).length} open`],
-    /* Between Work and Docs: the tabs the project's development process declares (doc-32 §4) */
-    ...processTabs(id).filter((t) => !inDocs(t) && !inWork(t)).map((t) => [t.key, t.title, planTabCount(id, t)]),
-    ["docs", "Docs", docsCount(id) || null],
-    ["calendar", "Calendar"],
+    /* Owner's order: Work, Insights, Docs; Conversations is gone (its channels are listed on Overview) */
     ["insights", "Insights"],
-    ["conversations", "Conversations"],
+    ["docs", "Docs", docsCount(id) || null],
+    ...processTabs(id).filter((t) => !inDocs(t) && !inWork(t)).map((t) => [t.key, t.title, planTabCount(id, t)]),
+    ["calendar", "Calendar"],
     ["team", "Team", projMembers(id).length],
   ];
   /* Product, Technical and Features are sections of Docs, not tabs of their own (owner) */
@@ -98,6 +98,27 @@ function pageProject(id, tab, sub) {
     ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : docsKeys.includes(tab) ? "docs" : tab), more)}
   </div>` + (stripShown(tab, docsKeys) ? projectReleaseSummary(id) : "") + projectBody(id, tab, sub);
 }
+/* New channel from a project: the Create channel dialog with this project chosen; the new channel opens in Chat */
+document.addEventListener("click", (e) => {
+  const t = e.target.closest?.('[data-act="project-new-channel"]');
+  if (!t) return;
+  openNewChannel(t, (chId) => { location.hash = `#/chat/${chId}`; });
+  const sel = document.querySelector('dialog[open] select[name="project"], dialog[open] select[name="proj"]');
+  if (sel) sel.value = t.dataset.id;
+});
+/* The project's chat channels (owner): every channel linked to the project, with its topic, members and unread */
+function projectChannelsHtml(id) {
+  const chans = Object.entries(CH).filter(([, c]) => c.kind === "channel" && (c.proj === id || P[id].channel === c.name));
+  const rows = chans.map(([k, c]) => {
+    const n = (c.members || []).length, unread = c.unread ? `<span class="pj-chan-unread">${c.unread} unread</span>` : "";
+    return `<li class="linked"><span class="chip-i pj-chan-ic" aria-hidden="true">${ic("hash", "ic16")}</span>
+      <div class="grow"><p class="rt"><a class="stretch" href="#/chat/${esc(k)}">${esc(c.name)}</a>${c.topic ? `<span class="sec">${esc(c.topic)}</span>` : ""}</p></div>
+      <span class="pj-chan-meta">${unread}<span>${ic("user-group", "ic14")}${n}</span></span>${ic("chev-right", "ic20 chev")}</li>`;
+  }).join("");
+  const create = `<button class="link" type="button" data-act="project-new-channel" data-id="${esc(id)}">${ic("plus", "ic16")}New channel</button>`;
+  return `<section class="project-sec" aria-labelledby="pj-chan-h">${sectionHead({ id: "pj-chan-h", title: "Channels", count: chans.length ? String(chans.length) : "", right: create })}
+    ${rows ? `<ul class="rows pj-chan-rows" role="list">${rows}</ul>` : `<p class="muted">No channels for this project yet.</p>`}</section>`;
+}
 function projectBody(id, tab, sub) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
   if (tab === "overview") {
@@ -107,6 +128,7 @@ function projectBody(id, tab, sub) {
       <p class="pj-goal"><span>Goal</span>${esc(pr.goal)}</p>
       ${projectSummaryHtml(id, ws)}
       <section class="project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted">Nothing needs you on this project.</p>`}</section>
+      ${projectChannelsHtml(id)}
       <section class="project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 6), { noProj: true })}</section>
     </div>`;
   }
@@ -120,7 +142,7 @@ function projectBody(id, tab, sub) {
   if (tab === "docs") return pageDocs(id, sub);
   const processTab = processTabBody(id, tab);
   if (processTab != null) return (processTabs(id).some((t) => t.key === tab && inDocs(t)) ? docsSectionBar(id, takeDocsTabAction()) : "") + processTab;
-  if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
+  if (tab === "conversations") { location.replace(`#/projects/${id}`); return ""; }
   return notFound();
 }
 

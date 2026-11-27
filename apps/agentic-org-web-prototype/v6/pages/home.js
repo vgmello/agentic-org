@@ -684,6 +684,12 @@ function renderProjBlockerHtml(bl, queue) {
   return `<div class="hb-blocker ${bl.tone}"><span class="hb-blocker-txt">${ic(bl.ico, "ic14 " + bl.icoCls)}<span>${esc(bl.text)}</span></span>${unblockEl}</div>`;
 }
 
+/* Owner: the lead sits beside the project name ("Lead Ada"); clicking the name opens the person panel. No member
+   avatars or footer row on the scorecard. */
+function cardLead(pr) {
+  if (!pr.lead || !M[pr.lead]) return "";
+  return `<span class="hb-card-leadline">Lead <a class="alink hb-card-lead-name" href="#/members/${esc(pr.lead)}" data-person="${esc(pr.lead)}">${esc(M[pr.lead].name)}</a></span>`;
+}
 function renderProjBentoCard(p, queue) {
   const pr = P[p], ws = W.filter((w) => w.proj === p), total = ws.length, done = ws.filter((w) => !OPEN(w)).length;
   const pct = total ? Math.round(done * 100 / total) : 0, curHealth = effectiveHealth(p);
@@ -694,13 +700,12 @@ function renderProjBentoCard(p, queue) {
   const metaParts = `${done} of ${total} done${pr.due ? ` · Due ${esc(pr.due)}` : ""}${paceLabel ? ` · <span class="hb-pace ${paceTone}">${esc(paceLabel)}</span>` : ""}`;
   const relTag = pr.release && !pr.name.includes(pr.release) ? `<span class="hb-rel-tag">${esc(pr.release)}</span>` : "";
   return `<article class="hb-card" data-card-href="#/projects/${p}">
-      <div class="hb-card-top"><div class="hb-card-id"><a class="hb-card-name" href="#/projects/${p}">${esc(pr.name)}</a>${relTag}</div>${healthBadge}</div>
+      <div class="hb-card-top"><div class="hb-card-id"><a class="hb-card-name" href="#/projects/${p}">${esc(pr.name)}</a>${relTag}${cardLead(pr)}</div>${healthBadge}</div>
       <div class="hb-card-prog">
         <div class="hb-card-prog-row"><span>${metaParts}</span><strong>${pct}%</strong></div>
         <div class="h4-bar ${healthTone}" role="progressbar" aria-label="${esc(pr.name)} progress" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><span style="width:${pct}%"></span></div>
       </div>
       ${renderProjBlockerHtml(resolveProjectBlocker(p, pr), queue)}
-      <div class="hb-card-foot">${avStack(projMembers(p), 4)}<a class="hb-card-lead" href="#/projects/${p}">${leadOf(p) ? esc(leadTxt(p)) : "Open project"}${ic("chev-right", "ic14")}</a></div>
     </article>`;
 }
 

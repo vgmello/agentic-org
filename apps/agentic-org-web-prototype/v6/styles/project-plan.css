@@ -121,3 +121,8 @@
 .sheet.np-dialog .work-task-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .sheet.np-dialog .work-task-fields label { display: grid; gap: 6px; }
 .sheet.np-dialog .work-task-fields .muted { font-weight: 400; color: var(--gray-400); }
+/* Project Overview › Channels */
+#main .pj-chan-rows .pj-chan-ic { margin-left: 0; width: 28px; height: 28px; }
+#main .pj-chan-meta { display: inline-flex; align-items: center; gap: 12px; color: var(--gray-400); font-size: var(--fs-sm); }
+#main .pj-chan-meta > span { display: inline-flex; align-items: center; gap: 4px; }
+#main .pj-chan-meta .pj-chan-unread { color: var(--tone-accent-ink); font-weight: 600; }
