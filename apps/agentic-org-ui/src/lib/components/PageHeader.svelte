@@ -1,8 +1,9 @@
 <!--
   @component
-  The header of a page or a detail view: one heading, an optional real count, optional description, the
-  page's actions on the right (at most one primary) and, on a detail page, one named back link above the
-  heading instead of a breadcrumb (app-shell-ux §6a).
+  The header of a page or a detail view: "Title | subtitle" inline on desktop with a 1px x 18px
+  shared-divider separator (Prototype Release c773480f1), wrapping cleanly on narrow screens,
+  plus an optional real count, right-aligned actions (at most one primary) and, on a detail page,
+  one named back link above the heading instead of a breadcrumb (app-shell-ux §6a).
 
   The shell's top bar holds the page's `h1` (the area name), so a page header is an `h2` by default.
   Usage:
@@ -56,13 +57,13 @@
 			>{back.label}</a
 		>
 	{/if}
-	<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
-		<div class="min-w-0 flex-1 basis-64">
+	<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
+		<div class="ph-title-row min-w-0 flex-1 basis-64">
 			<svelte:element
 				this={level === 1 ? 'h1' : 'h2'}
 				{id}
 				tabindex="-1"
-				class="flex flex-wrap items-baseline gap-x-2.5 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
+				class="flex max-w-full shrink-0 flex-wrap items-baseline gap-x-2.5 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
 			>
 				{title}
 				{#if count !== undefined}
@@ -73,10 +74,13 @@
 					>
 				{/if}
 			</svelte:element>
-			{#if typeof description === 'string'}
-				<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{description}</p>
-			{:else if description}
-				<div class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{@render description()}</div>
+			{#if description}
+				<span class="ph-sep" aria-hidden="true"></span>
+				{#if typeof description === 'string'}
+					<p class="ph-sub max-w-3xl text-sm/6 text-fg-muted">{description}</p>
+				{:else}
+					<div class="ph-sub max-w-3xl text-sm/6 text-fg-muted">{@render description()}</div>
+				{/if}
 			{/if}
 		</div>
 		{#if actions || (showSearch && shellCommand)}
@@ -89,3 +93,34 @@
 		{/if}
 	</div>
 </header>
+
+<style>
+	.ph-title-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px 12px;
+	}
+	.ph-sep {
+		display: inline-block;
+		flex: none;
+		align-self: center;
+		width: 1px;
+		height: 18px;
+		background: var(--toolbar-divider-color, var(--line));
+	}
+	.ph-sub {
+		margin: 0;
+		min-width: 0;
+	}
+	@media (max-width: 639px) {
+		.ph-title-row {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 4px;
+		}
+		.ph-sep {
+			display: none;
+		}
+	}
+</style>

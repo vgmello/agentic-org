@@ -11,6 +11,7 @@
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Minus from '@lucide/svelte/icons/minus';
 	import Plus from '@lucide/svelte/icons/plus';
+	import { tooltipContentClass } from '$lib/components/classes';
 	import {
 		WORKSPACE_NAV_IDS,
 		uiPrefs,
@@ -218,10 +219,7 @@
 						{/snippet}
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
-						<Tooltip.Content
-							side="right"
-							sideOffset={6}
-							class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+						<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
 							>{item.label}</Tooltip.Content
 						>
 					</Tooltip.Portal>
@@ -243,10 +241,7 @@
 							{/snippet}
 						</Tooltip.Trigger>
 						<Tooltip.Portal>
-							<Tooltip.Content
-								side="right"
-								sideOffset={6}
-								class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+							<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
 								>Move to More</Tooltip.Content
 							>
 						</Tooltip.Portal>
@@ -331,10 +326,7 @@
 										{/snippet}
 									</Tooltip.Trigger>
 									<Tooltip.Portal>
-										<Tooltip.Content
-											side="right"
-											sideOffset={6}
-											class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+										<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
 											>Pin to Workspace</Tooltip.Content
 										>
 									</Tooltip.Portal>

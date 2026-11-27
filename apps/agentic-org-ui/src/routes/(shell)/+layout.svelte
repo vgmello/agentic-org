@@ -1,13 +1,16 @@
 <script lang="ts">
 	import ExecutiveCommandBar from '$lib/platform/shell/ExecutiveCommandBar.svelte';
 	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
-	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
+	import MobileHeaderBar from '$lib/platform/shell/MobileHeaderBar.svelte';
 	import ShortcutsDialog from '$lib/platform/shell/ShortcutsDialog.svelte';
+	import { SidebarDockController } from '$lib/platform/shell/sidebar-dock.svelte';
 	import { provideNotifications } from '$lib/platform/workspace/notifications.svelte';
+	import { personPanel } from '$lib/platform/workspace/person-panel.svelte';
 	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
 	import { createHttpTessApi } from '$lib/modules/tess/api';
 	import { provideTessPanel, TessPanelState } from '$lib/modules/tess/tess-panel.svelte';
 	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
+	import { captureOverlayOpener } from '$lib/components/focus';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
@@ -35,6 +38,8 @@
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';
 	import { layerOffices } from '$lib/modules/offices/layer';
+	import type PersonSidePanelType from '$lib/modules/shell/features/person-panel/PersonSidePanel.svelte';
+	import type { PersonPanelDataSource } from '$lib/modules/shell/features/person-panel/types';
 
 	let { data, children } = $props();
 	const organizationId = $derived(data.connection.organization.id);
@@ -62,6 +67,38 @@
 	provideNotifications();
 	let shortcutsOpen = $state(false);
 	let commandBar = $state<ReturnType<typeof ExecutiveCommandBar> | undefined>();
+
+	let PersonPanel = $state.raw<typeof PersonSidePanelType | undefined>(undefined);
+	let personPanelSource = $state.raw<PersonPanelDataSource | undefined>(undefined);
+	let personPanelLoading = false;
+	async function ensurePersonPanelLoaded() {
+		if ((PersonPanel && personPanelSource) || personPanelLoading) return;
+		personPanelLoading = true;
+		try {
+			const [panelMod, sourceMod] = await Promise.all([
+				import('$lib/modules/shell/features/person-panel/PersonSidePanel.svelte'),
+				import('$lib/platform/shell/person-panel-source')
+			]);
+			if (!leaving) {
+				PersonPanel = panelMod.default;
+				personPanelSource = sourceMod.personPanelDataSource;
+			}
+		} catch {
+			if (!leaving && !PersonPanel) personPanel.close(false);
+		} finally {
+			personPanelLoading = false;
+		}
+	}
+	const stopPersonPanelSession = personPanel.bindSessionEnd((cb) => appSession.onSessionEnded(cb));
+	const stopPersonPanelOpen = personPanel.onOpen(() => {
+		if (!personPanel.opener) personPanel.captureOpener(captureOverlayOpener());
+		void ensurePersonPanelLoaded();
+	});
+	onDestroy(() => {
+		stopPersonPanelSession();
+		stopPersonPanelOpen();
+		personPanel.close(false);
+	});
 
 	provideShellCommand({
 		openPalette(prefill?: string) {
@@ -123,6 +160,7 @@
 		if (routeChanged) {
 			navKeys.cancel(false);
 			mobileMenuOpen = false;
+			personPanel.close(false);
 			tessPanel.noteRouteChange();
 		}
 		if (routeChanged && !move.to?.url?.hash && mainEl) {
@@ -139,18 +177,12 @@
 	let desktopNavigation = $state<HTMLDivElement | null>(null);
 	let mainEl = $state<HTMLElement | null>(null);
 	let mobileMenuOpen = $state(false);
-	let sidebarHovered = $state(false);
-	let sidebarFocused = $state(false);
-	let sidebarMenuOpen = $state(false);
-	let sidebarHoverTimer: ReturnType<typeof setTimeout> | undefined;
-	let sidebarFocusTimer: ReturnType<typeof setTimeout> | undefined;
 	const navKeys = new NavKeyController({
 		onSidebarOpen() {
 			if (typeof window !== 'undefined' && window.innerWidth < 640) {
 				mobileMenuOpen = true;
-			} else if (uiPrefs.navCollapsed) {
-				clearTimeout(sidebarFocusTimer);
-				sidebarFocused = true;
+			} else {
+				sidebarDock.openForKeyMode();
 			}
 		},
 		onSidebarCancel() {
@@ -159,79 +191,10 @@
 			}
 		}
 	});
-	const sidebarPinned = $derived(!uiPrefs.navCollapsed);
-	const sidebarCollapsed = $derived(
-		uiPrefs.navCollapsed &&
-			!sidebarHovered &&
-			!sidebarFocused &&
-			!sidebarMenuOpen &&
-			navKeys.mode !== 'sidebar'
-	);
-
-	let sidebarFocusRaf: number | undefined;
-	function handleSidebarMenuOpenChange(open: boolean) {
-		clearTimeout(sidebarFocusTimer);
-		if (sidebarFocusRaf !== undefined) {
-			cancelAnimationFrame(sidebarFocusRaf);
-			sidebarFocusRaf = undefined;
-		}
-		sidebarMenuOpen = open;
-		if (!open) {
-			// Recompute focus containment after Bits UI focus restoration or outside click settles
-			// without cancelling any pending pointer-leave collapse timer.
-			const syncFocus = () => {
-				if (sidebarMenuOpen) return;
-				const active = document.activeElement;
-				sidebarFocused = Boolean(active instanceof Node && desktopNavigation?.contains(active));
-			};
-			queueMicrotask(syncFocus);
-			sidebarFocusRaf = requestAnimationFrame(() => {
-				sidebarFocusRaf = undefined;
-				syncFocus();
-			});
-		}
-	}
-
-	function handleSidebarEnter() {
-		clearTimeout(sidebarHoverTimer);
-		sidebarHovered = true;
-	}
-	function handleSidebarLeave() {
-		clearTimeout(sidebarHoverTimer);
-		sidebarHoverTimer = setTimeout(() => {
-			sidebarHovered = false;
-		}, 240);
-	}
-	function handleSidebarFocusIn(event: FocusEvent) {
-		const target = event.target;
-		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
-			clearTimeout(sidebarFocusTimer);
-			sidebarFocused = true;
-		}
-	}
-	function handleSidebarFocusOut(event: FocusEvent) {
-		if (sidebarMenuOpen) return;
-		const next = event.relatedTarget;
-		if (next instanceof Node && desktopNavigation?.contains(next)) return;
-		clearTimeout(sidebarFocusTimer);
-		sidebarFocusTimer = setTimeout(() => {
-			if (!sidebarMenuOpen) sidebarFocused = false;
-		}, 160);
-	}
-	function toggleSidebarPin() {
-		clearTimeout(sidebarHoverTimer);
-		clearTimeout(sidebarFocusTimer);
-		uiPrefs.toggleNavCollapsed();
-		if (uiPrefs.navCollapsed) {
-			sidebarHovered = false;
-			sidebarFocused = false;
-		}
-	}
-	onDestroy(() => {
-		clearTimeout(sidebarHoverTimer);
-		clearTimeout(sidebarFocusTimer);
-		if (sidebarFocusRaf !== undefined) cancelAnimationFrame(sidebarFocusRaf);
+	const sidebarDock = new SidebarDockController({
+		isSidebarKeyMode: () => navKeys.mode === 'sidebar'
 	});
+	onDestroy(() => sidebarDock.dispose());
 
 	const shellData = provideShellData({
 		getOrganizationId: () => organizationId,
@@ -248,6 +211,7 @@
 	$effect(() => {
 		const id = organizationId;
 		const reset = untrack(() => shellData.loadedOrganizationId !== id);
+		if (reset) personPanel.close(false);
 		const { cancel } = shellData.load(id, reset);
 		return cancel;
 	});
@@ -357,45 +321,53 @@
 	<div
 		bind:this={desktopNavigation}
 		class={[
-			'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-300 ease-out min-[640px]:flex',
-			sidebarCollapsed ? 'w-[68px]' : 'w-[264px]'
+			'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-300 ease-out motion-reduce:transition-none min-[640px]:flex',
+			sidebarDock.collapsed ? 'w-[68px]' : 'w-[264px]'
 		]}
 	>
 		<ExecutiveSidebar
 			connection={data.connection}
 			needsYouCount={shellData.needsYouCount}
 			projects={shellData.snapshot?.projects ?? []}
-			collapsed={sidebarCollapsed}
-			pinned={sidebarPinned}
+			workItems={shellData.workItems}
+			inboxItems={shellData.inboxItems}
+			projectTeams={shellData.snapshot?.project_teams}
+			collapsed={sidebarDock.collapsed}
+			pinned={sidebarDock.pinned}
 			tessOpen={tessPanel.open}
 			offline={showPaused}
 			onOpenSearch={() => commandBar?.openPalette()}
 			onToggleTess={() => tessPanel.toggle(uiPrefs.showTessPill)}
-			onToggleCollapse={toggleSidebarPin}
-			onMenuOpenChange={handleSidebarMenuOpenChange}
-			onPointerEnter={handleSidebarEnter}
-			onPointerLeave={handleSidebarLeave}
-			onFocusIn={handleSidebarFocusIn}
-			onFocusOut={handleSidebarFocusOut}
+			onToggleCollapse={() => sidebarDock.togglePin()}
+			onMenuOpenChange={(open) => sidebarDock.onMenuOpenChange(open, desktopNavigation)}
+			onPointerEnter={() => sidebarDock.onPointerEnter()}
+			onPointerLeave={() => sidebarDock.onPointerLeave()}
+			onFocusIn={(event) => sidebarDock.onFocusIn(event)}
+			onFocusOut={(event) => sidebarDock.onFocusOut(event, desktopNavigation)}
 			onNavigate={(event, href) => selectDesktopSection(event, href, goto)}
 		/>
 	</div>
 	<div
 		class={[
-			'exec-shell-main exec-legacy-compat relative z-10 flex h-full flex-col overflow-hidden transition-[padding] duration-300 ease-out',
-			sidebarCollapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
+			'exec-shell-main exec-legacy-compat relative z-10 flex h-full flex-col overflow-hidden transition-[padding] duration-300 ease-out motion-reduce:transition-none',
+			sidebarDock.collapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
 		]}
 	>
-		<div data-shell-header class="flex shrink-0 items-center gap-2 px-4 min-[640px]:hidden">
-			<MobileNavigation
-				bind:open={mobileMenuOpen}
-				connection={data.connection}
-				needsYouCount={shellData.needsYouCount}
-				projects={shellData.snapshot?.projects ?? []}
-				onWiden={focusDesktopNavigation}
-			/>
-			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
-		</div>
+		<MobileHeaderBar
+			bind:open={mobileMenuOpen}
+			areaLabel={areaFor(page.url.pathname) ?? 'Agentic Org'}
+			connection={data.connection}
+			needsYouCount={shellData.needsYouCount}
+			projects={shellData.snapshot?.projects ?? []}
+			workItems={shellData.workItems}
+			inboxItems={shellData.inboxItems}
+			projectTeams={shellData.snapshot?.project_teams}
+			tessOpen={tessPanel.open}
+			offline={showPaused}
+			onOpenSearch={() => commandBar?.openPalette()}
+			onToggleTess={() => tessPanel.toggle(uiPrefs.showTessPill)}
+			onWiden={focusDesktopNavigation}
+		/>
 		<ExecutiveCommandBar
 			bind:this={commandBar}
 			connection={data.connection}
@@ -429,6 +401,24 @@
 				</main>
 			</div>
 		</div>
+		{#if PersonPanel && personPanelSource}
+			{@const PanelComp = PersonPanel}
+			<PanelComp
+				open={personPanel.isOpen}
+				memberId={personPanel.memberId}
+				openSeq={personPanel.openSeq}
+				opener={personPanel.opener}
+				restoreFocusOnClose={personPanel.restoreFocusOnClose}
+				{organizationId}
+				snapshot={shellData.snapshot}
+				source={personPanelSource}
+				onClose={(restore) => personPanel.close(restore)}
+				onMessageMember={(id) => {
+					personPanel.close(false);
+					void commandBar?.openMemberDm(id);
+				}}
+			/>
+		{/if}
 		<TessPanel
 			panel={tessPanel}
 			{organizationId}

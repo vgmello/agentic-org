@@ -1,0 +1,130 @@
+import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
+
+export interface SidebarDockOptions {
+	isSidebarKeyMode: () => boolean;
+	getNavCollapsed?: () => boolean;
+	toggleNavCollapsed?: () => void;
+}
+
+/**
+ * Manages desktop sidebar auto-hide hover/focus/menu timers and pinned rail expansion.
+ * Ensures every timer and requestAnimationFrame is cancelled cleanly on `dispose()`.
+ */
+export class SidebarDockController {
+	readonly #opts: SidebarDockOptions;
+	hovered = $state(false);
+	focused = $state(false);
+	menuOpen = $state(false);
+
+	#hoverTimer: ReturnType<typeof setTimeout> | undefined;
+	#focusTimer: ReturnType<typeof setTimeout> | undefined;
+	#focusRaf: number | undefined;
+	#disposed = false;
+
+	constructor(options: SidebarDockOptions) {
+		this.#opts = options;
+	}
+
+	#navCollapsed(): boolean {
+		return this.#opts.getNavCollapsed ? this.#opts.getNavCollapsed() : uiPrefs.navCollapsed;
+	}
+
+	get pinned(): boolean {
+		return !this.#navCollapsed();
+	}
+
+	get collapsed(): boolean {
+		return (
+			this.#navCollapsed() &&
+			!this.hovered &&
+			!this.focused &&
+			!this.menuOpen &&
+			!this.#opts.isSidebarKeyMode()
+		);
+	}
+
+	onMenuOpenChange(open: boolean, container: HTMLElement | null): void {
+		clearTimeout(this.#focusTimer);
+		if (this.#focusRaf !== undefined) {
+			cancelAnimationFrame(this.#focusRaf);
+			this.#focusRaf = undefined;
+		}
+		this.menuOpen = open;
+		if (!open && !this.#disposed) {
+			// Recompute focus containment after Bits UI focus restoration or outside click settles
+			// without cancelling any pending pointer-leave collapse timer.
+			const syncFocus = () => {
+				if (this.#disposed || this.menuOpen) return;
+				const active = typeof document !== 'undefined' ? document.activeElement : null;
+				this.focused = Boolean(active instanceof Node && container?.contains(active));
+			};
+			queueMicrotask(syncFocus);
+			if (typeof requestAnimationFrame !== 'undefined') {
+				this.#focusRaf = requestAnimationFrame(() => {
+					this.#focusRaf = undefined;
+					syncFocus();
+				});
+			}
+		}
+	}
+
+	onPointerEnter(): void {
+		clearTimeout(this.#hoverTimer);
+		this.hovered = true;
+	}
+
+	onPointerLeave(): void {
+		clearTimeout(this.#hoverTimer);
+		this.#hoverTimer = setTimeout(() => {
+			if (!this.#disposed) this.hovered = false;
+		}, 240);
+	}
+
+	onFocusIn(event: FocusEvent): void {
+		const target = event.target;
+		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
+			clearTimeout(this.#focusTimer);
+			this.focused = true;
+		}
+	}
+
+	onFocusOut(event: FocusEvent, container: HTMLElement | null): void {
+		if (this.menuOpen) return;
+		const next = event.relatedTarget;
+		if (next instanceof Node && container?.contains(next)) return;
+		clearTimeout(this.#focusTimer);
+		this.#focusTimer = setTimeout(() => {
+			if (!this.#disposed && !this.menuOpen) this.focused = false;
+		}, 160);
+	}
+
+	openForKeyMode(): void {
+		if (this.#navCollapsed()) {
+			clearTimeout(this.#focusTimer);
+			this.focused = true;
+		}
+	}
+
+	togglePin(): void {
+		clearTimeout(this.#hoverTimer);
+		clearTimeout(this.#focusTimer);
+		if (this.#opts.toggleNavCollapsed) this.#opts.toggleNavCollapsed();
+		else uiPrefs.toggleNavCollapsed();
+		if (this.#navCollapsed()) {
+			this.hovered = false;
+			this.focused = false;
+		}
+	}
+
+	dispose(): void {
+		this.#disposed = true;
+		clearTimeout(this.#hoverTimer);
+		clearTimeout(this.#focusTimer);
+		this.#hoverTimer = undefined;
+		this.#focusTimer = undefined;
+		if (this.#focusRaf !== undefined && typeof cancelAnimationFrame !== 'undefined') {
+			cancelAnimationFrame(this.#focusRaf);
+			this.#focusRaf = undefined;
+		}
+	}
+}

@@ -2,31 +2,28 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { Tooltip } from 'bits-ui';
-	import Bot from '@lucide/svelte/icons/bot';
-	import Building2 from '@lucide/svelte/icons/building-2';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import Folder from '@lucide/svelte/icons/folder';
 	import House from '@lucide/svelte/icons/house';
 	import Inbox from '@lucide/svelte/icons/inbox';
-	import Network from '@lucide/svelte/icons/network';
 	import PanelLeft from '@lucide/svelte/icons/panel-left';
 	import Search from '@lucide/svelte/icons/search';
-	import Settings from '@lucide/svelte/icons/settings';
-	import Star from '@lucide/svelte/icons/star';
-	import Users from '@lucide/svelte/icons/users';
-	import Workflow from '@lucide/svelte/icons/workflow';
-	import type { Connection, ProjectSummary } from '$lib/proto';
+	import { tooltipContentClass } from '$lib/components/classes';
+	import type { Connection, ProjectSummary, ProjectTeam, WorkItemSummary } from '$lib/proto';
+	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
+	import ExecutiveSidebarFavorites from './ExecutiveSidebarFavorites.svelte';
 	import ExecutiveSidebarFooter from './ExecutiveSidebarFooter.svelte';
+	import ExecutiveSidebarOrgNav from './ExecutiveSidebarOrgNav.svelte';
 	import ExecutiveSidebarWorkspaceNav from './ExecutiveSidebarWorkspaceNav.svelte';
 	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
 	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
 	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
-	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let {
 		connection,
 		needsYouCount = 0,
 		projects = [],
+		workItems = [],
+		inboxItems = [],
+		projectTeams,
 		collapsed = false,
 		pinned = true,
 		tessOpen = false,
@@ -44,6 +41,9 @@
 		connection: Connection;
 		needsYouCount?: number;
 		projects?: ProjectSummary[];
+		workItems?: readonly WorkItemSummary[];
+		inboxItems?: readonly InboxItem[];
+		projectTeams?: readonly ProjectTeam[];
 		collapsed?: boolean;
 		pinned?: boolean;
 		tessOpen?: boolean;
@@ -75,22 +75,6 @@
 
 	const pathname = $derived(page.url.pathname);
 	const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
-	const isTeamsActive = $derived(
-		pathname === '/teams' ||
-			(pathname.startsWith('/teams/') &&
-				!pathname.startsWith('/teams/members') &&
-				!pathname.startsWith('/teams/org-chart'))
-	);
-
-	const activeProjects = $derived(projects.filter((p) => !p.archived));
-	let favoritesOpen = $state(true);
-	const favoriteList = $derived.by(() => {
-		if (uiPrefs.favoriteProjects.length > 0) {
-			const favSet = new Set(uiPrefs.favoriteProjects);
-			return activeProjects.filter((p) => favSet.has(p.id));
-		}
-		return activeProjects.slice(0, 2);
-	});
 </script>
 
 <Tooltip.Provider delayDuration={150}>
@@ -135,10 +119,7 @@
 					{/snippet}
 				</Tooltip.Trigger>
 				<Tooltip.Portal>
-					<Tooltip.Content
-						side="right"
-						sideOffset={6}
-						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+					<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
 						>{connection.organization.name}</Tooltip.Content
 					>
 				</Tooltip.Portal>
@@ -172,10 +153,7 @@
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Portal>
-								<Tooltip.Content
-									side="bottom"
-									sideOffset={6}
-									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+								<Tooltip.Content side="bottom" sideOffset={6} class={tooltipContentClass}
 									>{pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}</Tooltip.Content
 								>
 							</Tooltip.Portal>
@@ -187,17 +165,22 @@
 
 		{#if onOpenSearch}
 			<div class={['shrink-0 pt-2 pb-1', collapsed ? 'flex justify-center px-2' : 'px-3']}>
-				<Tooltip.Root disabled={!collapsed}>
+				<Tooltip.Root disabled={!collapsed && !offline}>
 					<Tooltip.Trigger>
 						{#snippet child({ props })}
 							<button
 								{...props}
 								type="button"
-								onclick={onOpenSearch}
-								aria-label="Search (⌘K)"
+								disabled={offline}
+								onclick={() => {
+									if (!offline) onOpenSearch();
+								}}
+								aria-label={offline ? 'Search unavailable while offline' : 'Search (⌘K)'}
+								data-testid="sidebar-search-trigger"
 								class={[
 									'exec-sidebar-search flex items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
-									collapsed ? 'size-10 justify-center p-0' : 'w-full gap-2 px-2.5 py-1.5 text-left'
+									collapsed ? 'size-10 justify-center p-0' : 'w-full gap-2 px-2.5 py-1.5 text-left',
+									offline && 'is-offline'
 								]}
 							>
 								<Search class="size-4 shrink-0" aria-hidden="true" />
@@ -209,11 +192,8 @@
 						{/snippet}
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
-						<Tooltip.Content
-							side="right"
-							sideOffset={6}
-							class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-							>Search (⌘K)</Tooltip.Content
+						<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
+							>{offline ? 'Search unavailable while offline' : 'Search (⌘K)'}</Tooltip.Content
 						>
 					</Tooltip.Portal>
 				</Tooltip.Root>
@@ -255,10 +235,7 @@
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Portal>
-								<Tooltip.Content
-									side="right"
-									sideOffset={6}
-									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+								<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
 									>Home</Tooltip.Content
 								>
 							</Tooltip.Portal>
@@ -290,10 +267,7 @@
 								{/snippet}
 							</Tooltip.Trigger>
 							<Tooltip.Portal>
-								<Tooltip.Content
-									side="right"
-									sideOffset={6}
-									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+								<Tooltip.Content side="right" sideOffset={6} class={tooltipContentClass}
 									>{totalInboxAttention > 0
 										? `Inbox (${totalInboxAttention} needing attention)`
 										: 'Inbox'}</Tooltip.Content
@@ -306,134 +280,19 @@
 
 			<ExecutiveSidebarWorkspaceNav {collapsed} {isActive} {onNavigate} />
 
-			{#if !collapsed && favoriteList.length > 0}
-				<div>
-					<div class="flex items-center justify-between gap-1 px-2.5 pb-1.5">
-						<div class="exec-nav-label flex items-center gap-1.5">
-							<Star class="size-3" aria-hidden="true" />
-							<span>Favorite projects</span>
-						</div>
-						<Tooltip.Root>
-							<Tooltip.Trigger>
-								{#snippet child({ props })}
-									<button
-										{...props}
-										type="button"
-										onclick={() => (favoritesOpen = !favoritesOpen)}
-										aria-expanded={favoritesOpen}
-										aria-controls="exec-nav-favs"
-										aria-label={favoritesOpen
-											? 'Collapse favorite projects'
-											: 'Expand favorite projects'}
-										class="exec-icon-btn flex size-9 items-center justify-center rounded-md [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
-									>
-										<ChevronRight
-											class={[
-												'size-3.5 transition-transform duration-150',
-												favoritesOpen && 'rotate-90'
-											]}
-											aria-hidden="true"
-										/>
-									</button>
-								{/snippet}
-							</Tooltip.Trigger>
-							<Tooltip.Portal>
-								<Tooltip.Content
-									side="right"
-									sideOffset={6}
-									class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-									>{favoritesOpen
-										? 'Collapse favorite projects'
-										: 'Expand favorite projects'}</Tooltip.Content
-								>
-							</Tooltip.Portal>
-						</Tooltip.Root>
-					</div>
-					{#if favoritesOpen}
-						<ul id="exec-nav-favs" class="flex flex-col gap-0.5">
-							{#each favoriteList as proj (proj.id)}
-								{@const href = `/projects/${proj.id}/work`}
-								<li class="group flex items-center gap-0.5">
-									<a
-										href={resolve(href as '/projects')}
-										onclick={(e) => onNavigate?.(e, href)}
-										aria-current={isActive(`/projects/${proj.id}`) ? 'page' : undefined}
-										class={[
-											'exec-nav-item min-w-0 flex-1',
-											isActive(`/projects/${proj.id}`) && 'is-active'
-										]}
-									>
-										<Folder class="size-4 shrink-0" aria-hidden="true" />
-										<span class="truncate">{proj.name}</span>
-									</a>
-									{#if uiPrefs.isFavorite(proj.id)}
-										<Tooltip.Root>
-											<Tooltip.Trigger>
-												{#snippet child({ props })}
-													<button
-														{...props}
-														type="button"
-														onclick={() => uiPrefs.toggleFavorite(proj.id)}
-														aria-label="Remove {proj.name} from favorites"
-														class="exec-fav-unpin flex size-9 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
-													>
-														<Star class="size-3.5 fill-current" aria-hidden="true" />
-													</button>
-												{/snippet}
-											</Tooltip.Trigger>
-											<Tooltip.Portal>
-												<Tooltip.Content
-													side="right"
-													sideOffset={6}
-													class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-													>Unpin from favorites</Tooltip.Content
-												>
-											</Tooltip.Portal>
-										</Tooltip.Root>
-									{/if}
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</div>
+			{#if !collapsed}
+				<ExecutiveSidebarFavorites
+					{projects}
+					{workItems}
+					{inboxItems}
+					{projectTeams}
+					{offline}
+					{isActive}
+					{onNavigate}
+				/>
 			{/if}
 
-			<div class={collapsed ? 'w-full' : undefined}>
-				{#if !collapsed}
-					<div class="exec-nav-label px-2.5 pb-1.5">Organization</div>
-				{/if}
-				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
-					{#each [{ href: '/teams', label: 'Teams', Icon: Users, active: isTeamsActive }, { href: '/teams/org-chart', label: 'Org chart', Icon: Network, active: isActive('/teams/org-chart') }, { href: '/teams/members', label: 'Members', Icon: Bot, active: isActive('/teams/members') }, { href: '/settings/processes', label: 'Processes', Icon: Workflow, active: isActive('/settings/processes') }, { href: '/settings/offices', label: 'Offices', Icon: Building2, active: isActive('/settings/offices') }, { href: '/settings', label: 'Settings', Icon: Settings, active: pathname === '/settings' }] as const as item (item.href)}
-						{@const OrgIcon = item.Icon}
-						<li>
-							<Tooltip.Root disabled={!collapsed}>
-								<Tooltip.Trigger>
-									{#snippet child({ props })}
-										<a
-											{...props}
-											href={resolve(item.href)}
-											onclick={(e) => onNavigate?.(e, item.href)}
-											aria-current={item.active ? 'page' : undefined}
-											class={['exec-nav-item', collapsed && 'is-rail', item.active && 'is-active']}
-										>
-											<OrgIcon class="size-[18px] shrink-0" aria-hidden="true" />
-											<span class={collapsed ? 'sr-only' : 'truncate'}>{item.label}</span>
-										</a>
-									{/snippet}
-								</Tooltip.Trigger>
-								<Tooltip.Portal>
-									<Tooltip.Content
-										side="right"
-										sideOffset={6}
-										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-										>{item.label}</Tooltip.Content
-									>
-								</Tooltip.Portal>
-							</Tooltip.Root>
-						</li>
-					{/each}
-				</ul>
-			</div>
+			<ExecutiveSidebarOrgNav {collapsed} {pathname} {onNavigate} />
 		</nav>
 
 		<ExecutiveSidebarFooter
@@ -488,13 +347,6 @@
 	.exec-icon-btn.is-pinned {
 		color: var(--exec-accent-ink);
 		background: var(--exec-accent-soft);
-	}
-	.exec-fav-unpin {
-		color: var(--tone-warn);
-	}
-	.exec-fav-unpin:hover {
-		color: var(--tone-warn-ink);
-		background: var(--tone-warn-bg);
 	}
 	.exec-nav-label {
 		font-size: var(--exec-nav-label-size);
@@ -567,10 +419,15 @@
 			color 0.14s ease,
 			box-shadow 0.14s ease;
 	}
-	.exec-sidebar-search:hover {
+	.exec-sidebar-search:hover:not(:disabled) {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	}
+	.exec-sidebar-search.is-offline,
+	.exec-sidebar-search:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
 	}
 	.exec-sidebar-kbd {
 		font-family: var(--font-mono);
@@ -581,5 +438,12 @@
 		background: var(--exec-cmdk-kbd-bg);
 		color: var(--exec-cmdk-kbd-ink);
 		box-shadow: var(--exec-cmdk-kbd-shadow);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.exec-icon-btn,
+		.exec-nav-item,
+		.exec-sidebar-search {
+			transition: none;
+		}
 	}
 </style>

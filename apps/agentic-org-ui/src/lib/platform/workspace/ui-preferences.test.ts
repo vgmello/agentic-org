@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+	DEFAULT_PINNED_ORG_NAV,
 	DEFAULT_PINNED_WORKSPACE_NAV,
 	STORAGE_KEYS,
 	UI_THEMES,
 	applyUiAttributes,
 	isLightTheme,
 	isUiTheme,
+	moveOrgNavItem,
 	moveWorkspaceNavItem,
+	normalizeOrgNav,
 	normalizeUiTheme,
 	normalizeWorkspaceNav,
 	resolveInitialPreferences,
+	toggleOrgNavPin,
 	toggleWorkspaceNavPin,
 	uiPrefs,
 	type StorageLike
@@ -255,7 +259,14 @@ describe('ui preferences and 7-theme selection', () => {
 		}
 	});
 
-	it('persists, normalizes, reorders, and pins/unpins Workspace nav items safely', () => {
+	it('persists, normalizes, reorders, and pins/unpins Workspace nav items safely (insights pinned by default)', () => {
+		expect(DEFAULT_PINNED_WORKSPACE_NAV).toEqual([
+			'work',
+			'chat',
+			'activity',
+			'projects',
+			'insights'
+		]);
 		expect(resolveInitialPreferences().workspaceNav).toEqual([...DEFAULT_PINNED_WORKSPACE_NAV]);
 		expect(normalizeWorkspaceNav(['insights', 'work', 'bogus', 'work'])).toEqual([
 			'insights',
@@ -264,15 +275,15 @@ describe('ui preferences and 7-theme selection', () => {
 		expect(normalizeWorkspaceNav([])).toEqual([...DEFAULT_PINNED_WORKSPACE_NAV]);
 
 		const reordered = moveWorkspaceNavItem(
-			['work', 'chat', 'activity', 'projects'],
+			['work', 'chat', 'activity', 'projects', 'insights'],
 			'projects',
 			'chat',
 			'pinned'
 		);
-		expect(reordered).toEqual(['work', 'projects', 'chat', 'activity']);
+		expect(reordered).toEqual(['work', 'projects', 'chat', 'activity', 'insights']);
 
 		const movedToMore = moveWorkspaceNavItem(reordered, 'chat', null, 'more');
-		expect(movedToMore).toEqual(['work', 'projects', 'activity']);
+		expect(movedToMore).toEqual(['work', 'projects', 'activity', 'insights']);
 
 		const keptLast = moveWorkspaceNavItem(['work'], 'work', null, 'more');
 		expect(keptLast).toEqual(['work']);
@@ -285,6 +296,32 @@ describe('ui preferences and 7-theme selection', () => {
 			storage: memoryStorage({ [STORAGE_KEYS.workspaceNav]: JSON.stringify(['chat', 'insights']) })
 		});
 		expect(stored.workspaceNav).toEqual(['chat', 'insights']);
+	});
+
+	it('persists, normalizes, reorders, and pins/unpins Organization nav items safely (Teams & Settings pinned by default)', () => {
+		expect(DEFAULT_PINNED_ORG_NAV).toEqual(['teams', 'settings']);
+		expect(resolveInitialPreferences().orgNav).toEqual(['teams', 'settings']);
+		expect(normalizeOrgNav(['processes', 'teams', 'bogus', 'teams'])).toEqual([
+			'processes',
+			'teams'
+		]);
+		expect(normalizeOrgNav([])).toEqual(['teams', 'settings']);
+
+		const pinned = toggleOrgNavPin(['teams', 'settings'], 'processes');
+		expect(pinned).toEqual(['teams', 'settings', 'processes']);
+		expect(toggleOrgNavPin(['teams'], 'teams')).toEqual(['teams']);
+
+		const reordered = moveOrgNavItem(pinned, 'processes', 'teams', 'pinned');
+		expect(reordered).toEqual(['processes', 'teams', 'settings']);
+		expect(moveOrgNavItem(reordered, 'processes', null, 'more')).toEqual(['teams', 'settings']);
+		expect(moveOrgNavItem(['teams'], 'teams', null, 'more')).toEqual(['teams']);
+
+		const stored = resolveInitialPreferences({
+			storage: memoryStorage({
+				[STORAGE_KEYS.orgNav]: JSON.stringify(['settings', 'processes'])
+			})
+		});
+		expect(stored.orgNav).toEqual(['settings', 'processes']);
 	});
 
 	it('clears org-scoped favoriteProjects from memory and localStorage via clearFavorites()', () => {

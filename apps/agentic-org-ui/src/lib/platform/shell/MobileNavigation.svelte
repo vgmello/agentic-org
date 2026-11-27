@@ -5,7 +5,9 @@
 	import { innerWidth } from 'svelte/reactivity/window';
 	import { mergeProps, Tooltip } from 'bits-ui';
 	import MenuIcon from '@lucide/svelte/icons/menu';
-	import type { Connection, ProjectSummary } from '$lib/proto';
+	import { tooltipContentClass } from '$lib/components/classes';
+	import type { Connection, ProjectSummary, ProjectTeam, WorkItemSummary } from '$lib/proto';
+	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
 	import ExecutiveSidebar from './ExecutiveSidebar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import { registerModalBack } from '$lib/platform/workspace/modal-back';
@@ -16,12 +18,26 @@
 		connection,
 		needsYouCount = 0,
 		projects = [],
+		workItems = [],
+		inboxItems = [],
+		projectTeams,
+		tessOpen = false,
+		offline = false,
+		onOpenSearch,
+		onToggleTess,
 		onWiden
 	}: {
 		open?: boolean;
 		connection: Connection;
 		needsYouCount?: number;
 		projects?: ProjectSummary[];
+		workItems?: readonly WorkItemSummary[];
+		inboxItems?: readonly InboxItem[];
+		projectTeams?: readonly ProjectTeam[];
+		tessOpen?: boolean;
+		offline?: boolean;
+		onOpenSearch?: () => void;
+		onToggleTess?: () => void;
 		onWiden: () => void;
 	} = $props();
 	const menuId = $props.id();
@@ -110,10 +126,7 @@
 				{/snippet}
 			</Tooltip.Trigger>
 			<Tooltip.Portal>
-				<Tooltip.Content
-					side="bottom"
-					sideOffset={6}
-					class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+				<Tooltip.Content side="bottom" sideOffset={6} class={tooltipContentClass}
 					>Menu</Tooltip.Content
 				>
 			</Tooltip.Portal>
@@ -128,7 +141,29 @@
 		>
 			<Sheet.Title class="sr-only">Main navigation</Sheet.Title>
 			<Sheet.Description class="sr-only">Choose an area of the organization.</Sheet.Description>
-			<ExecutiveSidebar {connection} {needsYouCount} {projects} onNavigate={select} />
+			<ExecutiveSidebar
+				{connection}
+				{needsYouCount}
+				{projects}
+				{workItems}
+				{inboxItems}
+				{projectTeams}
+				{tessOpen}
+				{offline}
+				onOpenSearch={onOpenSearch
+					? () => {
+							closeForNavigation();
+							onOpenSearch();
+						}
+					: undefined}
+				onToggleTess={onToggleTess
+					? () => {
+							closeForNavigation();
+							onToggleTess();
+						}
+					: undefined}
+				onNavigate={select}
+			/>
 		</Sheet.Content>
 	</Sheet.Root>
 </Tooltip.Provider>
