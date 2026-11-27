@@ -60,6 +60,9 @@ pub(super) fn normalized_components(path: &Path) -> Vec<String> {
 }
 
 pub(super) fn path_is_within(path: &Path, root: &Path) -> bool {
+    if path.is_absolute() != root.is_absolute() {
+        return false;
+    }
     if org_platform::fs::paths_case_insensitive_by_default() {
         let p = normalized_components(path);
         let r = normalized_components(root);
@@ -113,7 +116,7 @@ pub(super) fn strip_root_prefix(path: &Path, root: &Path) -> Option<PathBuf> {
 }
 
 /// Whether `path` lies at or beneath a standard host user home tree (`/Users/<user>`,
-/// `/home/<user>`, or `/root`).
+/// `/home/<user>`, `/root`, `/var/root`, or `/private/var/root`).
 pub(super) fn is_under_host_user_home(path: &Path) -> bool {
     let norm = lexical_normalize(path);
     if !norm.is_absolute() {
@@ -123,7 +126,11 @@ pub(super) fn is_under_host_user_home(path: &Path) -> bool {
     let refs: Vec<&str> = comps.iter().map(String::as_str).collect();
     matches!(
         refs.as_slice(),
-        ["users", _, ..] | ["home", _, ..] | ["root", ..]
+        ["users", _, ..]
+            | ["home", _, ..]
+            | ["root", ..]
+            | ["var", "root", ..]
+            | ["private", "var", "root", ..]
     )
 }
 

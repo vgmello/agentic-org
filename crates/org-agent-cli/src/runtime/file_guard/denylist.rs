@@ -5,7 +5,9 @@ use std::path::Path;
 
 use org_command::Refusal;
 
-use super::paths::{denied_path, lowercase_components, normalized_components, path_is_within};
+use super::paths::{
+    denied_path, lowercase_components, normalized_components, office_agent_segment, path_is_within,
+};
 use super::roots::RootEntry;
 
 /// Host credential dotdirs/files and sensitive office/host state filenames that are ALWAYS
@@ -26,20 +28,18 @@ const DENIED_HOST_SECRET_COMPONENTS: &[&str] = &[
     ".git-credentials",
     "host-secrets",
     "git-credentials",
-    "office.db",
-    "office.db-wal",
-    "office.db-shm",
-    "office.db-journal",
-    "host.db",
-    "host.db-wal",
-    "host.db-shm",
-    "host.db-journal",
     "git-state.json",
     "hq-owner.v1.json",
 ];
 
+fn is_office_or_host_db(lower_seg: &str) -> bool {
+    lower_seg.starts_with("office.db") || lower_seg.starts_with("host.db")
+}
+
 fn is_session_binding_filename(lower_seg: &str) -> bool {
-    lower_seg.starts_with("session-binding-") && lower_seg.ends_with(".v1")
+    lower_seg == "session-binding.v1"
+        || (lower_seg.starts_with("session-binding-") && lower_seg.ends_with(".v1"))
+        || (lower_seg.starts_with(".session-binding.") && lower_seg.ends_with(".tmp"))
 }
 
 fn check_denied_host_secret_segment(
@@ -49,6 +49,7 @@ fn check_denied_host_secret_segment(
 ) -> Result<(), Refusal> {
     let lower = seg.to_ascii_lowercase();
     if DENIED_HOST_SECRET_COMPONENTS.contains(&lower.as_str())
+        || is_office_or_host_db(&lower)
         || is_session_binding_filename(&lower)
     {
         return Err(denied_path(
@@ -121,34 +122,6 @@ pub(super) fn has_denied_static_segment(path: &Path) -> bool {
     false
 }
 
-/// Another agent's home or workspace strictly under:
-/// - `local/offices/<office>/agents/<id>/...`
-/// - `teams/<team>/agents/<id>/...`
-/// - `agents/<id>/(home|private_home)/...`
-fn other_agent_home_segment<'a>(
-    comps: &'a [String],
-    idx: usize,
-    seg: &str,
-) -> Option<(&'a str, usize)> {
-    let eq = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
-    if eq(seg, "local")
-        && comps.get(idx + 1).is_some_and(|c| eq(c, "offices"))
-        && comps.get(idx + 3).is_some_and(|c| eq(c, "agents"))
-    {
-        comps.get(idx + 4).map(|id| (id.as_str(), idx + 5))
-    } else if eq(seg, "teams") && comps.get(idx + 2).is_some_and(|c| eq(c, "agents")) {
-        comps.get(idx + 3).map(|id| (id.as_str(), idx + 4))
-    } else if eq(seg, "agents")
-        && comps
-            .get(idx + 2)
-            .is_some_and(|c| eq(c, "home") || eq(c, "private_home"))
-    {
-        comps.get(idx + 1).map(|id| (id.as_str(), idx + 3))
-    } else {
-        None
-    }
-}
-
 fn is_own_agent_home_prefix(
     path: &Path,
     comps: &[String],
@@ -172,7 +145,8 @@ fn is_own_agent_home_prefix(
     matches_root(&home.canonical) || matches_root(&home.raw)
 }
 
-/// Refuses `path` if it targets another agent's home/workspace for `self_agent_id`.
+/// Refuses `path` if it targets another agent's home, worktrees, workspace, or tmp directory
+/// for `self_agent_id`.
 pub(super) fn check_other_agent_for_id(
     path: &Path,
     self_agent_id: Option<&str>,
@@ -180,11 +154,11 @@ pub(super) fn check_other_agent_for_id(
 ) -> Result<(), Refusal> {
     let comps = normalized_components(path);
     for (idx, seg) in comps.iter().enumerate() {
-        if let Some((agent_seg, prefix_len)) = other_agent_home_segment(&comps, idx, seg) {
+        if let Some((agent_seg, prefix_len)) = office_agent_segment(&comps, idx, seg) {
             let is_own_id = self_agent_id.is_some_and(|id| agent_seg.eq_ignore_ascii_case(id));
             if !is_own_id && !is_own_agent_home_prefix(path, &comps, prefix_len, private_home) {
                 return Err(denied_path(
-                    "Access to another agent's private_home is forbidden.",
+                    "Access to another agent's private_home or workspace is forbidden.",
                     "Attach files only from your own workspace, worktrees, private_home, or session TMPDIR.",
                 ));
             }

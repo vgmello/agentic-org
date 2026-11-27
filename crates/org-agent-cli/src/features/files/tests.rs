@@ -671,7 +671,7 @@ fn negative_exfiltration_guard_blocks_all_forbidden_paths_and_types() {
 #[test]
 fn file_roots_reject_global_temp_system_roots_symlinks_and_untrusted_env_wideners() {
     let dir = tempfile::tempdir().unwrap();
-    let valid_home = dir.path().join("agent-home");
+    let valid_home = dir.path().join("agents/agent-1/home");
     let valid_tmp = dir.path().join("session-tmp");
     fs::create_dir_all(&valid_home).unwrap();
     fs::create_dir_all(&valid_tmp).unwrap();

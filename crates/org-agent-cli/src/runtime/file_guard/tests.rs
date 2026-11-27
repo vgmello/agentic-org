@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use org_proto::ErrorCode;
 
-use super::roots::{
-    host_home_policy_allows_agent_home, host_home_policy_allows_tmpdir, is_forbidden_root,
-};
+use super::paths::{is_under_host_user_home, path_is_within};
+use super::roots::{is_allowed_agent_home_path, is_allowed_session_tmpdir_path, is_forbidden_root};
+use super::worktrees::find_git_root;
 use super::{prepare_output_path, read_upload_file, FileRoots, RootEntry};
 
 fn make_workspace_roots(workspace: &Path) -> FileRoots {
@@ -224,6 +224,19 @@ fn forbidden_roots_block_direct_user_homes_system_trees_and_global_temp_roots() 
         "/var/folders/ab/cdefgh/T",
         "/var/folders/ab/cdefgh/T/",
         "/private/var/folders/ab/cdefgh/T",
+        "/var/folders/aa/bb/C",
+        "/var/folders/aa/bb/C/sub",
+        "/var/folders/aa/bb/0",
+        "/var/folders/aa/bb/0/sub",
+        "/var/folders/aa/bb/X",
+        "/private/var/folders/aa/bb/C",
+        "/private/var/folders/aa/bb/C/sub",
+        "/private/var/folders/aa/bb/0",
+        "/private/var/folders/aa/bb/0/sub",
+        "/var/root",
+        "/var/root/Desktop",
+        "/private/var/root",
+        "/private/var/root/.ssh",
         "/tmp",
         "/private/tmp",
         "/var/tmp",
@@ -315,13 +328,23 @@ fn host_credential_dotdirs_and_office_state_files_are_unconditionally_denied_ins
         "office.db",
         "office.db-wal",
         "office.db-shm",
+        "office.db.new",
+        "office.db.bak",
         "host.db",
         "host.db-wal",
         "host.db-shm",
+        "host.db.new",
+        "host.db.bak",
         "git-state.json",
         "hq-owner.v1.json",
+        "session-binding.v1",
         "session-binding-0193a5c0.v1",
         "sub/session-binding-run-42.v1",
+        ".session-binding.foo.tmp",
+        "sub/.session-binding.run-42.tmp",
+        "agents/agent-other/worktrees/repo/a.txt",
+        "agents/agent-other/workspace/a.txt",
+        "agents/agent-other/tmp/a.txt",
     ];
 
     for rel in blocked_paths {
@@ -346,94 +369,144 @@ fn host_credential_dotdirs_and_office_state_files_are_unconditionally_denied_ins
         );
     }
 
-    // Normal non-sensitive JSON/Markdown inside the same workspace remains allowed.
+    // Normal non-sensitive JSON/Markdown and own agent subdirs inside the same workspace remain
+    // allowed.
     fs::write(workspace.join("report.json"), b"{\"ok\":true}").unwrap();
     assert!(read_upload_file("report.json", &roots).is_ok());
+    fs::create_dir_all(workspace.join("agents/agent-self/worktrees/repo")).unwrap();
+    fs::create_dir_all(workspace.join("agents/agent-self/tmp")).unwrap();
+    fs::write(
+        workspace.join("agents/agent-self/worktrees/repo/a.txt"),
+        b"own wt",
+    )
+    .unwrap();
+    fs::write(workspace.join("agents/agent-self/tmp/a.txt"), b"own tmp").unwrap();
+    assert!(read_upload_file("agents/agent-self/worktrees/repo/a.txt", &roots).is_ok());
+    assert!(read_upload_file("agents/agent-self/tmp/a.txt", &roots).is_ok());
 }
 
 #[test]
-fn spoofing_agent_id_env_cannot_bypass_other_agent_home_isolation() {
+fn spoofing_agent_id_env_or_home_fails_closed_in_both_directions() {
     let dir = tempfile::tempdir().unwrap();
     let office_agents = dir.path().join("local/offices/off-1/agents");
-    let self_home = office_agents.join("agent-real/home");
-    let victim_home = office_agents.join("agent-victim/home");
-    fs::create_dir_all(&self_home).unwrap();
-    fs::create_dir_all(&victim_home).unwrap();
-    fs::write(self_home.join("mine.txt"), b"my own note").unwrap();
-    fs::write(victim_home.join("secret.txt"), b"victim secret").unwrap();
+    let agent_a_wt = office_agents.join("agent-a/worktrees/r");
+    let agent_a_home = office_agents.join("agent-a/home");
+    let agent_b_home = office_agents.join("agent-b/home");
+    let agent_b_wt = office_agents.join("agent-b/worktrees/r");
+    for d in [&agent_a_wt, &agent_a_home, &agent_b_home, &agent_b_wt] {
+        fs::create_dir_all(d).unwrap();
+    }
+    fs::write(agent_a_wt.join("mine.txt"), b"my own note").unwrap();
+    fs::write(agent_b_home.join("secret.txt"), b"b home secret").unwrap();
+    fs::write(agent_b_wt.join("secret.txt"), b"b wt secret").unwrap();
 
-    // Attacker runs inside `agent-real`'s home but spoofs `AGENT_OS_AGENT_ID=agent-victim` and
-    // points `HOME` at `agent-victim`'s home.
-    let roots = FileRoots::from_parts(
-        self_home.clone(),
-        Some("agent-victim".to_owned()),
-        Some(victim_home.clone()),
+    // Direction A: Honest `cwd` inside `agents/agent-a/worktrees/r` + spoofed
+    // `AGENT_OS_AGENT_ID=agent-b` (and spoofed `HOME` at `agent-b/home`) -> `self_agent_id`
+    // stays `agent-a`, `private_home` is `None`, and `agents/agent-b/` fails closed.
+    let roots_cwd_wins = FileRoots::from_parts(
+        agent_a_wt.clone(),
+        Some("agent-b".to_owned()),
+        Some(agent_b_home.clone()),
         None,
     );
-
     assert_eq!(
-        roots.self_agent_id.as_deref(),
-        Some("agent-real"),
+        roots_cwd_wins.self_agent_id.as_deref(),
+        Some("agent-a"),
         "cwd-derived agent ID must win over spoofed AGENT_OS_AGENT_ID"
     );
     assert!(
-        roots.private_home.is_none(),
+        roots_cwd_wins.private_home.is_none(),
         "spoofed HOME pointing at another agent must never be admitted"
     );
+    assert!(read_upload_file("mine.txt", &roots_cwd_wins).is_ok());
+    for victim in [
+        agent_b_home.join("secret.txt"),
+        agent_b_wt.join("secret.txt"),
+    ] {
+        let err = read_upload_file(victim.to_str().unwrap(), &roots_cwd_wins).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{victim:?}: {err:?}");
+    }
 
-    // Own note succeeds; victim's file fails closed with NotAuthorized.
-    assert!(read_upload_file("mine.txt", &roots).is_ok());
-    let err =
-        read_upload_file(victim_home.join("secret.txt").to_str().unwrap(), &roots).unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotAuthorized, "{err:?}");
-
-    // Even when `cwd` is a neutral workspace, if `HOME` is `agent-real`'s office home and
-    // `AGENT_OS_AGENT_ID` spoofs `agent-victim`, `self_agent_id` resolves to `agent-real` and
-    // `agent-victim` stays denied.
+    // Direction B: Neutral `cwd` + honest `AGENT_OS_AGENT_ID=agent-real` + spoofed
+    // `HOME=.../agents/agent-victim/home` -> FAIL CLOSED: `private_home` is `None`,
+    // `self_agent_id` is `None`, and `agents/agent-victim/home` is REJECTED!
     let neutral_ws = dir.path().join("workspace");
-    fs::create_dir_all(neutral_ws.join("agents/agent-victim/private_home")).unwrap();
-    fs::write(
-        neutral_ws.join("agents/agent-victim/private_home/secret.txt"),
-        b"victim secret",
-    )
-    .unwrap();
-    let roots_from_home = FileRoots::from_parts(
-        neutral_ws,
-        Some("agent-victim".to_owned()),
-        Some(self_home),
+    let victim_home = office_agents.join("agent-victim/home");
+    let victim_nested = neutral_ws.join("agents/agent-victim/home");
+    fs::create_dir_all(&victim_home).unwrap();
+    fs::create_dir_all(&victim_nested).unwrap();
+    fs::write(victim_home.join("secret.txt"), b"victim home secret").unwrap();
+    fs::write(victim_nested.join("secret.txt"), b"victim nested secret").unwrap();
+
+    let roots_spoofed_home = FileRoots::from_parts(
+        neutral_ws.clone(),
+        Some("agent-real".to_owned()),
+        Some(victim_home.clone()),
         None,
     );
-    assert_eq!(roots_from_home.self_agent_id.as_deref(), Some("agent-real"));
+    assert!(
+        roots_spoofed_home.private_home.is_none(),
+        "disagreeing HOME must be rejected fail-closed"
+    );
+    assert!(
+        roots_spoofed_home.self_agent_id.is_none(),
+        "disagreeing HOME and AGENT_OS_AGENT_ID must fail closed with self_agent_id = None"
+    );
     let err = read_upload_file(
-        "agents/agent-victim/private_home/secret.txt",
-        &roots_from_home,
+        victim_home.join("secret.txt").to_str().unwrap(),
+        &roots_spoofed_home,
     )
     .unwrap_err();
     assert_eq!(err.code, ErrorCode::NotAuthorized, "{err:?}");
+    let err_nested =
+        read_upload_file("agents/agent-victim/home/secret.txt", &roots_spoofed_home).unwrap_err();
+    assert_eq!(err_nested.code, ErrorCode::NotAuthorized, "{err_nested:?}");
+
+    // Reverse disagreement in neutral `cwd`: honest `HOME=agent-a/home` + spoofed
+    // `AGENT_OS_AGENT_ID=agent-victim` ALSO fails closed (`None`/`None`).
+    let roots_reverse = FileRoots::from_parts(
+        neutral_ws,
+        Some("agent-victim".to_owned()),
+        Some(agent_a_home),
+        None,
+    );
+    assert!(roots_reverse.self_agent_id.is_none());
+    assert!(roots_reverse.private_home.is_none());
+    let err_rev =
+        read_upload_file("agents/agent-victim/home/secret.txt", &roots_reverse).unwrap_err();
+    assert_eq!(err_rev.code, ErrorCode::NotAuthorized, "{err_rev:?}");
 }
 
 #[test]
-fn host_home_and_root_tmpdir_env_are_never_admitted_as_roots() {
+fn host_home_and_root_tmpdir_env_are_strictly_allowlisted() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("workspace");
+    let arbitrary_dir = dir.path().join("arbitrary-dir");
     fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&arbitrary_dir).unwrap();
 
-    // Direct host HOME (e.g. `/root`, `/home/alice`, `/Users/alice`) and global TMPDIR roots
-    // (`/tmp`, `/var/tmp`, `/var/folders/.../T`) are never admitted even with an agent ID.
-    for bad_home in ["/root", "/home/alice", "/Users/alice"] {
+    // Direct host HOME, arbitrary non-office HOME, and global TMPDIR roots are never admitted.
+    for bad_home in [
+        PathBuf::from("/root"),
+        PathBuf::from("/home/alice"),
+        PathBuf::from("/Users/alice"),
+        PathBuf::from("/var/root"),
+        PathBuf::from("/private/var/root"),
+        arbitrary_dir,
+    ] {
         let roots = FileRoots::from_parts(
             workspace.clone(),
             Some("agent-1".to_owned()),
-            Some(PathBuf::from(bad_home)),
+            Some(bad_home.clone()),
             Some(PathBuf::from("/var/folders/ab/cd/T")),
         );
-        assert!(roots.private_home.is_none(), "HOME={bad_home}");
+        assert!(roots.private_home.is_none(), "HOME={bad_home:?}");
         assert!(roots.session_tmpdir.is_none());
     }
 
-    // A dedicated non-host-home office-scoped agent home IS admitted.
+    // Genuine office-scoped agent home and dedicated session temp dir ARE admitted.
     let agent_home = dir.path().join("local/offices/off-1/agents/agent-1/home");
-    let agent_tmp = dir.path().join("session-tmp-agent-1");
+    let agent_tmp = dir.path().join("local/offices/off-1/agents/agent-1/tmp");
     fs::create_dir_all(&agent_home).unwrap();
     fs::create_dir_all(&agent_tmp).unwrap();
     let ok_roots = FileRoots::from_parts(
@@ -451,38 +524,216 @@ fn host_home_and_root_tmpdir_env_are_never_admitted_as_roots() {
         Some(&agent_tmp.canonicalize().unwrap())
     );
 
-    // Arbitrary directories inside host user homes are refused for HOME and TMPDIR, whereas
-    // genuine office-scoped agent homes and office-scoped temp dirs remain permitted.
-    assert!(!host_home_policy_allows_agent_home(
-        Path::new("/Users/alice"),
-        "agent-1"
-    ));
-    assert!(!host_home_policy_allows_agent_home(
-        Path::new("/Users/alice/Documents"),
-        "agent-1"
-    ));
-    assert!(!host_home_policy_allows_agent_home(
-        Path::new("/home/alice/Desktop"),
-        "agent-1"
-    ));
-    assert!(!host_home_policy_allows_agent_home(
-        Path::new("/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/other/home"),
-        "agent-1"
-    ));
-    assert!(host_home_policy_allows_agent_home(
-        Path::new("/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1/home"),
-        "agent-1"
-    ));
-    assert!(!host_home_policy_allows_tmpdir(
-        Path::new("/Users/alice/Documents"),
-        Some("agent-1")
-    ));
-    assert!(!host_home_policy_allows_tmpdir(
-        Path::new("/var/folders/ab/cdefgh/T"),
-        Some("agent-1")
-    ));
-    assert!(host_home_policy_allows_tmpdir(
-        Path::new("/home/alice/.cache/agentic-org/tmp/ao/2oe/t/slug"),
-        Some("agent-1")
-    ));
+    // `is_under_host_user_home` includes macOS `/var/root` and `/private/var/root`.
+    for root_home in [
+        "/var/root",
+        "/var/root/Documents",
+        "/private/var/root",
+        "/private/var/root/.ssh",
+        "/root",
+        "/Users/alice",
+        "/home/alice",
+    ] {
+        assert!(
+            is_under_host_user_home(Path::new(root_home)),
+            "`{root_home}` must be recognized as under host user home"
+        );
+    }
+
+    // Strict allowlist rejects broad host/office/mount/macOS-cache paths for BOTH HOME & TMPDIR.
+    let rejected_both = [
+        "/Users/alice/Library/Application Support/agentic-org",
+        "/home/alice/.local/share/agentic-org",
+        "/home/alice/.cache/agentic-org/tmp/ao/2oe/t",
+        "/Users/t/Documents",
+        "/Volumes/disk",
+        "/mnt/share",
+        "/opt/app",
+        "/var/log",
+        "/var/root",
+        "/var/root/agents/agent-1/home",
+        "/private/var/root",
+        "/private/var/root/agents/agent-1/tmp",
+        "/var/folders/aa/bb/C",
+        "/var/folders/aa/bb/C/sub",
+        "/var/folders/aa/bb/0/sub",
+        "/private/var/folders/aa/bb/C/sub",
+        "/var/folders/ab/cdefgh/T",
+        "/Users/alice",
+        "/Users/alice/Documents",
+        "/home/alice",
+        "/home/alice/Desktop",
+        "/ao/t/slug",
+        "/run/user/notuid/sub",
+        "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/other/home",
+        "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/other/tmp",
+    ];
+    for bad in rejected_both {
+        assert!(
+            !is_allowed_agent_home_path(Path::new(bad), "agent-1"),
+            "HOME allowlist must reject `{bad}`"
+        );
+        assert!(
+            !is_allowed_session_tmpdir_path(Path::new(bad), Some("agent-1")),
+            "TMPDIR allowlist must reject `{bad}`"
+        );
+    }
+
+    // Additional HOME-only rejections (non-home agent subdirs).
+    for bad_home in [
+        "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1",
+        "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1/worktrees/r",
+        "/tmp/session-1",
+    ] {
+        assert!(
+            !is_allowed_agent_home_path(Path::new(bad_home), "agent-1"),
+            "HOME allowlist must reject `{bad_home}`"
+        );
+    }
+
+    // Valid allowlisted HOME paths.
+    for good_home in [
+        "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1/home",
+        "/home/alice/.local/share/agentic-org/local/offices/o1/agents/agent-1/private_home",
+    ] {
+        assert!(
+            is_allowed_agent_home_path(Path::new(good_home), "agent-1"),
+            "HOME allowlist must permit `{good_home}`"
+        );
+    }
+
+    // Valid allowlisted TMPDIR paths (own agent tmp, office runtime `t/<slug>`, OS temp subdirs).
+    for good_tmp in [
+        "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1/tmp",
+        "/Users/alice/Library/Application Support/agentic-org/local/offices/o1/agents/agent-1/tmp/run-1",
+        "/home/alice/.cache/agentic-org/tmp/ao/2oe/t/slug",
+        "/tmp/agentic-org-session-1",
+        "/private/tmp/agentic-org-session-1",
+        "/var/tmp/agentic-org-session-1",
+        "/private/var/tmp/agentic-org-session-1",
+        "/var/folders/ab/cdefgh/T/agentic-org-session-1",
+        "/private/var/folders/ab/cdefgh/T/agentic-org-session-1",
+        "/run/user/1000/ao/2oe/t/slug1",
+    ] {
+        assert!(
+            is_allowed_session_tmpdir_path(Path::new(good_tmp), Some("agent-1")),
+            "TMPDIR allowlist must permit `{good_tmp}`"
+        );
+    }
+}
+
+#[test]
+fn forged_dotgit_file_and_symlink_or_ancestor_escape_cannot_admit_secret_worktrees() {
+    let dir = tempfile::tempdir().unwrap();
+    let projects = dir.path().join("projects");
+    let sandbox_repo = projects.join("sandbox-repo");
+    let secret_repo = projects.join("secret-repo");
+    let secret_wt = projects.join("secret-wt");
+    let secret_wt_admin = secret_repo.join(".git/worktrees/secret-wt");
+    for d in [&sandbox_repo, &secret_repo, &secret_wt, &secret_wt_admin] {
+        fs::create_dir_all(d).unwrap();
+    }
+    fs::write(secret_wt.join("secret.md"), b"top secret").unwrap();
+    fs::write(
+        secret_wt_admin.join("gitdir"),
+        format!("{}\n", secret_wt.join(".git").display()),
+    )
+    .unwrap();
+    fs::write(secret_wt_admin.join("commondir"), "../..\n").unwrap();
+    fs::write(
+        secret_wt.join(".git"),
+        format!("gitdir: {}\n", secret_wt_admin.display()),
+    )
+    .unwrap();
+
+    // Attack 1: forged `sandbox-repo/.git` pointing at `../secret-repo/.git` (no back-pointer).
+    fs::write(sandbox_repo.join(".git"), "gitdir: ../secret-repo/.git\n").unwrap();
+    let roots_direct = FileRoots::from_parts(sandbox_repo.clone(), None, None, None);
+    assert!(
+        roots_direct.worktrees.is_empty(),
+        "forged gitdir to sibling repo .git must not admit secret-wt: {:?}",
+        roots_direct.worktrees
+    );
+    assert_eq!(
+        read_upload_file(secret_wt.join("secret.md").to_str().unwrap(), &roots_direct)
+            .unwrap_err()
+            .code,
+        ErrorCode::NotAuthorized
+    );
+
+    // Attack 2: forged `sandbox-repo/.git` pointing at `../secret-repo/.git/worktrees/secret-wt`
+    // (admin's `gitdir` points to `secret-wt/.git`, NOT `sandbox-repo/.git`).
+    fs::write(
+        sandbox_repo.join(".git"),
+        "gitdir: ../secret-repo/.git/worktrees/secret-wt\n",
+    )
+    .unwrap();
+    let roots_wt_admin = FileRoots::from_parts(sandbox_repo.clone(), None, None, None);
+    assert!(
+        roots_wt_admin.worktrees.is_empty(),
+        "forged gitdir to another worktree's admin dir must not admit secret-wt: {:?}",
+        roots_wt_admin.worktrees
+    );
+
+    // Attack 3: symlink `.git` inside `sandbox-repo` is ignored by `find_git_root`.
+    fs::remove_file(sandbox_repo.join(".git")).unwrap();
+    org_platform::fs::create_symlink(&secret_repo.join(".git"), &sandbox_repo.join(".git"))
+        .unwrap();
+    assert!(
+        find_git_root(&sandbox_repo.canonicalize().unwrap()).is_none(),
+        "symlink .git must never be followed by find_git_root"
+    );
+
+    // Attack 4: `find_git_root` stops at `agents/<id>` boundary and never climbs into an office
+    // ancestor `.git`.
+    let office = dir.path().join("local/offices/o1");
+    let agent_plain_dir = office.join("agents/agent-a/worktrees/no-git");
+    fs::create_dir_all(office.join(".git")).unwrap();
+    fs::create_dir_all(&agent_plain_dir).unwrap();
+    assert!(
+        find_git_root(&agent_plain_dir.canonicalize().unwrap()).is_none(),
+        "find_git_root must stop at agents/<id> boundary"
+    );
+
+    // Attack 5: symlinked `<common_dir>/worktrees/symlink-admin` is refused by
+    // `open_regular_beneath`.
+    let real_repo = projects.join("real-repo");
+    let linked_target = projects.join("linked-wt");
+    let external_admin = dir.path().join("external-admin");
+    for d in [
+        real_repo.join(".git/worktrees"),
+        linked_target.clone(),
+        external_admin.clone(),
+    ] {
+        fs::create_dir_all(d).unwrap();
+    }
+    fs::write(
+        external_admin.join("gitdir"),
+        format!("{}\n", linked_target.join(".git").display()),
+    )
+    .unwrap();
+    fs::write(
+        linked_target.join(".git"),
+        format!("gitdir: {}\n", external_admin.display()),
+    )
+    .unwrap();
+    org_platform::fs::create_symlink(
+        &external_admin,
+        &real_repo.join(".git/worktrees/symlink-admin"),
+    )
+    .unwrap();
+    let roots_symlink_admin = FileRoots::from_parts(real_repo, None, None, None);
+    assert!(
+        roots_symlink_admin.worktrees.is_empty(),
+        "symlinked worktree admin dir must be refused: {:?}",
+        roots_symlink_admin.worktrees
+    );
+}
+
+#[test]
+fn path_is_within_requires_matching_absolute_and_relative_kinds() {
+    assert!(!path_is_within(Path::new("foo/bar"), Path::new("/foo")));
+    assert!(!path_is_within(Path::new("/foo/bar"), Path::new("foo")));
+    assert!(path_is_within(Path::new("/foo/bar"), Path::new("/foo")));
+    assert!(path_is_within(Path::new("foo/bar"), Path::new("foo")));
 }

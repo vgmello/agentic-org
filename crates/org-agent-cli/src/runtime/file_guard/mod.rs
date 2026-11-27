@@ -15,7 +15,8 @@
 //!    `runtime/<office>/protected/`, another agent's home) and sensitive host credentials/state
 //!    (`.ssh`, `.aws`, `.claude`, `.codex`, `.gemini`, `.docker`, `.kube`, `.gnupg`, `.config/gh`,
 //!    `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, `host-secrets`, `git-credentials`,
-//!    `office.db*`, `host.db*`, `git-state.json`, `hq-owner.v1.json`, `session-binding-*.v1`).
+//!    `office.db*`, `host.db*`, `git-state.json`, `hq-owner.v1.json`, `session-binding*.v1`,
+//!    `.session-binding.*.tmp`).
 //! 3. **POSIX safe open via `org_platform::fs`**: component-wise `openat` with
 //!    `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` and `fstat` `S_ISREG` verification.
 //! 4. **Bounded read + canonical `org_media` allowlist & magic-byte pre-check**: `<= 10 MiB` for
