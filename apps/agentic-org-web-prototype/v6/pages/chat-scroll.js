@@ -132,13 +132,19 @@ function snapToAsk(s) {
   markStuckDays(s);
   markCut(s);
 }
+function settleOpening(s) {
+  clearSliver(s);
+  snapToAsk(s);
+}
 function applyPos(s, pos) {
   placeAt(s, pos);
   markStuckDays(s);
   markCut(s);
   if (!pos.end && !pos.boundary) return;
-  clearSliver(s);
-  snapToAsk(s);
+  settleOpening(s);
+  /* The earlier-asks row above the stream may appear for this opening and take its height: settle once more with
+     the stream's final size, so the opening keeps a whole ask in view. */
+  if (syncAskJump(s)) settleOpening(s);
 }
 const savedPos = (id) => positions.get(id);
 const savePos = (id, pos) => positions.set(id, pos);
@@ -202,23 +208,29 @@ function placeThread(panel, rootId, land = null) {
 export { followThreadEnd, placeThread };
 
 /* ---------------------------------------------------------------- earlier asks above the reading position
-   One button jumps to the nearest, oldest last. On phones it shares one row under the stream with Jump to latest
-   (never over a message); a row above the stream would scroll the stream by its height so the text doesn't move. */
+   A compact row of its own above the stream (never over a message or a day label) names the nearest earlier ask:
+   "1 earlier request · Approve publishing Kai's sync…". It jumps there, nearest first. The row appearing or going
+   scrolls the stream by its height, so the text being read doesn't move. */
 function asksAbove(s) {
   const top = s.getBoundingClientRect().top;
   return [...s.querySelectorAll(":scope > .msg .chat-needs:not(.is-done)")].filter((c) => c.getBoundingClientRect().bottom < top + 8);
 }
+function askJumpLabel(btn, cards) {
+  const n = cards.length, title = cards.at(-1)?.querySelector(".chat-needs-q")?.textContent.trim() || "";
+  const count = `${n} earlier ${n === 1 ? "request" : "requests"}`;
+  btn.setAttribute("aria-label", `${count} ${n === 1 ? "needs" : "need"} you. Nearest: ${title}`);
+  btn.querySelector(".chat-jump-count").textContent = count;
+  btn.querySelector(".chat-jump-what").textContent = title;
+}
 function syncAskJump(s) {
   const btn = document.querySelector('[data-act="chat-asks-jump"]'), row = btn?.parentElement;
-  if (!btn) return;
-  const n = asksAbove(s).length, before = row.offsetHeight;
-  btn.hidden = !n;
-  const label = n === 1 ? "1 earlier request needs you" : `${n} earlier requests need you`;
-  /* Phones show the short form ("2 earlier requests"); the name is always the full sentence. */
-  btn.setAttribute("aria-label", label);
-  btn.querySelector("span").innerHTML = `${n} earlier ${n === 1 ? "request" : "requests"}<span class="chat-long"> ${n === 1 ? "needs" : "need"} you</span>`;
+  if (!btn) return 0;
+  const cards = asksAbove(s), before = row.offsetHeight;
+  btn.hidden = !cards.length;
+  if (cards.length) askJumpLabel(btn, cards);
   const delta = row.offsetHeight - before;
-  if (delta && row.getBoundingClientRect().top < s.getBoundingClientRect().top) s.scrollTop += delta;
+  if (delta && row.getBoundingClientRect().top <= s.getBoundingClientRect().top) s.scrollTop += delta;
+  return delta;
 }
 function jumpToAsk() {
   const s = document.querySelector(".chat .chmain .msgs[data-ch]"), card = s && asksAbove(s).pop();
@@ -228,16 +240,27 @@ function jumpToAsk() {
   syncAskJump(s);
 }
 /* ---------------------------------------------------------------- newer messages below the reading position
-   When the opening position (or the reader) leaves the newest message below the fold, "Jump to latest" floats at
-   the stream's foot; it goes once the newest message is fully in view. */
+   When the opening position (or the reader) leaves messages below the fold, a row between the stream and the
+   composer says what is there ("1 newer message"); it goes once the newest message is fully in view. */
 const lastMessage = (s) => [...s.querySelectorAll(":scope > .msg")].pop();
 function newerBelow(s) {
   const last = lastMessage(s);
   return Boolean(last) && last.getBoundingClientRect().bottom > s.getBoundingClientRect().bottom + 1;
 }
+/* Messages wholly below the fold; the one being read (cut by the fold) is not "newer". */
+function unseenBelow(s) {
+  const bottom = s.getBoundingClientRect().bottom - 1;
+  return [...s.querySelectorAll(":scope > .msg")].filter((m) => m.getBoundingClientRect().top >= bottom).length;
+}
+/* "1 newer message" says what is below; "Jump to latest" when only the rest of the newest message is. */
 function syncLatestJump(s) {
   const btn = document.querySelector('[data-act="chat-latest-jump"]');
-  if (btn) btn.hidden = !newerBelow(s);
+  if (!btn) return;
+  btn.hidden = !newerBelow(s);
+  if (btn.hidden) return;
+  const n = unseenBelow(s), label = n ? `${n} newer ${n === 1 ? "message" : "messages"}` : "Jump to latest";
+  btn.setAttribute("aria-label", n ? `${label}, jump to the latest` : label);
+  btn.querySelector(".chat-jump-n").textContent = label;
 }
 /* Scrolls to the end and moves focus to the newest message (the button that had focus goes away). */
 function jumpToLatest() {
@@ -251,23 +274,9 @@ function jumpToLatest() {
   last.focus({ preventScroll: true });
   syncLatestJump(s);
 }
-/* Phones: each jump is as wide as its label. Both share the row while they fit side by side (at 320 px Jump to latest
-   reads "Latest", so "1 earlier request" fits beside it); otherwise Jump to latest wraps to its own row under Earlier
-   requests, so neither label is ever clipped. */
-/* A button's width with its whole label, even while the row has squeezed it. */
-const labelWidth = (btn) => { const t = btn.querySelector("span"); return btn.offsetWidth + t.scrollWidth - t.clientWidth; };
-function wrapJumps(s) {
-  const main = s.parentElement, ask = main.querySelector('[data-act="chat-asks-jump"]'), latest = main.querySelector('[data-act="chat-latest-jump"]');
-  if (!ask || !latest) return;
-  main.classList.remove("jumps-wrap");
-  if (ask.hidden || latest.hidden || getComputedStyle(ask).position !== "static") return;
-  const gutter = parseFloat(getComputedStyle(ask.parentElement).paddingLeft) || 16;
-  if (labelWidth(ask) + labelWidth(latest) + 8 > main.clientWidth - 2 * gutter) main.classList.add("jumps-wrap");
-}
 function syncJumps(s) {
   syncAskJump(s);
   syncLatestJump(s);
-  wrapJumps(s);
 }
 function watchAsks(s) {
   let frame = 0;

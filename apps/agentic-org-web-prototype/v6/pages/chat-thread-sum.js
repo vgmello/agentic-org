@@ -4,6 +4,7 @@
 import { M } from "../data.js";
 import { av, esc, ic, plural } from "../ui.js";
 import { inboxItem, splitTime } from "./chat-model.js";
+import { decidedInInbox, reviewInInbox, routeReasonHtml } from "./ask-route.js";
 
 const openRoots = new Set();
 
@@ -12,7 +13,13 @@ function askLine(root) {
   const it = root.needs && inboxItem(root.needs);
   if (!it) return "";
   const state = it.handled ? `${ic("check-circle", "ic14")}<span>Handled · ` : `${ic("bell", "ic14")}<span>Needs you · `;
-  return `<p class="chat-thread-sum-ask${it.handled ? " is-done" : ""}">${state}<b>${esc(it.what)}</b></span></p>`;
+  return `<p class="chat-thread-sum-ask${it.handled ? " is-done" : ""}">${state}<b>${esc(it.what)}</b></span></p>${inboxRoute(it)}`;
+}
+/* A consequential ask is decided in Inbox: the collapsed summary keeps its short reason and Review in Inbox in view,
+   as the full card states them. */
+function inboxRoute(it) {
+  if (!decidedInInbox(it)) return "";
+  return `<div class="chat-thread-sum-route">${routeReasonHtml(it, "chat-thread-sum-why")}${reviewInInbox(it)}</div>`;
 }
 function repliesButton(n) {
   if (!n) return `<span class="chat-thread-sum-n">No replies yet</span>`;

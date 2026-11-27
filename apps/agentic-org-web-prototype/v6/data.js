@@ -383,7 +383,12 @@ const CH = {
     { id: "g2", who: "you", time: "Nov 10, 16:20", text: "Yes, later. Leaving it unrouted for now." } ] },
   "agency-v1": { name: "agentic-org-v1", kind: "channel", topic: "Shipping the first release", proj: "agency-v1",
     members: ["you", "ada", "maya", "tomas", "kai", "jules", "avery", "noor"], msgs: [
-    { id: "m1", who: "ada", time: "09:12", text: "Morning. Codec split is in review; CSP gates next. I am re-planning the nav slices for IA v2 today." },
+    { id: "mo1", who: "ada", time: "Nov 24, 16:05", text: "Plan for the week: finish the codec split (T-A121), then the CSP gates (T-A124). Release sign-off is pencilled in for Friday." },
+    { id: "mo2", who: "kai", time: "Nov 24, 16:21", text: "Taking 2a.3.2b next. I'll keep the frame header change small so the review stays quick." },
+    { id: "my1", who: "avery", time: "Yesterday, 11:02", text: "CSP report-only run is clean on all seven themes. Enforcing mode waits on the gateway test in T-A124." },
+    { id: "my2", who: "kai", time: "Yesterday, 17:48", text: "Codec split pushed as 0a520e5b. Asked Tomas for a review." },
+    { id: "my3", who: "ada", time: "Yesterday, 18:10", text: "Release sign-off moves to Friday's walkthrough. v1.0 stays at risk until the CSP gate is green." },
+    { id: "m1", who: "ada", time: "09:12", text: "Morning. Codec split is in review; CSP gates next. I am re-planning the nav slices for IA v2 today: compare [Image 1] with [Image 2]." },
     { id: "m2", who: "tomas", time: "09:40", text: "READY on Kai's 0a520e5b for T-A121. It needs the owner's go to merge (tier A).", needs: "in1", thread: [
       { who: "kai", time: "09:41", text: "Thanks. I'll merge as soon as it's approved." },
       { who: "ada", time: "09:43", text: "Approved on my side. Waiting on the owner.", mentions: ["you"] },

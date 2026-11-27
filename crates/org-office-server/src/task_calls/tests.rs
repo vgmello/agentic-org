@@ -1,9 +1,9 @@
 use super::*;
 use org_office::TestOffice;
 use org_proto::tasks::{
-    LabelMatchMode, PatchField, TaskSortMode, TaskStatus, TasksAddDependencyParams,
-    TasksAssignParams, TasksCreateParams, TasksInspectParams, TasksListParams,
-    TasksTransitionParams,
+    LabelMatchMode, PatchField, TaskSortMode, TaskStatus, TaskStatusScope,
+    TasksAddDependencyParams, TasksAssignParams, TasksCreateParams, TasksInspectParams,
+    TasksListParams, TasksTransitionParams,
 };
 use org_proto::Outcome;
 
@@ -239,7 +239,8 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
             task: "T-A1".into(),
             note_id: note_id.clone(),
             body_markdown: "Private draft".into(),
-        },
+        }
+        .into(),
     )
     .unwrap();
     assert!(matches!(
@@ -253,7 +254,8 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
             note_id: note_id.clone(),
             expected_revision: 1,
             body_markdown: "Refined private draft".into(),
-        },
+        }
+        .into(),
     )
     .unwrap();
     assert!(matches!(
@@ -287,6 +289,110 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
         Outcome::Result(_)
     ));
     assert_eq!(notifications.load(Ordering::Relaxed), before + 1);
+}
+
+#[test]
+fn private_decisions_list_across_tasks_and_never_notify_live_events() {
+    use org_proto::private_notes::{
+        PrivateNoteAddParams, PrivateNoteField, PrivateNoteKind, PrivateNoteListParams,
+        PrivateNoteUpdateParams, TasksNotesListResult, TasksNotesPublishParams,
+        TasksNotesRemoveParams,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&notifications);
+    let live = Arc::new(LiveEvents::new(Box::new(move || {
+        counter.fetch_add(1, Ordering::Relaxed);
+    })));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+    let call = |request: Request| match svc.dispatch(Some(&owner), &request).unwrap().outcome {
+        Outcome::Result(value) => Ok(value),
+        Outcome::Error(e) => Err(e.code),
+    };
+
+    let decision_id = uuid(201);
+    let add = Request::new::<TasksNotesAdd>(
+        1,
+        &PrivateNoteAddParams {
+            command_id: uuid(200),
+            note_id: decision_id.clone(),
+            task: None,
+            project_id: None,
+            kind: PrivateNoteKind::Decision,
+            title: None,
+            why: Some("SECRET_WHY_SERVER".into()),
+            alternatives: None,
+            tags: vec!["Arch".into()],
+            body_markdown: "Keep notes at HQ\nonly".into(),
+        },
+    )
+    .unwrap();
+    call(add).unwrap();
+    let list = Request::new::<TasksNotesList>(
+        2,
+        &PrivateNoteListParams {
+            kind: Some(PrivateNoteKind::Decision),
+            tag: Some("arch".into()),
+            fields: vec![PrivateNoteField::Title],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let listed: TasksNotesListResult = serde_json::from_value(call(list).unwrap()).unwrap();
+    assert_eq!(listed.total, 1);
+    assert_eq!(listed.task_id, None);
+    let note = &listed.notes[0];
+    assert_eq!(note.title.as_deref(), Some("Keep notes at HQ"));
+    assert_eq!(
+        (note.body_markdown.as_ref(), note.why.as_ref()),
+        (None, None)
+    );
+    assert!(note.tags.is_empty(), "tags were not asked for");
+
+    let edit = Request::new::<TasksNotesUpdate>(
+        3,
+        &PrivateNoteUpdateParams {
+            command_id: uuid(202),
+            note_id: decision_id.clone(),
+            expected_revision: 1,
+            kind: None,
+            title: None,
+            why: None,
+            alternatives: None,
+            tags: Some(vec!["recall".into()]),
+            body_markdown: None,
+        },
+    )
+    .unwrap();
+    call(edit).unwrap();
+    let publish = Request::new::<TasksNotesPublish>(
+        4,
+        &TasksNotesPublishParams {
+            command_id: uuid(203),
+            note_id: decision_id.clone(),
+            expected_revision: 2,
+            comment_id: uuid(204),
+        },
+    )
+    .unwrap();
+    assert_eq!(call(publish), Err(ErrorCode::InvalidRequest));
+    let remove = Request::new::<TasksNotesRemove>(
+        5,
+        &TasksNotesRemoveParams {
+            command_id: uuid(205),
+            note_id: decision_id,
+            expected_revision: 2,
+        },
+    )
+    .unwrap();
+    call(remove).unwrap();
+    assert_eq!(
+        notifications.load(Ordering::Relaxed),
+        0,
+        "private notes never reach shared LiveEvents"
+    );
 }
 
 fn list(
@@ -451,6 +557,117 @@ fn task_list_filters_by_excluded_status_assignee_and_modified_file_and_pages_wit
         TasksListParams {
             modified_file: Some("../etc".into()),
             ..by_number()
+        },
+    ] {
+        assert_eq!(list(&svc, &owner, refused), Err(ErrorCode::InvalidRequest));
+    }
+}
+
+#[test]
+fn task_list_answers_a_status_scope_and_done_since_through_the_office_query() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+    for n in 1u64..=3 {
+        let create = Request::new::<TasksCreate>(
+            n,
+            &TasksCreateParams {
+                command_id: uuid(300 + n),
+                task_id: uuid(400 + n),
+                team_id: Some(root_team.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: format!("Task {n}"),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                details: None,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &create).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+    }
+    for (n, key, status) in [
+        (1u64, "T-A2", TaskStatus::Done),
+        (2, "T-A3", TaskStatus::Cancelled),
+    ] {
+        let transition = Request::new::<TasksTransition>(
+            10 + n,
+            &TasksTransitionParams {
+                command_id: uuid(500 + n),
+                task: key.into(),
+                expected_revision: 1,
+                status,
+                blocked_reason: None,
+                resolution: None,
+                note: None,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &transition).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+    }
+    let scoped = |scope, since: Option<&str>| TasksListParams {
+        status_scope: scope,
+        done_since: since.map(str::to_owned),
+        sort: TaskSortMode::Number,
+        ..Default::default()
+    };
+    let long_ago = Some("1970-01-02T00:00:00Z");
+    let far_ahead = Some("9999-12-31T23:59:59.999Z");
+    let cases = [
+        (scoped(None, None), view(&["T-A1", "T-A2", "T-A3"], 3)),
+        (
+            scoped(Some(TaskStatusScope::All), None),
+            view(&["T-A1", "T-A2", "T-A3"], 3),
+        ),
+        (
+            scoped(Some(TaskStatusScope::Open), None),
+            view(&["T-A1"], 1),
+        ),
+        (
+            scoped(Some(TaskStatusScope::Closed), None),
+            view(&["T-A2", "T-A3"], 2),
+        ),
+        // A board: open work and what was done since; cancelled work stays off it.
+        (
+            scoped(Some(TaskStatusScope::Open), long_ago),
+            view(&["T-A1", "T-A2"], 2),
+        ),
+        (
+            scoped(Some(TaskStatusScope::Open), far_ahead),
+            view(&["T-A1"], 1),
+        ),
+        (
+            scoped(Some(TaskStatusScope::Closed), far_ahead),
+            view(&["T-A3"], 1),
+        ),
+        (scoped(None, far_ahead), view(&["T-A1", "T-A3"], 2)),
+    ];
+    for (params, expected) in cases {
+        assert_eq!(list(&svc, &owner, params.clone()), expected, "{params:?}");
+    }
+    for refused in [
+        scoped(Some(TaskStatusScope::Open), Some("2026-11-20")),
+        TasksListParams {
+            status: Some(TaskStatus::Done),
+            ..scoped(Some(TaskStatusScope::Open), None)
         },
     ] {
         assert_eq!(list(&svc, &owner, refused), Err(ErrorCode::InvalidRequest));

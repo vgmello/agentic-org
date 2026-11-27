@@ -3,6 +3,7 @@
 pub mod checklist;
 pub mod core;
 pub mod create;
+pub mod list;
 pub mod ops;
 pub mod queries;
 mod write;
@@ -19,6 +20,7 @@ use serde_json::json;
 
 use crate::organization::records::{Employee, EmployeeStatus, TeamStatus};
 use crate::tasks::ports::TasksRead;
+use crate::tasks::query::TaskRollup;
 use crate::tasks::records::{
     ChecklistStepRecord, TaskCommentRecord, TaskDetailsRecord, TaskEventRecord, TaskRecord,
     TaskWatcherRecord,
@@ -30,9 +32,10 @@ pub use self::checklist::{
 pub(crate) use self::core::rewrite_task;
 pub use self::core::{AssignTask, TransitionTask, UpdateTask};
 pub use self::create::{CreateTask, CreatedTask, TaskNumbering, TASK_NUMBER_BLOCK};
+pub use self::list::list_tasks;
 pub use self::ops::{AddDependency, CommentTask, RemoveDependency, UnwatchTask, WatchTask};
 pub use self::queries::{
-    inspect_task, list_comments, list_history, list_labels, list_tasks, task_dependencies,
+    inspect_task, list_comments, list_history, list_labels, task_dependencies,
 };
 
 /// Result metadata returned to `org-office-server` after a task mutation commits.
@@ -358,31 +361,30 @@ pub(crate) fn build_ref_summary(task: &TaskRecord) -> TaskRefSummary {
     }
 }
 
+/// The view of one task, its rollup read on its own.
 pub(crate) fn build_task_view<R: TasksRead>(
     view: &R,
     task: &TaskRecord,
 ) -> Result<TaskView, Refusal> {
-    let steps = view.checklist_steps(&task.id).map_err(storage_refusal)?;
-    let comments = view.task_comments(&task.id).map_err(storage_refusal)?;
-    let watchers = view.task_watchers(&task.id).map_err(storage_refusal)?;
-    let links = view.task_links_from(&task.id).map_err(storage_refusal)?;
-    let mut depends_on: Vec<String> = links
-        .into_iter()
-        .filter(|l| l.kind == "depends_on")
-        .map(|l| l.target_id.as_str().to_owned())
-        .collect();
-    depends_on.sort();
-    depends_on.dedup();
-    let mut dependents: Vec<String> = view
-        .task_dependents(&task.id)
+    let rollup = view
+        .task_rollups(std::slice::from_ref(&task.id))
         .map_err(storage_refusal)?
-        .into_iter()
-        .map(|id| id.as_str().to_owned())
-        .collect();
-    dependents.sort();
-    dependents.dedup();
-    let checklist_done = steps.iter().filter(|s| s.done).count() as u64;
-    Ok(TaskView {
+        .remove(&task.id)
+        .unwrap_or_default();
+    Ok(task_view(task, rollup))
+}
+
+/// The wire view of `task`, with its list rollup.
+pub(crate) fn task_view(task: &TaskRecord, rollup: TaskRollup) -> TaskView {
+    let ids = |ids: Vec<Id>| -> Vec<String> {
+        let mut out: Vec<String> = ids.into_iter().map(|id| id.as_str().to_owned()).collect();
+        out.sort();
+        out.dedup();
+        out
+    };
+    let depends_on = ids(rollup.depends_on);
+    let dependents = ids(rollup.dependents);
+    TaskView {
         id: task.id.as_str().to_owned(),
         office_code: task.office_code.clone(),
         number: task.number,
@@ -428,11 +430,11 @@ pub(crate) fn build_task_view<R: TasksRead>(
             .updated_by_id
             .as_ref()
             .map(|id| id.as_str().to_owned()),
-        checklist_total: steps.len() as u64,
-        checklist_done,
-        comment_count: comments.len() as u64,
-        watcher_count: watchers.len() as u64,
-    })
+        checklist_total: rollup.checklist_total,
+        checklist_done: rollup.checklist_done,
+        comment_count: rollup.comment_count,
+        watcher_count: rollup.watcher_count,
+    }
 }
 
 pub(crate) fn step_to_wire(step: &ChecklistStepRecord) -> ChecklistStepWire {

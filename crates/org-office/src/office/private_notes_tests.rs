@@ -26,7 +26,7 @@ use crate::store::open::EngineChoice;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(50_000);
 
-fn next_uuid() -> String {
+pub(super) fn next_uuid() -> String {
     let n = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let ms = CREATION_AT.0 + n;
     let mut b = [0u8; 16];
@@ -41,19 +41,19 @@ fn next_uuid() -> String {
     )
 }
 
-struct PrivateNoteFixture {
+pub(super) struct PrivateNoteFixture {
     _tmp: tempfile::TempDir,
     folder: std::path::PathBuf,
-    roots: DataRoots,
+    pub(super) roots: DataRoots,
     custody: Custody,
-    office: Office,
-    owner: String,
-    agent_a: String,
-    agent_b: String,
-    task_key: String,
+    pub(super) office: Office,
+    pub(super) owner: String,
+    pub(super) agent_a: String,
+    pub(super) agent_b: String,
+    pub(super) task_key: String,
 }
 
-fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
+pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (folder, roots) = places(tmp.path());
     std::fs::create_dir_all(&roots.durable).unwrap();
@@ -174,7 +174,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 task: f.task_key.clone(),
                 note_id: note_id.clone(),
                 body_markdown: format!("Agent A plan: {secret}"),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -192,7 +193,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 task: f.task_key.clone(),
                 note_id: note_id.clone(),
                 body_markdown: format!("Agent A plan: {secret}"),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -207,7 +209,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 task: f.task_key.clone(),
                 note_id: note_id.clone(),
                 body_markdown: "Different body".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -221,7 +224,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
             TasksNotesListParams {
                 task: f.task_key.clone(),
                 author_id: None,
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -235,7 +239,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
             TasksNotesListParams {
                 task: f.task_key.clone(),
                 author_id: Some(f.agent_a.clone()),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -277,7 +282,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 1,
                 body_markdown: "Human overwrite".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -291,7 +297,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 1,
                 body_markdown: "Peer agent overwrite".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -307,7 +314,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 99,
                 body_markdown: "Stale".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -321,7 +329,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 1,
                 body_markdown: format!("Refined plan: {secret}"),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -356,7 +365,8 @@ fn assert_pn03_pn05_pn06_and_taskauth5_7(f: &PrivateNoteFixture, note_id: &str, 
             TasksNotesListParams {
                 task: f.task_key.clone(),
                 author_id: None,
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -433,7 +443,8 @@ fn assert_pn03_pn05_pn06_and_taskauth5_7(f: &PrivateNoteFixture, note_id: &str, 
                 task: f.task_key.clone(),
                 note_id: temp_id.clone(),
                 body_markdown: "Scratchpad to delete".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -460,7 +471,7 @@ fn assert_pn03_pn05_pn06_and_taskauth5_7(f: &PrivateNoteFixture, note_id: &str, 
     );
 }
 
-fn dir_contains_bytes_excluding(root: &Path, skip_dir: &Path, needle: &[u8]) -> bool {
+pub(super) fn dir_contains_bytes_excluding(root: &Path, skip_dir: &Path, needle: &[u8]) -> bool {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if dir == skip_dir {
@@ -503,7 +514,8 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
                     task: f.task_key.clone(),
                     note_id: unpub_id.clone(),
                     body_markdown: format!("Never published: {unpublished_secret}"),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap();
@@ -527,113 +539,122 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
 
         // PN-04 SQLite restart + task closure + ENTIRE runtime/<office-id> wipe survival!
         if engine == EngineChoice::Sqlite {
-            let cur = f.office.task_inspect(&f.task_key).unwrap().unwrap().task;
-            f.office
-                .task_transition(
-                    &f.owner,
-                    TasksTransitionParams {
-                        command_id: next_uuid(),
-                        task: f.task_key.clone(),
-                        expected_revision: cur.revision,
-                        status: TaskStatus::Done,
-                        blocked_reason: None,
-                        resolution: Some("completed".into()),
-                        note: None,
-                    },
-                )
-                .unwrap()
-                .unwrap();
-
-            let office_id = f.office.info().office_id.clone();
-            let instance_id = f.custody.identity.instance_id.as_str().to_owned();
-            f.office.close().expect("close office");
-
-            // Seed real session history + an oversized (>16 MiB) companion file under excluded
-            // durable subtrees to prove full runtime wipe rebuild prunes them before descent
-            // and file reads (`TASK-97` / Finding #3).
-            let session_dir = f
-                .roots
-                .durable
-                .join("local/offices")
-                .join(&office_id)
-                .join("sessions")
-                .join(&f.agent_a);
-            std::fs::create_dir_all(&session_dir).expect("create session dir");
-            std::fs::write(session_dir.join("history.jsonl"), b"{\"turn\":1}\n")
-                .expect("write session history");
-            let oversized_dir = f.roots.durable.join("accounting/usage/oversized-test");
-            std::fs::create_dir_all(&oversized_dir).expect("create oversized dir");
-            std::fs::write(oversized_dir.join("big.bin"), vec![b'x'; 17 * 1024 * 1024])
-                .expect("write >16 MiB companion file");
-
-            // Delete the ENTIRE disposable runtime/<office-id> cache: HQ durable/private/task-notes.db survives!
-            let runtime_office_dir = f.roots.runtime.join(&office_id);
-            std::fs::remove_dir_all(&runtime_office_dir).expect("remove runtime office dir");
-            assert!(
-                f.roots.durable.join("private/task-notes.db").is_file(),
-                "task-notes.db must live under HQ durable/private/task-notes.db"
-            );
-            assert!(
-                !runtime_office_dir.join("private/task-notes.db").exists(),
-                "task-notes.db must NOT live under disposable runtime/"
-            );
-
-            let reopened = Office::open_with(
-                f.folder.clone(),
-                None,
-                &instance_id,
-                f.roots.clone(),
-                f.custody.clone(),
-                Options {
-                    engine: EngineChoice::Sqlite,
-                    clock: Arc::new(FixedClock(CREATION_AT)),
-                    testing: Default::default(),
-                    before_final_checks: None,
-                },
-            )
-            .expect("reopen office after office.db rebuild");
-
-            // Notes survive restart, task closure, and office.db rebuild with ADR-0031 intact!
-            assert_eq!(
-                reopened
-                    .task_note_get(
-                        &f.agent_a,
-                        TasksNotesGetParams {
-                            note_id: unpub_id.clone()
-                        }
-                    )
-                    .unwrap()
-                    .unwrap()
-                    .note
-                    .body_markdown,
-                format!("Never published: {unpublished_secret}")
-            );
-            assert_eq!(
-                reopened
-                    .task_note_get(&f.agent_b, TasksNotesGetParams { note_id: unpub_id })
-                    .unwrap()
-                    .unwrap_err()
-                    .code,
-                ErrorCode::NotFound
-            );
-            assert_eq!(
-                reopened
-                    .task_note_list(
-                        &f.owner,
-                        TasksNotesListParams {
-                            task: f.task_key.clone(),
-                            author_id: None,
-                        },
-                    )
-                    .unwrap()
-                    .unwrap()
-                    .notes
-                    .len(),
-                3
-            );
-            reopened.close().expect("close reopened");
+            assert_pn04_sqlite_restart_and_runtime_wipe_survival(f, unpub_id, unpublished_secret);
         }
     }
+}
+
+fn assert_pn04_sqlite_restart_and_runtime_wipe_survival(
+    f: PrivateNoteFixture,
+    unpub_id: String,
+    unpublished_secret: &str,
+) {
+    let cur = f.office.task_inspect(&f.task_key).unwrap().unwrap().task;
+    f.office
+        .task_transition(
+            &f.owner,
+            TasksTransitionParams {
+                command_id: next_uuid(),
+                task: f.task_key.clone(),
+                expected_revision: cur.revision,
+                status: TaskStatus::Done,
+                blocked_reason: None,
+                resolution: Some("completed".into()),
+                note: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    let office_id = f.office.info().office_id.clone();
+    let instance_id = f.custody.identity.instance_id.as_str().to_owned();
+    f.office.close().expect("close office");
+
+    // Seed real session history + an oversized (>16 MiB) companion file under excluded
+    // durable subtrees to prove full runtime wipe rebuild prunes them before descent
+    // and file reads (`TASK-97` / Finding #3).
+    let session_dir = f
+        .roots
+        .durable
+        .join("local/offices")
+        .join(&office_id)
+        .join("sessions")
+        .join(&f.agent_a);
+    std::fs::create_dir_all(&session_dir).expect("create session dir");
+    std::fs::write(session_dir.join("history.jsonl"), b"{\"turn\":1}\n")
+        .expect("write session history");
+    let oversized_dir = f.roots.durable.join("accounting/usage/oversized-test");
+    std::fs::create_dir_all(&oversized_dir).expect("create oversized dir");
+    std::fs::write(oversized_dir.join("big.bin"), vec![b'x'; 17 * 1024 * 1024])
+        .expect("write >16 MiB companion file");
+
+    // Delete the ENTIRE disposable runtime/<office-id> cache: HQ durable/private/task-notes.db survives!
+    let runtime_office_dir = f.roots.runtime.join(&office_id);
+    std::fs::remove_dir_all(&runtime_office_dir).expect("remove runtime office dir");
+    assert!(
+        f.roots.durable.join("private/task-notes.db").is_file(),
+        "task-notes.db must live under HQ durable/private/task-notes.db"
+    );
+    assert!(
+        !runtime_office_dir.join("private/task-notes.db").exists(),
+        "task-notes.db must NOT live under disposable runtime/"
+    );
+
+    let reopened = Office::open_with(
+        f.folder.clone(),
+        None,
+        &instance_id,
+        f.roots.clone(),
+        f.custody.clone(),
+        Options {
+            engine: EngineChoice::Sqlite,
+            clock: Arc::new(FixedClock(CREATION_AT)),
+            testing: Default::default(),
+            before_final_checks: None,
+        },
+    )
+    .expect("reopen office after office.db rebuild");
+
+    // Notes survive restart, task closure, and office.db rebuild with ADR-0031 intact!
+    assert_eq!(
+        reopened
+            .task_note_get(
+                &f.agent_a,
+                TasksNotesGetParams {
+                    note_id: unpub_id.clone()
+                }
+            )
+            .unwrap()
+            .unwrap()
+            .note
+            .body_markdown,
+        Some(format!("Never published: {unpublished_secret}"))
+    );
+    assert_eq!(
+        reopened
+            .task_note_get(&f.agent_b, TasksNotesGetParams { note_id: unpub_id })
+            .unwrap()
+            .unwrap_err()
+            .code,
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        reopened
+            .task_note_list(
+                &f.owner,
+                TasksNotesListParams {
+                    task: f.task_key.clone(),
+                    author_id: None,
+                }
+                .into(),
+            )
+            .unwrap()
+            .unwrap()
+            .notes
+            .len(),
+        3
+    );
+    reopened.close().expect("close reopened");
 }
 
 fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine: EngineChoice) {
@@ -648,7 +669,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 task: f.task_key.clone(),
                 note_id: person_note_id.clone(),
                 body_markdown: "Human-only supervisory note v1".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -675,7 +697,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 TasksNotesListParams {
                     task: f.task_key.clone(),
                     author_id: None,
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap_err()
@@ -693,7 +716,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 task: f.task_key.clone(),
                 note_id: agent_note_id.clone(),
                 body_markdown: "Agent A exclusive note".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -754,7 +778,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 note_id: person_note_id.clone(),
                 expected_revision: 1,
                 body_markdown: "Human-only supervisory note v2".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -778,15 +803,16 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 task: f.task_key.clone(),
                 note_id: person_note_id.clone(),
                 body_markdown: "Human-only supervisory note v1".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
         .note;
     assert_eq!(replay_create.revision, 1);
     assert_eq!(
-        replay_create.body_markdown,
-        "Human-only supervisory note v1"
+        replay_create.body_markdown.as_deref(),
+        Some("Human-only supervisory note v1")
     );
     let replay_edit = f
         .office
@@ -797,13 +823,17 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 note_id: person_note_id,
                 expected_revision: 1,
                 body_markdown: "Human-only supervisory note v2".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
         .note;
     assert_eq!(replay_edit.revision, 2);
-    assert_eq!(replay_edit.body_markdown, "Human-only supervisory note v2");
+    assert_eq!(
+        replay_edit.body_markdown.as_deref(),
+        Some("Human-only supervisory note v2")
+    );
 
     // (f) On SQLite Unix, durable/private directory is 0o700 and task-notes.db is 0o600.
     if engine == EngineChoice::Sqlite {
@@ -826,7 +856,7 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
 }
 
 fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) {
-    use crate::private_notes::{request_digest, BeginPublishCmd, PublishAttempt};
+    use crate::private_notes::{publish_digest, BeginPublishCmd, PublishAttempt};
     use org_proto::hiring::{AgentSetStatus, AgentSetStatusParams};
     use org_proto::{Outcome, Request};
 
@@ -841,21 +871,14 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
                 task: f.task_key.clone(),
                 note_id: locked_note_id.clone(),
                 body_markdown: "Pending publish body".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
     let pub_cmd = next_uuid();
     let comment_id = next_uuid();
-    let rev_bytes = 1u64.to_be_bytes();
-    let digest = request_digest(&[
-        b"publish\0",
-        locked_note_id.as_bytes(),
-        b"\0",
-        &rev_bytes,
-        b"\0",
-        comment_id.as_bytes(),
-    ]);
+    let digest = publish_digest(&locked_note_id, 1, &comment_id);
     let pending = f
         .office
         .private_notes
@@ -883,7 +906,8 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
                     note_id: locked_note_id.clone(),
                     expected_revision: 1,
                     body_markdown: "Blocked while pending".into(),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap_err()
@@ -945,7 +969,8 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
                 TasksNotesListParams {
                     task: f.task_key.clone(),
                     author_id: None,
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap_err()
@@ -995,7 +1020,8 @@ fn the_chief_of_staff_never_reads_another_agents_private_notes() {
                     task: f.task_key.clone(),
                     note_id: note_id.clone(),
                     body_markdown: "Alpha's private reasoning".into(),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap();
@@ -1006,7 +1032,8 @@ fn the_chief_of_staff_never_reads_another_agents_private_notes() {
                 TasksNotesListParams {
                     task: f.task_key.clone(),
                     author_id: Some(f.agent_a.clone()),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap();
