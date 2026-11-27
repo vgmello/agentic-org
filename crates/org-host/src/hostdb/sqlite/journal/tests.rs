@@ -1097,3 +1097,163 @@ fn malformed_stored_replay_verifier_refuses_instead_of_exposing_unchecked_phc() 
         "invalid sensitive PHC"
     );
 }
+
+/// The real wall clock: what `Authentication::open` prunes at, unlike the fixed [`NOW`].
+fn wall_now() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+/// `count` settled rows plus one `reserved` and one staged row, all expired since `at - DAY`.
+fn seed_expired(db: &HostDb, at: i64, count: u64) {
+    let refusal =
+        serde_json::to_string(&rejected(org_proto::ErrorCode::InvalidName).stored).unwrap();
+    let mut c = db.connection.lock().unwrap();
+    let tx = c.transaction().unwrap();
+    for seq in 0..count + 2 {
+        let ident = id(at - 31 * DAY, 10_000 + seq);
+        let (state, result) = if seq == count {
+            ("reserved", None)
+        } else if seq == count + 1 {
+            ("abandoned", Some(&refusal))
+        } else {
+            ("rejected", Some(&refusal))
+        };
+        tx.execute(
+            "INSERT INTO op_journal VALUES (?1,'organization.create',?2,'creator',?3,?4,?5)",
+            (&ident, [7u8; 32], state, result, at - DAY),
+        )
+        .unwrap();
+        if state == "abandoned" {
+            tx.execute(
+                "INSERT INTO org_create_staging VALUES (?1,'name','org','office','member')",
+                [&ident],
+            )
+            .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+}
+#[test]
+fn prune_expired_drains_whole_batches_one_transaction_each() {
+    let (_home, _secrets, db) = super::super::tests::fixture();
+    let live = id(NOW - DAY, 1);
+    db.write(&attempt(&live), NOW - DAY, |_| Ok(completed()))
+        .unwrap();
+    // An exact multiple of the batch: two full batches, then one that finds nothing.
+    seed_expired(&db, NOW, 2 * u64::from(PRUNE_BATCH));
+    BEGIN_COUNT.with(|count| count.set(0));
+    assert_eq!(db.prune_expired(NOW).unwrap(), 2 * usize::from(PRUNE_BATCH));
+    assert_eq!(BEGIN_COUNT.with(|count| count.get()), 3);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 3);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM org_create_staging"), 1);
+    assert_replay(&db, &attempt(&live), NOW, completed().stored);
+    assert_eq!(db.prune_expired(NOW).unwrap(), 0);
+}
+/// TASK-235: a host start (`Authentication::open`, as `startup_authentication` opens the
+/// registry) prunes every verifier that expired while the host was down, past one batch,
+/// and keeps the live verifier and the rows still owed a reconciliation.
+#[test]
+fn host_start_prunes_expired_verifiers_and_keeps_live_ones() {
+    const HOUR: i64 = 3_600_000;
+    let (home, secrets, db) = super::super::tests::fixture();
+    let now = wall_now();
+    fn create(ident: &str) -> Attempt<'_> {
+        Attempt {
+            kind: "account.create",
+            ..attempt(ident)
+        }
+    }
+    // Expires an hour before the start; the later live write's own prune runs too early for it.
+    let expired = id(now - 30 * DAY - HOUR, 1);
+    db.write(&create(&expired), now - 30 * DAY - HOUR, |_| {
+        Ok(create_effect("expired"))
+    })
+    .unwrap();
+    let live = id(now - DAY, 2);
+    db.write(&create(&live), now - DAY, |_| Ok(create_effect("live")))
+        .unwrap();
+    seed_expired(&db, now, u64::from(PRUNE_BATCH) + 44);
+    assert_eq!(
+        scalar(&db, "SELECT count(*) FROM op_journal"),
+        2 + i64::from(PRUNE_BATCH) + 46
+    );
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_verifiers"), 2);
+    drop(db);
+
+    let custody: std::sync::Arc<dyn crate::host_secrets::HostSecrets> =
+        std::sync::Arc::new(secrets);
+    let instance = super::super::tests::init().instance_id;
+    let started = crate::authentication::Authentication::open(
+        home.path(),
+        std::sync::Arc::clone(&custody),
+        &instance,
+    )
+    .unwrap();
+    drop(started);
+
+    let db = HostDb::open(home.path(), &*custody).unwrap();
+    // The live create, the reserved row and the staged row.
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 3);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM org_create_staging"), 1);
+    let kept: Vec<String> = db
+        .connection
+        .lock()
+        .unwrap()
+        .prepare("SELECT created_account FROM op_verifiers")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(kept, ["live"]);
+    assert!(matches!(
+        db.lookup(&create(&live), now),
+        Ok(Lookup::NeedsVerification { .. })
+    ));
+    assert!(matches!(
+        db.lookup(&create(&expired), now),
+        Err(Error::Expired)
+    ));
+}
+/// A prune that fails at start is maintenance lost, not a refused start: the registry opens,
+/// nothing is half-deleted, and the clock does not move past what was served.
+#[test]
+fn host_start_survives_a_failing_prune_without_deleting_anything() {
+    let (home, secrets, db) = super::super::tests::fixture();
+    seed_expired(&db, wall_now(), 3);
+    db.connection
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER fail_prune BEFORE DELETE ON op_journal \
+             BEGIN SELECT RAISE(ABORT,'prune failed'); END;",
+        )
+        .unwrap();
+    drop(db);
+
+    let custody: std::sync::Arc<dyn crate::host_secrets::HostSecrets> =
+        std::sync::Arc::new(secrets);
+    let instance = super::super::tests::init().instance_id;
+    let started = crate::authentication::Authentication::open(
+        home.path(),
+        std::sync::Arc::clone(&custody),
+        &instance,
+    )
+    .unwrap();
+    drop(started);
+
+    let db = HostDb::open(home.path(), &*custody).unwrap();
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 5);
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key='clock_high_ms'"
+        ),
+        123
+    );
+}

@@ -15,8 +15,11 @@ use crate::sessions::{
     SessionRecord, StoreError, SESSION_LIMIT,
 };
 
-/// The `prev_*` columns hold the previous cookie/proof during the rotation
-/// grace window (used from B7).
+/// `cookie_digest` and `proof_digest` hold the web process's digests exactly as
+/// the control wire delivered them (`crate::sessions`); no raw cookie or proof
+/// reaches this table. The `prev_*` columns are reserved for the previous pair's
+/// digests during a rotation grace window (B7). Nothing writes or reads them
+/// yet, so every row leaves them NULL.
 pub(super) const TABLE_DDL: &str = r#"
 CREATE TABLE browser_sessions (
  id TEXT PRIMARY KEY CHECK (length(id) = 36),
