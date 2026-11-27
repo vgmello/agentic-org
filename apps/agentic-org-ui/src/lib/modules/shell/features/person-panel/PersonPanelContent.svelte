@@ -74,6 +74,12 @@
 		profile?.workTabHref ??
 			(memberId ? `/members/${encodeURIComponent(memberId)}/work` : '/teams/members')
 	);
+
+	function closeAfterLinkClick(event: MouseEvent) {
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
+			return;
+		queueMicrotask(() => onClose(false));
+	}
 </script>
 
 <header class="pp-head">
@@ -150,7 +156,7 @@
 			{#if homeTeam}
 				<a
 					href={resolve(`/teams/${encodeURIComponent(homeTeam.id)}` as '/teams')}
-					onclick={() => onClose(false)}
+					onclick={closeAfterLinkClick}
 					class="pp-link truncate"
 				>
 					{homeTeam.name}
@@ -175,7 +181,7 @@
 			{/if}
 			<a
 				href={resolve(profileHref as '/teams/members')}
-				onclick={() => onClose(false)}
+				onclick={closeAfterLinkClick}
 				class="pp-btn-outline inline-flex min-h-9 flex-1 items-center justify-center rounded-lg px-3 py-1.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 			>
 				View full profile
@@ -190,7 +196,7 @@
 				<ul class="pp-list">
 					{#each openWork as item (item.id)}
 						<li>
-							<a href={resolve(item.href as '/work')} onclick={() => onClose(false)} class="pp-row">
+							<a href={resolve(item.href as '/work')} onclick={closeAfterLinkClick} class="pp-row">
 								<span class="pp-row-main">{item.title}</span>
 								<span class="pp-row-meta">{item.ref} · {item.statusLabel}</span>
 							</a>
@@ -200,7 +206,7 @@
 				{#if totalOpenWork > openWork.length}
 					<a
 						href={resolve(workTabHref as '/teams/members')}
-						onclick={() => onClose(false)}
+						onclick={closeAfterLinkClick}
 						class="pp-more pp-link"
 					>
 						All {totalOpenWork} open items

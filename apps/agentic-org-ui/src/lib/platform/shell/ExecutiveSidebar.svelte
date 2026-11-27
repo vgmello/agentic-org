@@ -11,12 +11,17 @@
 	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
 	import ExecutiveSidebarFavorites from './ExecutiveSidebarFavorites.svelte';
 	import ExecutiveSidebarFooter from './ExecutiveSidebarFooter.svelte';
-	import ExecutiveSidebarOrgNav from './ExecutiveSidebarOrgNav.svelte';
-	import ExecutiveSidebarWorkspaceNav from './ExecutiveSidebarWorkspaceNav.svelte';
 	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
+	import PinnableNavSection from './PinnableNavSection.svelte';
+	import {
+		ORG_SECTION_CONFIG,
+		WORKSPACE_SECTION_CONFIG,
+		isOrgNavItemActive
+	} from './sidebar-nav-items';
 	import { tooltipLinkProps } from './tooltip-link-props';
 	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
 	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let {
 		connection,
@@ -25,6 +30,7 @@
 		workItems = [],
 		inboxItems = [],
 		projectTeams,
+		projectDueById,
 		collapsed = false,
 		pinned = true,
 		tessOpen = false,
@@ -45,6 +51,7 @@
 		workItems?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		projectTeams?: readonly ProjectTeam[];
+		projectDueById?: Readonly<Record<string, string>>;
 		collapsed?: boolean;
 		pinned?: boolean;
 		tessOpen?: boolean;
@@ -68,10 +75,11 @@
 
 	let orgMenuOpen = $state(false);
 	let accountMenuOpen = $state(false);
+	let navMoreMenuOpen = $state(false);
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
 
 	function notifyMenuOpen() {
-		onMenuOpenChange?.(orgMenuOpen || accountMenuOpen);
+		onMenuOpenChange?.(orgMenuOpen || accountMenuOpen || navMoreMenuOpen);
 	}
 
 	const pathname = $derived(page.url.pathname);
@@ -85,7 +93,7 @@
 		onpointerleave={onPointerLeave}
 		onfocusin={onFocusIn}
 		onfocusout={onFocusOut}
-		class="exec-sidebar flex h-full w-full min-w-0 flex-col overflow-hidden"
+		class="exec-sidebar flex h-full w-full min-w-0 flex-col overflow-clip"
 		data-collapsed={collapsed ? 'true' : undefined}
 	>
 		<div
@@ -292,7 +300,19 @@
 				</ul>
 			</div>
 
-			<ExecutiveSidebarWorkspaceNav {collapsed} {isActive} {onNavigate} />
+			<PinnableNavSection
+				config={WORKSPACE_SECTION_CONFIG}
+				pinnedIds={uiPrefs.workspaceNav}
+				{collapsed}
+				isItemActive={(item) => isActive(item.href)}
+				onMoveItem={(id, beforeId, zone) => uiPrefs.moveWorkspaceItem(id, beforeId, zone)}
+				onTogglePin={(id) => uiPrefs.toggleWorkspacePin(id)}
+				{onNavigate}
+				onMenuOpenChange={(next) => {
+					navMoreMenuOpen = next;
+					notifyMenuOpen();
+				}}
+			/>
 
 			{#if !collapsed}
 				<ExecutiveSidebarFavorites
@@ -300,13 +320,26 @@
 					{workItems}
 					{inboxItems}
 					{projectTeams}
+					{projectDueById}
 					{offline}
 					{isActive}
 					{onNavigate}
 				/>
 			{/if}
 
-			<ExecutiveSidebarOrgNav {collapsed} {pathname} {onNavigate} />
+			<PinnableNavSection
+				config={ORG_SECTION_CONFIG}
+				pinnedIds={uiPrefs.orgNav}
+				{collapsed}
+				isItemActive={(item) => isOrgNavItemActive(item.id, pathname)}
+				onMoveItem={(id, beforeId, zone) => uiPrefs.moveOrgItem(id, beforeId, zone)}
+				onTogglePin={(id) => uiPrefs.toggleOrgPin(id)}
+				{onNavigate}
+				onMenuOpenChange={(next) => {
+					navMoreMenuOpen = next;
+					notifyMenuOpen();
+				}}
+			/>
 		</nav>
 
 		<ExecutiveSidebarFooter

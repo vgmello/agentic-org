@@ -93,7 +93,7 @@ async function textFits(locator: Locator) {
 	await expect(locator).toHaveCSS('white-space', 'normal');
 	await expect(locator).toHaveCSS('overflow-x', 'visible');
 }
-async function footerChecks(page: Page, width: number, _scale: number, office = 'HQ') {
+async function footerChecks(page: Page, width: number, scale: number, office = 'HQ') {
 	const scope = await footerScope(page, width);
 	const account = accountButton(scope);
 	await account.scrollIntoViewIfNeeded();
@@ -102,13 +102,23 @@ async function footerChecks(page: Page, width: number, _scale: number, office = 
 	const line = officeLine(scope, office);
 	await line.scrollIntoViewIfNeeded();
 	await expect(line).toHaveAttribute('href', '/settings/offices');
-	const words = line.locator('span').last();
-	await textFits(words);
-	await page.mouse.move(width - 1, 0);
-	const restingContrast = await contrast(words);
-	expect(restingContrast).toBeGreaterThanOrEqual(4.5);
-	await line.hover();
-	expect(await contrast(words)).toBeGreaterThanOrEqual(4.5);
+	// At 200% text below 40rem (e.g., 960px at 32px root), SHELL-30 reflows the desktop sidebar to the 4rem icon rail.
+	const railReflow = width >= 640 && width < 40 * 16 * scale;
+	if (railReflow) {
+		await expect(page.getByRole('complementary', { name: 'Sidebar', exact: true })).toHaveAttribute(
+			'data-collapsed',
+			'true'
+		);
+		await expect(line.locator('span')).toHaveCount(0);
+	} else {
+		const words = line.locator('span').last();
+		await textFits(words);
+		await page.mouse.move(width - 1, 0);
+		const restingContrast = await contrast(words);
+		expect(restingContrast).toBeGreaterThanOrEqual(4.5);
+		await line.hover();
+		expect(await contrast(words)).toBeGreaterThanOrEqual(4.5);
+	}
 	if (width < 640) expect((await line.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 	await page.keyboard.press('Tab');
 	await line.focus();
@@ -130,6 +140,7 @@ for (const width of [320, 960, 1280]) {
 			const menu = page.getByRole('menu');
 			await expect(menu.getByRole('menuitem')).toHaveText([
 				'Your preferences',
+				'Keyboard shortcuts ?',
 				'Switch organization',
 				'About',
 				'Sign out'
@@ -163,12 +174,21 @@ test(
 		const compactOffice = officeLine(aside);
 		await expect(compactOffice).toBeVisible();
 		await expect(compactOffice.locator('span')).toHaveCount(0);
-		await expect(
-			page
-				.getByRole('navigation', { name: 'Main', exact: true })
-				.locator('ul:not(#exec-nav-favs) > li > a')
-		).toHaveCount(12);
+		const mainNav = page.getByRole('navigation', { name: 'Main', exact: true });
+		await expect(mainNav.locator('ul:not([data-sidebar-favs]) > li > a')).toHaveCount(9);
+		// Unpinned Organization items (Processes) stay reachable from the collapsed rail More menu.
+		await expect(page.getByTestId('organization-more-toggle-rail')).toBeVisible();
 		await shot(page, 'footer-rail');
+		// At 200% text (32px root), the 960px reflow rail keeps Processes reachable via its rail More menu.
+		await page.setViewportSize({ width: 960, height: 900 });
+		await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+		const railMore = page.getByTestId('organization-more-toggle-rail');
+		await expect(railMore).toBeVisible();
+		await railMore.click();
+		const processesItem = page.getByRole('menuitem', { name: 'Processes', exact: true });
+		await expect(processesItem).toBeVisible();
+		await processesItem.click();
+		await expect(page).toHaveURL(/\/settings\/processes$/);
 	}
 );
 

@@ -82,7 +82,7 @@
 		]}
 	>
 		{#if !collapsed}
-			<h2 id={tessHeadingId} class="exec-nav-label px-2 pb-1">Chief of staff</h2>
+			<h2 id={tessHeadingId} class="exec-nav-label truncate px-2 pb-1">Chief of staff</h2>
 		{/if}
 		<Tooltip.Root disabled={!collapsed}>
 			<Tooltip.Trigger>

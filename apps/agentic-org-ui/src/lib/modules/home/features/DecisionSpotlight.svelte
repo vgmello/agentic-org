@@ -6,6 +6,7 @@
 	import type { OrgSnapshot } from '$lib/proto';
 	import { isDenyAction } from '$lib/modules/inbox/spotlight';
 	import type { HomeInboxState, SpotlightDecision } from '$lib/modules/home/model';
+	import { openPersonOnClick } from '$lib/platform/workspace/person-panel.svelte';
 	import { useShellAi } from '$lib/platform/workspace/shell-ai';
 	import HomeDayOne from './HomeDayOne.svelte';
 	import { SpotlightController } from './spotlight-controller.svelte';
@@ -258,6 +259,8 @@
 						href={resolve(
 							`/members/${encodeURIComponent(currentDecision.actorId)}` as '/teams/members'
 						)}
+						data-person={currentDecision.actorId}
+						onclick={(event) => openPersonOnClick(event, currentDecision.actorId!)}
 						class="spot-meta-link inline-flex min-h-9 items-center font-semibold text-[var(--exec-ink)] hover:underline"
 					>
 						{currentDecision.actorName}

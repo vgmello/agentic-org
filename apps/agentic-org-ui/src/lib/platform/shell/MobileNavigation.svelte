@@ -21,6 +21,7 @@
 		workItems = [],
 		inboxItems = [],
 		projectTeams,
+		projectDueById,
 		tessOpen = false,
 		offline = false,
 		onOpenSearch,
@@ -34,6 +35,7 @@
 		workItems?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		projectTeams?: readonly ProjectTeam[];
+		projectDueById?: Readonly<Record<string, string>>;
 		tessOpen?: boolean;
 		offline?: boolean;
 		onOpenSearch?: () => void;
@@ -43,6 +45,7 @@
 	const menuId = $props.id();
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
+	let menuTipOpen = $state(false);
 	let closingForNavigation = false;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
@@ -59,6 +62,7 @@
 
 	function menuOpenChanged(value: boolean) {
 		if (!value) return;
+		menuTipOpen = false;
 		closingForNavigation = false;
 	}
 
@@ -108,7 +112,7 @@
 
 <Tooltip.Provider delayDuration={150}>
 	<Sheet.Root bind:open onOpenChange={menuOpenChanged}>
-		<Tooltip.Root disabled={open}>
+		<Tooltip.Root bind:open={menuTipOpen} disabled={open}>
 			<Tooltip.Trigger>
 				{#snippet child({ props: tipProps })}
 					<Sheet.Trigger bind:ref={trigger} aria-controls={menuId}>
@@ -126,7 +130,7 @@
 				{/snippet}
 			</Tooltip.Trigger>
 			<Tooltip.Portal>
-				<Tooltip.Content side="bottom" sideOffset={6} class={tooltipContentClass}
+				<Tooltip.Content role="tooltip" side="bottom" sideOffset={6} class={tooltipContentClass}
 					>Menu</Tooltip.Content
 				>
 			</Tooltip.Portal>
@@ -148,6 +152,7 @@
 				{workItems}
 				{inboxItems}
 				{projectTeams}
+				{projectDueById}
 				{tessOpen}
 				{offline}
 				onOpenSearch={onOpenSearch

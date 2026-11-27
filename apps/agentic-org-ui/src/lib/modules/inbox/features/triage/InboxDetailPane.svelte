@@ -5,6 +5,7 @@
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import { appendInboxDeviceComment, readInboxDeviceComments } from '../../device-comments';
+	import { openPersonOnClick } from '$lib/platform/workspace/person-panel.svelte';
 	import InboxDetailActivity from './InboxDetailActivity.svelte';
 	import InboxDetailDecisionActions from './InboxDetailDecisionActions.svelte';
 	import InboxDetailRequestFields from './InboxDetailRequestFields.svelte';
@@ -113,11 +114,8 @@
 	);
 
 	$effect(() => {
-		if (isDenying) {
-			void tick().then(() => denyInputEl?.focus());
-		}
+		if (isDenying) void tick().then(() => denyInputEl?.focus());
 	});
-
 	$effect(() => {
 		void organizationId;
 		void item?.id;
@@ -157,8 +155,7 @@
 	let clampRaf: number | undefined;
 	function resetPreviewPosition() {
 		previewFlipAbove = false;
-		previewShiftX = 0;
-		previewShiftY = 0;
+		previewShiftX = previewShiftY = 0;
 		previewMaxHeight = undefined;
 	}
 	function clampMemberPreview(node: HTMLElement) {
@@ -304,10 +301,12 @@
 							<a
 								class="triage-from-link"
 								href={resolve(`/members/${encodeURIComponent(item.actorId)}` as '/teams/members')}
-								aria-describedby="triage-from-role-{item.id}"
+								data-person={item.actorId}
+								onclick={(event) => {
+									if (openPersonOnClick(event, item.actorId!)) previewDismissed = true;
+								}}
+								aria-describedby="triage-from-role-{item.id}">{item.actorName}</a
 							>
-								{item.actorName}
-							</a>
 							<span
 								class="triage-from-popover"
 								data-flip-above={previewFlipAbove ? '' : undefined}

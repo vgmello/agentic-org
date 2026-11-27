@@ -89,10 +89,15 @@ export class PersonPanelLoader {
 		}
 	}
 
-	dispose(): void {
-		this.#disposed = true;
+	cancel(): void {
 		this.#seq += 1;
 		this.#abort?.abort();
 		this.#abort = undefined;
+		this.loading = false;
+	}
+
+	dispose(): void {
+		this.#disposed = true;
+		this.cancel();
 	}
 }

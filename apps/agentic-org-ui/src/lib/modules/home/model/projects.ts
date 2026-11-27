@@ -3,6 +3,11 @@ import type { HomeProject } from '$lib/modules/home/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import { leadOf, teamsOfProject } from '$lib/modules/organization/model';
 import type { ProjectRow } from '$lib/modules/projects/types';
+import {
+	classifyProjectHealth,
+	isProjectOverdue,
+	isSeriousOpenBug
+} from '$lib/platform/workspace/project-health';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import {
 	formatDueShort,
@@ -36,14 +41,6 @@ function resolveProjectDoneTotal(
 	return { doneCount: projItems.filter(isItemDone).length, totalCount: projItems.length };
 }
 
-function isSeriousOpenBug(item: WorkItemSummary): boolean {
-	return (
-		item.kind === 'bug' &&
-		item.status !== 'closed' &&
-		(item.severity === 'critical' || item.severity === 'major')
-	);
-}
-
 function computeProjectSignals(
 	projItems: readonly WorkItemSummary[],
 	row: ProjectRow | undefined,
@@ -63,38 +60,6 @@ function computeProjectSignals(
 	);
 	const scopedReqs = projItems.filter((i) => i.kind === 'request' && i.status === 'scoped');
 	return { doneCount, totalCount, pct, blockedItems, blockedCount, criticalBugs, scopedReqs };
-}
-
-function classifyProjectHealth(input: {
-	criticalBugs: number;
-	blockedCount: number;
-	projProblemsCount: number;
-	hasRowCriticalBug: boolean;
-	isOverdue: boolean;
-	scopedReqsCount: number;
-	projInboxCount: number;
-	unassignedTeam: boolean;
-}): {
-	health: ProjectBentoCard['health'];
-	healthTone: ProjectBentoCard['healthTone'];
-	statusPillClass: ProjectBentoCard['statusPillClass'];
-} {
-	const offTrack =
-		input.criticalBugs > 0 ||
-		input.blockedCount >= 2 ||
-		(input.projProblemsCount > 0 && input.blockedCount > 0) ||
-		input.hasRowCriticalBug;
-	if (offTrack) return { health: 'Off track', healthTone: 'bad', statusPillClass: 't-red' };
-
-	const atRisk =
-		input.isOverdue ||
-		input.blockedCount > 0 ||
-		input.scopedReqsCount > 0 ||
-		input.projInboxCount >= 2 ||
-		input.unassignedTeam;
-	if (atRisk) return { health: 'At risk', healthTone: 'warn', statusPillClass: 't-amber' };
-
-	return { health: 'On track', healthTone: 'ok', statusPillClass: 't-green' };
 }
 
 interface BlockerPresentation {
@@ -277,7 +242,6 @@ export function deriveProjectCards(
 	);
 	const homeById = new Map((domain?.homeProjects ?? []).map((p) => [p.id, p]));
 	const openInbox = (domain?.inboxItems ?? []).filter((i) => i.state === 'open');
-	const todayUtc = utcNoonMs(nowMs);
 
 	const projectIds = new Set<string>([
 		...rowById.keys(),
@@ -299,23 +263,20 @@ export function deriveProjectCards(
 		const teams = teamsOfProject(snapshot, projectId);
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
-		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
-		const isOverdue = Boolean(
-			dueDt &&
-			dueDt.getTime() < todayUtc &&
-			signals.totalCount > 0 &&
-			signals.doneCount < signals.totalCount
-		);
+		const isOverdue = isProjectOverdue(homeProj?.due, signals.doneCount, signals.totalCount, nowMs);
 		const unassignedTeam = teams.length === 0 && !row;
 
-		const { health, healthTone, statusPillClass } = classifyProjectHealth({
-			criticalBugs: signals.criticalBugs,
+		const {
+			label: health,
+			tone: healthTone,
+			statusPillClass
+		} = classifyProjectHealth({
+			criticalBugs: Math.max(signals.criticalBugs, row?.bugs.critical ?? 0),
 			blockedCount: signals.blockedCount,
-			projProblemsCount: projProblems.length,
-			hasRowCriticalBug: Boolean(row && row.bugs.critical > 0),
+			problemCount: projProblems.length,
 			isOverdue,
 			scopedReqsCount: signals.scopedReqs.length,
-			projInboxCount: projInbox.length,
+			openInboxCount: projInbox.length,
 			unassignedTeam
 		});
 

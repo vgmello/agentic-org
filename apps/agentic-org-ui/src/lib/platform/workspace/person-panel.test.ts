@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PersonPanelState } from './person-panel.svelte';
+import { PersonPanelState, openPersonOnClick } from './person-panel.svelte';
 
 describe('PersonPanelState', () => {
 	it('opens with trimmed memberId, tracks opener, and notifies open listeners', () => {
@@ -118,5 +118,52 @@ describe('PersonPanelState', () => {
 		expect(panel.isOpen).toBe(false);
 		panel.open('maya');
 		expect(onOpen).toHaveBeenCalledTimes(1);
+	});
+
+	it('openPersonOnClick intercepts plain left clicks and preserves modifier/middle-click navigation', () => {
+		const panel = new PersonPanelState();
+		const preventDefault = vi.fn();
+
+		const plainClick = {
+			defaultPrevented: false,
+			button: 0,
+			metaKey: false,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			currentTarget: null,
+			preventDefault
+		} as unknown as MouseEvent;
+		expect(openPersonOnClick(plainClick, 'rowan', panel)).toBe(true);
+		expect(preventDefault).toHaveBeenCalledTimes(1);
+		expect(panel.isOpen).toBe(true);
+		expect(panel.memberId).toBe('rowan');
+		panel.close(false);
+
+		for (const mod of [
+			{ metaKey: true },
+			{ ctrlKey: true },
+			{ shiftKey: true },
+			{ altKey: true },
+			{ button: 1 },
+			{ defaultPrevented: true }
+		]) {
+			const modPrevent = vi.fn();
+			const event = {
+				defaultPrevented: false,
+				button: 0,
+				metaKey: false,
+				ctrlKey: false,
+				shiftKey: false,
+				altKey: false,
+				currentTarget: null,
+				preventDefault: modPrevent,
+				...mod
+			} as unknown as MouseEvent;
+			expect(openPersonOnClick(event, 'maya', panel)).toBe(false);
+			expect(modPrevent).not.toHaveBeenCalled();
+			expect(panel.isOpen).toBe(false);
+		}
+		panel.dispose();
 	});
 });

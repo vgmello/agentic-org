@@ -15,14 +15,15 @@
 	import { tooltipContentClass } from '$lib/components/classes';
 	import type { ProjectSummary, ProjectTeam, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
+	import { deriveProjectHealth } from '$lib/platform/workspace/project-health';
 	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
-	import { deriveProjectHealth } from './project-health';
 
 	let {
 		projects = [],
 		workItems = [],
 		inboxItems = [],
 		projectTeams,
+		projectDueById,
 		offline = false,
 		isActive,
 		onNavigate
@@ -31,6 +32,7 @@
 		workItems?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		projectTeams?: readonly ProjectTeam[];
+		projectDueById?: Readonly<Record<string, string>>;
 		offline?: boolean;
 		isActive: (href: string) => boolean;
 		onNavigate?: (event: MouseEvent, href: string) => void;
@@ -96,7 +98,13 @@
 			{:else}
 				{#each favoriteList as proj (proj.id)}
 					{@const href = `/projects/${proj.id}`}
-					{@const health = deriveProjectHealth(proj.id, workItems, inboxItems, projectTeams)}
+					{@const health = deriveProjectHealth({
+						projectId: proj.id,
+						workItems,
+						inboxItems,
+						projectTeams,
+						due: projectDueById?.[proj.id]
+					})}
 					<li class="group flex items-center gap-0.5">
 						<a
 							href={resolve(href as '/projects')}

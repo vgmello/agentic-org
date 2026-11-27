@@ -179,9 +179,22 @@ export function createHttpMembersApi({
 		const isOwnerOrAdmin = Boolean(session()?.accountAdmin || viewerMember?.owner);
 		const access = accessById?.get(memberId);
 		const currentTask = row.status !== 'inactive' ? pickCurrentTask(workRows, memberId) : undefined;
+		const openAssigned = workRows.filter(
+			(w) => w.assignee?.id === memberId && w.status !== 'done' && w.status !== 'cancelled'
+		);
+		const openWork = {
+			total: openAssigned.length,
+			items: openAssigned.slice(0, 3).map((w) => ({
+				id: w.id,
+				ref: w.ref,
+				title: w.title,
+				status: w.status as 'todo' | 'in_progress' | 'blocked'
+			}))
+		};
 		return {
 			...row,
 			...(currentTask ? { workingOn: currentTask, currentTask } : {}),
+			openWork,
 			...(member.agent?.title ? { title: member.agent.title } : {}),
 			...(member.agent?.focus ? { focus: member.agent.focus } : {}),
 			leads,

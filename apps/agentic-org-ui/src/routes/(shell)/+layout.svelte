@@ -16,6 +16,7 @@
 
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { afterNavigate, goto, invalidate } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
 	import { inboxApi } from '$lib/modules/inbox/api';
@@ -73,6 +74,15 @@
 	let PersonPanel = $state.raw<typeof PersonSidePanelType | undefined>(undefined);
 	let personPanelSource = $state.raw<PersonPanelDataSource | undefined>(undefined);
 	let personPanelLoading = false;
+	function fallbackToMemberRoute() {
+		if (leaving || PersonPanel) return;
+		const fallbackId = personPanel.memberId;
+		personPanel.close(false);
+		if (fallbackId) {
+			void goto(resolve(`/members/${encodeURIComponent(fallbackId)}` as '/teams/members'));
+		}
+	}
+
 	async function ensurePersonPanelLoaded() {
 		if ((PersonPanel && personPanelSource) || personPanelLoading) return;
 		personPanelLoading = true;
@@ -83,10 +93,12 @@
 			]);
 			if (!leaving) {
 				PersonPanel = panelMod.default;
-				personPanelSource = sourceMod.personPanelDataSource;
+				personPanelSource = sourceMod.createPersonPanelDataSource(() =>
+					shellData.personPanelContext()
+				);
 			}
 		} catch {
-			if (!leaving && !PersonPanel) personPanel.close(false);
+			fallbackToMemberRoute();
 		} finally {
 			personPanelLoading = false;
 		}
@@ -324,7 +336,7 @@
 		bind:this={desktopNavigation}
 		{@attach sidebarDock.attachReflow}
 		class={[
-			'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-300 ease-out motion-reduce:transition-none min-[640px]:flex @max-[40rem]:transition-none',
+			'fixed inset-y-0 z-40 hidden flex-col overflow-clip transition-[width] duration-300 ease-out motion-reduce:transition-none min-[640px]:flex @max-[40rem]:transition-none',
 			sidebarDock.collapsed ? 'w-[68px]' : 'w-16 @min-[40rem]:w-[264px]'
 		]}
 	>
@@ -335,6 +347,7 @@
 			workItems={shellData.workItems}
 			inboxItems={shellData.inboxItems}
 			projectTeams={shellData.snapshot?.project_teams}
+			projectDueById={shellData.projectDueById}
 			collapsed={sidebarDock.collapsed || sidebarDock.textReflowRail}
 			pinned={sidebarDock.pinned}
 			tessOpen={tessPanel.open}
@@ -367,6 +380,7 @@
 			workItems={shellData.workItems}
 			inboxItems={shellData.inboxItems}
 			projectTeams={shellData.snapshot?.project_teams}
+			projectDueById={shellData.projectDueById}
 			tessOpen={tessPanel.open}
 			offline={showPaused}
 			onOpenSearch={() => commandBar?.openPalette()}

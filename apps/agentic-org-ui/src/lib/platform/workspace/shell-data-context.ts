@@ -21,6 +21,11 @@ export interface ShellDataContext {
 	readonly openInboxCount: number;
 	readonly needsYouCount: number;
 	readonly offices: OfficeInfo[];
+	readonly projectDueById: Readonly<Record<string, string>>;
+	setProjectDueDates(
+		organizationId: string,
+		projects: ReadonlyArray<{ id: string; due?: string }>
+	): void;
 	load(id?: string, reset?: boolean): { promise: Promise<ShellRefreshResult>; cancel: () => void };
 	refresh(): Promise<ShellRefreshResult>;
 	dispose(): void;

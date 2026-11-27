@@ -28,11 +28,11 @@ test(
 		await expect(panel.getByRole('link', { name: 'View full profile' })).toBeVisible();
 		await expect(panel.getByRole('heading', { level: 3, name: 'Current work' })).toBeVisible();
 
-		// Read-only summary: at most 3 open items listed and zero destructive/edit mutation controls
-		await expect(panel.locator('.pp-list > li')).toHaveCount(
-			await panel.locator('.pp-list > li').count()
-		);
-		expect(await panel.locator('.pp-list > li').count()).toBeLessThanOrEqual(3);
+		// Read-only summary: at least 1 and at most 3 open items listed, and zero destructive/edit mutation controls
+		await expect(panel.locator('.pp-list > li').first()).toBeVisible();
+		const listedCount = await panel.locator('.pp-list > li').count();
+		expect(listedCount).toBeGreaterThanOrEqual(1);
+		expect(listedCount).toBeLessThanOrEqual(3);
 		await expect(
 			panel.getByRole('button', { name: /Edit|Delete|Remove|Pause|Offboard/i })
 		).toHaveCount(0);
@@ -63,6 +63,23 @@ test(
 		await expect(panel).toBeVisible();
 		await panel.getByRole('link', { name: 'View full profile' }).click();
 		await expect(page).toHaveURL(/\/members\/rowan$/);
+		await expect(panel).toHaveCount(0);
+
+		// Also opens from Home DecisionSpotlight actor link and Inbox From link (AC #4)
+		await visit(page, '/home?mock=poc');
+		const spotActor = page.locator('#hb-spotlight a[data-person]').first();
+		await expect(spotActor).toBeVisible();
+		await spotActor.click();
+		await expect(panel).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(panel).toHaveCount(0);
+
+		await visit(page, '/inbox?mock=poc');
+		const inboxFrom = page.locator('.triage-from-link[data-person]').first();
+		await expect(inboxFrom).toBeVisible();
+		await inboxFrom.click();
+		await expect(panel).toBeVisible();
+		await page.keyboard.press('Escape');
 		await expect(panel).toHaveCount(0);
 	}
 );

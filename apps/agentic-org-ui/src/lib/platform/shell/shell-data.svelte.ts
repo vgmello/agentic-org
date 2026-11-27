@@ -35,6 +35,7 @@ export class ShellData implements ShellDataContext {
 	inboxItems = $state.raw<InboxItem[]>([]);
 	inboxLoadedOrganizationId = $state<string | undefined>(undefined);
 	#layeredOffices = $state.raw<OfficeInfo[]>([]);
+	projectDueById = $state.raw<Readonly<Record<string, string>>>({});
 	loaded = $state(false);
 	loadedOrganizationId = $state<string | undefined>(undefined);
 
@@ -64,6 +65,28 @@ export class ShellData implements ShellDataContext {
 		return this.#layeredOffices.length > 0 ? this.#layeredOffices : this.#options.getBaseOffices();
 	}
 
+	personPanelContext() {
+		const id = this.organizationId;
+		return {
+			organizationId: id,
+			snapshot: this.snapshot,
+			workItems: this.workItems,
+			workLoaded: this.loaded && this.loadedOrganizationId === id && this.workError === undefined
+		};
+	}
+
+	setProjectDueDates(
+		organizationId: string,
+		projects: ReadonlyArray<{ id: string; due?: string }>
+	): void {
+		if (this.#leaving || organizationId !== this.organizationId) return;
+		const next: Record<string, string> = {};
+		for (const project of projects) {
+			if (project.due) next[project.id] = project.due;
+		}
+		this.projectDueById = Object.freeze(next);
+	}
+
 	#resetFields(): void {
 		this.snapshot = undefined;
 		this.workItems = [];
@@ -71,6 +94,7 @@ export class ShellData implements ShellDataContext {
 		this.inboxItems = [];
 		this.inboxLoadedOrganizationId = undefined;
 		this.#layeredOffices = [];
+		this.projectDueById = {};
 		this.loaded = false;
 		this.loadedOrganizationId = undefined;
 	}

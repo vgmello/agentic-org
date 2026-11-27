@@ -19,6 +19,7 @@
 		workItems = [],
 		inboxItems = [],
 		projectTeams,
+		projectDueById,
 		tessOpen = false,
 		offline = false,
 		onOpenSearch,
@@ -33,6 +34,7 @@
 		workItems?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		projectTeams?: readonly ProjectTeam[];
+		projectDueById?: Readonly<Record<string, string>>;
 		tessOpen?: boolean;
 		offline?: boolean;
 		onOpenSearch?: () => void;
@@ -53,6 +55,7 @@
 		{workItems}
 		{inboxItems}
 		{projectTeams}
+		{projectDueById}
 		{tessOpen}
 		{offline}
 		{onOpenSearch}

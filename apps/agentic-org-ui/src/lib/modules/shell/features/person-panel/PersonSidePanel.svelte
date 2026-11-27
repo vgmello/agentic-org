@@ -56,7 +56,9 @@
 
 	function trackDesktopPanel(node: HTMLElement) {
 		desktopPanelEl = node;
+		document.addEventListener('keydown', handleWindowKeydown);
 		return () => {
+			document.removeEventListener('keydown', handleWindowKeydown);
 			if (desktopPanelEl === node) desktopPanelEl = null;
 		};
 	}
@@ -90,21 +92,27 @@
 		const target = opener ?? lastOpener;
 		const within = desktopPanelEl;
 		const wasDesktop = isOpenDesktop;
+		loader.cancel();
 		onClose(restoreFocus);
 		if (wasDesktop && restoreFocus) {
 			void returnFocus(target, { within, fallback: fallbackHeading });
 		}
 	}
 
-	function handleWindowKeydown(event: KeyboardEvent) {
-		if (!isOpenDesktop || event.key !== 'Escape' || event.isComposing) return;
-		if (
-			document.querySelector(
-				'[role="tooltip"], [role="menu"], [role="listbox"], [role="alertdialog"], [role="dialog"]'
-			)
-		) {
-			return;
+	function hasVisibleOverlay(): boolean {
+		const nodes = document.querySelectorAll<HTMLElement>(
+			'[role="tooltip"], [role="menu"], [role="listbox"], [role="alertdialog"], [role="dialog"]'
+		);
+		for (const el of nodes) {
+			if (el.getClientRects().length > 0) return true;
 		}
+		return false;
+	}
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (!isOpenDesktop || event.defaultPrevented) return;
+		if (event.key !== 'Escape' || event.isComposing) return;
+		if (hasVisibleOverlay()) return;
 		event.preventDefault();
 		event.stopPropagation();
 		closePanel(true);
@@ -121,14 +129,14 @@
 		}
 		if (!id) return;
 		node.scrollTop = 0;
-		const { cancel } = loader.load(orgId, id);
+		loader.load(orgId, id);
 		void tick().then(() => {
 			if (!loader.disposed && open && memberId === id) {
 				focusHeading(node);
 			}
 		});
 		return () => {
-			cancel();
+			loader.cancel();
 		};
 	}
 
@@ -138,8 +146,6 @@
 		});
 	}
 </script>
-
-<svelte:window onkeydown={handleWindowKeydown} />
 
 {#snippet panelBody()}
 	<div class="flex min-h-0 flex-1 flex-col overflow-y-auto" {@attach syncMemberLoad}>

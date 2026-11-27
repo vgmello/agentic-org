@@ -7,7 +7,7 @@
 	import XCircle from '@lucide/svelte/icons/x-circle';
 	import SectionHead from '$lib/components/SectionHead.svelte';
 	import type { ProjectBentoCard } from '$lib/modules/home/model';
-	import { personPanel } from '$lib/platform/workspace/person-panel.svelte';
+	import { openPersonOnClick } from '$lib/platform/workspace/person-panel.svelte';
 
 	interface Props {
 		projects: readonly ProjectBentoCard[];
@@ -17,24 +17,6 @@
 	}
 
 	let { projects, attentionCount, spotlightIds, onSpotJump }: Props = $props();
-
-	function handleLeadClick(event: MouseEvent, leadId: string) {
-		if (
-			event.defaultPrevented ||
-			event.button !== 0 ||
-			event.metaKey ||
-			event.ctrlKey ||
-			event.shiftKey ||
-			event.altKey
-		) {
-			return;
-		}
-		event.preventDefault();
-		personPanel.open(
-			leadId,
-			event.currentTarget instanceof HTMLElement ? event.currentTarget : null
-		);
-	}
 
 	const headCount = $derived(
 		`${projects.length} active${attentionCount > 0 ? ` · ${attentionCount} need attention` : ''}`
@@ -87,7 +69,7 @@
 											`/members/${encodeURIComponent(proj.leadId)}` as '/teams/members'
 										)}
 										data-person={proj.leadId}
-										onclick={(event) => handleLeadClick(event, proj.leadId!)}
+										onclick={(event) => openPersonOnClick(event, proj.leadId!)}
 										class="proj-lead-link font-medium text-[var(--exec-body)] hover:text-[var(--exec-ink)] hover:underline"
 									>
 										{proj.leadName}

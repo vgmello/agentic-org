@@ -20,6 +20,10 @@ import { toAppError } from '$lib/proto';
 export interface HomeOfficesAdapter<TOverview = unknown> {
 	overview(organizationId: string, signal?: AbortSignal): Promise<TOverview>;
 	layer(base: OfficeInfo[], overview: TOverview | undefined): OfficeInfo[];
+	onProjectDueDates?: (
+		organizationId: string,
+		projects: ReadonlyArray<{ id: string; due?: string }>
+	) => void;
 }
 
 export interface HomeInitialSeed {
@@ -298,6 +302,7 @@ export class HomeLiveState<TOverview = unknown> {
 			homeApi.projects(targetOrgId, signal),
 			(rows) => {
 				this.homeProjects = rows;
+				this.#officesAdapter.onProjectDueDates?.(targetOrgId, rows);
 			},
 			() => {
 				this.homeProjects = undefined;

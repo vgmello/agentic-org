@@ -116,3 +116,29 @@ export class PersonPanelState {
 }
 
 export const personPanel = new PersonPanelState();
+
+function isPrimaryUnmodifiedClick(event: MouseEvent): boolean {
+	if (event.defaultPrevented || event.button !== 0) return false;
+	if (event.metaKey || event.ctrlKey) return false;
+	return !event.shiftKey && !event.altKey;
+}
+
+/**
+ * Shared link click handler for member names across Home and Inbox.
+ * Allows Cmd/Ctrl/Shift/Alt/middle-click to open `/members/<id>` in a new tab as normal,
+ * while plain primary clicks open the global Person Side Panel and remember the opener.
+ */
+export function openPersonOnClick(
+	event: MouseEvent,
+	memberId: string,
+	panel: PersonPanelState = personPanel
+): boolean {
+	if (!isPrimaryUnmodifiedClick(event)) return false;
+	event.preventDefault();
+	const opener =
+		typeof HTMLElement !== 'undefined' && event.currentTarget instanceof HTMLElement
+			? event.currentTarget
+			: null;
+	panel.open(memberId, opener);
+	return true;
+}
