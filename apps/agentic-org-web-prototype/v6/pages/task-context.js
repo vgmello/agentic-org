@@ -1,6 +1,6 @@
 /* Task context: what a new task carries so its assignee "has access to everything".
-   Chat's Turn into task attaches a conversation excerpt by default; any other page is offered, never attached,
-   and Add context… searches conversations and work items. The created task stores a snapshot in `context`. */
+   Chat's Turn into task attaches its message's excerpt by default; Chat's /task and any other page are offered,
+   never attached, and Add context… searches conversations and work items. The created task stores a snapshot in `context`. */
 import { CH, IN, M, P, TEAMS, W } from "../data.js";
 import { qs } from "../state.js";
 import { esc, ic, plural } from "../ui.js";
@@ -244,8 +244,9 @@ function contextPicker(ctx) {
 
 function contextOffer(ctx) {
   if (!ctx.offer || isAttached(ctx, ctx.offer.key)) return "";
-  const title = resolveContext(ctx.offer).title;
-  return `<button class="stc-ctx-offer" type="button" data-stc="ctx-add-page">${ic("plus", "ic14")}<span>Add this page as context: <b>${esc(title)}</b></span></button>`;
+  const { title, kind } = resolveContext(ctx.offer);
+  const what = kind === "conversation" ? "Add the latest messages as context" : "Add this page as context";
+  return `<button class="stc-ctx-offer" type="button" data-stc="ctx-add-page">${ic("plus", "ic14")}<span>${what}: <b>${esc(title)}</b></span></button>`;
 }
 
 function renderContextSection(ctx) {
@@ -410,7 +411,8 @@ function detailFilesHtml(l) {
   return `<p class="work-ctx-files">${ic("paperclip", "ic14")}<span><span class="sr-only">Attached: </span>${l.files.map(one).join("")}</span></p>`;
 }
 function detailContextItem(c) {
-  const msgs = c.messages?.length ? `<details class="work-ctx-msgs"><summary>Show ${excerptCount(c.messages)}</summary>
+  /* The summary names its next step, as the composer's toggle does: "Show 6 messages", then "Hide messages". */
+  const msgs = c.messages?.length ? `<details class="work-ctx-msgs"><summary><span class="work-ctx-show">Show ${excerptCount(c.messages)}</span><span class="work-ctx-hide">Hide messages</span></summary>
       <ol role="list">${c.messages.map((l) => `<li><p class="work-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p>${lineText(l)}${detailFilesHtml(l)}</li>`).join("")}</ol>
     </details>` : "";
   const label = `${ic(KIND_ICON[c.kind] || "doc-check", "ic16")}<span>${esc(c.title)}</span>`;

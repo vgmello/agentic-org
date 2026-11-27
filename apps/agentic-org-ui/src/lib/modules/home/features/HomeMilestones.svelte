@@ -3,7 +3,7 @@
 	import { toast } from 'svelte-sonner';
 	import Calendar from '@lucide/svelte/icons/calendar';
 	import SectionHead from '$lib/components/SectionHead.svelte';
-	import type { HomeMilestone } from '$lib/home/model';
+	import type { HomeMilestone } from '$lib/modules/home/model';
 
 	interface Props {
 		milestones: readonly HomeMilestone[];

@@ -4,7 +4,7 @@
 	import DollarSign from '@lucide/svelte/icons/dollar-sign';
 	import Folder from '@lucide/svelte/icons/folder';
 	import Users from '@lucide/svelte/icons/users';
-	import type { ExecutiveKpis, SignalTone } from '$lib/home/model';
+	import type { ExecutiveKpis, SignalTone } from '$lib/modules/home/model';
 
 	interface Props {
 		kpis: ExecutiveKpis;

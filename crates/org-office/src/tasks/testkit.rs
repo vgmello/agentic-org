@@ -12,11 +12,14 @@ use org_store::{
 
 use super::{
     ports::{TasksRead, TasksWrite},
+    query::{TaskHistoryOutline, TaskListPage, TaskListQuery, TaskRollup},
     records::{
         ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord, TaskEventRecord,
         TaskLinkRecord, TaskRecord, TaskWatcherRecord,
     },
 };
+
+mod list;
 
 #[derive(Clone, Default, Debug)]
 pub struct TasksTables {
@@ -222,6 +225,32 @@ macro_rules! memory_tasks_read {
                         .get(task_id)
                         .map(|m| m.values().cloned().collect())
                         .unwrap_or_default()
+                })
+            }
+
+            fn task_page(&self, query: &TaskListQuery) -> Result<TaskListPage, EngineError> {
+                list::page(self, query)
+            }
+
+            fn task_rollups(&self, ids: &[Id]) -> Result<BTreeMap<Id, TaskRollup>, EngineError> {
+                list::rollups(self, ids)
+            }
+
+            fn task_history_outlines(
+                &self,
+            ) -> Result<BTreeMap<Id, TaskHistoryOutline>, EngineError> {
+                read(self.table(), |t| {
+                    t.events
+                        .iter()
+                        .filter(|(_, by_rev)| !by_rev.is_empty())
+                        .map(|(task_id, by_rev)| {
+                            let outline = TaskHistoryOutline {
+                                revisions: by_rev.keys().copied().collect(),
+                                created_change_json: by_rev.get(&1).map(|e| e.change_json.clone()),
+                            };
+                            (task_id.clone(), outline)
+                        })
+                        .collect()
                 })
             }
         }

@@ -4,13 +4,16 @@
 //! bare cache integrity checks, per-repository locking, on-demand origin refresh with a branch
 //! change summary, isolated per-task worktrees,
 //! non-force commit-OID branch pushes, `merged/`/`archive/` cleanup tags, checkpoint bundles,
-//! and derived sandbox allow/deny rules (`FC-103`, `FC-140`).
+//! derived sandbox allow/deny rules (`FC-103`, `FC-140`), and read-only inspection of caches
+//! and worktrees: exact worktree heads, bounded commit diffs and line slices (`TASK-92.1`).
 //!
 //! Knows only paths, URLs, references, and commit OIDs — never projects, tasks, or databases.
 
 #![forbid(unsafe_code)]
 
+mod bounded;
 pub mod cache;
+pub mod inspect;
 pub mod refresh;
 pub mod runner;
 #[cfg(test)]
@@ -22,9 +25,17 @@ pub mod worktree;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
+pub use bounded::{BoundedOutput, OutputLimits, MAX_BOUNDED_STDERR_BYTES};
 pub use cache::{
     canonical_cache_config, fetch_cache, init_bare_cache, ls_remote_heads, verify_cache_integrity,
     RepoLocks,
+};
+pub use inspect::{
+    anchor_snippet_sha256, diff_commits, read_blob_lines, resolve_worktree_head,
+    validate_repo_path, BlobLines, BlobLinesRequest, CommitDiff, DiffCommitsRequest, DiffFileStat,
+    DiffFileStatus, ReadOnlyCache, WorktreeChanges, WorktreeHead, DEFAULT_DIFF_CONTEXT_LINES,
+    MAX_BLOB_BYTES, MAX_BLOB_LINES, MAX_BLOB_SLICE_BYTES, MAX_DIFF_BYTES, MAX_DIFF_CONTEXT_LINES,
+    MAX_DIFF_FILES, MAX_DIFF_SUMMARY_BYTES, MAX_REPO_PATH_BYTES, MAX_STATUS_BYTES,
 };
 pub use refresh::{list_origin_branches, refresh_cache, remote_default_branch, CacheRefresh};
 pub use runner::{

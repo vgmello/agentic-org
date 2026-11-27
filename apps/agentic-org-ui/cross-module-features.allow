@@ -1,0 +1,10 @@
+# Legacy cross-module /features/ imports (shrink-only; new imports must use public index.ts or ui.ts).
+# Sorted by line.
+src/lib/modules/members/features/directory/MembersDirectory.svelte -> src/lib/modules/organization/features/add-person/AddPersonSheet.svelte
+src/lib/modules/teams/features/team-actions/TeamDialogs.svelte -> src/lib/modules/organization/features/teams/MoveTeamDialog.svelte
+src/lib/modules/teams/features/team-actions/TeamDialogs.svelte -> src/lib/modules/organization/features/teams/NewTeamSheet.svelte
+src/lib/modules/teams/features/team-actions/TeamDialogs.svelte -> src/lib/modules/organization/features/teams/RenameTeamDialog.svelte
+src/lib/modules/teams/features/team-page/TeamWork.svelte -> src/lib/modules/workitems/features/detail/WorkDetailPage.svelte
+src/lib/modules/work/features/bugs/ReportBugDialog.svelte -> src/lib/modules/copilot/features/draft-text/DraftableText.svelte
+src/lib/modules/work/features/tasks/NewTaskDialog.svelte -> src/lib/modules/copilot/features/draft-text/DraftableText.svelte
+src/lib/modules/work/features/tasks/TaskSheet.svelte -> src/lib/modules/copilot/features/draft-text/DraftableText.svelte

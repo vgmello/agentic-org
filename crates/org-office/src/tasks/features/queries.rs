@@ -1,202 +1,21 @@
-//! Read queries for unified tasks: filtered/ordered listing, inspection, dependency hierarchy
-//! traversal, indexed label catalog, comments, and immutable history (`TASK-49`, `TASK-77`).
+//! Read queries for unified tasks: inspection, dependency hierarchy traversal, indexed label
+//! catalog, comments, and immutable history (`TASK-49`, `TASK-77`). Listing is `list.rs`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use org_proto::tasks::{
-    LabelMatchMode, TaskDependenciesResult, TaskDependencyEdge, TaskInspectResult,
-    TaskLabelSummary, TaskRefSummary, TaskSortMode, TasksCommentsResult, TasksHistoryResult,
-    TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
+    TaskDependenciesResult, TaskDependencyEdge, TaskInspectResult, TaskLabelSummary,
+    TaskRefSummary, TasksCommentsResult, TasksHistoryResult, TasksLabelsParams, TasksLabelsResult,
 };
 use org_store::{Id, Refusal};
 
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records::{normalize_labels, TaskRecord};
+use crate::tasks::records::TaskRecord;
 
 use super::{
-    build_ref_summary, build_task_view, comment_to_wire, event_to_wire, refuse, require_task,
-    step_to_wire, storage_refusal, watcher_to_wire,
+    build_ref_summary, build_task_view, comment_to_wire, event_to_wire, require_task, step_to_wire,
+    storage_refusal, watcher_to_wire,
 };
-
-pub fn list_tasks<R: TasksRead>(
-    view: &R,
-    params: &TasksListParams,
-) -> Result<TasksListResult, Refusal> {
-    let label_filter_ids = resolve_label_filter(view, &params.labels, params.label_match)?;
-    let depends_on_filter = match params.depends_on.as_deref() {
-        Some(r) => {
-            let target = require_task(view, r)?;
-            Some(
-                view.task_dependents(&target.id)
-                    .map_err(storage_refusal)?
-                    .into_iter()
-                    .collect::<BTreeSet<Id>>(),
-            )
-        }
-        None => None,
-    };
-    let dependent_of_filter = match params.dependent_of.as_deref() {
-        Some(r) => {
-            let source = require_task(view, r)?;
-            Some(
-                view.task_links_from(&source.id)
-                    .map_err(storage_refusal)?
-                    .into_iter()
-                    .filter(|l| l.kind == "depends_on")
-                    .map(|l| l.target_id)
-                    .collect::<BTreeSet<Id>>(),
-            )
-        }
-        None => None,
-    };
-    let query_lower = params
-        .query
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty())
-        .map(str::to_ascii_lowercase);
-
-    let mut matched: Vec<TaskRecord> = view
-        .tasks()
-        .map_err(storage_refusal)?
-        .into_iter()
-        .filter(|t| {
-            matches_task_filters(
-                t,
-                params,
-                label_filter_ids.as_ref(),
-                depends_on_filter.as_ref(),
-                dependent_of_filter.as_ref(),
-                query_lower.as_deref(),
-            )
-        })
-        .collect();
-
-    sort_tasks(&mut matched, params.sort);
-    let total = matched.len() as u64;
-    if let Some(limit) = params.limit {
-        matched.truncate(limit as usize);
-    }
-    let mut views = Vec::with_capacity(matched.len());
-    for task in &matched {
-        views.push(build_task_view(view, task)?);
-    }
-    Ok(TasksListResult {
-        tasks: views,
-        total,
-    })
-}
-
-fn resolve_label_filter<R: TasksRead>(
-    view: &R,
-    raw_labels: &[String],
-    mode: LabelMatchMode,
-) -> Result<Option<BTreeSet<Id>>, Refusal> {
-    if raw_labels.is_empty() {
-        return Ok(None);
-    }
-    let normalized = normalize_labels(raw_labels).map_err(|e| refuse(e.code, e.message))?;
-    let mut acc: Option<BTreeSet<Id>> = None;
-    for label in normalized {
-        let ids: BTreeSet<Id> = view
-            .task_ids_by_label(&label)
-            .map_err(storage_refusal)?
-            .into_iter()
-            .collect();
-        acc = Some(match (acc, mode) {
-            (None, _) => ids,
-            (Some(prev), LabelMatchMode::All) => prev.intersection(&ids).cloned().collect(),
-            (Some(mut prev), LabelMatchMode::Any) => {
-                prev.extend(ids);
-                prev
-            }
-        });
-    }
-    Ok(Some(acc.unwrap_or_default()))
-}
-
-fn matches_scalar_filters(task: &TaskRecord, params: &TasksListParams) -> bool {
-    let type_ok = params
-        .task_type
-        .as_deref()
-        .is_none_or(|kind| task.task_type.eq_ignore_ascii_case(kind.trim()));
-    let status_ok = params.status.is_none_or(|status| task.status == status);
-    let team_ok = params
-        .team_id
-        .as_deref()
-        .is_none_or(|tid| task.team_id.as_str() == tid.trim());
-    let assigned_team_ok = params
-        .assigned_team_id
-        .as_deref()
-        .is_none_or(|atid| task.assigned_team_id.as_ref().map(Id::as_str) == Some(atid.trim()));
-    let assignee_ok = params
-        .assignee_id
-        .as_deref()
-        .is_none_or(|aid| task.assignee_id.as_ref().map(Id::as_str) == Some(aid.trim()));
-    let project_ok = params
-        .project_id
-        .as_deref()
-        .is_none_or(|pid| task.project_id.as_ref().map(Id::as_str) == Some(pid.trim()));
-    type_ok && status_ok && team_ok && assigned_team_ok && assignee_ok && project_ok
-}
-
-fn matches_text_query(task: &TaskRecord, q: &str) -> bool {
-    task.key().to_ascii_lowercase().contains(q)
-        || task.title.to_ascii_lowercase().contains(q)
-        || task.body_markdown.to_ascii_lowercase().contains(q)
-        || task.labels.iter().any(|l| l.contains(q))
-        || task
-            .reference_files
-            .iter()
-            .any(|p| p.to_ascii_lowercase().contains(q))
-        || task
-            .modified_files
-            .iter()
-            .any(|p| p.to_ascii_lowercase().contains(q))
-}
-
-fn matches_task_filters(
-    task: &TaskRecord,
-    params: &TasksListParams,
-    label_ids: Option<&BTreeSet<Id>>,
-    depends_on_ids: Option<&BTreeSet<Id>>,
-    dependent_of_ids: Option<&BTreeSet<Id>>,
-    query_lower: Option<&str>,
-) -> bool {
-    matches_scalar_filters(task, params)
-        && label_ids.is_none_or(|set| set.contains(&task.id))
-        && depends_on_ids.is_none_or(|set| set.contains(&task.id))
-        && dependent_of_ids.is_none_or(|set| set.contains(&task.id))
-        && query_lower.is_none_or(|q| matches_text_query(task, q))
-}
-
-fn sort_tasks(tasks: &mut [TaskRecord], mode: TaskSortMode) {
-    match mode {
-        TaskSortMode::Order => tasks.sort_by(|a, b| {
-            let a_null = a.rank_order.is_none();
-            let b_null = b.rank_order.is_none();
-            a_null
-                .cmp(&b_null)
-                .then_with(|| a.rank_order.cmp(&b.rank_order))
-                .then_with(|| a.office_code.cmp(&b.office_code))
-                .then_with(|| a.number.cmp(&b.number))
-                .then_with(|| a.id.cmp(&b.id))
-        }),
-        TaskSortMode::Number => tasks.sort_by(|a, b| {
-            a.office_code
-                .cmp(&b.office_code)
-                .then_with(|| a.number.cmp(&b.number))
-                .then_with(|| a.id.cmp(&b.id))
-        }),
-        TaskSortMode::UpdatedDesc => tasks.sort_by(|a, b| {
-            b.meta
-                .updated_at
-                .cmp(&a.meta.updated_at)
-                .then_with(|| b.number.cmp(&a.number))
-                .then_with(|| a.id.cmp(&b.id))
-        }),
-    }
-}
 
 pub fn inspect_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskInspectResult, Refusal> {
     let task = require_task(view, reference)?;

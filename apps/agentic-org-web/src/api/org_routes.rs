@@ -107,7 +107,9 @@ fn try_route_organization_subroutes(
         .or_else(|| super::process_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::cost_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::chat_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::note_routes::try_route(api, request, org, tail, post, query))
         .or_else(|| super::task_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::attachment_routes::try_route(api, request, org, tail, get, post, query))
 }
 
 pub(super) fn route_organization(
@@ -130,6 +132,9 @@ pub(super) fn route_organization(
             [] | ["preview"] => Err(invalid()),
             _ => Err(not_found()),
         };
+    }
+    if let Some(routed) = super::doc_routes::try_route(api, request, org, tail) {
+        return routed;
     }
     if let ["projects", rest @ ..] = tail {
         return route_projects(api, request, org, rest, post, query);

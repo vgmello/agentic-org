@@ -2318,3 +2318,168 @@ fn role_inspect_route_requires_canonical_uuidv7_before_reaching_office() {
     assert_eq!(valid.status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(calls.methods().contains(&"organization.list".to_owned()));
 }
+
+#[path = "tests/attachments.rs"]
+mod attachments;
+
+#[test]
+fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+        })
+    }));
+    let member = "0193a5c0-0000-7000-8000-000000000040";
+    let decisions = format!("/api/v1/organizations/{ORG}/members/{member}/decisions");
+
+    // No session: 401, whatever the member or query.
+    let unauth = send(&gateway, Method::GET, &decisions, "", None, &[]);
+    assert_eq!(unauth.status, StatusCode::UNAUTHORIZED);
+
+    let pair = sign_in(&gateway).pair();
+    // A malformed member, another author or kind, or an unknown filter never reaches HQ.
+    for target in [
+        format!("/api/v1/organizations/{ORG}/members/not-a-uuid/decisions"),
+        format!(
+            "/api/v1/organizations/{ORG}/members/0193A5C0-0000-7000-8000-000000000040/decisions"
+        ),
+        format!("{decisions}?kind=note"),
+        format!("{decisions}?author_id=0193a5c0-0000-7000-8000-000000000041"),
+        format!("{decisions}?bogus=1"),
+        format!("{decisions}?fields=secret"),
+        format!("{decisions}?limit=ten"),
+        // IDs are canonical UUIDv7s, the page size 1 to 500, text filters 1 to 128 bytes, and
+        // no key repeats.
+        format!("{decisions}?project_id=not-a-uuid"),
+        format!("{decisions}?project_id=0193A5C0-0000-7000-8000-000000000050"),
+        format!("{decisions}?limit=0"),
+        format!("{decisions}?limit=501"),
+        format!("{decisions}?tag="),
+        format!("{decisions}?since="),
+        format!("{decisions}?cursor="),
+        format!("{decisions}?tag={}", "a".repeat(129)),
+        format!("{decisions}?since={}", "1".repeat(129)),
+        format!("{decisions}?cursor={}", "c".repeat(129)),
+        format!("{decisions}?tag=a&tag=b"),
+        format!("{decisions}?limit=5&limit=6"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?author_id=not-a-uuid"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?kind=plan&kind=note"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?limit=501"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/not-a-uuid"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/0193A5C0-0000-7000-8000-000000000060"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/550e8400-e29b-41d4-a716-446655440000"),
+    ] {
+        let reply = send(&gateway, Method::GET, &target, "", Some(&pair), &[]);
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{target}");
+    }
+    let posted = send(&gateway, Method::POST, &decisions, "{}", Some(&pair), &[]);
+    assert_eq!(posted.status, StatusCode::BAD_REQUEST);
+    let task_notes_with_task_id = send(
+        &gateway,
+        Method::GET,
+        &format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?task_id=T-A2"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(task_notes_with_task_id.status, StatusCode::BAD_REQUEST);
+    assert!(
+        !calls.methods().contains(&"organization.list".to_owned()),
+        "refused requests must fail before resolving HQ"
+    );
+
+    // Valid requests go to the organization's HQ office (503 here: the fixture has no office).
+    for target in [
+        format!("{decisions}?tag=arch&project_id=0193a5c0-0000-7000-8000-000000000050&task_id=T-A1&limit=20&fields=title,tags"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?kind=decision&tag=arch&fields=title"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/0193a5c0-0000-7000-8000-000000000060"),
+    ] {
+        let reply = send(&gateway, Method::GET, &target, "", Some(&pair), &[]);
+        assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{target}");
+    }
+    assert!(calls.methods().contains(&"organization.list".to_owned()));
+}
+
+#[test]
+fn project_doc_routes_check_session_path_query_and_body_before_reaching_hq() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+        })
+    }));
+    let base = format!("/api/v1/organizations/{ORG}/projects/checkout/docs");
+    let doc = "0193a5c0-0000-7000-8000-000000000040";
+    let create = r#"{"command_id":"0193a5c0-0000-7000-8000-000000000041","kind":"guide","title":"Setup","section":"guides"}"#;
+    let update = r#"{"command_id":"0193a5c0-0000-7000-8000-000000000042","expected_revision":1,"title":"New"}"#;
+    let mv = r#"{"command_id":"0193a5c0-0000-7000-8000-000000000043","expected_revision":2,"new_path":"a.md"}"#;
+    let valid = [
+        (Method::GET, base.clone(), ""),
+        (
+            Method::GET,
+            format!("{base}?section=guides&status=draft&limit=10"),
+            "",
+        ),
+        (Method::GET, format!("{base}/index"), ""),
+        (Method::GET, format!("{base}/{doc}"), ""),
+        (Method::POST, base.clone(), create),
+        (Method::PATCH, format!("{base}/{doc}"), update),
+        (Method::POST, format!("{base}/{doc}/move"), mv),
+    ];
+    // No session: 401 before the path or the body is looked at.
+    for (method, target, body) in &valid {
+        let reply = send(&gateway, method.clone(), target, body, None, &[]);
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{method} {target}");
+    }
+    let pair = sign_in(&gateway).pair();
+    // Bad paths, queries and bodies: 400 without resolving the HQ office.
+    for (method, target, body) in [
+        (Method::GET, format!("{base}/guides-setup"), ""),
+        (Method::GET, format!("{base}/index?x=1"), ""),
+        (Method::GET, format!("{base}/{doc}?x=1"), ""),
+        (Method::GET, format!("{base}?unknown=1"), ""),
+        (Method::GET, format!("{base}?status=archived"), ""),
+        (Method::GET, format!("{base}?section=a&section=b"), ""),
+        (Method::GET, format!("{base}/index"), "{}"),
+        (Method::PATCH, format!("{base}/index"), update),
+        (Method::PATCH, base.clone(), update),
+        (Method::PATCH, format!("{base}/{doc}"), "{}"),
+        (Method::POST, format!("{base}/{doc}/move"), "not json"),
+        (Method::POST, base.clone(), r#"{"title":1}"#),
+        (Method::POST, format!("{base}/index"), create),
+        (
+            Method::GET,
+            format!("/api/v1/organizations/{ORG}/projects/bad.ref/docs"),
+            "",
+        ),
+    ] {
+        let reply = send(&gateway, method.clone(), &target, body, Some(&pair), &[]);
+        assert_eq!(
+            reply.status,
+            StatusCode::BAD_REQUEST,
+            "{method} {target} {body}"
+        );
+    }
+    let deeper = send(
+        &gateway,
+        Method::GET,
+        &format!("{base}/{doc}/move/x"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(deeper.status, StatusCode::NOT_FOUND);
+    assert!(
+        !calls.methods().contains(&"organization.list".to_owned()),
+        "refused requests never resolve the HQ office"
+    );
+    // Well-formed requests reach the HQ office (503 here: the fixture has no office socket).
+    for (method, target, body) in &valid {
+        let reply = send(&gateway, method.clone(), target, body, Some(&pair), &[]);
+        assert_eq!(
+            reply.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{method} {target}"
+        );
+    }
+    assert!(calls.methods().contains(&"organization.list".to_owned()));
+}

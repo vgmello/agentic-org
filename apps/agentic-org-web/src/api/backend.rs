@@ -2,10 +2,12 @@
 //! call, and the live-event stream.
 
 use super::account_routes;
+use super::attachment_routes;
 use super::bad_input;
 use super::chat_routes;
 use super::cost_routes;
 use super::create_outcome;
+use super::doc_routes;
 use super::failure;
 use super::git_routes;
 use super::hiring_routes;
@@ -15,6 +17,7 @@ use super::instance_view;
 use super::invalid;
 use super::mutation;
 use super::not_found;
+use super::note_routes;
 use super::office_routes;
 use super::open_routes;
 use super::org_routes;
@@ -34,6 +37,7 @@ use super::RegisterBody;
 use super::Route;
 use super::SessionApi;
 use super::SignInBody;
+use crate::body::stream::StreamedBody;
 use crate::body::BusinessBody;
 use crate::host::Failure;
 use crate::path::RequestPath;
@@ -368,11 +372,14 @@ impl ApiBackend for SessionApi {
             Route::Sessions(route) => return session_routes::prepare(route, bytes),
             Route::Chat(route) => return chat_routes::prepare(route, bytes),
             Route::Tasks(route) => return task_routes::prepare(route, bytes),
+            Route::Notes(route) => return note_routes::prepare(route, bytes),
             Route::Git(route) => return git_routes::prepare(route, bytes),
             Route::Process(route) => return process_routes::prepare(route, bytes),
+            Route::Docs(route) => return doc_routes::prepare(route, bytes),
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
             Route::OfficeFederation(route) => return office_routes::prepare(route, bytes),
+            Route::Attachments(route) => return attachment_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -478,6 +485,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Notes(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(note_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
             Call::Git(call) => AsyncDispatch::Async {
                 future: Box::pin(
                     async move { WebReply::Json(git_routes::execute(&self, call).await) },
@@ -488,6 +501,12 @@ impl ApiBackend for SessionApi {
                 future: Box::pin(async move {
                     WebReply::Json(process_routes::execute(&self, call).await)
                 }),
+                streaming: false,
+            },
+            Call::Docs(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(doc_routes::execute(&self, call).await) },
+                ),
                 streaming: false,
             },
             Call::Cost(call) => AsyncDispatch::Async {
@@ -508,7 +527,27 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::Attachments(call) => AsyncDispatch::Async {
+                future: Box::pin(attachment_routes::execute(self, call)),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
+        }
+    }
+    fn streamed_body(&self, route: &Route) -> Option<u64> {
+        match route {
+            Route::Attachments(route) => attachment_routes::streamed_body(route),
+            _ => None,
+        }
+    }
+    fn prepare_streamed(
+        &self,
+        route: Route,
+        body: StreamedBody,
+    ) -> Result<PreparedCall<Call>, ApiReply> {
+        match route {
+            Route::Attachments(route) => attachment_routes::prepare_streamed(route, body),
+            _ => Err(not_found()),
         }
     }
     fn execute(&self, call: Call) -> ApiReply {
@@ -526,13 +565,13 @@ impl ApiBackend for SessionApi {
             Call::Hiring(_) => unreachable!("Call::Hiring is dispatched asynchronously"),
             Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
-            Call::Tasks(_) => unreachable!("Call::Tasks is dispatched asynchronously"),
+            Call::Tasks(_) | Call::Notes(_) => unreachable!("dispatched asynchronously"),
             Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
-            Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
+            Call::Process(_) | Call::Docs(_) => unreachable!("dispatched asynchronously"),
             Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
             Call::Provider(_) => unreachable!("Call::Provider is dispatched asynchronously"),
-            Call::OfficeFederation(_) => {
-                unreachable!("Call::OfficeFederation is dispatched asynchronously")
+            Call::OfficeFederation(_) | Call::Attachments(_) => {
+                unreachable!("office federation and attachment calls dispatch asynchronously")
             }
             Call::Session(pair) => match self
                 .validate(pair)

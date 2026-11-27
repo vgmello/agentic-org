@@ -6,7 +6,7 @@ use super::records::{
     ChecklistStepWire, PatchField, TaskCommentWire, TaskDependenciesResult, TaskDetailsWire,
     TaskEventWire, TaskInspectResult, TaskLabelSummary, TaskView,
 };
-use super::{LabelMatchMode, TaskPriority, TaskSortMode, TaskStatus, WorkType};
+use super::{LabelMatchMode, TaskPriority, TaskSortMode, TaskStatus, TaskStatusScope, WorkType};
 use crate::calls::Call;
 
 /// `tasks.create`: create a unified task (`task`, `bug`, `request`, ...), minting its final
@@ -68,6 +68,13 @@ impl Call for TasksCreate {
 
 /// `tasks.list`: query tasks with rich filtering (type, status, owning team, assigned team,
 /// assignee, project, multi-label AND/OR, dependency relation, text search, and ordering).
+///
+/// The status filters combine as one set (`TASK-105`): start from `status_scope` (every status
+/// when absent or `all`), keep only `status` when given, then drop `exclude_status`. A `status`
+/// outside `status_scope`, or named in `exclude_status` too, is refused as `invalid_request`.
+/// `done_since` then keeps a `done` task only when its `updated_at` is at or after that instant,
+/// and with `status_scope = open` it also admits those recently done tasks (a board's open work
+/// and what was just finished). Every other filter narrows the set further.
 pub struct TasksList;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +122,14 @@ pub struct TasksListParams {
     /// counts every match, so a client pages with `offset + tasks.len() < total`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<u64>,
+    /// `open`, `closed` or `all` statuses; absent answers every status, as before `TASK-105`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_scope: Option<TaskStatusScope>,
+    /// An RFC 3339 instant (`2026-11-26T00:00:00Z`): `done` tasks last updated before it are
+    /// left out, and `status_scope = open` admits the `done` tasks updated since. Anything that
+    /// is not an RFC 3339 timestamp is refused as `invalid_request`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_since: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -38,6 +38,9 @@ mod private_notes;
 #[cfg(test)]
 mod private_notes_tests;
 mod processes;
+mod project_docs;
+#[cfg(test)]
+mod project_docs_tests;
 #[cfg(test)]
 mod provider_pool_tests;
 mod providers;

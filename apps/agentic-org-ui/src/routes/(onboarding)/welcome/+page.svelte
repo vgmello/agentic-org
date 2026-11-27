@@ -50,7 +50,7 @@
 	// Creates this page is following now. One that HQ stops answering for leaves the set, so
 	// Check again on its row, or the next reading of the list, follows it again.
 	// Bookkeeping only, never rendered or read by an effect: a plain Set on purpose.
-	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive bookkeeping set never rendered
 	const followed = new Set<string>();
 	/** Creates whose lookup stopped because HQ could not be reached. */
 	let stalled = $state<string[]>([]);

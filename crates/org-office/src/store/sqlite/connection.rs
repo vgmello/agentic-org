@@ -7,9 +7,12 @@ use std::{
 };
 
 use org_store::EngineError;
-use rusqlite::{config::DbConfig, Connection, OpenFlags};
+use rusqlite::{
+    config::DbConfig, functions::FunctionFlags, types::ValueRef, Connection, OpenFlags,
+};
 
 use super::refused;
+use crate::time::parse_rfc3339_ms;
 
 /// How long a connection waits for another's lock before it fails.
 const BUSY_WAIT: Duration = Duration::from_secs(5);
@@ -46,7 +49,32 @@ fn open_connection(path: &Path, flags: OpenFlags) -> rusqlite::Result<Connection
     let db = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     db.busy_timeout(BUSY_WAIT)?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
+    register_rfc3339_ms(&db)?;
     Ok(db)
+}
+
+/// `rfc3339_ms(text)`: the Unix milliseconds `crate::time::parse_rfc3339_ms` reads from
+/// `text`, or `NULL` when it reads none, so a query compares instants by the same rule as the
+/// `MemoryEngine` (`ENG-1`). Queries only: no schema object may depend on it, and
+/// `SQLITE_DIRECTONLY` keeps it out of triggers and views.
+fn register_rfc3339_ms(db: &Connection) -> rusqlite::Result<()> {
+    db.create_scalar_function(
+        "rfc3339_ms",
+        1,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_DIRECTONLY,
+        |ctx| {
+            let at = match ctx.get_raw(0) {
+                ValueRef::Text(raw) => std::str::from_utf8(raw)
+                    .ok()
+                    .and_then(parse_rfc3339_ms)
+                    .and_then(|ms| i64::try_from(ms).ok()),
+                _ => None,
+            };
+            Ok(at)
+        },
+    )
 }
 
 /// Why a write connection could not be opened. SQLite's own error is kept, so the caller
