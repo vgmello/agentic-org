@@ -370,8 +370,10 @@ pub(crate) fn build_office_ports(
         .with_draft_caller(Arc::new(move |request_id| {
             use crate::serve::ChiefOfStaffPort;
             draft_gate.draft_caller(request_id)
-        })),
+        }))
+        .with_session_manager(Arc::clone(&office), Arc::clone(&session_manager)),
     );
+    tess_calls::follow_tess_stream(&tess_svc, &office, session_manager.stream_hub());
     serve::OfficePorts {
         operation_get: {
             let office = Arc::clone(&office);
@@ -486,9 +488,20 @@ pub(crate) fn build_office_ports(
                 )
             }))
         },
-        tess: Some(gate_rpc_port(&office, move |member, request| {
-            tess_svc.dispatch(member, request)
-        })),
+        tess: {
+            let o = Arc::clone(&office);
+            Some(Box::new(
+                move |member, via_grant, stopping, apply_exec, request| {
+                    if snapshot_pending(&o) {
+                        return Some(org_proto::Response::error(
+                            request.id,
+                            snapshot_unavailable_api_error(),
+                        ));
+                    }
+                    tess_svc.dispatch_with_context(member, via_grant, stopping, apply_exec, request)
+                },
+            ))
+        },
         directory: messaging.directory,
         submit,
     }

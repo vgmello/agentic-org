@@ -26,6 +26,7 @@ mod provider_routes;
 mod search_routes;
 mod session_routes;
 mod task_routes;
+mod tess_routes;
 
 pub use instance_routes::{CallerAuth, TlsEnableInput};
 
@@ -192,6 +193,7 @@ pub enum Route {
     Provider(provider_routes::ProviderRoute),
     OfficeFederation(office_routes::OfficeFederationRoute),
     Attachments(attachment_routes::AttachmentRoute),
+    Tess(tess_routes::TessRoute),
 }
 
 pub enum Call {
@@ -237,6 +239,7 @@ pub enum Call {
     Provider(provider_routes::ProviderCall),
     OfficeFederation(office_routes::OfficeFederationCall),
     Attachments(attachment_routes::AttachmentCall),
+    Tess(tess_routes::TessCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.

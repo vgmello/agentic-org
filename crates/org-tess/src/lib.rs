@@ -1,28 +1,42 @@
-//! Server-validated Chief of Staff (Tess) `suggestion.*` and `ui.present` RPC handlers
-//! (`TASK-80.4` Part A).
+//! Server-validated Chief of Staff (Tess) `suggestion.*`, `ui.present`, and `tess.*` RPC handlers
+//! (`TASK-80.4` Parts A & B).
 //!
-//! Suggestions live in bounded, runtime-ephemeral office RAM scoped strictly to
-//! `(created_by_member_id, for_caller_id)` with TTL expiration so `schema.sql` stays untouched.
-//! Both `suggestion.create` and `ui.present` validate every target command, input field, entity
-//! reference, and caller permission live against [`Office`] and fail closed on any mismatch.
+//! Suggestions and active Ask Tess turns live in bounded, runtime-ephemeral office RAM scoped
+//! strictly to each human caller so `schema.sql` stays untouched. Every proposal, UI block, turn
+//! stream, cancel, reset, and two-phase apply validates caller identity and authority live against
+//! [`Office`] and fails closed on any mismatch.
 
 #![forbid(unsafe_code)]
 
+mod apply;
+mod ports;
 mod preflight;
 mod suggestions;
+mod turns;
 mod ui;
+#[cfg(test)]
+mod unit_tests;
+mod viewport;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use org_office::{CallerAuthority, Office, OfficeError};
 use org_proto::tess::{
-    SuggestionCreate, SuggestionDismiss, SuggestionInspect, SuggestionList, SuggestionWithdraw,
-    UiPresent,
+    SuggestionApply, SuggestionCreate, SuggestionDismiss, SuggestionInspect, SuggestionList,
+    SuggestionView, SuggestionWithdraw, TessAsk, TessSessionReset, TessTurnCancel, TessTurnEvents,
+    UiBlock, UiPresent,
 };
-use org_proto::{ApiError, Call, ErrorCode, Request, Response};
+use org_proto::{format_rfc3339_ms, ApiError, Call, ErrorCode, Request, Response};
+
+pub use self::ports::{
+    is_tess_method, requires_human_grant, ApplyExecFn, TessRuntimePort, TessStartedSession,
+    TessStreamInput, TessTurnEndOutcome,
+};
+pub use self::turns::ask_partition;
 
 use self::suggestions::SuggestionStore;
+use self::turns::TurnHub;
 
 /// Looks up the active human caller a bound Chief of Staff run acts for (`None` for wakes/others).
 pub type ActingForFn = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -42,17 +56,7 @@ pub enum DelegationAccess {
 /// Evaluates whether a target RPC call is allowed through Chief of Staff delegation.
 pub type DelegationPolicyFn = fn(&str) -> DelegationAccess;
 
-/// Whether `request` belongs to the Chief of Staff `suggestion.*` or `ui.present` RPC family.
-fn is_tess_method(request: &Request) -> bool {
-    request.is::<SuggestionCreate>()
-        || request.is::<SuggestionList>()
-        || request.is::<SuggestionInspect>()
-        || request.is::<SuggestionWithdraw>()
-        || request.is::<SuggestionDismiss>()
-        || request.is::<UiPresent>()
-}
-
-/// Verified caller context for one `suggestion.*` or `ui.present` RPC.
+/// Verified caller context for one Tess RPC.
 #[derive(Debug, Clone)]
 pub(crate) enum CallerContext {
     /// Chief of Staff acting for a verified active human person.
@@ -63,21 +67,22 @@ pub(crate) enum CallerContext {
     },
     /// Chief of Staff running a wake with no human caller (refused for proposals and UI blocks).
     TessWake,
-    /// A verified active human person calling directly (e.g. listing, inspecting, or dismissing
-    /// suggestions addressed to them).
+    /// A verified active human person calling directly.
     HumanCaller {
         caller_id: String,
         authority: CallerAuthority,
     },
 }
 
-/// Runtime-ephemeral Chief of Staff suggestion store and live UI verifier.
+/// Runtime-ephemeral Chief of Staff suggestion store, live UI verifier, and Ask Tess turn hub.
 pub struct TessService {
     office: Arc<Office>,
     acting_for: ActingForFn,
     draft_caller: DraftCallerFn,
     delegation_policy: DelegationPolicyFn,
+    runtime: Option<Arc<dyn TessRuntimePort>>,
     suggestions: Mutex<SuggestionStore>,
+    turns: TurnHub,
     id_seq: AtomicU64,
 }
 
@@ -92,7 +97,9 @@ impl TessService {
             acting_for,
             draft_caller: Arc::new(|_| None),
             delegation_policy,
+            runtime: None,
             suggestions: Mutex::new(SuggestionStore::default()),
+            turns: TurnHub::default(),
             id_seq: AtomicU64::new(1),
         }
     }
@@ -100,6 +107,36 @@ impl TessService {
     pub fn with_draft_caller(mut self, draft_caller: DraftCallerFn) -> Self {
         self.draft_caller = draft_caller;
         self
+    }
+
+    pub fn with_runtime(mut self, runtime: Arc<dyn TessRuntimePort>) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    /// Forwards one post-redaction `SessionStreamHub` frame from `tess:ask:<caller_id>` into
+    /// `caller_id`'s active Ask Tess turn stream.
+    pub fn ingest_stream_event(&self, caller_id: &str, at: String, input: TessStreamInput) {
+        self.turns
+            .ingest_stream(caller_id, at, self.now_ms(), input);
+    }
+
+    pub(crate) fn publish_turn_ui_block(&self, caller_id: &str, ui_block: UiBlock) {
+        let at =
+            format_rfc3339_ms(self.now_ms()).unwrap_or_else(|| "1970-01-01T00:00:00.000Z".into());
+        self.turns.publish_ui_block(caller_id, at, ui_block);
+    }
+
+    pub(crate) fn publish_turn_suggestion(
+        &self,
+        caller_id: &str,
+        suggestion: SuggestionView,
+        ui_block: UiBlock,
+    ) {
+        let at =
+            format_rfc3339_ms(self.now_ms()).unwrap_or_else(|| "1970-01-01T00:00:00.000Z".into());
+        self.turns
+            .publish_suggestion_created(caller_id, at, suggestion, ui_block);
     }
 
     pub(crate) fn delegation_access(&self, call: &str) -> DelegationAccess {
@@ -111,6 +148,18 @@ impl TessService {
     }
 
     pub fn dispatch(&self, member: Option<&str>, request: &Request) -> Option<Response> {
+        let never_stop = AtomicBool::new(false);
+        self.dispatch_with_context(member, false, &never_stop, None, request)
+    }
+
+    pub fn dispatch_with_context(
+        &self,
+        member: Option<&str>,
+        via_grant: bool,
+        stopping: &AtomicBool,
+        apply_exec: Option<&ApplyExecFn<'_>>,
+        request: &Request,
+    ) -> Option<Response> {
         if !is_tess_method(request) {
             return None;
         }
@@ -124,34 +173,80 @@ impl TessService {
             Ok(ctx) => ctx,
             Err(err) => return Some(Response::error(request.id, err)),
         };
+        self.dispatch_suggestion_or_ui(&context, via_grant, apply_exec, request)
+            .or_else(|| self.dispatch_turn_call(&context, via_grant, stopping, request))
+    }
+
+    fn dispatch_suggestion_or_ui(
+        &self,
+        context: &CallerContext,
+        via_grant: bool,
+        apply_exec: Option<&ApplyExecFn<'_>>,
+        request: &Request,
+    ) -> Option<Response> {
         if request.is::<SuggestionCreate>() {
             return Some(run_call::<SuggestionCreate>(request, |p| {
-                suggestions::handle_create(self, &context, p)
+                suggestions::handle_create(self, context, p)
             }));
         }
         if request.is::<SuggestionList>() {
             return Some(run_call::<SuggestionList>(request, |p| {
-                suggestions::handle_list(self, &context, p)
+                suggestions::handle_list(self, context, p)
             }));
         }
         if request.is::<SuggestionInspect>() {
             return Some(run_call::<SuggestionInspect>(request, |p| {
-                suggestions::handle_inspect(self, &context, p)
+                suggestions::handle_inspect(self, context, p)
             }));
         }
         if request.is::<SuggestionWithdraw>() {
             return Some(run_call::<SuggestionWithdraw>(request, |p| {
-                suggestions::handle_withdraw(self, &context, p)
+                suggestions::handle_withdraw(self, context, p)
             }));
         }
         if request.is::<SuggestionDismiss>() {
             return Some(run_call::<SuggestionDismiss>(request, |p| {
-                suggestions::handle_dismiss(self, &context, p)
+                suggestions::handle_dismiss(self, context, p)
+            }));
+        }
+        if request.is::<SuggestionApply>() {
+            return Some(run_call::<SuggestionApply>(request, |p| {
+                apply::handle_apply(self, context, via_grant, apply_exec, p)
             }));
         }
         if request.is::<UiPresent>() {
             return Some(run_call::<UiPresent>(request, |p| {
-                ui::handle_present(self, &context, p)
+                ui::handle_present(self, context, p)
+            }));
+        }
+        None
+    }
+
+    fn dispatch_turn_call(
+        &self,
+        context: &CallerContext,
+        via_grant: bool,
+        stopping: &AtomicBool,
+        request: &Request,
+    ) -> Option<Response> {
+        if request.is::<TessAsk>() {
+            return Some(run_call::<TessAsk>(request, |p| {
+                turns::handle_ask(self, context, via_grant, p)
+            }));
+        }
+        if request.is::<TessTurnEvents>() {
+            return Some(run_call::<TessTurnEvents>(request, |p| {
+                turns::handle_turn_events(self, context, via_grant, stopping, p)
+            }));
+        }
+        if request.is::<TessTurnCancel>() {
+            return Some(run_call::<TessTurnCancel>(request, |p| {
+                turns::handle_turn_cancel(self, context, via_grant, p)
+            }));
+        }
+        if request.is::<TessSessionReset>() {
+            return Some(run_call::<TessSessionReset>(request, |p| {
+                turns::handle_session_reset(self, context, via_grant, p)
             }));
         }
         None

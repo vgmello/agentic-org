@@ -120,6 +120,7 @@ const NEVER: &[&str] = &[
     "office.remove",
     "office.restart",
     "search.query",
+    "suggestion.apply",
     "suggestion.dismiss",
 ];
 const NEVER_PREFIXES: &[&str] = &[
@@ -128,6 +129,7 @@ const NEVER_PREFIXES: &[&str] = &[
     "office.invitation.",
     "provider.",
     "tasks.notes.",
+    "tess.",
 ];
 /// Read-only provider pool/quota queries permitted when acting for the live owner, checked before
 /// `NEVER_PREFIXES` (`provider.`) so credentials, enrollment, and mutations stay `Access::Never`.

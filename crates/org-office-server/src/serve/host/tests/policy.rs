@@ -860,5 +860,107 @@ fn task140_host_channel_held_events_poll_refuses_offboarded_person() {
     srv.join().unwrap();
 }
 
+#[test]
+fn task80_host_channel_blocking_tess_turn_events_avoids_hol_blocking_and_enforces_revocation() {
+    let mut shared = shared();
+    let entered = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let entered_cb = Arc::clone(&entered);
+    let release_cb = Arc::clone(&release);
+    shared.ports.tess = Some(Box::new(
+        move |_member, via_grant, _stop, _apply_exec, req| {
+            if !req.is::<org_proto::tess::TessTurnEvents>() {
+                return None;
+            }
+            assert!(
+                via_grant,
+                "HostChannel must invoke tess_rpc with via_grant=true"
+            );
+            {
+                let mut g = entered_cb.0.lock().unwrap();
+                *g = true;
+                entered_cb.1.notify_all();
+            }
+            let mut r = release_cb.0.lock().unwrap();
+            while !*r {
+                r = release_cb.1.wait(r).unwrap();
+            }
+            Some(
+                Response::ok::<org_proto::tess::TessTurnEvents>(
+                    req.id,
+                    &org_proto::tess::TessTurnEventsResult {
+                        turn_id: "turn-1".into(),
+                        partition: format!("tess:ask:{OWNER_ID}"),
+                        events: Vec::new(),
+                        head_seq: 1,
+                        done: false,
+                        lagged: false,
+                    },
+                )
+                .unwrap(),
+            )
+        },
+    ));
+    let ctx = context();
+    let revocations = Arc::clone(&ctx._revocations);
+    let mut poll_req = signed(
+        &shared,
+        "tess.turn_events",
+        json!({"turn_id": "turn-1", "after_seq": 1, "wait_ms": 2000}),
+    );
+    poll_req.id = 301;
+    let mut who_req = signed(&shared, "who", json!({}));
+    who_req.id = 302;
+
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let shared = Arc::new(shared);
+    let srv_shared = Arc::clone(&shared);
+    let srv = std::thread::spawn(move || {
+        serve(socket, &srv_shared, ctx, &Default::default());
+    });
+    let mut reader = std::io::BufReader::new(peer);
+
+    let hello = exchange(&mut reader, "hello", json!({"api": {"min": 2, "max": 2}}));
+    assert_eq!(hello["result"]["api_version"], 2);
+
+    // Send held tess.turn_events (id 301) and wait until its worker thread blocks.
+    frame::write_message(reader.get_mut(), &poll_req).unwrap();
+    {
+        let mut g = entered.0.lock().unwrap();
+        while !*g {
+            g = entered.1.wait(g).unwrap();
+        }
+    }
+
+    // Normal `who` (id 302) completes immediately on the same multiplexed HostChannel.
+    let started = std::time::Instant::now();
+    frame::write_message(reader.get_mut(), &who_req).unwrap();
+    let first: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(
+        first["id"], 302,
+        "who blocked behind tess.turn_events: {first}"
+    );
+    assert!(started.elapsed() < Duration::from_millis(500));
+
+    // Revoke session while held, then release -> refused with not_authorized.
+    revocations
+        .lock()
+        .unwrap()
+        .apply_batch(vec!["session".into()])
+        .unwrap();
+    {
+        let mut r = release.0.lock().unwrap();
+        *r = true;
+        release.1.notify_all();
+    }
+    let second: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(second["id"], 301);
+    assert_eq!(second["error"]["code"], "not_authorized", "{second}");
+
+    drop(reader);
+    srv.join().unwrap();
+}
+
 #[path = "inventory.rs"]
 mod inventory;

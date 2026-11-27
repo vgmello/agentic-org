@@ -162,6 +162,11 @@ fn secrets_and_owner_reads_are_never_hers_even_for_the_owner() {
         "member.external_bind",
         "git.push",
         "search.query",
+        "suggestion.apply",
+        "tess.ask",
+        "tess.turn_events",
+        "tess.turn_cancel",
+        "tess.session_reset",
     ] {
         assert_eq!(access(method), Access::Never, "{method}");
         assert!(!allowed(access(method), &acting_for(owner())), "{method}");
@@ -328,18 +333,23 @@ fn the_gate_refuses_her_before_any_method_runs_and_leaves_everyone_else_alone() 
     // answers by its own rules: here no cost port is wired at all).
     *port.current.lock().unwrap() = acting_for(owner());
     assert!(!refused("tess", false));
-    // A secret method stays refused even for the owner.
-    let secret = Request {
-        id: 8,
-        method: "provider.credential_status".into(),
-        principal: None,
-        params: serde_json::json!({}),
-    };
-    let response = shared.answer_for_test(&secret, "tess", false);
-    assert!(matches!(
-        response.outcome,
-        org_proto::Outcome::Error(ref e) if e.message == DELEGATION_DENIED
-    ));
+    // A secret or human-only Tess method stays refused even for the owner.
+    for method in ["provider.credential_status", "suggestion.apply", "tess.ask"] {
+        let forbidden = Request {
+            id: 8,
+            method: method.into(),
+            principal: None,
+            params: serde_json::json!({}),
+        };
+        let response = shared.answer_for_test(&forbidden, "tess", false);
+        assert!(
+            matches!(
+                response.outcome,
+                org_proto::Outcome::Error(ref e) if e.message == DELEGATION_DENIED
+            ),
+            "{method}"
+        );
+    }
     // The office cannot read who she is: every bound member is refused, never let through.
     port.broken.store(true, Ordering::SeqCst);
     for member in ["tess", "ada"] {

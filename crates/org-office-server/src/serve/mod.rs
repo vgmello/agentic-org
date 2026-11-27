@@ -177,8 +177,18 @@ pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send
 /// Dispatches L4 provider connection pools, bindings, model discovery, readiness, and quota RPCs (`TASK-54`).
 pub type ProvidersFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
-/// Dispatches Chief of Staff (Tess) `suggestion.*` and `ui.present` RPCs (`TASK-80.4`).
-pub type TessFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+/// Dispatches Chief of Staff (Tess) `suggestion.*`, `ui.present`, and `tess.*` RPCs (`TASK-80.4`).
+pub type TessFn = Box<
+    dyn Fn(
+            Option<&str>,
+            bool,
+            &std::sync::atomic::AtomicBool,
+            Option<&org_tess::ApplyExecFn<'_>>,
+            &Request,
+        ) -> Option<Response>
+        + Send
+        + Sync,
+>;
 
 /// What the connections ask of the office.
 pub struct OfficePorts {

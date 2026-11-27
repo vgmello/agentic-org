@@ -31,6 +31,7 @@ pub(super) struct StoredSuggestion {
     view: SuggestionView,
     ui_block: UiBlock,
     expires_at_ms: u64,
+    applying: bool,
 }
 
 #[derive(Debug, Default)]
@@ -98,6 +99,64 @@ impl SuggestionStore {
             CallerContext::HumanCaller { caller_id, .. } => entry.view.for_caller_id == *caller_id,
             CallerContext::TessWake => false,
         }
+    }
+
+    pub(crate) fn reserve_for_apply(
+        &mut self,
+        suggestion_id: &str,
+        caller_id: &str,
+        now_ms: u64,
+    ) -> Result<SuggestionView, ApiError> {
+        self.expire_due(now_ms);
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|e| e.view.id == suggestion_id && e.view.for_caller_id == caller_id)
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "suggestion not found"))?;
+        if entry.view.status != SuggestionStatus::Pending {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                format!(
+                    "suggestion is already `{}` and cannot be applied",
+                    entry.view.status.as_str()
+                ),
+            ));
+        }
+        if entry.applying {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "suggestion is already being applied",
+            ));
+        }
+        entry.applying = true;
+        Ok(entry.view.clone())
+    }
+
+    pub(crate) fn release_applying(&mut self, suggestion_id: &str, caller_id: &str) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.view.id == suggestion_id && e.view.for_caller_id == caller_id)
+        {
+            entry.applying = false;
+        }
+    }
+
+    pub(crate) fn complete_apply(
+        &mut self,
+        suggestion_id: &str,
+        caller_id: &str,
+        applied_at: String,
+    ) -> Result<SuggestionView, ApiError> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|e| e.view.id == suggestion_id && e.view.for_caller_id == caller_id)
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "suggestion not found"))?;
+        entry.applying = false;
+        entry.view.status = SuggestionStatus::Applied;
+        entry.view.resolved_at = Some(applied_at);
+        Ok(entry.view.clone())
     }
 }
 
@@ -222,15 +281,19 @@ pub(super) fn handle_create(
     };
 
     if !params.dry_run {
-        let mut store = svc.suggestions.lock().unwrap_or_else(|p| p.into_inner());
-        store.insert(
-            StoredSuggestion {
-                view: view.clone(),
-                ui_block: ui_block.clone(),
-                expires_at_ms,
-            },
-            now_ms,
-        )?;
+        {
+            let mut store = svc.suggestions.lock().unwrap_or_else(|p| p.into_inner());
+            store.insert(
+                StoredSuggestion {
+                    view: view.clone(),
+                    ui_block: ui_block.clone(),
+                    expires_at_ms,
+                    applying: false,
+                },
+                now_ms,
+            )?;
+        }
+        svc.publish_turn_suggestion(caller_id, view.clone(), ui_block.clone());
     }
 
     Ok(SuggestionCreateResult {
@@ -374,6 +437,12 @@ fn close_suggestion(
                 entry.view.status.as_str(),
                 target_status.as_str()
             ),
+        ));
+    }
+    if entry.applying {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "suggestion is currently being applied",
         ));
     }
     let mut updated = entry.view.clone();
