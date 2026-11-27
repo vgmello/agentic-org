@@ -482,6 +482,14 @@ html[data-theme="report"] {
 }
 .work-layout-toggle .queue-tab[aria-pressed="true"]:hover { background: var(--toolbar-seg-active-bg); }
 /* No outline on the List/Board toggle (no border lines). View controls stay left, right after the tabs (owner). */
+/* Main Work page: New task is centred vertically across the whole header (title row + toolbar row) (owner) */
+@media (min-width: 900px) {
+  #main .work-header.queue-header { position: relative; }
+  #main .work-header > .queue-headline > .ph-actions {
+    position: absolute; inset-inline-end: var(--gutter); inset-block-start: 50%; translate: 0 -50%; margin: 0;
+  }
+  #main .work-header > .work-toolbar { padding-inline-end: calc(var(--gutter) + 9rem); }
+}
 /* Project and team Work tabs: New task ends the toolbar row, at the right edge (owner) */
 #main .work-subbar-header .work-toolbar > #work-new-task { margin-inline-start: auto; }
 #main .work-layout-toggle { box-shadow: none; }
