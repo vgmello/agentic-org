@@ -147,6 +147,16 @@ pub fn load_target(root: &Path, read: Read<'_>) -> Result<Target, String> {
             .to_owned();
         let syntax =
             syn::parse_file(&source).map_err(|error| format!("{}: {error}", file.display()))?;
+        // A module an inner `#![cfg]` (`#![cfg(test)]` too) may leave out never hides a name
+        // around it.
+        if let (true, Some((name, parent))) =
+            (parse::conditional(&syntax.attrs), module.split_last())
+        {
+            let items = target.scopes.get_mut(parent).map(|scope| &mut scope.items);
+            if let Some(always) = items.and_then(|items| items.get_mut(name)) {
+                *always = false;
+            }
+        }
         if parse::test_only(&syntax.attrs) {
             continue;
         }
@@ -464,17 +474,23 @@ impl Target {
         for binding in scope.uses.get(name).into_iter().flatten() {
             let path = &binding.path;
             let first = path.segments.first().map(String::as_str);
+            let before = found.len();
             if path.head != Head::Local || first != Some(name) {
                 found.extend(self.absolute_at(key, path, depth + 1, globs)?);
             } else if let Some((_, around)) = around {
                 // `use x;` (or `use x::y as x;`) never resolves through itself: in a block it
-                // names the `x` around the block; in a module, another crate.
+                // names the `x` around the block; in a module, another crate (this one through
+                // an alias).
                 let outer = self.lookup(around, name, depth + 1, globs)?;
                 found.extend(extend(outer, &path.segments[1..]));
+            } else if self.aliases.contains(name) {
+                found.push(path.segments[1..].to_vec());
             } else {
                 continue;
             }
-            certain |= !binding.conditional;
+            // A `use` of a crate function, constant, static or macro binds no `name::`.
+            let only_values = !values && self.only_values(&found[before..], depth, globs)?;
+            certain |= !binding.conditional && !only_values;
         }
         let item = scope.items.get(name);
         let value = values && scope.values.contains(name);
@@ -495,6 +511,31 @@ impl Target {
             certain |= !glob.conditional && found.len() > before;
         }
         Ok((found, certain))
+    }
+
+    /// Whether each of `targets` (at least one) reaches a function, constant, static or macro
+    /// only, never a module, type or trait.
+    fn only_values(
+        &self,
+        targets: &[Vec<String>],
+        depth: usize,
+        globs: bool,
+    ) -> Result<bool, String> {
+        for target in targets {
+            for to in self.resolve_at(target, depth + 1, globs)? {
+                let value = to.split_last().is_some_and(|(last, parent)| {
+                    self.scopes.get(parent).is_some_and(|scope| {
+                        scope.values.contains(last)
+                            && !scope.items.contains_key(last)
+                            && !scope.children.contains(last)
+                    })
+                });
+                if !value {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(!targets.is_empty())
     }
 
     fn resolve_at(

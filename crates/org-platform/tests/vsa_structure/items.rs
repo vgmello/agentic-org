@@ -538,7 +538,10 @@ impl FileItems {
                 Some(name) => {
                     let bound = names.uses.entry(name).or_default();
                     match bound.iter_mut().find(|bound| bound.path == found.path) {
-                        Some(bound) => bound.conditional &= conditional,
+                        Some(bound) => {
+                            bound.conditional &= conditional;
+                            bound.public |= found.public;
+                        }
                         None => bound.push(found),
                     }
                 }

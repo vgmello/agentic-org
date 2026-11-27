@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use proc_macro2::{Delimiter, Group, LineColumn, Spacing, TokenTree};
+use proc_macro2::{Delimiter, Group, LineColumn, Spacing, TokenStream, TokenTree};
 
 use super::parse::{is_keyword, split_commas, unraw, Building, Written};
 
@@ -29,6 +29,12 @@ fn punct(token: Option<&TokenTree>, c: char) -> Option<&proc_macro2::Punct> {
         Some(TokenTree::Punct(p)) if p.as_char() == c => Some(p),
         _ => None,
     }
+}
+
+/// `$crate` at `at`, which a macro expands to `crate`.
+fn dollar_crate(tokens: &[TokenTree], at: usize) -> bool {
+    punct(tokens.get(at), '$').is_some()
+        && matches!(tokens.get(at + 1), Some(TokenTree::Ident(word)) if word == "crate")
 }
 
 /// Whether the ident at `at` starts a path: a name (or `crate`, `self`, `super`) before `::`,
@@ -152,9 +158,10 @@ fn use_group(group: &Group, path: &Building) -> bool {
 }
 
 /// Whether `tokens` are one `use` tree after `path::` (or a whole one when `path` is empty):
-/// `crate` never follows a prefix, `super` only climbs, `self` only climbs or ends the tree.
+/// `crate` (`$crate` in a macro) never follows a prefix, `super` only climbs, `self` only climbs
+/// or ends the tree.
 fn use_tree(tokens: &[TokenTree], mut path: Building) -> bool {
-    let mut at = 0;
+    let mut at = usize::from(dollar_crate(tokens, 0));
     loop {
         match tokens.get(at) {
             Some(TokenTree::Punct(star)) if star.as_char() == '*' => return at + 1 == tokens.len(),
@@ -199,6 +206,7 @@ fn read_path(
     mut path: Building,
     tree: Tree,
 ) -> (Vec<Written>, usize) {
+    at += usize::from(dollar_crate(tokens, at));
     loop {
         match tokens.get(at) {
             Some(TokenTree::Ident(word)) => {
@@ -231,6 +239,12 @@ fn read_path(
 
 /// Every path `tokens` name, in `use` trees, signatures, bodies and macro definitions alike.
 pub fn scan(tokens: &[TokenTree], out: &mut Vec<Named>) {
+    scan_in(tokens, out, false);
+}
+
+/// [`scan`], in a macro call when `call`: what the macro makes of a `use` item is unknown, so
+/// the trees of its `{..}` group are also read on their own.
+fn scan_in(tokens: &[TokenTree], out: &mut Vec<Named>, call: bool) {
     let mut at = 0;
     while at < tokens.len() {
         let tree = if after_use(tokens, at) {
@@ -249,7 +263,8 @@ pub fn scan(tokens: &[TokenTree], out: &mut Vec<Named>) {
                     (Some(group.span_open().start()), Some((paths, end, false)))
                 } else {
                     let inner: Vec<TokenTree> = group.stream().into_iter().collect();
-                    scan(&inner, out);
+                    let call = call || matches!(macro_body(tokens, at), Some(Macro::Call(_)));
+                    scan_in(&inner, out, call);
                     (None, None)
                 }
             }
@@ -278,6 +293,14 @@ pub fn scan(tokens: &[TokenTree], out: &mut Vec<Named>) {
                     path,
                     restriction,
                 }));
+                let groups = tokens[at..end].iter().filter_map(|token| match token {
+                    TokenTree::Group(group) if call && tree == Tree::Use => Some(group),
+                    _ => None,
+                });
+                for group in groups {
+                    let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+                    scan_in(&inner, out, call);
+                }
                 at = end;
             }
             _ => at += 1,
@@ -317,7 +340,8 @@ pub struct FoundUse {
     /// Where the outermost macro call it is an argument of starts; `None` outside any call and
     /// in a `macro_rules!` definition (which expands wherever it is called).
     pub call: Option<LineColumn>,
-    /// An attribute before it may leave it out: a `cfg`, a `cfg_attr` or a macro variable.
+    /// An attribute before it may leave it out (a `cfg`, a `cfg_attr` or a macro variable), or it
+    /// is in a `macro_rules!` definition.
     pub conditional: bool,
 }
 
@@ -381,7 +405,7 @@ fn walk_uses(
                         item,
                         group,
                         call: within.call,
-                        conditional,
+                        conditional: within.defining || conditional,
                     });
                 }
             }
@@ -458,10 +482,24 @@ fn use_item(tokens: &[TokenTree], index: usize) -> Option<(syn::ItemUse, bool)> 
         + tokens[index..]
             .iter()
             .position(|token| punct(Some(token), ';').is_some())?;
-    let item = tokens[start..=end].iter().enumerate().filter(|(i, token)| {
-        let dollar = punct(Some(token), '$').is_some();
-        !(dollar && matches!(tokens.get(start + i + 1), Some(TokenTree::Ident(w)) if w == "crate"))
-    });
-    let item = syn::parse2(item.map(|(_, token)| token.clone()).collect()).ok()?;
+    let item = syn::parse2(without_dollar(&tokens[start..=end])).ok()?;
     Some((item, conditional))
+}
+
+/// `tokens` with the `$` of each `$crate` left out, in groups too.
+fn without_dollar(tokens: &[TokenTree]) -> TokenStream {
+    let kept = tokens
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !dollar_crate(tokens, *i));
+    kept.map(|(_, token)| match token {
+        TokenTree::Group(group) => {
+            let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+            let mut stripped = Group::new(group.delimiter(), without_dollar(&inner));
+            stripped.set_span(group.span());
+            TokenTree::Group(stripped)
+        }
+        other => other.clone(),
+    })
+    .collect()
 }

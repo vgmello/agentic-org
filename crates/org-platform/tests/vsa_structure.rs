@@ -15,9 +15,11 @@
 //! macro definitions alike. A plain `name` is looked up as a module or type, never as a function,
 //! constant, static or macro, from its block outwards to the first scope that binds it for
 //! certain; every binding on the way counts (`use crate::tasks as t;`, a glob, `cfg`
-//! alternatives), and one that may not exist (under a `cfg`, or a `use` in a macro call) never
-//! hides the bindings around it. A `{..}` after `name::` is a group of `use` trees only in a `use`
-//! item; anywhere else, like a `pub(..)` that is no visibility, its tokens are scanned. Each path
+//! alternatives), and one that may not exist (under a `cfg` or an inner `#![cfg]`, a `use` in a
+//! macro call or a `macro_rules!` body) or that names only a crate function, constant, static or
+//! macro never hides the bindings around it. A `{..}` after `name::` is a group of `use` trees
+//! only in a `use` item (in a macro call its tokens are scanned too); anywhere else, like a
+//! `pub(..)` that is no visibility, its tokens are scanned. Each path
 //! is resolved from the crate root through the `use` bindings of every module it passes (root
 //! re-exports, inline facades such as `org-office`'s `organization_family`, globs). Test files
 //! are left out by name (`tests`, `*_tests`, `*-tests`, `testing`, `testkit`, `test_support`, as
@@ -55,6 +57,8 @@
 // A test target's root resolves `mod x;` beside itself; its modules live in `vsa_structure/`.
 #[path = "vsa_structure/bypasses.rs"]
 mod bypasses;
+#[path = "vsa_structure/bypasses_more.rs"]
+mod bypasses_more;
 #[path = "vsa_structure/graph.rs"]
 mod graph;
 #[path = "vsa_structure/items.rs"]

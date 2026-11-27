@@ -1,5 +1,5 @@
-//! Each way around the checks found in review is closed (`TASK-213` passes 2 to 4): synthetic
-//! crates that try it and fail.
+//! Each way around the checks found in review is closed (`TASK-213` passes 2 to 4; pass 5 in
+//! `bypasses_more.rs`): synthetic crates that try it and fail.
 
 use proc_macro2::{TokenStream, TokenTree};
 
@@ -307,7 +307,7 @@ fn only_the_crate_root_glob_imports_a_crate_module() {
 // Pass 3
 
 /// The `org-office` families `tasks` and `messaging`, with `extra` files added.
-fn office<'a>(extra: &[(&'a str, &'a str)]) -> Vec<String> {
+pub(super) fn office<'a>(extra: &[(&'a str, &'a str)]) -> Vec<String> {
     let mut files: Vec<(&'a str, &'a str)> = vec![
         ("o/src/tasks/mod.rs", "pub mod features;"),
         (
