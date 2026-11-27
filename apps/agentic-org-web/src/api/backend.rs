@@ -2,6 +2,7 @@
 //! call, and the live-event stream.
 
 use super::account_routes;
+use super::attachment_routes;
 use super::bad_input;
 use super::chat_routes;
 use super::cost_routes;
@@ -34,6 +35,7 @@ use super::RegisterBody;
 use super::Route;
 use super::SessionApi;
 use super::SignInBody;
+use crate::body::stream::StreamedBody;
 use crate::body::BusinessBody;
 use crate::host::Failure;
 use crate::path::RequestPath;
@@ -373,6 +375,7 @@ impl ApiBackend for SessionApi {
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
             Route::OfficeFederation(route) => return office_routes::prepare(route, bytes),
+            Route::Attachments(route) => return attachment_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -508,7 +511,27 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::Attachments(call) => AsyncDispatch::Async {
+                future: Box::pin(attachment_routes::execute(self, call)),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
+        }
+    }
+    fn streamed_body(&self, route: &Route) -> Option<u64> {
+        match route {
+            Route::Attachments(route) => attachment_routes::streamed_body(route),
+            _ => None,
+        }
+    }
+    fn prepare_streamed(
+        &self,
+        route: Route,
+        body: StreamedBody,
+    ) -> Result<PreparedCall<Call>, ApiReply> {
+        match route {
+            Route::Attachments(route) => attachment_routes::prepare_streamed(route, body),
+            _ => Err(not_found()),
         }
     }
     fn execute(&self, call: Call) -> ApiReply {
@@ -531,8 +554,8 @@ impl ApiBackend for SessionApi {
             Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
             Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
             Call::Provider(_) => unreachable!("Call::Provider is dispatched asynchronously"),
-            Call::OfficeFederation(_) => {
-                unreachable!("Call::OfficeFederation is dispatched asynchronously")
+            Call::OfficeFederation(_) | Call::Attachments(_) => {
+                unreachable!("office federation and attachment calls dispatch asynchronously")
             }
             Call::Session(pair) => match self
                 .validate(pair)

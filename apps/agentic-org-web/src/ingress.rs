@@ -7,6 +7,7 @@ use hyper::Method;
 use org_host_control::listen::ListenOrigin;
 
 use crate::origin::authority;
+use crate::path::RequestPath;
 
 pub(crate) struct RequestAdmission {
     origin: ListenOrigin,
@@ -38,8 +39,11 @@ impl RequestAdmission {
 
     /// The `/api/v1` request rule (web-api-v1 §2 "Request shape", §4), applied
     /// after Host and before routing or reading the body. Order: `OPTIONS`,
-    /// `Sec-Fetch-Site`, `Origin`, then the POST media type.
-    pub(crate) fn check_api(&self, request: &Parts) -> Result<(), ApiRefusal> {
+    /// `Sec-Fetch-Site`, `Origin`, then the POST/PATCH media type. The one exception
+    /// to the JSON media type is the attachment upload (`POST
+    /// /api/v1/organizations/{org}/attachments`), whose route admits only its own
+    /// closed list of file types; it passes every other row here.
+    pub(crate) fn check_api(&self, request: &Parts, path: &RequestPath) -> Result<(), ApiRefusal> {
         if request.method == Method::OPTIONS {
             return Err(ApiRefusal::Options);
         }
@@ -55,7 +59,12 @@ impl RequestAdmission {
         if !self.accepts_api_origin(request) {
             return Err(ApiRefusal::Origin);
         }
-        if request.method == Method::POST && !json_content_type(request) {
+        let json_body = match request.method {
+            Method::POST => !is_attachment_upload(path),
+            Method::PATCH => true,
+            _ => false,
+        };
+        if json_body && !json_content_type(request) {
             return Err(ApiRefusal::MediaType);
         }
         Ok(())
@@ -84,6 +93,12 @@ pub(crate) enum ApiRefusal {
     Origin,
     /// 415: a POST whose `Content-Type` is not JSON.
     MediaType,
+}
+
+/// Exactly `/api/v1/organizations/{org}/attachments`: the streamed upload route.
+fn is_attachment_upload(path: &RequestPath) -> bool {
+    matches!(path.segments(), [api, v1, orgs, _, attachments]
+        if api == "api" && v1 == "v1" && orgs == "organizations" && attachments == "attachments")
 }
 
 /// One `Content-Type` of exactly `application/json`, optionally with
@@ -225,7 +240,11 @@ mod tests {
     }
 
     fn api(method: Method, headers: &[(&str, &str)]) -> Parts {
-        let mut builder = Request::builder().method(method).uri("/api/v1/session");
+        api_at(method, "/api/v1/session", headers)
+    }
+
+    fn api_at(method: Method, target: &str, headers: &[(&str, &str)]) -> Parts {
+        let mut builder = Request::builder().method(method).uri(target);
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
@@ -331,11 +350,87 @@ mod tests {
                 Err(ApiRefusal::MediaType),
             ),
         ] {
+            let request = api(method.clone(), &headers);
+            let path = RequestPath::parse(request.uri.path()).unwrap();
             assert_eq!(
-                admission.check_api(&api(method.clone(), &headers)),
+                admission.check_api(&request, &path),
                 expected,
                 "{method} {headers:?}"
             );
         }
+    }
+
+    #[test]
+    fn only_the_exact_upload_path_skips_the_json_rule_and_patch_needs_json() {
+        let origin = "http://127.0.0.1:8080";
+        let admission = RequestAdmission::new(ListenOrigin::parse(origin).unwrap());
+        let check = |method: Method, target: &str, headers: &[(&str, &str)]| {
+            let request = api_at(method, target, headers);
+            let path = RequestPath::parse(request.uri.path()).unwrap();
+            admission.check_api(&request, &path)
+        };
+        let upload = "/api/v1/organizations/org-1/attachments";
+        let o = ("origin", origin);
+        for media in [
+            "application/pdf",
+            "image/png",
+            "text/html",
+            "multipart/form-data",
+        ] {
+            // The route decides the file type; the ingress rule still admits it.
+            assert_eq!(
+                check(Method::POST, upload, &[o, ("content-type", media)]),
+                Ok(())
+            );
+        }
+        // Origin and Sec-Fetch-Site still apply to the upload (CSRF).
+        assert_eq!(
+            check(Method::POST, upload, &[("content-type", "image/png")]),
+            Err(ApiRefusal::Origin)
+        );
+        assert_eq!(
+            check(
+                Method::POST,
+                upload,
+                &[
+                    o,
+                    ("content-type", "image/png"),
+                    ("sec-fetch-site", "cross-site")
+                ]
+            ),
+            Err(ApiRefusal::CrossSite)
+        );
+        for target in [
+            "/api/v1/organizations/org-1/attachments/0193a5c0-0000-7000-8000-000000000001",
+            "/api/v1/organizations/org-1/attachment",
+            "/api/v1/organizations/org-1/files",
+            "/api/v1/organizations/attachments",
+            "/api/v2/organizations/org-1/attachments",
+        ] {
+            assert_eq!(
+                check(Method::POST, target, &[o, ("content-type", "image/png")]),
+                Err(ApiRefusal::MediaType),
+                "{target}"
+            );
+        }
+        let file = "/api/v1/organizations/org-1/files/0193a5c0-0000-7000-8000-000000000001";
+        assert_eq!(
+            check(
+                Method::PATCH,
+                file,
+                &[o, ("content-type", "application/json")]
+            ),
+            Ok(())
+        );
+        for headers in [vec![o], vec![o, ("content-type", "text/plain")]] {
+            assert_eq!(
+                check(Method::PATCH, file, &headers),
+                Err(ApiRefusal::MediaType)
+            );
+        }
+        assert_eq!(
+            check(Method::PATCH, upload, &[o, ("content-type", "image/png")]),
+            Err(ApiRefusal::MediaType)
+        );
     }
 }

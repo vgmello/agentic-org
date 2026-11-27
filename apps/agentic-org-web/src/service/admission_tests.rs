@@ -218,10 +218,11 @@ fn origin_gate_covers_every_api_namespace_and_method_but_no_static_namespace() {
                         .respond(request(method.clone(), path, &[HOST_TEXT], &origins))
                         .await;
                     if api {
-                        // OPTIONS is 405 first; then Origin; then a POST
+                        // OPTIONS is 405 first; then Origin; then a POST or PATCH
                         // without a JSON Content-Type is 415 (this request has none).
                         let options = method == Method::OPTIONS;
-                        let media = !options && accepted && method == Method::POST;
+                        let media =
+                            !options && accepted && matches!(method, Method::POST | Method::PATCH);
                         let expected_route = usize::from(
                             !options && !media && accepted && path.ends_with("/v1/read"),
                         );

@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use crate::assets::BuildFiles;
 use crate::blocking::BlockingPool;
+use crate::body::stream::{self, StreamedBody, STREAMED_BODY_TIMEOUT};
 use crate::body::{
     read_business_body, BodyError, BusinessBody, BODY_READ_TIMEOUT, MAX_BUSINESS_BODY_BYTES,
 };
@@ -69,7 +70,31 @@ pub trait ApiBackend: Send + Sync + 'static {
     }
     /// Runs on a dedicated worker and must use finite native deadlines.
     fn execute(&self, call: Self::Call) -> ApiReply;
+    /// A route whose body streams to its call in bounded chunks instead of the buffered
+    /// business body (attachment uploads): the exact length the route admitted. The
+    /// default streams nothing.
+    fn streamed_body(&self, _route: &Self::Route) -> Option<u64> {
+        None
+    }
+    /// Prepares a route [`streamed_body`](Self::streamed_body) admitted. Its call must
+    /// dispatch asynchronously; it reads `body` while the service feeds it.
+    fn prepare_streamed(
+        &self,
+        _route: Self::Route,
+        _body: StreamedBody,
+    ) -> Result<PreparedCall<Self::Call>, ApiReply> {
+        Err(ApiReply::error(
+            StatusCode::NOT_FOUND,
+            WebErrorCode::NotFound,
+            "Not found.",
+        ))
+    }
 }
+
+/// The largest chunk a streamed body is cut into: one office IPC chunk (512 KiB).
+const STREAMED_CHUNK_BYTES: usize = org_proto::attachments::ATTACHMENT_CHUNK_MAX_BYTES as usize;
+/// How long a streamed call may outlive its body deadline before its answer is unknown.
+const STREAMED_CALL_GRACE: Duration = Duration::from_secs(5);
 
 pub struct ApiReply {
     status: StatusCode,
@@ -109,6 +134,14 @@ impl ApiReply {
     #[cfg(test)]
     pub(crate) fn body_bytes(&self) -> &[u8] {
         &self.body
+    }
+
+    #[cfg(test)]
+    pub(crate) fn header(&self, name: &str) -> Option<&HeaderValue> {
+        self.headers
+            .iter()
+            .find(|(key, _)| key.as_str() == name)
+            .map(|(_, value)| value)
     }
 
     fn into_http(self, head: bool) -> Response<WebBody> {
@@ -328,7 +361,7 @@ impl<B: ApiBackend> WebService<B> {
                     "Invalid request path.",
                 )
                 .into_http(head),
-                Ok(path) if path.is_api() => match self.admission.check_api(&parts) {
+                Ok(path) if path.is_api() => match self.admission.check_api(&parts, &path) {
                     Err(refusal) => ApiReply::refusal(refusal).into_http(head),
                     Ok(()) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
                         match self.api_response(&parts, path, body).await {
@@ -377,6 +410,9 @@ impl<B: ApiBackend> WebService<B> {
             Ok(route) => route,
             Err(reply) => return WebReply::Json(reply),
         };
+        if let Some(declared) = self.backend.streamed_body(&route) {
+            return self.streamed_response(route, declared, body).await;
+        }
         let body = match read_business_body(body, self.limits.body_bytes, self.limits.body_timeout)
             .await
         {
@@ -440,6 +476,49 @@ impl<B: ApiBackend> WebService<B> {
                 _ => prepared.kind.unknown(),
             },
         )
+    }
+}
+
+impl<B: ApiBackend> WebService<B> {
+    /// The streamed-body path (attachment uploads): no buffered body and no worker. The
+    /// declared length must be the body's exact framing; the body is fed to the call in
+    /// bounded chunks while the call runs, and one deadline covers both.
+    async fn streamed_response<T>(&self, route: B::Route, declared: u64, body: T) -> WebReply
+    where
+        T: Body<Data = Bytes>,
+        T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        if body.size_hint().exact() != Some(declared) {
+            return WebReply::Json(ApiReply::error(
+                StatusCode::LENGTH_REQUIRED,
+                WebErrorCode::InvalidRequest,
+                "Content-Length is required.",
+            ));
+        }
+        let deadline = tokio::time::Instant::now() + STREAMED_BODY_TIMEOUT;
+        let (streamed, feeder) = stream::channel(declared, STREAMED_CHUNK_BYTES, deadline);
+        let prepared = match self.backend.prepare_streamed(route, streamed) {
+            Ok(prepared) => prepared,
+            Err(reply) => return WebReply::Json(reply),
+        };
+        let mut future = match Arc::clone(&self.backend).dispatch_async(prepared.call) {
+            AsyncDispatch::Async { future, .. } => future,
+            AsyncDispatch::Sync(_) => return WebReply::Json(prepared.kind.unavailable()),
+        };
+        let mut pump = std::pin::pin!(feeder.pump(body));
+        let mut pumping = true;
+        // The call answers; the feeder only serves it. Once the call is done (even before
+        // the body ends), the rest of the body is never read.
+        let run = std::future::poll_fn(|cx| {
+            if pumping && pump.as_mut().poll(cx).is_ready() {
+                pumping = false;
+            }
+            future.as_mut().poll(cx)
+        });
+        match tokio::time::timeout_at(deadline + STREAMED_CALL_GRACE, run).await {
+            Ok(reply) => reply,
+            Err(_) => WebReply::Json(prepared.kind.unknown()),
+        }
     }
 }
 
