@@ -18,15 +18,6 @@ src/lib/modules/messaging/model.ts 952
 src/lib/modules/org-chart/features/chart/OrgChartCanvas.svelte 1005
 src/lib/modules/roles/http-api.ts 1075
 src/lib/modules/teams/features/team-page/TeamOverview.svelte 799
-src/lib/modules/work/features/requests/RequestSheet.svelte 714
-src/lib/modules/work/features/tasks/TaskSheet.svelte 736
-src/lib/modules/workitems/features/capture/CaptureDialog.svelte 1357
-src/lib/modules/workitems/features/detail/BugSection.svelte 720
-src/lib/modules/workitems/features/detail/WorkDetailPage.svelte 754
-src/lib/modules/workitems/features/queue/WorkList.svelte 721
-src/lib/modules/workitems/features/queue/WorkQueueView.svelte 1467
-src/lib/modules/workitems/features/queue/WorkToolbarMenus.svelte 1026
-src/lib/modules/workitems/http-api.ts 747
 src/lib/platform/auth/session-controller.ts 712
 src/lib/platform/http/wire.ts 788
 src/lib/platform/shell/ExecutiveSidebar.svelte 889

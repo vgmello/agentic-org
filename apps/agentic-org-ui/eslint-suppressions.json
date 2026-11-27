@@ -90,11 +90,6 @@
       "count": 1
     }
   },
-  "src/lib/modules/work/features/tasks/TaskSheet.svelte": {
-    "@typescript-eslint/no-unused-expressions": {
-      "count": 1
-    }
-  },
   "src/lib/modules/work/requests-view.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
