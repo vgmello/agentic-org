@@ -199,6 +199,13 @@ impl Office {
             .get(&self.info.org_id, attachment_id)
     }
 
+    /// Reads who each member's live run acts for (`TASK-80.1`), so an upload the Chief of Staff
+    /// stages for one member is never bound for another (`TASK-240`). The office's composition
+    /// sets it once its sessions run; until then no upload names anyone.
+    pub fn set_attachment_acting_for(&self, reader: Box<crate::attachments::staging::ActingFor>) {
+        self.attachments.staging.set_acting_for(reader);
+    }
+
     /// Removes every expired staged upload now; returns how many went.
     pub fn attachment_gc_staged(&self) -> Result<usize, OfficeError> {
         self.attachments.staging.gc(self.attachment_now_ms())

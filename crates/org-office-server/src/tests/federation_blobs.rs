@@ -34,6 +34,8 @@ use super::a2a_messaging::enroll_satellite;
 use crate::attachment_calls::dispatch_attachment_rpc;
 use crate::federation::{ship_blob_outbox, HqBlobRemote, HqFederationServer, SatelliteSyncSession};
 
+mod message_files;
+
 pub(super) struct Net {
     pub(super) hq: Arc<Office>,
     pub(super) owner: String,
