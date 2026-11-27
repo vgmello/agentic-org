@@ -1,13 +1,8 @@
 //! Browser HTTP routes for unified typed tasks, checklists, comments, watchers, history,
 //! dependency hierarchy, searchable labels, reference/modified files, and ordering
-//! (`TASK-49` B4/B5 + `TASK-77` B4b).
+//! (`TASK-49` B4/B5 + `TASK-77` B4b). Private task notes are `note_routes`'.
 
 use hyper::{http::request::Parts, Method, StatusCode};
-use org_proto::private_notes::{
-    TasksNotesAdd, TasksNotesAddParams, TasksNotesGet, TasksNotesGetParams, TasksNotesList,
-    TasksNotesListParams, TasksNotesPublish, TasksNotesPublishParams, TasksNotesRemove,
-    TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
-};
 use org_proto::tasks::{
     LabelMatchMode, TaskSortMode, TaskStatus, TaskStatusScope, TasksAddDependency,
     TasksAddDependencyParams, TasksAssign, TasksAssignParams, TasksChecklistAdd,
@@ -52,12 +47,6 @@ pub enum TaskRoute {
     ChecklistEdit(CallerAuth, String),
     ChecklistRemove(CallerAuth, String),
     ChecklistMove(CallerAuth, String),
-    NotesList(CallerAuth, String, TasksNotesListParams),
-    NotesGet(CallerAuth, String, String),
-    NotesAdd(CallerAuth, String),
-    NotesUpdate(CallerAuth, String),
-    NotesRemove(CallerAuth, String),
-    NotesPublish(CallerAuth, String),
 }
 
 pub enum TaskCall {
@@ -81,12 +70,6 @@ pub enum TaskCall {
     ChecklistEdit(CallerAuth, String, TasksChecklistEditParams),
     ChecklistRemove(CallerAuth, String, TasksChecklistRemoveParams),
     ChecklistMove(CallerAuth, String, TasksChecklistMoveParams),
-    NotesList(CallerAuth, String, TasksNotesListParams),
-    NotesGet(CallerAuth, String, String),
-    NotesAdd(CallerAuth, String, Box<TasksNotesAddParams>),
-    NotesUpdate(CallerAuth, String, Box<TasksNotesUpdateParams>),
-    NotesRemove(CallerAuth, String, TasksNotesRemoveParams),
-    NotesPublish(CallerAuth, String, TasksNotesPublishParams),
 }
 
 fn valid_org_id(id: &str) -> Result<(), ApiReply> {
@@ -266,28 +249,6 @@ pub(super) fn try_route(
         ["tasks", "checklist", action] if post => {
             route_checklist_post_action(api, request, org, action)
         }
-        ["tasks", "notes", action] if post => route_notes_post_action(api, request, org, action),
-        ["tasks", "notes", note_id] if is_get && !query => Some((|| {
-            let pair = api.caller_auth(request)?;
-            valid_org_id(org)?;
-            valid_task_ref(note_id)?;
-            Ok(Route::Tasks(TaskRoute::NotesGet(
-                pair,
-                org.to_owned(),
-                (*note_id).to_owned(),
-            )))
-        })()),
-        ["tasks", task, "notes"] if is_get => Some((|| {
-            let pair = api.caller_auth(request)?;
-            valid_org_id(org)?;
-            valid_task_ref(task)?;
-            let params = parse_notes_list_query(task, request.uri.query())?;
-            Ok(Route::Tasks(TaskRoute::NotesList(
-                pair,
-                org.to_owned(),
-                params,
-            )))
-        })()),
         ["tasks", task] if is_get && !query => Some((|| {
             if is_reserved_task_action(task) {
                 return Err(invalid());
@@ -353,45 +314,6 @@ fn route_checklist_post_action(
     Some(auth_org(api, request, org, build))
 }
 
-fn route_notes_post_action(
-    api: &SessionApi,
-    request: &Parts,
-    org: &str,
-    action: &str,
-) -> Option<Result<Route, ApiReply>> {
-    let build: fn(CallerAuth, String) -> TaskRoute = match action {
-        "add" => TaskRoute::NotesAdd,
-        "update" => TaskRoute::NotesUpdate,
-        "remove" => TaskRoute::NotesRemove,
-        "publish" => TaskRoute::NotesPublish,
-        _ => return Some(Err(not_found())),
-    };
-    Some(auth_org(api, request, org, build))
-}
-
-fn parse_notes_list_query(
-    task: &str,
-    query: Option<&str>,
-) -> Result<TasksNotesListParams, ApiReply> {
-    let mut author_id = None;
-    if let Some(q) = query.filter(|s| !s.is_empty()) {
-        for pair in q.split('&') {
-            let Some((k, raw_v)) = pair.split_once('=') else {
-                return Err(invalid());
-            };
-            if k == "author_id" {
-                author_id = Some(decode_query_value(raw_v)?);
-            } else {
-                return Err(invalid());
-            }
-        }
-    }
-    Ok(TasksNotesListParams {
-        task: task.to_owned(),
-        author_id,
-    })
-}
-
 fn empty(bytes: &[u8]) -> Result<(), ApiReply> {
     if bytes.is_empty() {
         Ok(())
@@ -444,18 +366,6 @@ pub(super) fn prepare(route: TaskRoute, bytes: &[u8]) -> Result<PreparedCall<Cal
         TaskRoute::ChecklistEdit(c, o) => TaskCall::ChecklistEdit(c, o, decode(bytes)?),
         TaskRoute::ChecklistRemove(c, o) => TaskCall::ChecklistRemove(c, o, decode(bytes)?),
         TaskRoute::ChecklistMove(c, o) => TaskCall::ChecklistMove(c, o, decode(bytes)?),
-        TaskRoute::NotesList(c, o, p) => {
-            empty(bytes)?;
-            TaskCall::NotesList(c, o, p)
-        }
-        TaskRoute::NotesGet(c, o, id) => {
-            empty(bytes)?;
-            TaskCall::NotesGet(c, o, id)
-        }
-        TaskRoute::NotesAdd(c, o) => TaskCall::NotesAdd(c, o, Box::new(decode(bytes)?)),
-        TaskRoute::NotesUpdate(c, o) => TaskCall::NotesUpdate(c, o, Box::new(decode(bytes)?)),
-        TaskRoute::NotesRemove(c, o) => TaskCall::NotesRemove(c, o, decode(bytes)?),
-        TaskRoute::NotesPublish(c, o) => TaskCall::NotesPublish(c, o, decode(bytes)?),
     };
     Ok(PreparedCall::read(Call::Tasks(call), bytes.len()))
 }
@@ -574,20 +484,6 @@ pub(super) async fn execute(api: &SessionApi, call: TaskCall) -> ApiReply {
         TaskCall::ChecklistMove(c, o, p) => {
             run_office::<TasksChecklistMove>(api, c, &o, &p, false).await
         }
-        TaskCall::NotesList(c, o, p) => run_office::<TasksNotesList>(api, c, &o, &p, true).await,
-        TaskCall::NotesGet(c, o, note_id) => {
-            run_office::<TasksNotesGet>(api, c, &o, &TasksNotesGetParams { note_id }, true).await
-        }
-        TaskCall::NotesAdd(c, o, p) => run_office::<TasksNotesAdd>(api, c, &o, &p, false).await,
-        TaskCall::NotesUpdate(c, o, p) => {
-            run_office::<TasksNotesUpdate>(api, c, &o, &p, false).await
-        }
-        TaskCall::NotesRemove(c, o, p) => {
-            run_office::<TasksNotesRemove>(api, c, &o, &p, false).await
-        }
-        TaskCall::NotesPublish(c, o, p) => {
-            run_office::<TasksNotesPublish>(api, c, &o, &p, false).await
-        }
     }
 }
 
@@ -643,18 +539,5 @@ mod tests {
         assert!(is_reserved_task_action("update"));
         assert!(is_reserved_task_action("notes"));
         assert!(!is_reserved_task_action("T-A1"));
-
-        let notes_q = parse_notes_list_query(
-            "T-A1",
-            Some("author_id=0193a5c0-0000-7000-8000-000000000001"),
-        )
-        .ok()
-        .expect("valid notes query");
-        assert_eq!(notes_q.task, "T-A1");
-        assert_eq!(
-            notes_q.author_id.as_deref(),
-            Some("0193a5c0-0000-7000-8000-000000000001")
-        );
-        assert!(parse_notes_list_query("T-A1", Some("bad=1")).is_err());
     }
 }

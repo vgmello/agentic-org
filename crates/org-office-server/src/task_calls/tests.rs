@@ -239,7 +239,8 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
             task: "T-A1".into(),
             note_id: note_id.clone(),
             body_markdown: "Private draft".into(),
-        },
+        }
+        .into(),
     )
     .unwrap();
     assert!(matches!(
@@ -253,7 +254,8 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
             note_id: note_id.clone(),
             expected_revision: 1,
             body_markdown: "Refined private draft".into(),
-        },
+        }
+        .into(),
     )
     .unwrap();
     assert!(matches!(
@@ -287,6 +289,110 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
         Outcome::Result(_)
     ));
     assert_eq!(notifications.load(Ordering::Relaxed), before + 1);
+}
+
+#[test]
+fn private_decisions_list_across_tasks_and_never_notify_live_events() {
+    use org_proto::private_notes::{
+        PrivateNoteAddParams, PrivateNoteField, PrivateNoteKind, PrivateNoteListParams,
+        PrivateNoteUpdateParams, TasksNotesListResult, TasksNotesPublishParams,
+        TasksNotesRemoveParams,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&notifications);
+    let live = Arc::new(LiveEvents::new(Box::new(move || {
+        counter.fetch_add(1, Ordering::Relaxed);
+    })));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+    let call = |request: Request| match svc.dispatch(Some(&owner), &request).unwrap().outcome {
+        Outcome::Result(value) => Ok(value),
+        Outcome::Error(e) => Err(e.code),
+    };
+
+    let decision_id = uuid(201);
+    let add = Request::new::<TasksNotesAdd>(
+        1,
+        &PrivateNoteAddParams {
+            command_id: uuid(200),
+            note_id: decision_id.clone(),
+            task: None,
+            project_id: None,
+            kind: PrivateNoteKind::Decision,
+            title: None,
+            why: Some("SECRET_WHY_SERVER".into()),
+            alternatives: None,
+            tags: vec!["Arch".into()],
+            body_markdown: "Keep notes at HQ\nonly".into(),
+        },
+    )
+    .unwrap();
+    call(add).unwrap();
+    let list = Request::new::<TasksNotesList>(
+        2,
+        &PrivateNoteListParams {
+            kind: Some(PrivateNoteKind::Decision),
+            tag: Some("arch".into()),
+            fields: vec![PrivateNoteField::Title],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let listed: TasksNotesListResult = serde_json::from_value(call(list).unwrap()).unwrap();
+    assert_eq!(listed.total, 1);
+    assert_eq!(listed.task_id, None);
+    let note = &listed.notes[0];
+    assert_eq!(note.title.as_deref(), Some("Keep notes at HQ"));
+    assert_eq!(
+        (note.body_markdown.as_ref(), note.why.as_ref()),
+        (None, None)
+    );
+    assert!(note.tags.is_empty(), "tags were not asked for");
+
+    let edit = Request::new::<TasksNotesUpdate>(
+        3,
+        &PrivateNoteUpdateParams {
+            command_id: uuid(202),
+            note_id: decision_id.clone(),
+            expected_revision: 1,
+            kind: None,
+            title: None,
+            why: None,
+            alternatives: None,
+            tags: Some(vec!["recall".into()]),
+            body_markdown: None,
+        },
+    )
+    .unwrap();
+    call(edit).unwrap();
+    let publish = Request::new::<TasksNotesPublish>(
+        4,
+        &TasksNotesPublishParams {
+            command_id: uuid(203),
+            note_id: decision_id.clone(),
+            expected_revision: 2,
+            comment_id: uuid(204),
+        },
+    )
+    .unwrap();
+    assert_eq!(call(publish), Err(ErrorCode::InvalidRequest));
+    let remove = Request::new::<TasksNotesRemove>(
+        5,
+        &TasksNotesRemoveParams {
+            command_id: uuid(205),
+            note_id: decision_id,
+            expected_revision: 2,
+        },
+    )
+    .unwrap();
+    call(remove).unwrap();
+    assert_eq!(
+        notifications.load(Ordering::Relaxed),
+        0,
+        "private notes never reach shared LiveEvents"
+    );
 }
 
 fn list(

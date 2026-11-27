@@ -16,6 +16,7 @@ use super::instance_view;
 use super::invalid;
 use super::mutation;
 use super::not_found;
+use super::note_routes;
 use super::office_routes;
 use super::open_routes;
 use super::org_routes;
@@ -370,6 +371,7 @@ impl ApiBackend for SessionApi {
             Route::Sessions(route) => return session_routes::prepare(route, bytes),
             Route::Chat(route) => return chat_routes::prepare(route, bytes),
             Route::Tasks(route) => return task_routes::prepare(route, bytes),
+            Route::Notes(route) => return note_routes::prepare(route, bytes),
             Route::Git(route) => return git_routes::prepare(route, bytes),
             Route::Process(route) => return process_routes::prepare(route, bytes),
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
@@ -481,6 +483,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Notes(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(note_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
             Call::Git(call) => AsyncDispatch::Async {
                 future: Box::pin(
                     async move { WebReply::Json(git_routes::execute(&self, call).await) },
@@ -549,7 +557,7 @@ impl ApiBackend for SessionApi {
             Call::Hiring(_) => unreachable!("Call::Hiring is dispatched asynchronously"),
             Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
-            Call::Tasks(_) => unreachable!("Call::Tasks is dispatched asynchronously"),
+            Call::Tasks(_) | Call::Notes(_) => unreachable!("dispatched asynchronously"),
             Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
             Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
             Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),

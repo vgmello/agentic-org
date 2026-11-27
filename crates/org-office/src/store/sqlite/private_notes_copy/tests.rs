@@ -18,7 +18,7 @@ fn a_copy_carries_pages_still_in_the_wal_and_is_owner_only() {
     writer
         .execute_batch(
             "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;
-             CREATE TABLE probe (v TEXT); INSERT INTO probe VALUES ('only in the wal');",
+             INSERT INTO private_note_authors VALUES ('org', 'only in the wal');",
         )
         .unwrap();
     let wal = std::fs::metadata(db.with_extension("db-wal")).unwrap();
@@ -30,7 +30,9 @@ fn a_copy_carries_pages_still_in_the_wal_and_is_owner_only() {
     assert_eq!(mode, 0o600);
     let read = Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let value: String = read
-        .query_row("SELECT v FROM probe", [], |row| row.get(0))
+        .query_row("SELECT author_id FROM private_note_authors", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(value, "only in the wal");
     // A copy never replaces a file that is there.
@@ -107,4 +109,14 @@ fn a_user_space_copy_carries_rows_still_in_the_wal_and_passes_only_its_own_check
         snapshot_user_space(&db, &copy).is_err(),
         "never replaces a file"
     );
+}
+
+#[test]
+fn a_copy_or_check_keeps_temporary_data_in_memory() {
+    let (_dir, db) = notes_db();
+    let conn = open_read_only(&db).unwrap();
+    let temp_store: i64 = conn
+        .query_row("PRAGMA temp_store", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(temp_store, 2, "MEMORY");
 }
