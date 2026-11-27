@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use crate::toolless::ToollessPromptAdapter;
 use crate::transcript::TranscriptParser;
 use crate::{
     Capabilities, LaunchContext, LaunchPlan, Probe, ProbeContext, ProbeOutput, ProbeResult,
@@ -152,6 +153,13 @@ pub trait AgentRuntime: Send + Sync {
 
     /// Sans-I/O conversation transcript parser and layout descriptor for this runtime, if any.
     fn transcript_parser(&self) -> Option<&dyn TranscriptParser> {
+        None
+    }
+
+    /// Sans-I/O strict tool-less prompt adapter for watcher and summary runs (`WATCH-4`), if
+    /// this runtime supports a true zero-tool/zero-file CLI mode. Returns `None` (fail closed)
+    /// for runtimes that cannot disable all file and tool access.
+    fn toolless_prompt(&self) -> Option<&dyn ToollessPromptAdapter> {
         None
     }
 }

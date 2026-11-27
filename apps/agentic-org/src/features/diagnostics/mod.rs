@@ -6,6 +6,7 @@
 
 mod doctor;
 mod doctor_host;
+mod doctor_types;
 mod logs;
 mod org_integrity;
 mod org_integrity_checks;

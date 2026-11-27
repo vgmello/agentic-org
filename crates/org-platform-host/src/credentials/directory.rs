@@ -511,7 +511,7 @@ pub(super) fn valid_suffix(suffix: &str) -> bool {
 /// random source.
 pub(super) fn temporary_name() -> Result<String, CredentialError> {
     let mut random = [0u8; 16];
-    File::open("/dev/urandom")?.read_exact(&mut random)?;
+    org_platform::confinement::fill_entropy(&mut random)?;
     let mut name = String::from(TEMPORARY);
     for byte in random {
         name.push_str(&format!("{byte:02x}"));

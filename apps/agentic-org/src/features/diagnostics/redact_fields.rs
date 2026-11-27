@@ -2,7 +2,52 @@
 //! HTTP headers, quoted JSON/log key-value fields, unquoted `key: value` secret fields,
 //! `KEY=value` / query parameter assignments, and recovery codes.
 
-use super::redact::{find_ascii_ci, is_json_space_escape, unquoted_token_len, REDACTED};
+/// Replacement for every redacted secret value.
+pub(crate) const REDACTED: &str = "[REDACTED]";
+
+pub(super) fn odd_backslashes_before(bytes: &[u8], idx: usize) -> bool {
+    bytes[..idx]
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'\\')
+        .count()
+        % 2
+        == 1
+}
+
+pub(super) fn is_json_space_escape(bytes: &[u8], idx: usize) -> bool {
+    matches!(bytes[idx], b'n' | b'r' | b't') && odd_backslashes_before(bytes, idx)
+}
+
+pub(super) fn find_ascii_ci(haystack: &str, needle_lower: &str) -> Option<usize> {
+    let h = haystack.as_bytes();
+    let n = needle_lower.as_bytes();
+    if n.is_empty() || n.len() > h.len() {
+        return None;
+    }
+    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+}
+
+pub(super) fn unquoted_token_len(bytes: &[u8], stops: &[u8]) -> usize {
+    let mut len = 0;
+    while len < bytes.len() {
+        let b = bytes[len];
+        if b == b'\\' {
+            let run = bytes[len..].iter().take_while(|&&c| c == b'\\').count();
+            if run % 2 == 1 && matches!(bytes.get(len + run), Some(b'"' | b'n' | b'r' | b't')) {
+                len += run - 1;
+                break;
+            }
+            len += run;
+            continue;
+        }
+        if b.is_ascii_whitespace() || stops.contains(&b) {
+            break;
+        }
+        len += 1;
+    }
+    len
+}
 
 const SENSITIVE_KEYS: &[&str] = &[
     "authorization",

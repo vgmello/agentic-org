@@ -342,18 +342,30 @@ pub struct ExternalSessionView {
 
 pub struct MemberExternalApprove;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemberExternalApproveParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_id: Option<String>,
-    /// The approval code `agent-os login` printed (`ABCD-EFGH`).
-    pub code: String,
+    /// The approval code `agent-os login` printed (`ABCD-EFGH`), wiped on drop and redacted from `Debug`.
+    #[serde(with = "secret_string")]
+    pub code: Zeroizing<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u64>,
     /// Park a live managed turn first instead of refusing.
     #[serde(default)]
     pub takeover: bool,
+}
+
+impl fmt::Debug for MemberExternalApproveParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MemberExternalApproveParams")
+            .field("command_id", &self.command_id)
+            .field("code", &"<redacted>")
+            .field("ttl_secs", &self.ttl_secs)
+            .field("takeover", &self.takeover)
+            .finish()
+    }
 }
 
 impl Call for MemberExternalApprove {

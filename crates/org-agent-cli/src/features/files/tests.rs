@@ -714,7 +714,7 @@ fn file_roots_reject_global_temp_system_roots_symlinks_and_untrusted_env_widener
     let valid_home = dir.path().join("agents/agent-1/home");
     let valid_tmp = dir.path().join("session-tmp");
     fs::create_dir_all(&valid_home).unwrap();
-    fs::create_dir_all(&valid_tmp).unwrap();
+    org_platform::fs::create_owner_only_dir(&valid_tmp).unwrap();
 
     // Symlink pointing at `/tmp` must be rejected by canonical check for every root slot.
     let link_to_tmp = dir.path().join("link-to-tmp");

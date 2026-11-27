@@ -167,6 +167,7 @@ mod runtime;
 mod session;
 mod spec;
 mod token;
+pub mod toolless;
 pub mod transcript;
 mod usage;
 
@@ -202,4 +203,5 @@ pub use token::{
     AgentName, CommandPrefix, EnvName, InvalidValue, McpServerName, PlainId, RuleTool, RuntimeId,
     SessionId, Token, ToolName,
 };
+pub use toolless::{ToollessPromptAdapter, ToollessPromptOutput, ToollessPromptUsage};
 pub use usage::{CostBasis, LimitStatus, RateLimit, Usage, UsageScope, Window};

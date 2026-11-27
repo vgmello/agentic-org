@@ -9,9 +9,9 @@
 
 use std::cmp::Ordering;
 
-use org_proto::search::{SearchEntityType, SEARCH_EXCERPT_MAX_CHARS, SEARCH_MAX_CURSOR_BYTES};
-use org_proto::{ApiError, ErrorCode};
+use org_proto::search::{SearchEntityType, SEARCH_EXCERPT_MAX_CHARS};
 
+pub use super::plan::SearchCursor;
 use super::plan::SearchPlan;
 use super::records::{Field, SearchDoc, FIELD_WEIGHTS};
 use super::text::{for_each_word, stem, token_count, tokens, QueryTerm};
@@ -175,22 +175,6 @@ pub fn best_first(a: &Scored, b: &Scored) -> Ordering {
     order(&key_of(a), &key_of(b))
 }
 
-fn invalid_cursor() -> ApiError {
-    ApiError::new(
-        ErrorCode::InvalidRequest,
-        "cursor is the next_cursor of a previous page",
-    )
-}
-
-/// Where a page ended: its last hit's ranking key.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SearchCursor {
-    pub score: f64,
-    pub updated_at: String,
-    pub entity_type: SearchEntityType,
-    pub entity_id: String,
-}
-
 impl SearchCursor {
     pub fn of(hit: &Scored) -> Self {
         Self {
@@ -199,53 +183,6 @@ impl SearchCursor {
             entity_type: hit.doc.entity_type,
             entity_id: hit.doc.entity_id.clone(),
         }
-    }
-
-    /// The score's exact bits, then the rest, `~`-separated.
-    pub fn encode(&self) -> String {
-        format!(
-            "{:016x}~{}~{}~{}",
-            self.score.to_bits(),
-            self.entity_type.as_str(),
-            self.updated_at,
-            self.entity_id
-        )
-    }
-
-    /// Parses a `next_cursor`.
-    pub fn parse(raw: &str) -> Result<Self, ApiError> {
-        if raw.len() > SEARCH_MAX_CURSOR_BYTES {
-            return Err(invalid_cursor());
-        }
-        let mut parts = raw.splitn(4, '~');
-        let (Some(bits), Some(kind), Some(updated_at), Some(entity_id)) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            return Err(invalid_cursor());
-        };
-        let plain = |text: &str, extra: &[char]| {
-            text.chars()
-                .all(|c| c.is_ascii_alphanumeric() || extra.contains(&c))
-        };
-        let score = (bits.len() == 16)
-            .then(|| u64::from_str_radix(bits, 16).ok())
-            .flatten()
-            .map(f64::from_bits)
-            .filter(|s| s.is_finite() && *s >= 0.0)
-            .ok_or_else(invalid_cursor)?;
-        let entity_type = SearchEntityType::parse(kind).ok_or_else(invalid_cursor)?;
-        if !plain(updated_at, &['-', ':', '.', '+'])
-            || entity_id.is_empty()
-            || !plain(entity_id, &['-'])
-        {
-            return Err(invalid_cursor());
-        }
-        Ok(Self {
-            score,
-            updated_at: updated_at.to_owned(),
-            entity_type,
-            entity_id: entity_id.to_owned(),
-        })
     }
 
     /// Whether `hit` comes after this cursor, best first.

@@ -74,7 +74,7 @@ fn approve(
         actor,
         &MemberExternalApproveParams {
             command_id: None,
-            code: code.into(),
+            code: code.to_owned().into(),
             ttl_secs: None,
             takeover,
         },
@@ -475,7 +475,7 @@ fn login_requests_validate_key_label_and_agent() {
             &fx.owner_id,
             &MemberExternalApproveParams {
                 command_id: None,
-                code: login(&mgr, &fx.agent_a, &ws).1,
+                code: login(&mgr, &fx.agent_a, &ws).1.into(),
                 ttl_secs: Some(1),
                 takeover: false,
             },
@@ -777,7 +777,7 @@ fn external_renew_extends_active_lease_audits_and_refuses_revoked_expired_or_una
             &fx.owner_id,
             &MemberExternalApproveParams {
                 command_id: None,
-                code,
+                code: code.into(),
                 ttl_secs: Some(3600),
                 takeover: false,
             },

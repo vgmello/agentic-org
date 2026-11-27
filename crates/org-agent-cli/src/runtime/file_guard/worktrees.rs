@@ -17,11 +17,13 @@ use std::fs;
 use std::io::{ErrorKind, Read as _};
 use std::path::{Path, PathBuf};
 
-use super::denylist::{check_other_agent_for_id, has_denied_static_segment};
-use super::paths::{
-    agent_id_from_path, agent_managed_ancestor, lexical_normalize, path_eq, path_is_within,
+use super::denylist::{
+    check_other_agent_for_id, has_denied_static_segment, push_unique, RootEntry,
 };
-use super::roots::{is_forbidden_root, push_unique, RootEntry};
+use super::paths::{
+    agent_id_from_path, agent_managed_ancestor, is_forbidden_root, lexical_normalize, path_eq,
+    path_is_within,
+};
 
 const MAX_GIT_POINTER_BYTES: u64 = 8 * 1024;
 

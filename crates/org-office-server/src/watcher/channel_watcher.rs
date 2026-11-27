@@ -115,10 +115,14 @@ impl ChannelWatcher {
     }
 
     pub fn production(office: Arc<Office>, sessions: Option<Arc<SessionManager>>) -> Self {
+        let runtimes = sessions
+            .as_ref()
+            .map(|s| s.runtimes().clone())
+            .unwrap_or_else(org_office_sessions::RuntimeRegistry::production);
         Self::new(
             office,
             sessions,
-            Arc::new(CliWatcherRuntimeProvider),
+            Arc::new(CliWatcherRuntimeProvider::new(runtimes)),
             WatcherConfig::default(),
         )
     }

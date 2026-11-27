@@ -102,6 +102,7 @@ pub(super) fn project_or_hiring(
     shared: &Shared,
     binding: &Binding,
     delegation: Option<&super::delegation::Delegation>,
+    dispatch_fn: fn(&Request, &Shared, &mut Binding) -> Response,
 ) -> Option<Response> {
     project_read(request, shared, binding)
         .or_else(|| hiring_rpc(request, shared, binding, delegation))
@@ -115,7 +116,7 @@ pub(super) fn project_or_hiring(
         .or_else(|| costs_rpc(request, shared, binding, delegation))
         .or_else(|| providers_rpc(request, shared, binding, delegation))
         .or_else(|| federation_rpc(request, shared, binding))
-        .or_else(|| tess_rpc(request, shared, binding))
+        .or_else(|| tess_rpc(request, shared, binding, dispatch_fn))
 }
 
 fn sessions_rpc(

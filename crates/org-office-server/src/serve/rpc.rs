@@ -95,7 +95,12 @@ fn is_tess_method(request: &Request) -> bool {
         || request.is::<TessSessionReset>()
 }
 
-pub(super) fn tess_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+pub(super) fn tess_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+    dispatch_fn: fn(&Request, &Shared, &mut Binding) -> Response,
+) -> Option<Response> {
     if !is_tess_method(request) {
         return None;
     }
@@ -128,7 +133,7 @@ pub(super) fn tess_rpc(request: &Request, shared: &Shared, binding: &Binding) ->
             id: caller_id.to_owned(),
             via_grant: true,
         };
-        super::dispatch::answer(sub_req, shared, &mut human_binding)
+        dispatch_fn(sub_req, shared, &mut human_binding)
     };
     let exec_ref: Option<&org_tess::ApplyExecFn<'_>> = request
         .is::<org_proto::tess::SuggestionApply>()

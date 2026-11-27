@@ -167,7 +167,7 @@ async fn execute_approve(
 ) -> ApiReply {
     let params = MemberExternalApproveParams {
         command_id,
-        code: code.as_str().to_owned(),
+        code: code.clone_zeroizing(),
         ttl_secs,
         takeover,
     };

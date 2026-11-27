@@ -13,8 +13,9 @@ use super::doctor_host::{
     check_permissions, check_release_pin_at, check_sockets, validate_marker_content,
 };
 use super::logs::{matches_office_filter, validate_office_filter};
-use super::org_integrity::{check_org_state, walk_state_tree_bounded, StateIndex};
+use super::org_integrity::{walk_state_tree_bounded, StateIndex};
 use super::org_integrity_checks::build_sqlite_parity_check;
+use super::org_integrity_checks::check_org_state;
 use super::paths::{
     normalize_lstat_path, probe_lock_held, read_regular_bounded, validate_loaded_abs_path,
     write_atomic_owner_only, InstancePaths, LockProbe,

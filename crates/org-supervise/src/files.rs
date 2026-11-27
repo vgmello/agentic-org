@@ -1,7 +1,7 @@
 //! Directory-relative, no-follow planned file installation. Never writes through a leaf.
 use std::ffi::{CString, OsStr};
 use std::fs::{File, Permissions};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -138,7 +138,7 @@ impl PrivateDirectory {
         let parent = root(parent_path)?;
         private_directory(&parent)?;
         let mut random = [0; 16];
-        File::open("/dev/urandom")?.read_exact(&mut random)?;
+        org_platform::confinement::fill_entropy(&mut random)?;
         let name = CString::new(format!("probe-{:032x}", u128::from_ne_bytes(random))).unwrap();
         // Pinned private parent, newly allocated literal name, no chmod of any inode.
         posix::make_directory_at(&parent, &name, 0o700)?;
@@ -245,7 +245,7 @@ pub(crate) fn write_file(base: &Path, relative: &Path, contents: &[u8]) -> io::R
         parent = directory(&parent, name, false)?;
     }
     let mut random = [0u8; 16];
-    File::open("/dev/urandom")?.read_exact(&mut random)?;
+    org_platform::confinement::fill_entropy(&mut random)?;
     let temp = CString::new(format!(
         ".org-supervise-{:032x}",
         u128::from_ne_bytes(random)

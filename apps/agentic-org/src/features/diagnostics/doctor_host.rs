@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use super::doctor::DoctorCheck;
+use super::doctor_types::DoctorCheck;
 use super::paths::{
     check_owner_and_mode, normalize_lstat_path, probe_lock_held, read_regular_bounded,
     InstancePaths, LockProbe,

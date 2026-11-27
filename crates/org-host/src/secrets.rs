@@ -5,28 +5,27 @@
 //! key store (`keys`) before the office's server starts. It is in the host's memory only from its
 //! creation (or a load from the store) until the first line that carries it is written.
 
-use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 
 use org_proto::{OfficeSecretsKey, OFFICE_SECRETS_KEY_BYTES};
 
-/// A fresh office secrets key: 32 bytes from `/dev/urandom`.
+/// A fresh office secrets key: 32 bytes from OS CSPRNG (`org_platform::confinement::fill_entropy`).
 pub(crate) fn generate_office_secrets_key() -> io::Result<OfficeSecretsKey> {
     random(OfficeSecretsKey::from_bytes)
 }
 
-/// A fresh non-secret unique name: 16 lowercase hex characters (8 bytes) from `/dev/urandom`,
+/// A fresh non-secret unique name: 16 lowercase hex characters (8 bytes) from OS CSPRNG,
 /// for per-spawn file names such as a rendezvous socket. It is not a key and carries no authority.
 pub(crate) fn generate_unique_name() -> io::Result<String> {
     random(|bytes| bytes[..8].iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// 32 bytes from `/dev/urandom`, wrapped by `wrap`. The bytes read are zeroed afterwards (best
+/// 32 bytes from OS CSPRNG, wrapped by `wrap`. The bytes read are zeroed afterwards (best
 /// effort), whether or not the read succeeded; only the wrapped secret keeps them.
 fn random<T>(wrap: impl FnOnce([u8; 32]) -> T) -> io::Result<T> {
     const _: () = assert!(OFFICE_SECRETS_KEY_BYTES == 32);
     let mut bytes = [0u8; 32];
-    let read = File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes));
+    let read = org_platform::confinement::fill_entropy(&mut bytes);
     let secret = read.map(|()| wrap(bytes));
     zero(&mut bytes);
     secret

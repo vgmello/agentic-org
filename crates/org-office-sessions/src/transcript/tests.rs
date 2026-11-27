@@ -802,3 +802,36 @@ fn secrets_in_subagent_agent_id_and_entry_id_are_redacted() {
 
     let _ = fs::remove_dir_all(&home);
 }
+
+#[test]
+fn walk_regular_files_enforces_shared_visited_entries_budget_across_empty_dirs_and_symlinks() {
+    let home = temp_home("visited-budget");
+    let canon_home = fs::canonicalize(&home).unwrap();
+    let root = canon_home.join(".claude/projects");
+    fs::create_dir_all(&root).unwrap();
+
+    // Populate more than `MAX_VISITED_ENTRIES` empty directories and symlinks (0 regular files,
+    // so the `out.len() >= 512` cap never triggers).
+    let target = canon_home.join("dangling-target");
+    let total_entries = super::discover::MAX_VISITED_ENTRIES + 256;
+    for idx in 0..total_entries {
+        if idx % 2 == 0 {
+            fs::create_dir(root.join(format!("empty-{idx:05}"))).unwrap();
+        } else {
+            org_platform::fs::create_symlink(&target, &root.join(format!("link-{idx:05}")))
+                .unwrap();
+        }
+    }
+
+    let mut visited = 0usize;
+    let mut files = Vec::new();
+    super::discover::walk_regular_files(&root, &canon_home, 0, &mut visited, &mut files);
+    assert_eq!(
+        visited,
+        super::discover::MAX_VISITED_ENTRIES,
+        "walk_regular_files must stop once MAX_VISITED_ENTRIES is reached"
+    );
+    assert!(files.is_empty());
+
+    let _ = fs::remove_dir_all(&home);
+}

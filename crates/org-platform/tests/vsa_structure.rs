@@ -76,7 +76,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use graph::{cycles, load_target};
+use graph::{cycles, display_path, load_target, Target};
 use rules::{
     agent_cli_violations, cycle_violations, layout_violations, office_reach_ins,
     operator_cli_violations,
@@ -99,6 +99,53 @@ const OPERATOR_COMPOSERS: [&str; 2] = ["cli", "features"];
 /// Every strongly connected component of top-level production modules that exists today:
 /// `(crate root, members in name order)`. Emptied in `TASK-256`: zero intra-crate cycles remain.
 const KNOWN_CYCLES: &[(&str, &[&str])] = &[];
+
+/// Every strongly connected component of nested sibling production submodules (depth >= 2) that
+/// pre-existed when `TASK-259` extended the SCC guard across all module depths:
+/// `(crate root, parent module path, members in name order)`. Shrink-only ratchet: no new nested
+/// cycle may be introduced, no listed cycle may grow, and removed/shrunk entries must be updated
+/// in the same change. (`org-office::search`, `org-office-server::serve`, and
+/// `org-agent-cli::runtime::file_guard` were broken in `TASK-259` and stay permanently at 0.)
+const KNOWN_NESTED_CYCLES: &[(&str, &str, &[&str])] = &[
+    (
+        "apps/agentic-org/src/lib.rs",
+        "crate::features::sign_in",
+        &["hr_bind", "office_proxy"],
+    ),
+    (
+        "crates/org-agent-cli/src/lib.rs",
+        "crate::features::processes",
+        &["process", "process_inspect"],
+    ),
+    (
+        "crates/org-platform-host/src/lib.rs",
+        "crate::admission",
+        &["linux", "macos", "refused", "test_support"],
+    ),
+    (
+        "crates/org-platform-host/src/lib.rs",
+        "crate::credentials",
+        &[
+            "directory",
+            "linux",
+            "macos",
+            "mounts",
+            "refused",
+            "release",
+            "rules",
+        ],
+    ),
+    (
+        "crates/org-platform/src/lib.rs",
+        "crate::process",
+        &["linux", "macos", "raw_spawn"],
+    ),
+    (
+        "crates/org-proto/src/lib.rs",
+        "crate::web",
+        &["outcome", "views"],
+    ),
+];
 
 /// Every `org-office` file that names another domain's `features` today: `(file, domain)`.
 /// Emptied in `TASK-218`: zero cross-domain `features/` reach-ins remain.
@@ -170,6 +217,89 @@ fn print_requested() -> bool {
     std::env::var_os("VSA_STRUCTURE_PRINT").is_some()
 }
 
+/// Strongly connected components among sibling submodules at depth >= 2 (i.e. direct children of
+/// any non-root module `parent`, such as `crate::search::{plan, rank}` or
+/// `crate::serve::{dispatch, rpc, sessions}`). Returns sorted `(parent, members)` pairs.
+fn sibling_submodule_cycles(target: &Target) -> Vec<(Vec<String>, Vec<String>)> {
+    let parents: BTreeSet<Vec<String>> = target
+        .modules
+        .iter()
+        .filter(|m| m.path.len() >= 2)
+        .map(|m| m.path[..m.path.len() - 1].to_vec())
+        .collect();
+    let mut found = Vec::new();
+    for parent in parents {
+        let depth = parent.len();
+        let children: BTreeSet<String> = target
+            .modules
+            .iter()
+            .filter(|m| m.path.len() == depth + 1 && m.path[..depth] == parent[..])
+            .map(|m| m.path[depth].clone())
+            .collect();
+        if children.len() < 2 {
+            continue;
+        }
+        let mut graph: BTreeMap<String, BTreeSet<String>> = children
+            .iter()
+            .map(|c| (c.clone(), BTreeSet::new()))
+            .collect();
+        for reference in &target.references {
+            if reference.from.len() <= depth || reference.to.len() <= depth {
+                continue;
+            }
+            if reference.from[..depth] != parent[..] || reference.to[..depth] != parent[..] {
+                continue;
+            }
+            let from = &reference.from[depth];
+            let to = &reference.to[depth];
+            if from != to && children.contains(from) && children.contains(to) {
+                graph.entry(from.clone()).or_default().insert(to.clone());
+            }
+        }
+        for component in cycles(&graph) {
+            found.push((parent.clone(), component));
+        }
+    }
+    found.sort();
+    found
+}
+
+fn nested_cycle_violations(target: &Target, known: &[(&str, &str, &[&str])]) -> Vec<String> {
+    let root = target.root.display().to_string();
+    let found: Vec<(String, Vec<String>)> = sibling_submodule_cycles(target)
+        .into_iter()
+        .map(|(parent, members)| (display_path(&parent), members))
+        .collect();
+    let listed: Vec<(String, Vec<String>)> = known
+        .iter()
+        .filter(|(r, _, _)| *r == root)
+        .map(|(_, parent, members)| {
+            (
+                (*parent).to_owned(),
+                members.iter().map(|m| (*m).to_owned()).collect(),
+            )
+        })
+        .collect();
+    let mut out = Vec::new();
+    for entry @ (parent, component) in &found {
+        if !listed.contains(entry) {
+            out.push(format!(
+                "{root}: the sibling submodules under `{parent}` {{{}}} depend on each other in a cycle; break it (a listed nested cycle never grows, and none is added)",
+                component.join(", ")
+            ));
+        }
+    }
+    for entry @ (parent, component) in &listed {
+        if !found.contains(entry) {
+            out.push(format!(
+                "{root}: the listed nested cycle under `{parent}` {{{}}} is gone or changed; update or remove its KNOWN_NESTED_CYCLES entry",
+                component.join(", ")
+            ));
+        }
+    }
+    out
+}
+
 #[test]
 fn the_workspace_keeps_its_vsa_boundaries_and_only_shrinks_its_module_cycles() {
     let repo = repository();
@@ -183,9 +313,18 @@ fn the_workspace_keeps_its_vsa_boundaries_and_only_shrinks_its_module_cycles() {
                     for cycle in cycles(&target.graph()) {
                         println!("cycle {} {:?}", root.display(), cycle);
                     }
+                    for (parent, cycle) in sibling_submodule_cycles(&target) {
+                        println!(
+                            "nested-cycle {} {} {:?}",
+                            root.display(),
+                            display_path(&parent),
+                            cycle
+                        );
+                    }
                 }
                 failures.extend(layout_violations(&target));
                 failures.extend(cycle_violations(&target, KNOWN_CYCLES));
+                failures.extend(nested_cycle_violations(&target, KNOWN_NESTED_CYCLES));
                 targets.insert(root.display().to_string(), target);
             }
             Err(error) => failures.push(error),
@@ -195,6 +334,13 @@ fn the_workspace_keeps_its_vsa_boundaries_and_only_shrinks_its_module_cycles() {
         if !targets.contains_key(*root) {
             failures.push(format!(
                 "{root}: listed in KNOWN_CYCLES but not a crate target"
+            ));
+        }
+    }
+    for (root, _, _) in KNOWN_NESTED_CYCLES {
+        if !targets.contains_key(*root) {
+            failures.push(format!(
+                "{root}: listed in KNOWN_NESTED_CYCLES but not a crate target"
             ));
         }
     }
@@ -234,4 +380,83 @@ fn the_workspace_keeps_its_vsa_boundaries_and_only_shrinks_its_module_cycles() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn nested_sibling_submodule_cycles_at_depth_two_and_three_are_caught() {
+    let cyclic = tests::target(
+        "nested/src/lib.rs",
+        &[
+            ("nested/src/lib.rs", "mod area;"),
+            ("nested/src/area/mod.rs", "mod a; mod b; mod deep;"),
+            ("nested/src/area/a.rs", "use super::b::B; pub struct A;"),
+            ("nested/src/area/b.rs", "use super::a::A; pub struct B;"),
+            ("nested/src/area/deep/mod.rs", "mod x; mod y; mod z;"),
+            (
+                "nested/src/area/deep/x.rs",
+                "use super::y::Y; pub struct X;",
+            ),
+            (
+                "nested/src/area/deep/y.rs",
+                "use super::z::Z; pub struct Y;",
+            ),
+            (
+                "nested/src/area/deep/z.rs",
+                "use super::x::X; pub struct Z;",
+            ),
+        ],
+    );
+    let violations = nested_cycle_violations(&cyclic, &[]);
+    assert_eq!(violations.len(), 2, "{violations:#?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`crate::area` {a, b}")),
+        "{violations:#?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`crate::area::deep` {x, y, z}")),
+        "{violations:#?}"
+    );
+    assert!(nested_cycle_violations(
+        &cyclic,
+        &[
+            ("nested/src/lib.rs", "crate::area", &["a", "b"]),
+            ("nested/src/lib.rs", "crate::area::deep", &["x", "y", "z"]),
+        ]
+    )
+    .is_empty());
+    let stale = nested_cycle_violations(
+        &cyclic,
+        &[("nested/src/lib.rs", "crate::area", &["a", "b", "c"])],
+    );
+    assert_eq!(
+        stale.len(),
+        3,
+        "a mismatched listed nested cycle fails both ways plus unlisted cycles: {stale:#?}"
+    );
+
+    // Acyclic nested siblings (even with a #[cfg(test)] back-edge) pass cleanly.
+    let acyclic = tests::target(
+        "clean/src/lib.rs",
+        &[
+            ("clean/src/lib.rs", "mod area;"),
+            ("clean/src/area/mod.rs", "mod leaf; mod upper;"),
+            (
+                "clean/src/area/leaf.rs",
+                "pub struct Leaf;\n#[cfg(test)] mod t { use super::super::upper::Upper; }",
+            ),
+            (
+                "clean/src/area/upper.rs",
+                "use super::leaf::Leaf; pub struct Upper(pub Leaf);",
+            ),
+        ],
+    );
+    assert!(
+        nested_cycle_violations(&acyclic, &[]).is_empty(),
+        "{:?}",
+        nested_cycle_violations(&acyclic, &[])
+    );
 }

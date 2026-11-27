@@ -6,17 +6,16 @@
 
 use serde_json::Value;
 
+pub(crate) use super::redact_fields::REDACTED;
 use super::redact_fields::{
-    is_sensitive_key, redact_env_assignments, redact_header_values, redact_quoted_key_values,
-    redact_recovery_codes, redact_unquoted_key_values,
+    find_ascii_ci, is_json_space_escape, is_sensitive_key, redact_env_assignments,
+    redact_header_values, redact_quoted_key_values, redact_recovery_codes,
+    redact_unquoted_key_values, unquoted_token_len,
 };
 use super::redact_pem::{
     has_leading_orphan_pem_end, has_unclosed_pem_begin, redact_pem_blocks,
     scrub_preceding_pem_body, strip_pem_end_line, REDACTED_PRIVATE_KEY,
 };
-
-/// Replacement for every redacted secret value.
-pub(crate) const REDACTED: &str = "[REDACTED]";
 
 const SECRET_PREFIXES: &[(&str, usize)] = &[
     ("sk-ant-", 6),
@@ -178,53 +177,9 @@ pub(super) fn is_token_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')
 }
 
-pub(super) fn odd_backslashes_before(bytes: &[u8], idx: usize) -> bool {
-    bytes[..idx]
-        .iter()
-        .rev()
-        .take_while(|&&b| b == b'\\')
-        .count()
-        % 2
-        == 1
-}
-
-pub(super) fn is_json_space_escape(bytes: &[u8], idx: usize) -> bool {
-    matches!(bytes[idx], b'n' | b'r' | b't') && odd_backslashes_before(bytes, idx)
-}
-
 fn at_word_start(input: &str, idx: usize) -> bool {
     let bytes = input.as_bytes();
     idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric() || is_json_space_escape(bytes, idx - 1)
-}
-
-pub(super) fn find_ascii_ci(haystack: &str, needle_lower: &str) -> Option<usize> {
-    let h = haystack.as_bytes();
-    let n = needle_lower.as_bytes();
-    if n.is_empty() || n.len() > h.len() {
-        return None;
-    }
-    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
-}
-
-pub(super) fn unquoted_token_len(bytes: &[u8], stops: &[u8]) -> usize {
-    let mut len = 0;
-    while len < bytes.len() {
-        let b = bytes[len];
-        if b == b'\\' {
-            let run = bytes[len..].iter().take_while(|&&c| c == b'\\').count();
-            if run % 2 == 1 && matches!(bytes.get(len + run), Some(b'"' | b'n' | b'r' | b't')) {
-                len += run - 1;
-                break;
-            }
-            len += run;
-            continue;
-        }
-        if b.is_ascii_whitespace() || stops.contains(&b) {
-            break;
-        }
-        len += 1;
-    }
-    len
 }
 
 fn redact_all_prefixes(input: &str, total: &mut usize) -> String {

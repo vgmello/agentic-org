@@ -203,7 +203,7 @@ fn answer_directory_or_session(
     if request.is::<OrgSnapshotCall>() {
         return Some(org_snapshot(request, shared, binding));
     }
-    if let Some(response) = project_or_hiring(request, shared, binding, delegation) {
+    if let Some(response) = project_or_hiring(request, shared, binding, delegation, answer) {
         return Some(response);
     }
     if request.is::<Who>() {

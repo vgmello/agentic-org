@@ -7,8 +7,6 @@
 //! and are purged automatically when the requesting `host.sock` connection closes.
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, Weak};
 
@@ -93,8 +91,7 @@ impl CliApprovals {
             ));
         }
         let mut raw = [0u8; TOKEN_BYTES];
-        File::open("/dev/urandom")
-            .and_then(|mut f| f.read_exact(&mut raw))
+        org_platform::confinement::fill_entropy(&mut raw)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "randomness unavailable"))?;
         let digest = ApprovalDigest::of(instance_id, &raw);
         let encoded = base64url_encode(&raw);

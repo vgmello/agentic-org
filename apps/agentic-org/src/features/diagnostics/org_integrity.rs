@@ -10,12 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use super::doctor::DoctorCheck;
-use super::org_integrity_checks::{
-    build_cross_link_check, build_display_key_check, build_sqlite_parity_check, build_syntax_check,
-    resolve_office_db,
-};
-use super::paths::{normalize_lstat_path, read_regular_bounded, validate_plain_path};
+use super::paths::{normalize_lstat_path, read_regular_bounded};
 use super::yaml_front::{parse_markdown_front_matter, parse_yaml_mapping};
 
 const MAX_SCAN_ENTRIES: usize = 10_000;
@@ -60,82 +55,7 @@ pub(super) enum TargetKind {
     AnyEntity,
 }
 
-fn syntax_fail(scope: &str, msg: impl Into<String>, fix: &str, path: &Path) -> Vec<DoctorCheck> {
-    vec![DoctorCheck::fail(
-        format!("{scope}.syntax"),
-        "org_integrity",
-        msg,
-        Some(fix.to_owned()),
-        Some(path.display().to_string()),
-    )]
-}
-
-/// Runs all four organization-state integrity checks against `org_dir`.
-pub(crate) fn check_org_state(
-    org_dir: &Path,
-    office_db_override: Option<&Path>,
-    scope_label: &str,
-) -> Vec<DoctorCheck> {
-    if let Err(err) = validate_plain_path(org_dir) {
-        return syntax_fail(
-            scope_label,
-            err.to_string(),
-            "Pass a clean path without `..` or NUL bytes.",
-            org_dir,
-        );
-    }
-    let state_root = resolve_state_root(org_dir);
-    let norm_root = normalize_lstat_path(&state_root);
-    match fs::symlink_metadata(&norm_root) {
-        Ok(m) if m.is_dir() => {}
-        Ok(_) => {
-            return syntax_fail(
-                scope_label,
-                format!(
-                    "`{}` is not a real directory (symlinks are refused)",
-                    norm_root.display()
-                ),
-                "Point --org-dir at a real durable/state directory.",
-                &norm_root,
-            );
-        }
-        Err(e) => {
-            return syntax_fail(
-                scope_label,
-                format!("cannot inspect `{}`: {e}", norm_root.display()),
-                "Verify the organization state directory exists and is readable.",
-                &norm_root,
-            );
-        }
-    }
-
-    let mut index = StateIndex::default();
-    walk_state_tree(&norm_root, &norm_root, &mut index);
-
-    let mut checks = vec![
-        build_syntax_check(&index, scope_label, &norm_root),
-        build_display_key_check(&index, scope_label, &norm_root),
-        build_cross_link_check(&index, scope_label, &norm_root),
-    ];
-    if let Some(db_path) = resolve_office_db(org_dir, &norm_root, office_db_override) {
-        checks.push(build_sqlite_parity_check(&index, &db_path, scope_label));
-    }
-    checks
-}
-
-fn resolve_state_root(org_dir: &Path) -> PathBuf {
-    let durable_state = org_dir.join("durable").join("state");
-    if fs::symlink_metadata(&durable_state).is_ok_and(|m| m.is_dir()) {
-        return durable_state;
-    }
-    let direct_state = org_dir.join("state");
-    if fs::symlink_metadata(&direct_state).is_ok_and(|m| m.is_dir()) {
-        return direct_state;
-    }
-    org_dir.to_path_buf()
-}
-
-fn walk_state_tree(root: &Path, dir: &Path, index: &mut StateIndex) {
+pub(super) fn walk_state_tree(root: &Path, dir: &Path, index: &mut StateIndex) {
     walk_state_tree_bounded(root, dir, 0, MAX_SCAN_DEPTH, MAX_SCAN_ENTRIES, index);
 }
 
