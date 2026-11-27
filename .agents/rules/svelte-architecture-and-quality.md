@@ -3,150 +3,112 @@ paths:
   - "apps/agentic-org-ui/**"
 ---
 
-# Svelte architecture, security and quality rules (9/10 bar)
+# Svelte 5 & SvelteKit Architecture, Security, and Quality Rules
 
-These rules apply to every change under `apps/agentic-org-ui/`. They exist because the
-2026-11-26 Claude Opus `xhigh` UI audit found 42 production files over 700 lines, 2 source
-dependency cycles, barrel imports pulling 2.1 MB of JS into every shell page's first paint,
-18 duplicated wire parsers, an unguarded Chat reload race, and missing UI/client guards on
-built-in agents (Milestone `m-7`, `TASK-225`..`TASK-230`).
+These rules apply to every change under `apps/agentic-org-ui/`. `backlog/docs/doc-8 - Architecture-Rules.md` (parent `agentic-org-project`) governs cross-domain boundaries; this file defines the enforceable UI contract.
 
-`backlog/docs/doc-8 - Architecture-Rules.md` (parent `agentic-org-project`) still governs
-domain boundaries. This file adds the enforceable Svelte 5 / SvelteKit rules inside
-`apps/agentic-org-ui/`.
+Every automated claim below is verified fail-closed by `src/lib/platform/tooling/gate-self-test.test.ts` and executed on every `bun run gate`.
 
 ---
 
-## 1. File size ratchet: aim for <= 500 lines; 700 is the hard cap
+## 1. Component & File Size Ratchet (`<= 500` LOC target)
 
-| Rule | Value |
-| --- | --- |
-| Target for a production `.svelte` / `.ts` / `.js` / `.css` file | **500 lines or fewer** |
-| Hard cap for any unlisted production file | **700 lines** |
-| Legacy files over 700 lines | listed in `apps/agentic-org-ui/large-files.allow`; **a listed file may only shrink** |
-| Enforced by | `src/lib/platform/tooling/file-size-ratchet.test.ts` (Vitest + CI `ui-large-files-list` shrink-only job) |
+| Rule | Value | Enforced by |
+| --- | --- | --- |
+| New / unlisted production files (tracked or untracked) | **`<= 500` lines** | `file-size-ratchet.test.ts` (vs. `merge-base origin/v1`) |
+| Existing legacy files `501–700` lines | **may never grow** | `file-size-ratchet.test.ts` (base comparison) |
+| Legacy files `> 700` lines (`large-files.allow`) | **strictly shrink-only**; delete once `<= 700` | `file-size-ratchet.test.ts` + CI `ui-large-files-list` |
+| Plain `.css` imports (incl. `?inline`/`?raw`) & `<style>@import` outside `src/lib/styles/**` & root `+layout.svelte` | **banned** (breaks Svelte CSS scoping & `css_unused_selector`) | `eslint.config.js` + `file-size-ratchet.test.ts` |
 
-- Every line counts (`\n` count, plus trailing unterminated line), including `<style>` blocks.
-- Production vs. non-production is decided by `isNonProductionModule` in
-  `src/lib/platform/tooling/production-import-guard.ts`. Never place production code under
-  `testing/`, `mocks/`, `fixtures/`, or `*.test.ts` to bypass the cap.
-- **When touching a listed file:** keep net line count `<= 0`. If new behavior is needed,
-  extract a cohesive responsibility (`<= 500 LOC`) first, update `large-files.allow` to the
-  exact new line count, and delete the entry once `<= 700`.
-- **No mechanical splitting** (`part2.svelte`, `misc.ts`). Split by responsibility:
-  - `.svelte.ts` state/loader controller
-  - cohesive sub-components (header, toolbar, list/card, form/dialog)
-  - pure domain/mapping helpers (`.ts`)
+- Count includes `<style>` blocks (`\n` count + trailing line). Never move `<style>` into an imported `.css` file to dodge the cap.
+- Never place production code under `testing/`, `mocks/`, `fixtures/`, or `*.test.ts`.
+- Allowlist entries can never be traded for new large files; new paths are allowed only for genuine `git diff -M` renames with `newLines <= oldLines`.
+- Split by real responsibility: cohesive child Svelte components (with scoped `<style>`), `.svelte.ts` state/loader controllers, and pure `.ts` domain helpers — never `part2.svelte` or `misc.ts`.
+
+---
+
+## 2. Bundle Budgets & Non-UI Barrels
+
+- **Never re-export Svelte components from `modules/<domain>/index.ts`.** Keep `index.ts` lightweight (types, pure helpers, API singletons); put shared cross-module Svelte components in `modules/<domain>/ui.ts` or explicit component paths (human/review check + enforced indirectly via bundle budgets).
+- **`src/lib/platform/**` and `src/routes/(shell)/+layout.svelte` may never import domain barrels** (any `$lib/modules/<x>`, `/index`, or relative `../modules/<x>` form — enforced by `eslint.config.js` and tested in `gate-self-test.test.ts`).
+- **Lazy-load heavy shell overlays** (command palette modal, creation dialogs, companion drawers) via dynamic `import()` on first open.
+- **Shrink-only gzip budgets** (`apps/agentic-org-ui/bundle-budget.json`, enforced fail-closed by `scripts/check-build-assets.ts` + `bundle-budget.test.ts`):
+  - `(shell)` and `(onboarding)` first-paint closures (including `client/entry.js`, `app.js`, root layout, and group layout) must stay within their JS, CSS, and total gzip budgets (shrink-only).
+  - Every nested `(shell)` `+layout.svelte`, `(shell)` `+page.svelte`, and `(onboarding)` `+page.svelte` incremental JS closure must stay `<= 150 kB` gzip (legacy routes/layouts above `150 kB` are locked shrink-only in `bundle-budget.json`; stale overrides fail the build).
+
+---
+
+## 3. Layered Module Graph & Wire Choke-Point
+
+Enforced via real TypeScript + Svelte AST import parsing across tracked and untracked files in `src/lib/platform/tooling/module-graph.test.ts`:
+
+- **Zero cycles (`[]`)** across all `module/*` (including bare barrel imports), `components`, non-shell `platform/*`, and `src/lib/*` root modules (`lib-root:*`).
+- **Layer boundaries:**
+  - `platform/{http,auth,tooling,organizations}` never imports `modules/*` or `platform/shell`; non-Svelte `platform/*` never imports `components/**`.
+  - `components/**` never imports `modules/*` (legacy `components -> platform/shell` exceptions are locked shrink-only in `layer-exceptions.allow`).
+  - Cross-module imports go through public entries (`$lib/modules/<domain>` or `ui.ts`); legacy cross-module `/features/` imports are locked shrink-only in `cross-module-features.allow`.
+- **Single untrusted-wire decode choke-point:** Use `$lib/platform/http/decode` (`asRec`, `asStr`, `asNum`, etc.) and `$lib/platform/http/wire`; never copy-paste local `asRec` decoders (review check).
+- **No test fakes in production:** Never import types or values from `engine.ts`, `reducer.ts`, `world.ts`, or `testing/` into production code (enforced by `productionImportGuard`).
+
+---
+
+## 4. Security, Auth, CSP & Built-in Agent Immutability
+
+- **Single auth & SSE choke-point (enforced by `eslint.config.js`):** All authenticated HTTP & SSE calls go through `appSession.controller()` (`read`, `submit`, `subscribeEvents`, `openSseStream`). Raw `fetch`, `window`/`globalThis`/`self.fetch`, destructured `fetch`, `EventSource`, `'X-Org-Session-Proof'` literals, and `SESSION_PROOF_HEADER` imports are banned outside `session-controller.ts`, `events.ts`, `json-http.ts`, and `wire.ts`.
+- **Zero raw DOM HTML sinks (enforced by `eslint.config.js`):** Zero `{@html ...}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval`, or `new Function()`.
+- **Single safe-URL helper:** Validate every server-supplied or query-derived navigation target through `$lib/platform/http/safe-url` (`safeInternalPath` / `splitSafeHref`) or `$lib/platform/auth/return-target` (`safeReturnTarget`). Every `eslint-disable-next-line svelte/no-navigation-without-resolve` must route its pathname through `resolve()` and carry `-- <reason>`.
+- **Links & buttons (enforced by `eslint.config.js`):** `svelte/no-target-blank` and `svelte/button-has-type` are errors.
+- **Built-in agents (`HR` and `Tess` / `chief_of_staff`) are immutable (review + unit tests):** Check `isBuiltInAgent(member)` (trusting `member.builtin_key` exclusively when present) in both UI controls and client action helpers — never allow rename, handle change, pause/resume, home-team move, or offboard/delete.
+- **Device-only storage (`localStorage` & `sessionStorage` — enforced by `eslint.config.js`):** Banned in new production files (global, `window`/`globalThis`/`self` member, or destructured) unless routed through a caller-scoped device-store helper registered with `appSession.onSessionEnded()`. Never claim device-only notes were posted to the office.
+- **Strict CSP (`config/csp/html.txt`):** Zero `data:` URIs in built CSS/JS (`check-build-assets.ts`).
+
+---
+
+## 5. Svelte 5 Runes, State, Async & Lifecycle Hygiene
+
+- **Runes enforced by compiler:** `svelte.config.js` compiles all `src/**` with `runes: true`. Never use Svelte 4 syntax (`export let`, `$:`, `on:`, `$app/stores`).
+- **Typed async promise hygiene (enforced by `eslint.config.js`):** `@typescript-eslint/no-floating-promises` and `@typescript-eslint/no-misused-promises` are errors across all production `src/**/*.ts` and `src/**/*.svelte.ts` modules.
+- **State discipline (review check):**
+  - Use `$state.raw` for server snapshots and read-only fetched lists/objects.
+  - Use `$state.snapshot` when passing reactive state across non-Svelte boundaries (`JSON.stringify`, `structuredClone`, external libs, HTTP bodies).
+  - Any module-level `$state` holding session/org data MUST register cleanup via `appSession.onSessionEnded()`.
+  - Prefer `$derived` / `$derived.by` and event handlers over `$effect`. Every `$effect` must synchronize with a real external system (DOM, timer, network subscription, browser event) — never copy props or mirror state.
+- **Stable `{#each}` keys (review check):** Always key by a stable, unique ID deduplicated at the decoder/model boundary. Never use index keys or index-suffixed keys (`${label}-${idx}`) on reorderable, filterable, or interactive lists (index keys are allowed only for static, non-interactive text segments such as highlight spans).
+- **Async race & resource teardown (review + controller race tests):** Every async loader uses a monotonic request generation counter + `AbortController` signal, ignores stale results after org/route switch or `onDestroy`, and pairs every listener, timer, `requestAnimationFrame`, and stream reader (`try/finally` `cancel()` + `releaseLock()`) with teardown.
+- **Suppressions ratchet (enforced by `suppressions-ratchet.test.ts`):**
+  - Inline ESLint configuration comments (`/* eslint ... */`, `/* eslint-env ... */`, `/* global ... */`) and file-wide/block `eslint-disable` comments are **strictly forbidden**.
+  - Only line-scoped `eslint-disable-next-line` / `eslint-disable-line` with `-- <reason>` and `svelte-ignore` with an immediately preceding reason comment are permitted, and per-file counts of `eslint`, `svelte`, and `$effect` are locked shrink-only in `suppressions.allow`.
+
+---
+
+## 6. Accessibility, CSS Scoping & 7-Theme Tokens
+
+- **Icon-only controls require a tooltip (owner rule, 2026-11-24 — review + Playwright):** Every icon-only button, link, or toggle MUST provide an accessible name (`aria-label`) AND a hover + keyboard-focus tooltip dismissible with `Escape` (WCAG 1.4.13, `bits-ui` `Tooltip`). Panel `Escape` handlers must ignore `Escape` while `[role="tooltip"]` is open.
+- **Scoped CSS only:** Keep component styles inside `<style>` blocks; use `:global(...)` only nested under a scoped parent selector.
+- **Semantic tokens across all 7 themes (enforced by `look-tokens.test.ts`):** Zero hard-coded colors anywhere in `src/` (including `.svelte` and `.css`).
+- **Reduced motion (review + Playwright):** Every custom animation/transition must respect `@media (prefers-reduced-motion: reduce)` / `motion-reduce:`.
+
+---
+
+## 7. Testing & Error Boundaries
+
+- **Controller race tests:** Every `.svelte.ts` loader/controller must have a unit test proving stale in-flight responses are ignored after an org/scope switch or dispose.
+- **Regression test per fix:** Every bug fix ships with a focused test that fails without the fix.
+- **New routes:** Must render explicit loading, empty, and error states (and rely on `+error.svelte` / `<svelte:boundary>` where failures are isolated), plus a Playwright smoke test covering `prefers-reduced-motion: reduce`, axe accessibility checks, and at least two themes.
+
+---
+
+## 8. Verification Gate (`bun run gate`)
+
+Before every UI commit, run the single mechanical gate from `apps/agentic-org-ui/`:
 
 ```sh
-cd apps/agentic-org-ui
-bunx --no-install vitest run src/lib/platform/tooling/file-size-ratchet.test.ts
-# Print exact counts over cap:
-UI_FILE_SIZE_RATCHET_PRINT=1 bunx --no-install vitest run src/lib/platform/tooling/file-size-ratchet.test.ts
-# Run CI shrink-only comparison against origin/v1:
-UI_FILE_SIZE_RATCHET_BASE=$(git merge-base HEAD origin/v1) \
-  bunx --no-install vitest run src/lib/platform/tooling/file-size-ratchet.test.ts
+bun run gate
 ```
 
----
+(`bun run format:check && bun run check && bun run lint && bun run test && bun run build` — runs Prettier baseline check, `svelte-check`, hardened `eslint --max-warnings=0`, all Vitest suites including `file-size-ratchet`, `module-graph`, `suppressions-ratchet`, `bundle-budget`, `gate-self-test`, `look-tokens`, and `ui-gate`, plus production `vite build` + fail-closed `check-build-assets`.)
 
-## 2. Bundle hygiene & non-UI barrels
-
-- **Never re-export Svelte components from a domain's default `index.ts` barrel** when
-  `platform/**` or other modules import types/APIs from it. A barrel forces Rollup/Rolldown
-  to bundle every re-exported feature component and stylesheet into the importing chunk.
-  - Keep `modules/<domain>/index.ts` lightweight (types, pure helpers, API singletons).
-  - Put shared cross-module Svelte components in explicit feature paths or `modules/<domain>/ui.ts`.
-  - **`platform/**` may never import domain barrels** (enforced by ESLint `no-restricted-imports`).
-- **Lazy-load heavy shell overlays** (command palette results, creation dialogs, expanded
-  companion panels) via dynamic `import()` on first open.
-- **Target budgets:** Shell first-paint JS `<= 280 kB` gzip (`<= 200 kB` once overlays are
-  lazy-loaded); route-specific JS `<= 150 kB` gzip on top of the shell.
-
----
-
-## 3. Zero source dependency cycles & single wire choke-point
-
-- **Zero module cycles (`doc-8`).** Enforced by `src/lib/platform/tooling/module-graph.test.ts`.
-  Existing legacy cycles (if any remain during Wave 2) are explicitly allowlisted as shrinking
-  debt; no new cycle edge is ever allowed.
-- **Shared components (`src/lib/components/**`) never import `$lib/modules/**`.** Pass data
-  and callbacks via props/snippets.
-- **Never import cross-module internals** (`$lib/modules/<other>/features/...`). Always import
-  from the owning module's public entry (`$lib/modules/<other>` or `$lib/modules/<other>/ui`).
-- **One untrusted-wire decode choke-point.** Use shared helpers in `$lib/platform/http/decode`
-  (and `$lib/platform/http/wire`); never copy-paste local `asRec` / `asStr` / `asNum` decoders
-  in new adapters.
-- **Contract types never live in test fakes.** Never import types or values from `engine.ts`,
-  `reducer.ts`, `world.ts`, or `testing/` into production code (`productionImportGuard` enforces
-  runtime isolation; keep types in `types.ts` / `rules.ts`).
-
----
-
-## 4. Security, auth, CSP & built-in agent immutability
-
-- **All authenticated HTTP & SSE calls go through `appSession.controller()`** (`read`,
-  `submit`, `subscribeEvents`, `openSseStream`). Never call raw `globalThis.fetch` directly in
-  `src/lib/modules/**`, and never leak `X-Org-Session-Proof` outside `session-controller.ts`.
-- **Zero `{@html ...}` or `innerHTML`** in production Svelte components. Render structured
-  segments via plain Svelte text interpolation. Validate every server-supplied navigation URL
-  through a safe same-origin path check rejecting `//`, `/\`, external schemes, and ASCII
-  control characters.
-- **Built-in agents (`HR` and `Tess` / `chief_of_staff`) are immutable.** Always check
-  `isBuiltInAgent(member)` in both UI menus/dialogs AND client action helpers:
-  - Never allow rename, handle change, pause/resume, home-team move, or offboard/delete.
-  - Trust `member.builtin_key` exclusively when present.
-- **Device-only (`localStorage`) state must be honest and caller-scoped.** Never claim
-  device-only notes/comments were "posted" to the office, and clear caller-scoped local state
-  on sign-out or account switch (`appSession.onSessionEnded`).
-- **Strict CSP (`config/csp/html.txt`):** No `data:` URIs in built CSS/JS (`check-build-assets`).
-  Any new browser media preview (`blob:`) requires an explicit CSP update + test.
-
----
-
-## 5. Svelte 5 reactivity, async races & lifecycle hygiene
-
-- **Runes only:** Never introduce Svelte 4 syntax (`export let`, `$:`, `on:`, `$app/stores`).
-- **Prefer `$derived` / `$derived.by` and event handlers over `$effect`.** Never use `$effect`
-  merely to copy props into `$state` or mirror one `$state` variable into another.
-- **Guard every async loader against races and unmount:** Use a monotonic request generation
-  counter + `AbortController` signal, debounce rapid live-event refetches, and ignore stale
-  responses after org switch, route change, or `onDestroy`.
-- **Clean up every resource:** Every `addEventListener`, `setInterval`, `setTimeout`,
-  `requestAnimationFrame`, `AbortController`, and stream reader (`try/finally` `cancel()` +
-  `releaseLock()`) must have a paired teardown.
-- **Disambiguate `{#each}` keys** whenever data comes from server/model/user input
-  (e.g. `` `${label}-${idx}` ``) to prevent Svelte 5 `each_key_duplicate` runtime crashes.
-
----
-
-## 6. Accessibility, reduced motion & 7-theme tokens
-
-- **Icon-only controls require a tooltip (owner rule, 2026-11-24):** Every icon-only button,
-  link, or toggle MUST have an accessible name (`aria-label`) AND a hover + keyboard-focus
-  tooltip dismissible with `Escape` (WCAG 1.4.13, `bits-ui` `Tooltip`). Panel-level `Escape`
-  handlers must ignore `Escape` while `[role="tooltip"]` is open.
-- **Zero hard-coded colors in `.svelte` files.** Use semantic CSS tokens (`var(--exec-*)`,
-  `var(--tone-*)`, Tailwind semantic utilities) verified across all 7 themes (`look-tokens.test.ts`).
-- **Respect `prefers-reduced-motion: reduce`** on every custom transition/animation.
-
----
-
-## 7. Pre-commit 7-point self-check & periodic audit cadence
-
-Before **every** UI commit, verify all 7 points:
-1. File sizes: `file-size-ratchet.test.ts` green; no new file `> 700` LOC (target `<= 500`).
-2. Module graph & barrels: `module-graph.test.ts` green; no new cycles; no component barrels pulled into `platform/**`.
-3. Auth & XSS: zero raw `fetch`, zero `{@html}`, safe URL checks, built-in HR/Tess guards intact.
-4. Async & lifecycle: monotonic gen + `AbortController` on loaders; every listener/timer/rAF cancelled.
-5. Keys & reactivity: no state-syncing `$effect`; unique `{#each}` keys; `svelte-autofixer` returns 0 issues.
-6. Accessibility & themes: tooltips on all icon-only controls; `prefers-reduced-motion`; semantic tokens only.
-7. Gates green: `bun run check`, `bun run lint`, `bunx --no-install vitest run`, `bun run build` (+ `check-build-assets`), and live screenshots for visible UI changes.
-
-### Periodic Architecture Audit Cadence (Keep Score >= 9/10)
-- **Trigger-based (primary):** Run a fresh read-only Opus `xhigh` UI architecture audit after
-  any major UI milestone or wave (`> 1,000 LOC` net UI change, new route group, or new domain
-  module).
-- **Standing safety net (low frequency):** Run a lightweight biweekly audit (1st & 15th of
-  each month) checking ratchet shrink progress, module cycles, shell/route gzip budgets, and
-  prototype delta — creating follow-up tasks only if any dimension drops below 9/10.
+**Human-only verification (cannot be automated by `bun run gate`):**
+1. Inspect live Playwright screenshots across themes (including reduced motion) for any visible UI change.
+2. Spot-check keyboard navigation, focus restoration, and Escape dismissal on any new overlay/drawer/dialog.
+3. Confirm no scope shortcuts or silent fallbacks were introduced, then run a fresh local `code-reviewer` pass before merging to `v1`.

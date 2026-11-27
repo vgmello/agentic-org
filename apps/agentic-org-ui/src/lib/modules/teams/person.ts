@@ -41,7 +41,7 @@ export function handleProblem(handle: string): string | undefined {
 export function nameProblem(name: string): string | undefined {
 	const n = name.trim();
 	if (n === '') return 'Enter their name.';
-	// eslint-disable-next-line no-control-regex
+	// eslint-disable-next-line no-control-regex -- rejects ASCII control characters in member names
 	if (/[\u0000-\u001f\u007f]/.test(n)) return 'Remove the control characters.';
 	return undefined;
 }

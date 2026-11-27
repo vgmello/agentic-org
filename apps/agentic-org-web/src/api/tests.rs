@@ -2399,3 +2399,87 @@ fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
     }
     assert!(calls.methods().contains(&"organization.list".to_owned()));
 }
+
+#[test]
+fn project_doc_routes_check_session_path_query_and_body_before_reaching_hq() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+        })
+    }));
+    let base = format!("/api/v1/organizations/{ORG}/projects/checkout/docs");
+    let doc = "0193a5c0-0000-7000-8000-000000000040";
+    let create = r#"{"command_id":"0193a5c0-0000-7000-8000-000000000041","kind":"guide","title":"Setup","section":"guides"}"#;
+    let update = r#"{"command_id":"0193a5c0-0000-7000-8000-000000000042","expected_revision":1,"title":"New"}"#;
+    let mv = r#"{"command_id":"0193a5c0-0000-7000-8000-000000000043","expected_revision":2,"new_path":"a.md"}"#;
+    let valid = [
+        (Method::GET, base.clone(), ""),
+        (
+            Method::GET,
+            format!("{base}?section=guides&status=draft&limit=10"),
+            "",
+        ),
+        (Method::GET, format!("{base}/index"), ""),
+        (Method::GET, format!("{base}/{doc}"), ""),
+        (Method::POST, base.clone(), create),
+        (Method::PATCH, format!("{base}/{doc}"), update),
+        (Method::POST, format!("{base}/{doc}/move"), mv),
+    ];
+    // No session: 401 before the path or the body is looked at.
+    for (method, target, body) in &valid {
+        let reply = send(&gateway, method.clone(), target, body, None, &[]);
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{method} {target}");
+    }
+    let pair = sign_in(&gateway).pair();
+    // Bad paths, queries and bodies: 400 without resolving the HQ office.
+    for (method, target, body) in [
+        (Method::GET, format!("{base}/guides-setup"), ""),
+        (Method::GET, format!("{base}/index?x=1"), ""),
+        (Method::GET, format!("{base}/{doc}?x=1"), ""),
+        (Method::GET, format!("{base}?unknown=1"), ""),
+        (Method::GET, format!("{base}?status=archived"), ""),
+        (Method::GET, format!("{base}?section=a&section=b"), ""),
+        (Method::GET, format!("{base}/index"), "{}"),
+        (Method::PATCH, format!("{base}/index"), update),
+        (Method::PATCH, base.clone(), update),
+        (Method::PATCH, format!("{base}/{doc}"), "{}"),
+        (Method::POST, format!("{base}/{doc}/move"), "not json"),
+        (Method::POST, base.clone(), r#"{"title":1}"#),
+        (Method::POST, format!("{base}/index"), create),
+        (
+            Method::GET,
+            format!("/api/v1/organizations/{ORG}/projects/bad.ref/docs"),
+            "",
+        ),
+    ] {
+        let reply = send(&gateway, method.clone(), &target, body, Some(&pair), &[]);
+        assert_eq!(
+            reply.status,
+            StatusCode::BAD_REQUEST,
+            "{method} {target} {body}"
+        );
+    }
+    let deeper = send(
+        &gateway,
+        Method::GET,
+        &format!("{base}/{doc}/move/x"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(deeper.status, StatusCode::NOT_FOUND);
+    assert!(
+        !calls.methods().contains(&"organization.list".to_owned()),
+        "refused requests never resolve the HQ office"
+    );
+    // Well-formed requests reach the HQ office (503 here: the fixture has no office socket).
+    for (method, target, body) in &valid {
+        let reply = send(&gateway, method.clone(), target, body, Some(&pair), &[]);
+        assert_eq!(
+            reply.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{method} {target}"
+        );
+    }
+    assert!(calls.methods().contains(&"organization.list".to_owned()));
+}

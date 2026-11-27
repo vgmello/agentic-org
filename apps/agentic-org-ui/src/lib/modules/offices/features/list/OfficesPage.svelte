@@ -153,7 +153,7 @@
 	// ---- status changes of every office, said once in a polite live region (OFC-13, §6.1) ---------------------------
 	let changeNote = $state('');
 	// Bookkeeping only, never rendered: a plain map.
-	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive bookkeeping map never rendered
 	const lastStatus = new Map<string, string>();
 	$effect(() => {
 		for (const office of offices) {

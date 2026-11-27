@@ -1,54 +1,64 @@
-import { describe, expect, it, vi } from 'vitest';
-
-let mockCallerScope: string | undefined = 'inst-1:acct-a';
-vi.mock('$lib/platform/auth/app-session.svelte', () => ({
-	appSession: {
-		get callerScope() {
-			return mockCallerScope;
-		}
-	}
-}));
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	appendInboxDeviceComment,
 	clearInboxDeviceComments,
-	readInboxDeviceComments
+	readInboxCommentDrafts,
+	readInboxDeviceComments,
+	writeInboxCommentDrafts
 } from './device-comments';
 
-describe('inbox device-only comments', () => {
-	it('preserves notes across undefined caller (reauth), clears on account switch and sign-out', () => {
-		const store = new Map<string, string>();
-		const mockStorage = {
-			get length() {
-				return store.size;
-			},
-			key: (i: number) => [...store.keys()][i] ?? null,
-			getItem: (k: string) => store.get(k) ?? null,
-			setItem: (k: string, v: string) => void store.set(k, v),
-			removeItem: (k: string) => void store.delete(k)
-		};
-		(globalThis as unknown as { window: { localStorage: typeof mockStorage } }).window = {
-			localStorage: mockStorage
-		};
+function createMemoryStorage(): Storage {
+	const map = new Map<string, string>();
+	return {
+		get length() {
+			return map.size;
+		},
+		clear() {
+			map.clear();
+		},
+		getItem(key: string) {
+			return map.has(key) ? map.get(key)! : null;
+		},
+		key(index: number) {
+			return [...map.keys()][index] ?? null;
+		},
+		removeItem(key: string) {
+			map.delete(key);
+		},
+		setItem(key: string, value: string) {
+			map.set(key, String(value));
+		}
+	};
+}
 
-		mockCallerScope = 'inst-1:acct-a';
-		mockStorage.setItem('unrelated.key', 'keep');
-		const saved = appendInboxDeviceComment('org-1', 'item-1', 'Check rollout');
-		expect(saved).toHaveLength(1);
-		expect(readInboxDeviceComments('org-1', 'item-1')).toHaveLength(1);
+describe('Inbox device-local comments and drafts cleanup', () => {
+	let local: Storage;
+	let session: Storage;
 
-		// Transient reauth / unreachable leaves saved notes intact
-		mockCallerScope = undefined;
-		expect(readInboxDeviceComments('org-1', 'item-1')).toHaveLength(1);
-
-		// Switching to another signed-in account wipes prior caller's notes
-		mockCallerScope = 'inst-1:acct-b';
-		expect(readInboxDeviceComments('org-1', 'item-1')).toEqual([]);
-		expect(mockStorage.getItem('unrelated.key')).toBe('keep');
-
-		// Explicit sign-out cleanup removes new caller's notes too
-		appendInboxDeviceComment('org-1', 'item-2', 'Acct B note');
+	beforeEach(() => {
+		local = createMemoryStorage();
+		session = createMemoryStorage();
+		vi.stubGlobal('window', { localStorage: local, sessionStorage: session });
 		clearInboxDeviceComments();
-		expect(readInboxDeviceComments('org-1', 'item-2')).toEqual([]);
+	});
+
+	afterEach(() => {
+		clearInboxDeviceComments();
+		vi.unstubAllGlobals();
+	});
+
+	it('clears persisted comments, sessionStorage drafts, and in-memory drafts on sign-out', () => {
+		appendInboxDeviceComment('org-1', 'item-1', 'Follow up tomorrow');
+		writeInboxCommentDrafts({ 'org-1::item-1': 'Unsent draft note' });
+
+		expect(readInboxDeviceComments('org-1', 'item-1')).toHaveLength(1);
+		expect(readInboxCommentDrafts()).toEqual({ 'org-1::item-1': 'Unsent draft note' });
+		expect(session.getItem('agentic-org.inbox.commentDrafts')).toContain('Unsent draft note');
+
+		clearInboxDeviceComments();
+
+		expect(readInboxDeviceComments('org-1', 'item-1')).toEqual([]);
+		expect(readInboxCommentDrafts()).toEqual({});
+		expect(session.getItem('agentic-org.inbox.commentDrafts')).toBeNull();
 	});
 });

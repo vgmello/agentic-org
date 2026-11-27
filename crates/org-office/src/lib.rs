@@ -74,6 +74,9 @@ pub mod office_local;
 mod private_fs;
 pub mod private_notes;
 pub mod processes;
+/// The project documentation tree family (`TASK-55`): documents, media and the office-maintained
+/// `index.yaml` under `state/projects/<id>/docs/`.
+pub mod project_docs;
 pub mod projects;
 pub mod providers;
 pub mod replication;

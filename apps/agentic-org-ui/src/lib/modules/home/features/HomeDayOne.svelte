@@ -4,7 +4,7 @@
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Clock from '@lucide/svelte/icons/clock';
-	import type { HomeInboxState } from '$lib/home/model';
+	import type { HomeInboxState } from '$lib/modules/home/model';
 
 	interface Props {
 		isDayOne: boolean;

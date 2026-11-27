@@ -1457,13 +1457,13 @@
 					</div>
 				{/if}
 			</div>
-
 			<aside
 				id="activity-release-panel"
 				class="activity-panel"
 				aria-label="Release gates and operational context"
 				inert={!panelOpen ? true : undefined}
 			>
+				<!-- scrollable region requires keyboard focus for arrow/page scroll -->
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 				<div
 					bind:this={panelScrollEl}

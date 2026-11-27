@@ -12,6 +12,7 @@ mod account_routes;
 mod attachment_routes;
 mod chat_routes;
 mod cost_routes;
+mod doc_routes;
 mod git_routes;
 mod hiring_routes;
 mod hq_context;
@@ -167,6 +168,7 @@ pub enum Route {
     Notes(note_routes::NoteRoute),
     Git(git_routes::GitRoute),
     Process(process_routes::ProcessRoute),
+    Docs(doc_routes::DocRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
     OfficeFederation(office_routes::OfficeFederationRoute),
@@ -210,6 +212,7 @@ pub enum Call {
     Notes(note_routes::NoteCall),
     Git(git_routes::GitCall),
     Process(process_routes::ProcessCall),
+    Docs(doc_routes::DocCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),
     OfficeFederation(office_routes::OfficeFederationCall),
