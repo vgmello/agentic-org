@@ -14,6 +14,19 @@ use crate::organization::{
     },
 };
 
+/// A `default_dod_json` column: a JSON array of step texts, or null (`TASK-88`).
+pub(in crate::store::sqlite) fn default_dod(
+    row: &Row<'_>,
+    col: usize,
+) -> rusqlite::Result<Option<Vec<String>>> {
+    let json: Option<String> = row.get(col)?;
+    json.map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(col, rusqlite::types::Type::Text, e.into())
+        })
+}
+
 pub(super) fn organization_row(row: &Row<'_>) -> rusqlite::Result<Organization> {
     Ok(Organization {
         id: id(row, 0)?,
@@ -21,7 +34,8 @@ pub(super) fn organization_row(row: &Row<'_>) -> rusqlite::Result<Organization> 
         name: row.get(2)?,
         organization_repository_id: id(row, 3)?,
         state_branch: row.get(4)?,
-        meta: meta(row, 5)?,
+        default_dod: default_dod(row, 5)?,
+        meta: meta(row, 6)?,
     })
 }
 

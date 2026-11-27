@@ -89,6 +89,9 @@ pub struct Project {
     pub development_process_id: Option<Id>,
     pub contributing_team_ids: Vec<Id>,
     pub repositories: Vec<ProjectRepositoryLink>,
+    /// The project's default definition of done (`TASK-88`): `None` inherits the
+    /// organization's, `Some([])` opts out, a list overrides. Written only when set.
+    pub default_dod: Option<Vec<String>>,
     pub meta: Meta,
 }
 
@@ -115,6 +118,7 @@ impl Project {
             revision: self.meta.revision,
             created_at: self.meta.created_at.clone(),
             updated_at: self.meta.updated_at.clone(),
+            default_dod: self.default_dod.clone(),
         }
     }
 }
@@ -154,6 +158,7 @@ pub fn encode_project(record: &Project) -> Vec<u8> {
         })
         .collect();
     fields.insert("repositories".into(), Value::Array(repo_entries));
+    records::write_default_dod(record.default_dod.as_ref(), &mut fields);
     yaml::encode(&fields)
 }
 
@@ -201,6 +206,7 @@ pub fn decode_project(bytes: &[u8]) -> Result<Project, RecordError> {
             integration_branch,
         });
     }
+    let default_dod = records::read_default_dod(&mut reader)?;
     reader.finish()?;
     Ok(Project {
         id,
@@ -212,6 +218,7 @@ pub fn decode_project(bytes: &[u8]) -> Result<Project, RecordError> {
         development_process_id,
         contributing_team_ids,
         repositories,
+        default_dod,
         meta,
     })
 }
@@ -343,3 +350,7 @@ pub fn kind_of(path: &DurablePath) -> Option<Kind> {
 pub(crate) fn time_text(at: org_store::Timestamp) -> String {
     records::time_text(at)
 }
+
+#[cfg(test)]
+#[path = "records_tests.rs"]
+mod tests;

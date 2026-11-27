@@ -11,6 +11,20 @@ use crate::organization::{
     records::{self, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Organization, Team},
 };
 
+/// Default definition-of-done items (`TASK-88`) as `org_proto::tasks::normalize_dod_items`
+/// leaves them, refused unrecorded otherwise: the office normalizes before it submits, so
+/// only a command built around it gets here.
+pub(crate) fn checked_dod_items(items: Option<&[String]>) -> Result<Option<Vec<String>>, Refusal> {
+    let Some(items) = items else {
+        return Ok(None);
+    };
+    match org_proto::tasks::normalize_dod_items(items) {
+        Ok(normalized) if normalized == items => Ok(Some(normalized)),
+        Ok(_) => invalid("a definition-of-done item is not trimmed"),
+        Err(error) => invalid(&error.message),
+    }
+}
+
 /// A rule refused the change: recorded with its operation, so a retry gets this answer.
 pub(crate) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Refusal> {
     let rejection = OrgRejection {

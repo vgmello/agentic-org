@@ -170,7 +170,7 @@ macro_rules! memory_tasks_read {
             fn checklist_steps(&self, task_id: &Id) -> Result<Vec<ChecklistStepRecord>, EngineError> {
                 read(self.table(), |t| {
                     let mut list = t.checklists.get(task_id).cloned().unwrap_or_default();
-                    list.sort_by_key(|s| s.position);
+                    list.sort_by_key(|s| (s.section, s.position));
                     list
                 })
             }

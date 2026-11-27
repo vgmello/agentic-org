@@ -1,14 +1,27 @@
 //! Row decoders for tasks and their children.
 
-use org_proto::tasks::{TaskPriority, TaskStatus, WorkType};
+use org_proto::tasks::{ChecklistSection, TaskPriority, TaskStatus, WorkType};
 use rusqlite::Row;
 
 use super::super::organization::{id, meta, number, optional_id};
-use super::{bad_col, opt_u64};
+use super::{bad_col, opt_u64, TASK_META_AT};
 use crate::tasks::records::{
-    ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord, TaskDetailsRecord,
-    TaskEventRecord, TaskLinkRecord, TaskMeta, TaskRecord, TaskWatcherRecord,
+    ChecklistStepRecord, DoneAnywayRecord, FinalSummaryRecord, OfficeTaskCounterRecord,
+    TaskCommentRecord, TaskDetailsRecord, TaskEventRecord, TaskLinkRecord, TaskMeta, TaskRecord,
+    TaskWatcherRecord,
 };
+
+/// Columns 20..=23 of a task row: its `final_summary*`, all null or all set (`TASK-88`).
+fn final_summary(row: &Row<'_>) -> rusqlite::Result<Option<FinalSummaryRecord>> {
+    let text: Option<String> = row.get(20)?;
+    let at: Option<String> = row.get(21)?;
+    let by_id = optional_id(row, 23)?;
+    match (text, at, by_id) {
+        (None, None, None) => Ok(None),
+        (Some(text), Some(at), Some(by_id)) => Ok(Some(FinalSummaryRecord { text, at, by_id })),
+        _ => Err(bad_col(20, "a final summary without its time or author")),
+    }
+}
 
 pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
     let work_type_raw: Option<String> = row.get(7)?;
@@ -46,31 +59,37 @@ pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
         modified_files: Vec::new(),
         repositories: Vec::new(),
         details: None,
-        meta: TaskMeta::from_org_meta(meta(row, 20)?),
+        final_summary: final_summary(row)?,
+        meta: TaskMeta::from_org_meta(meta(row, TASK_META_AT)?),
     })
 }
 
 pub(super) fn details_row(row: &Row<'_>) -> rusqlite::Result<TaskDetailsRecord> {
-    let sev_int: i64 = row.get(5)?;
+    let sev_int: i64 = row.get(4)?;
+    let done_anyway: Option<String> = row.get(17)?;
+    let done_anyway = done_anyway
+        .map(|json| serde_json::from_str::<DoneAnywayRecord>(&json))
+        .transpose()
+        .map_err(|_| bad_col(17, "invalid done_anyway_json"))?;
     Ok(TaskDetailsRecord {
-        definition_of_done: row.get(0)?,
-        what_happened: row.get(1)?,
-        expected: row.get(2)?,
-        steps: row.get(3)?,
-        environment: row.get(4)?,
+        what_happened: row.get(0)?,
+        expected: row.get(1)?,
+        steps: row.get(2)?,
+        environment: row.get(3)?,
         severity_confirmed: sev_int != 0,
-        reopen_count: number(row, 6)?,
-        duplicate_of_task_id: optional_id(row, 7)?,
-        closed_reason: row.get(8)?,
-        affects_feature_id: optional_id(row, 9)?,
-        request_kind: row.get(10)?,
-        request_text: row.get(11)?,
-        route_reason: row.get(12)?,
-        routing_source: row.get(13)?,
-        routed_by_employee_id: optional_id(row, 14)?,
-        merged_into_task_id: optional_id(row, 15)?,
-        suggested_triager_id: optional_id(row, 16)?,
-        suggested_verifier_id: optional_id(row, 17)?,
+        reopen_count: number(row, 5)?,
+        duplicate_of_task_id: optional_id(row, 6)?,
+        closed_reason: row.get(7)?,
+        affects_feature_id: optional_id(row, 8)?,
+        request_kind: row.get(9)?,
+        request_text: row.get(10)?,
+        route_reason: row.get(11)?,
+        routing_source: row.get(12)?,
+        routed_by_employee_id: optional_id(row, 13)?,
+        merged_into_task_id: optional_id(row, 14)?,
+        suggested_triager_id: optional_id(row, 15)?,
+        suggested_verifier_id: optional_id(row, 16)?,
+        done_anyway,
     })
 }
 
@@ -82,11 +101,16 @@ pub(super) fn counter_row(row: &Row<'_>) -> rusqlite::Result<OfficeTaskCounterRe
     })
 }
 
+/// A step row: `id, position, text, required, done, linked_task_id, checked_by_employee_id,
+/// checked_at, revision, section`.
 pub(super) fn step_row(row: &Row<'_>) -> rusqlite::Result<ChecklistStepRecord> {
     let req_i: i64 = row.get(3)?;
     let done_i: i64 = row.get(4)?;
+    let section: String = row.get(9)?;
+    let section = ChecklistSection::parse(&section).ok_or_else(|| bad_col(9, "invalid section"))?;
     Ok(ChecklistStepRecord {
         id: id(row, 0)?,
+        section,
         position: number(row, 1)?,
         text: row.get(2)?,
         required: req_i != 0,

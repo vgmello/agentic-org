@@ -22,6 +22,7 @@ pub mod authority;
 pub mod create_organization;
 pub mod create_team;
 pub mod deactivate_person;
+pub mod default_dod;
 pub mod ensure_chief_of_staff;
 pub mod hiring;
 pub mod may_hire;
@@ -49,6 +50,7 @@ pub use authority::HIRE_DENIED;
 pub use create_organization::{CreateOrganization, Creator, OrganizationCreated};
 pub use create_team::{CreateTeam, TeamCreated};
 pub use deactivate_person::DeactivatePerson;
+pub use default_dod::SetOrganizationDefaultDod;
 pub use ensure_chief_of_staff::{ChiefOfStaffEnsured, EnsureChiefOfStaff};
 pub use hiring::{ConfirmHire, DraftHire, HireAgent, HireChanged, WithdrawHire};
 pub use may_hire::SetMayHire;
@@ -104,10 +106,12 @@ pub enum Op {
     RegisterSatelliteOffice,
     ApplyReplicatedFiles,
     EnsureChiefOfStaff,
+    SetOrganizationDefaultDod,
+    SetProjectDefaultDod,
 }
 
 impl Op {
-    pub const ALL: [Op; 36] = [
+    pub const ALL: [Op; 38] = [
         Op::CreateOrganization,
         Op::ImportOrganization,
         Op::CreateTeam,
@@ -144,6 +148,8 @@ impl Op {
         Op::RegisterSatelliteOffice,
         Op::ApplyReplicatedFiles,
         Op::EnsureChiefOfStaff,
+        Op::SetOrganizationDefaultDod,
+        Op::SetProjectDefaultDod,
     ];
 
     /// Structure changes answer only once durable (ADR-0014).
@@ -190,6 +196,8 @@ impl Op {
             Op::RegisterSatelliteOffice => "organization.register_satellite_office",
             Op::ApplyReplicatedFiles => "organization.apply_replicated_files",
             Op::EnsureChiefOfStaff => "organization.ensure_chief_of_staff",
+            Op::SetOrganizationDefaultDod => "organization.set_default_dod",
+            Op::SetProjectDefaultDod => "organization.set_project_default_dod",
         }
     }
 }

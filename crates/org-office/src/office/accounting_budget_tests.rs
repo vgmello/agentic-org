@@ -201,6 +201,7 @@ fn seed_task(office: &Office, actor: &str, team_id: &str, project_id: &str, titl
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -602,6 +603,8 @@ fn run_l3_task_and_agent_budget_suite(fx: &CostBudgetFixture) {
                 blocked_reason: None,
                 resolution: None,
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )
         .unwrap()
@@ -1303,6 +1306,7 @@ fn run_pass1_security_and_retrigger_suite(fx: &CostBudgetFixture) {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -1587,6 +1591,8 @@ fn run_pass2_extended_reset_and_stop_suite(fx: &CostBudgetFixture) {
                 blocked_reason: None,
                 resolution: None,
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )
         .unwrap()
@@ -1675,6 +1681,8 @@ fn run_pass2_extended_reset_and_stop_suite(fx: &CostBudgetFixture) {
                 blocked_reason: None,
                 resolution: None,
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )
         .unwrap()
@@ -2252,6 +2260,8 @@ fn stage_crashed_stop_intent(
         blocked_reason: None,
         resolution: reason.clone(),
         note: reason.clone(),
+        done_anyway_reason: None,
+        final_summary: None,
     };
     let fields = serde_json::to_vec(&transition_params).unwrap();
     let task_cmd_fp = hex_of(org_store::Sha256::of_parts(&[
@@ -2296,6 +2306,8 @@ fn budget_stop_intent_crash_recovery_and_eval_blocks_in_progress_task() {
                     blocked_reason: None,
                     resolution: None,
                     note: None,
+                    done_anyway_reason: None,
+                    final_summary: None,
                 },
             )
             .unwrap()

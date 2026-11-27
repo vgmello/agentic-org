@@ -49,7 +49,8 @@ pub(super) fn write_checklist_add<T: OfficeTransport + ?Sized>(
         task: req_str(&request.input, "task")?.to_owned(),
         step_id: entity_id(request, "checklist-step")?,
         text: req_str(&request.input, "text")?.to_owned(),
-        required: opt_bool(&request.input, "required"),
+        required: Some(opt_bool(&request.input, "required")),
+        section: None,
     };
     checklist_answer(
         request,
@@ -135,6 +136,7 @@ pub(super) fn write_checklist_move<T: OfficeTransport + ?Sized>(
         task: req_str(&request.input, "task")?.to_owned(),
         step_id: req_str(&request.input, "step_id")?.to_owned(),
         position,
+        section: None,
     };
     checklist_answer(
         request,

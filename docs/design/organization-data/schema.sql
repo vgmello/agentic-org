@@ -14,6 +14,10 @@ CREATE TABLE organizations (
   name TEXT NOT NULL,
   organization_repository_id TEXT NOT NULL,
   state_branch TEXT NOT NULL,
+  -- TASK-88: the organization's default definition of done, a JSON array of step texts copied
+  -- into a new task's `dod` checklist section when neither the task nor its project names one.
+  default_dod_json TEXT CHECK (default_dod_json IS NULL OR (
+    json_valid(default_dod_json) AND json_type(default_dod_json) = 'array')),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -210,6 +214,9 @@ slug TEXT NOT NULL CHECK (
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   development_process_id TEXT,
+  -- TASK-88: NULL inherits the organization's default definition of done; '[]' opts out.
+  default_dod_json TEXT CHECK (default_dod_json IS NULL OR (
+    json_valid(default_dod_json) AND json_type(default_dod_json) = 'array')),
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
   UNIQUE (organization_id, slug),
@@ -444,6 +451,12 @@ CREATE TABLE tasks (
   resolution TEXT,
   blocked_reason TEXT,
   rank_order INTEGER CHECK (rank_order >= 0),
+  -- TASK-88: the attributed closing summary, set on close or by `tasks.final_summary` only.
+  final_summary TEXT CHECK (final_summary IS NULL OR (
+    length(trim(final_summary)) > 0 AND length(final_summary) <= 8000)),
+  final_summary_at TEXT,
+  final_summary_by_kind TEXT CHECK (final_summary_by_kind IS NULL OR final_summary_by_kind = 'employee'),
+  final_summary_by_id TEXT,
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -452,6 +465,11 @@ CREATE TABLE tasks (
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
+  CHECK ((final_summary IS NULL AND final_summary_at IS NULL AND final_summary_by_kind IS NULL
+          AND final_summary_by_id IS NULL)
+      OR (final_summary IS NOT NULL AND final_summary_at IS NOT NULL
+          AND final_summary_by_kind IS NOT NULL AND final_summary_by_id IS NOT NULL)),
+  FOREIGN KEY (organization_id, final_summary_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   UNIQUE (organization_id, office_code, number),
   FOREIGN KEY (organization_id, office_code) REFERENCES office_codes(organization_id, code) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
@@ -525,6 +543,9 @@ CREATE TABLE checklist_steps (
   target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
   target_id TEXT NOT NULL,
   id TEXT NOT NULL,
+  -- TASK-88: acceptance criteria, definition of done, or work steps; `position` is 0-based
+  -- and contiguous within its section.
+  section TEXT NOT NULL DEFAULT 'work' CHECK (section IN ('acceptance', 'dod', 'work')),
   position INTEGER NOT NULL CHECK (position >= 0),
   text TEXT NOT NULL,
   required INTEGER NOT NULL CHECK (required IN (0, 1)),
@@ -537,7 +558,7 @@ CREATE TABLE checklist_steps (
   FOREIGN KEY (organization_id,target_kind,linked_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,checked_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
-  UNIQUE (organization_id, target_kind, target_id, position),
+  UNIQUE (organization_id, target_kind, target_id, section, position),
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -1909,7 +1930,6 @@ GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
 CREATE TABLE task_details (
   organization_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
-  definition_of_done TEXT,
   shortcut_json TEXT CHECK (shortcut_json IS NULL OR (json_valid(shortcut_json) AND json_type(shortcut_json)='object')),
   done_anyway_json TEXT CHECK (done_anyway_json IS NULL OR (json_valid(done_anyway_json) AND json_type(done_anyway_json)='object')),
   what_happened TEXT,

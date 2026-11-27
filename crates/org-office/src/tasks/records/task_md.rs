@@ -11,8 +11,9 @@ use org_store::Id;
 use serde_json::{json, Map, Value};
 
 use super::{
-    is_valid_office_code, normalize_file_paths, normalize_labels, TaskDetailsRecord,
-    TaskLinkRecord, TaskMeta, TaskRecord, TaskRepositoryRecord, SCHEMA_VERSION,
+    is_valid_office_code, normalize_file_paths, normalize_labels, DoneAnywayRecord,
+    FinalSummaryRecord, TaskDetailsRecord, TaskLinkRecord, TaskMeta, TaskRecord,
+    TaskRepositoryRecord, SCHEMA_VERSION,
 };
 use crate::organization::records::{
     is_stable_id,
@@ -53,8 +54,11 @@ fn sorted_links(links: &[TaskLinkRecord]) -> Vec<&TaskLinkRecord> {
 fn details_fields(details: &TaskDetailsRecord) -> Value {
     let text = |t: &Option<String>| text_value(t.as_deref());
     let id = |i: &Option<Id>| id_value(i.as_ref());
+    let done_anyway = details.done_anyway.as_ref().map_or(Value::Null, |d| {
+        let steps: Vec<&str> = d.steps.iter().map(Id::as_str).collect();
+        json!({"reason": d.reason, "steps": steps})
+    });
     json!({
-        "definition_of_done": text(&details.definition_of_done),
         "what_happened": text(&details.what_happened),
         "expected": text(&details.expected),
         "steps": text(&details.steps),
@@ -72,7 +76,25 @@ fn details_fields(details: &TaskDetailsRecord) -> Value {
         "merged_into_task_id": id(&details.merged_into_task_id),
         "suggested_triager_id": id(&details.suggested_triager_id),
         "suggested_verifier_id": id(&details.suggested_verifier_id),
+        "done_anyway": done_anyway,
     })
+}
+
+/// The four `final_summary*` fields (`TASK-88`): all null, or all set.
+fn final_summary_fields(summary: Option<&FinalSummaryRecord>, fields: &mut Fields) {
+    let (text, at, kind, by) =
+        summary.map_or((Value::Null, Value::Null, Value::Null, Value::Null), |s| {
+            (
+                json!(s.text),
+                json!(s.at),
+                json!(FinalSummaryRecord::BY_KIND),
+                json!(s.by_id.as_str()),
+            )
+        });
+    fields.insert("final_summary".into(), text);
+    fields.insert("final_summary_at".into(), at);
+    fields.insert("final_summary_by_kind".into(), kind);
+    fields.insert("final_summary_by_id".into(), by);
 }
 
 fn repository_fields(task: &TaskRecord, fields: &mut Fields) {
@@ -159,6 +181,7 @@ pub fn task_fields(task: &TaskRecord, links: &[TaskLinkRecord]) -> Fields {
     // Reserved for task attachments (`TASK-98.4`): always written, empty until supported.
     put("attachments", json!([]));
     repository_fields(task, &mut fields);
+    final_summary_fields(task.final_summary.as_ref(), &mut fields);
     fields
 }
 
@@ -230,12 +253,39 @@ fn read_meta(reader: &mut Reader) -> Result<TaskMeta, RecordError> {
     })
 }
 
+/// `details.done_anyway` (`TASK-88`): a file written before it has none.
+fn read_done_anyway(d: &mut Reader) -> Result<Option<DoneAnywayRecord>, RecordError> {
+    if !d.has("done_anyway") {
+        return Ok(None);
+    }
+    let Some(mut done) = d.optional_mapping("done_anyway")? else {
+        return Ok(None);
+    };
+    let reason = done.text("reason")?;
+    if reason.trim().is_empty() {
+        return Err(done.error("reason", "empty"));
+    }
+    let mut steps = Vec::new();
+    for text in done.strings("steps")? {
+        steps.push(stable_text(&done, "steps", &text)?);
+    }
+    done.finish()?;
+    Ok(Some(DoneAnywayRecord { reason, steps }))
+}
+
 fn read_details(reader: &mut Reader) -> Result<Option<TaskDetailsRecord>, RecordError> {
     let Some(mut d) = reader.optional_mapping("details")? else {
         return Ok(None);
     };
+    // `TASK-88` retired `definition_of_done` (the checklist's `dod` section replaces it): a
+    // file written before then still has the key, always null since nothing set it.
+    if d.has("definition_of_done") && d.optional_text("definition_of_done")?.is_some() {
+        return Err(d.error(
+            "definition_of_done",
+            "retired: use the checklist's dod section",
+        ));
+    }
     let details = TaskDetailsRecord {
-        definition_of_done: d.optional_text("definition_of_done")?,
         what_happened: d.optional_text("what_happened")?,
         expected: d.optional_text("expected")?,
         steps: d.optional_text("steps")?,
@@ -253,9 +303,40 @@ fn read_details(reader: &mut Reader) -> Result<Option<TaskDetailsRecord>, Record
         merged_into_task_id: optional_stable(&mut d, "merged_into_task_id")?,
         suggested_triager_id: optional_stable(&mut d, "suggested_triager_id")?,
         suggested_verifier_id: optional_stable(&mut d, "suggested_verifier_id")?,
+        done_anyway: read_done_anyway(&mut d)?,
     };
     d.finish()?;
     Ok(Some(details))
+}
+
+/// The four `final_summary*` fields (`TASK-88`): a file written before them has none; a file
+/// with them has all four null or all four set, by an employee.
+fn read_final_summary(r: &mut Reader) -> Result<Option<FinalSummaryRecord>, RecordError> {
+    let keys = [
+        "final_summary",
+        "final_summary_at",
+        "final_summary_by_kind",
+        "final_summary_by_id",
+    ];
+    if keys.iter().all(|key| !r.has(key)) {
+        return Ok(None);
+    }
+    let text = r.optional_text("final_summary")?;
+    let at = r.optional_text("final_summary_at")?;
+    let kind = r.optional_text("final_summary_by_kind")?;
+    let by_id = optional_stable(r, "final_summary_by_id")?;
+    match (text, at, kind, by_id) {
+        (None, None, None, None) => Ok(None),
+        (Some(text), Some(at), Some(kind), Some(by_id))
+            if kind == FinalSummaryRecord::BY_KIND && !text.trim().is_empty() =>
+        {
+            Ok(Some(FinalSummaryRecord { text, at, by_id }))
+        }
+        _ => Err(r.error(
+            "final_summary",
+            "the summary, its time, its author's kind and ID are set together, by an employee",
+        )),
+    }
 }
 
 fn read_links(reader: &mut Reader, task_id: &Id) -> Result<Vec<TaskLinkRecord>, RecordError> {
@@ -385,6 +466,7 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
         })?,
         repositories: read_repositories(&mut r)?,
         details: read_details(&mut r)?,
+        final_summary: read_final_summary(&mut r)?,
         meta: read_meta(&mut r)?,
         id,
         office_code,

@@ -6,13 +6,15 @@ pub mod create;
 pub mod list;
 pub mod ops;
 pub mod queries;
+pub mod summary;
+pub mod transition;
 mod write;
 
 use std::collections::{BTreeSet, VecDeque};
 
 use org_proto::tasks::{
-    ChecklistStepWire, TaskCommentWire, TaskDetailsWire, TaskEventWire, TaskRefSummary, TaskView,
-    TaskWatcherWire, TASK_BODY_MAX_CHARS, TASK_TITLE_MAX_CHARS,
+    ChecklistSection, ChecklistStepWire, TaskCommentWire, TaskDetailsWire, TaskEventWire,
+    TaskRefSummary, TaskView, TaskWatcherWire, TASK_BODY_MAX_CHARS, TASK_TITLE_MAX_CHARS,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Refusal};
@@ -22,21 +24,23 @@ use crate::organization::records::{Employee, EmployeeStatus, TeamStatus};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::query::TaskRollup;
 use crate::tasks::records::{
-    ChecklistStepRecord, TaskCommentRecord, TaskDetailsRecord, TaskEventRecord, TaskRecord,
-    TaskWatcherRecord,
+    ChecklistStepRecord, FinalSummaryRecord, TaskCommentRecord, TaskDetailsRecord, TaskEventRecord,
+    TaskRecord, TaskWatcherRecord,
 };
 
 pub use self::checklist::{
     ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
 };
 pub(crate) use self::core::rewrite_task;
-pub use self::core::{AssignTask, TransitionTask, UpdateTask};
+pub use self::core::{AssignTask, UpdateTask};
 pub use self::create::{CreateTask, CreatedTask, TaskNumbering, TASK_NUMBER_BLOCK};
 pub use self::list::list_tasks;
 pub use self::ops::{AddDependency, CommentTask, RemoveDependency, UnwatchTask, WatchTask};
 pub use self::queries::{
     inspect_task, list_comments, list_history, list_labels, task_dependencies,
 };
+pub use self::summary::SetFinalSummary;
+pub use self::transition::TransitionTask;
 
 /// Result metadata returned to `org-office-server` after a task mutation commits.
 #[derive(Debug, Clone)]
@@ -287,8 +291,8 @@ pub(crate) fn parse_details<R: TasksRead>(
             ));
         }
     }
+    // `done_anyway` is the office's to set (`TASK-88`): a client's is ignored.
     Ok(TaskDetailsRecord {
-        definition_of_done: wire.definition_of_done.clone(),
         what_happened: wire.what_happened.clone(),
         expected: wire.expected.clone(),
         steps: wire.steps.clone(),
@@ -306,6 +310,7 @@ pub(crate) fn parse_details<R: TasksRead>(
         merged_into_task_id: merged_into,
         suggested_triager_id: triager,
         suggested_verifier_id: verifier,
+        done_anyway: None,
     })
 }
 
@@ -382,6 +387,9 @@ pub(crate) fn task_view(task: &TaskRecord, rollup: TaskRollup) -> TaskView {
         out.dedup();
         out
     };
+    let ac = rollup.section(ChecklistSection::Acceptance);
+    let dod = rollup.section(ChecklistSection::Dod);
+    let work = rollup.section(ChecklistSection::Work);
     let depends_on = ids(rollup.depends_on);
     let dependents = ids(rollup.dependents);
     TaskView {
@@ -416,6 +424,7 @@ pub(crate) fn task_view(task: &TaskRecord, rollup: TaskRollup) -> TaskView {
         depends_on,
         dependents,
         details: task.details.as_ref().map(TaskDetailsRecord::to_wire),
+        final_summary: task.final_summary.as_ref().map(FinalSummaryRecord::to_wire),
         created_at: task.meta.created_at.clone(),
         created_by_kind: task.meta.created_by_kind.clone(),
         created_by_id: task
@@ -432,6 +441,12 @@ pub(crate) fn task_view(task: &TaskRecord, rollup: TaskRollup) -> TaskView {
             .map(|id| id.as_str().to_owned()),
         checklist_total: rollup.checklist_total,
         checklist_done: rollup.checklist_done,
+        ac_total: ac.total,
+        ac_done: ac.done,
+        dod_total: dod.total,
+        dod_done: dod.done,
+        work_steps_total: work.total,
+        work_steps_done: work.done,
         comment_count: rollup.comment_count,
         watcher_count: rollup.watcher_count,
     }
@@ -440,6 +455,7 @@ pub(crate) fn task_view(task: &TaskRecord, rollup: TaskRollup) -> TaskView {
 pub(crate) fn step_to_wire(step: &ChecklistStepRecord) -> ChecklistStepWire {
     ChecklistStepWire {
         id: step.id.as_str().to_owned(),
+        section: step.section,
         position: step.position,
         text: step.text.clone(),
         required: step.required,

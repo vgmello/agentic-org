@@ -12,6 +12,7 @@ fn id(n: u64) -> Id {
 fn step(n: u64, position: u64, done: bool) -> ChecklistStepRecord {
     ChecklistStepRecord {
         id: id(n),
+        section: org_proto::tasks::ChecklistSection::Work,
         position,
         text: format!("step {n}: \"quoted\""),
         required: n.is_multiple_of(2),
@@ -133,4 +134,47 @@ fn the_counter_names_its_office_and_its_reservation() {
         },
     );
     assert!(decode_counter(&behind).is_err());
+}
+
+#[test]
+fn checklist_sections_number_their_own_steps_and_old_files_are_work() {
+    use org_proto::tasks::ChecklistSection::{Acceptance, Dod, Work};
+    let mut a = step(1, 0, false);
+    a.section = Dod;
+    let mut b = step(2, 1, true);
+    b.section = Work;
+    let mut c = step(3, 0, false);
+    c.section = Acceptance;
+    let mut d = step(4, 0, false);
+    d.section = Work;
+    let bytes = encode_checklist(&[a.clone(), b.clone(), c.clone(), d.clone()]).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.contains("\"section\":\"acceptance\""), "{text}");
+    // Written section by section, each in position order.
+    let decoded = decode_checklist(&bytes).unwrap();
+    let order: Vec<_> = decoded
+        .iter()
+        .map(|s| (s.id.clone(), s.section, s.position))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            (c.id.clone(), Acceptance, 0),
+            (a.id.clone(), Dod, 0),
+            (d.id.clone(), Work, 0),
+            (b.id.clone(), Work, 1),
+        ]
+    );
+    assert_eq!(encode_checklist(&decoded).unwrap(), bytes);
+    // A file written before sections has none: its steps are work, in file order.
+    let old = text
+        .replace("\"section\":\"acceptance\",", "")
+        .replace("\"section\":\"dod\",", "")
+        .replace("\"section\":\"work\",", "");
+    let legacy = decode_checklist(old.as_bytes()).unwrap();
+    assert!(legacy.iter().all(|s| s.section == Work));
+    let positions: Vec<u64> = legacy.iter().map(|s| s.position).collect();
+    assert_eq!(positions, [0, 1, 2, 3]);
+    let unknown = text.replace("\"section\":\"dod\"", "\"section\":\"notes\"");
+    assert!(decode_checklist(unknown.as_bytes()).is_err());
 }

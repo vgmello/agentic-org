@@ -2223,6 +2223,7 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -2331,6 +2332,8 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
             blocked_reason: None,
             resolution: Some("Merged".into()),
             note: None,
+            done_anyway_reason: None,
+            final_summary: None,
         },
     )
     .unwrap()
@@ -2418,6 +2421,7 @@ fn assert_sat_owned_worktree_syncs_to_hq(
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -2498,6 +2502,7 @@ fn assert_sat_worktree_rejects_hq_durable_conflicts(
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

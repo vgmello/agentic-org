@@ -76,6 +76,8 @@ fn block_task_for_budget(office: &Office, task_id: &str) -> Result<(), OfficeErr
                 blocked_reason: Some("Budget reached".into()),
                 resolution: None,
                 note: Some("Task blocked because its budget was reached.".into()),
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )? {
             Ok(_) => return Ok(()),
@@ -263,6 +265,8 @@ fn execute_or_reconcile_stop_intent(
                     .unwrap_or("Task stopped at budget limit.")
                     .to_owned(),
             ),
+            done_anyway_reason: None,
+            final_summary: None,
         };
         let fp = task_transition_fingerprint(&transition_params);
         if intent.task_command_fingerprint.as_deref() != Some(fp.as_str()) {

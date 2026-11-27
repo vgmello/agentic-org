@@ -600,6 +600,7 @@ fn seed_project_task_wake_fixture(
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

@@ -15,6 +15,7 @@
 
 pub(crate) mod attachment_ops;
 mod companions;
+pub(crate) mod dod_ops;
 pub(crate) mod git_ops;
 mod import_validation;
 pub(crate) mod messaging_ops;
@@ -32,6 +33,9 @@ use org_store::{Clock, OfficeIdentity, Opening, Store, StoreError, WriterAuthori
 pub(crate) use companions::{
     open_accounting, open_attachments, open_budgets, open_private_notes, open_providers,
     open_replication, ReplicationOpenSpec,
+};
+pub use dod_ops::{
+    OrganizationDefaultDodRead, SetOrganizationDefaultDodOp, SetProjectDefaultDodOp,
 };
 pub use git_ops::{
     AttachProjectRepositoryOp, RecordTaskRepoBranchOp, RegisterRepositoryOp, RepositoriesList,

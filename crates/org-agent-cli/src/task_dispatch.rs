@@ -237,6 +237,7 @@ fn write_task_create<T: OfficeTransport + ?Sized>(
         modified_files: opt_str_list(i, "modified_files").unwrap_or_default(),
         depends_on: opt_str_list(i, "depends_on").unwrap_or_default(),
         details: None,
+        dod: None,
     };
     let raw = transport.call_method(TasksCreate::METHOD, json!(params))?;
     let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;
@@ -351,6 +352,8 @@ fn write_task_transition<T: OfficeTransport + ?Sized>(
         blocked_reason: opt_str(i, "blocked_reason"),
         resolution: opt_str(i, "resolution"),
         note: opt_str(i, "note"),
+        done_anyway_reason: None,
+        final_summary: None,
     };
     let raw = transport.call_method(TasksTransition::METHOD, json!(params))?;
     let res: TasksMutationResult = serde_json::from_value(raw).map_err(decode_err)?;

@@ -15,9 +15,10 @@ use org_proto::private_notes::{
     TasksNotesUpdate,
 };
 use org_proto::tasks::{
-    TasksAddDependency, TasksAssign, TasksChecklistAdd, TasksChecklistCheck, TasksChecklistEdit,
-    TasksChecklistMove, TasksChecklistRemove, TasksComment, TasksComments, TasksCreate,
-    TasksDependencies, TasksHistory, TasksInspect, TasksLabels, TasksList, TasksMutationResult,
+    OrganizationDefaultDodGet, OrganizationDefaultDodSet, ProjectDefaultDodSet, TasksAddDependency,
+    TasksAssign, TasksChecklistAdd, TasksChecklistCheck, TasksChecklistEdit, TasksChecklistMove,
+    TasksChecklistRemove, TasksComment, TasksComments, TasksCreate, TasksDependencies,
+    TasksFinalSummary, TasksHistory, TasksInspect, TasksLabels, TasksList, TasksMutationResult,
     TasksRemoveDependency, TasksTransition, TasksUnwatch, TasksUpdate, TasksWatch,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
@@ -31,6 +32,14 @@ fn is_task_core_method(request: &Request) -> bool {
         || request.is::<TasksUpdate>()
         || request.is::<TasksTransition>()
         || request.is::<TasksAssign>()
+        || request.is::<TasksFinalSummary>()
+}
+
+/// The default definitions of done new tasks copy (`TASK-88`).
+fn is_task_dod_method(request: &Request) -> bool {
+    request.is::<OrganizationDefaultDodGet>()
+        || request.is::<OrganizationDefaultDodSet>()
+        || request.is::<ProjectDefaultDodSet>()
 }
 
 fn is_task_collab_method(request: &Request) -> bool {
@@ -68,6 +77,7 @@ pub(crate) fn is_task_method(request: &Request) -> bool {
         || is_task_collab_method(request)
         || is_task_checklist_method(request)
         || is_task_notes_method(request)
+        || is_task_dod_method(request)
 }
 
 /// Live task RPC service composed over [`Office`], [`LiveEvents`], and optional [`SessionManager`].
@@ -131,6 +141,7 @@ impl TaskService {
             .or_else(|| self.dispatch_collab(member, request))
             .or_else(|| self.dispatch_checklist(member, request))
             .or_else(|| self.dispatch_notes(member, request))
+            .or_else(|| self.dispatch_dod(member, request))
     }
 
     fn dispatch_core(&self, member: &str, request: &Request) -> Option<Response> {
@@ -163,7 +174,44 @@ impl TaskService {
                 self.office.task_assign(member, p)
             }));
         }
+        if request.is::<TasksFinalSummary>() {
+            return Some(self.run_write::<TasksFinalSummary>(member, request, |p| {
+                self.office.task_final_summary(member, p)
+            }));
+        }
         None
+    }
+
+    /// Default definitions of done (`TASK-88`): a change wakes replication, so satellites
+    /// copy the new default offline.
+    fn dispatch_dod(&self, member: &str, request: &Request) -> Option<Response> {
+        if request.is::<OrganizationDefaultDodGet>() {
+            return Some(run_call::<OrganizationDefaultDodGet>(request, |_| {
+                self.office.organization_default_dod()
+            }));
+        }
+        if request.is::<OrganizationDefaultDodSet>() {
+            return Some(run_call::<OrganizationDefaultDodSet>(request, |p| {
+                self.synced(self.office.organization_set_default_dod(member, p))
+            }));
+        }
+        if request.is::<ProjectDefaultDodSet>() {
+            return Some(run_call::<ProjectDefaultDodSet>(request, |p| {
+                self.synced(self.office.project_set_default_dod(member, p))
+            }));
+        }
+        None
+    }
+
+    /// `answer`, after waking replication when it is a change made.
+    fn synced<T>(
+        &self,
+        answer: Result<Result<T, ApiError>, org_office::OfficeError>,
+    ) -> Result<Result<T, ApiError>, org_office::OfficeError> {
+        if matches!(answer, Ok(Ok(_))) {
+            self.notify_sync();
+        }
+        answer
     }
 
     fn run_notifying<C: Call>(

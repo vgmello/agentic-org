@@ -1,11 +1,14 @@
-//! Operations of the projects family: `CreateProject`, `AddProjectTeam`, `RemoveProjectTeam`.
+//! Operations of the projects family: `CreateProject`, `AddProjectTeam`, `RemoveProjectTeam`,
+//! `SetProjectDefaultDod`.
 
 pub mod contributing_teams;
 pub mod create_project;
+pub mod default_dod;
 pub mod repositories;
 
 pub use contributing_teams::{AddProjectTeam, RemoveProjectTeam};
 pub use create_project::{CreateProject, OwnerTeamChoice, ProjectCreated};
+pub use default_dod::{SetProjectDefaultDod, PROJECT_DOD_DENIED};
 pub use repositories::{resolve_repository, AttachProjectRepository, RegisterRepository};
 
 use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Operation, Refusal, UnitOfWork};
