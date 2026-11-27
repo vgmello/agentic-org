@@ -1,3 +1,4 @@
+import { asNum, asRec, asStr as rawStr, type Rec } from '$lib/platform/http/decode';
 import { SESSION_PROOF_HEADER } from '$lib/platform/http/wire';
 import type {
 	TessActionProposal,
@@ -16,14 +17,10 @@ import type {
 	TessUiBlock
 } from './types';
 
-type Rec = Record<string, unknown>;
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined =>
-	typeof v === 'string' && v.length > 0 ? v : undefined;
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+const asStr = (v: unknown): string | undefined => {
+	const s = rawStr(v);
+	return s && s.length > 0 ? s : undefined;
+};
 
 const VALID_TONES = new Set<TessEntityTone>(['ok', 'warn', 'bad', 'accent', 'muted']);
 

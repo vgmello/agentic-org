@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyChat, canRead, emptyChat, feedFor, messagesIn, syncAuto, tick } from './engine';
+import { applyChat, canRead, emptyChat, feedFor, messagesIn, syncAuto, tick } from './testing/chat-engine';
 import {
 	bridgeAs,
 	byId,

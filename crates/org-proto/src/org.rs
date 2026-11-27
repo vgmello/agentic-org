@@ -24,9 +24,9 @@
 //! ## Command ids and retries
 //! `command_id` is a ULID in its canonical form: exactly 26 **uppercase** Crockford base32
 //! characters (`0-9`, `A-Z` without `I`, `L`, `O`, `U`), the first `0` to `7`. Its time part
-//! dates the command. Work writes' `change_id` ([`crate::work`]) has the same form. Until the
-//! wire moves to UUIDv7, the office stores each command under a UUIDv7 that keeps all but the
-//! ULID's lowest 6 random bits (`org_office::organization_family::operation_id`), so a client
+//! dates the command. Until the wire moves to UUIDv7, the office stores each command under a
+//! UUIDv7 that keeps all but the ULID's lowest 6 random bits
+//! (`org_office::organization_family::operation_id`), so a client
 //! must not use a monotonic ULID generator: two commands in one millisecond could map to one id,
 //! and once the first is recorded the second is refused as a reused command id or, if it comes
 //! from the same member with the same params, gets the first's stored answer without running.
@@ -100,9 +100,6 @@
 //!   them team-less when it was the project's last team (see [`ProjectRemoveTeam`]);
 //! - `team.delete` leaves the areas it owned team-less, with their leads cleared;
 //! - `area.set_team` clears a lead who isn't in the new team.
-//!
-//! Work items (`crate::work`) are office data and follow these changes afterwards, as their own
-//! work events (e.g. tasks of a project lose a `team_id` that is no longer one of its teams).
 
 mod commands;
 mod feed;

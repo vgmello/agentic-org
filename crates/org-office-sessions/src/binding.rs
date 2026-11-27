@@ -54,6 +54,11 @@ pub struct ActiveRunBinding {
     pub session_id: String,
     pub mode: BindingMode,
     pub accepted_commands: Vec<AcceptedCommandRecord>,
+    /// The member a Chief of Staff run acts for (`TASK-80.1`): set by the office alone, from
+    /// the verified caller that started the run (never from a flag or an RPC parameter), and
+    /// kept in RAM only. The server intersects that member's live authority with the run's on
+    /// every call ([`RunBindingRegistry::acting_for_caller_id`]). `None` for every other run.
+    pub acting_for_caller_id: Option<String>,
 }
 
 impl fmt::Debug for ActiveRunBinding {
@@ -65,6 +70,7 @@ impl fmt::Debug for ActiveRunBinding {
             .field("session_id", &self.session_id)
             .field("mode", &self.mode)
             .field("accepted_commands_len", &self.accepted_commands.len())
+            .field("acting_for_caller_id", &self.acting_for_caller_id)
             .finish()
     }
 }
@@ -128,7 +134,9 @@ impl RunBindingRegistry {
         Ok(out)
     }
 
-    /// Issues and stores a new run binding for `employee_id` rooted at `root_pid`.
+    /// Issues and stores a new run binding for `employee_id` rooted at `root_pid`, acting for
+    /// `acting_for_caller_id` (`TASK-80.1`): the session manager passes the caller of the very
+    /// launch it issues for (a Chief of Staff run's partition), and `None` for every other run.
     /// Replaces any older binding for the same `employee_id`.
     pub fn issue(
         &self,
@@ -136,6 +144,7 @@ impl RunBindingRegistry {
         run_id: impl Into<String>,
         session_id: impl Into<String>,
         root_pid: libc::pid_t,
+        acting_for_caller_id: Option<&str>,
     ) -> Result<ActiveRunBinding, String> {
         let token = Self::mint_token()?;
         let binding = ActiveRunBinding {
@@ -145,10 +154,19 @@ impl RunBindingRegistry {
             session_id: session_id.into(),
             mode: BindingMode::Managed { root_pid },
             accepted_commands: Vec::new(),
+            acting_for_caller_id: acting_for_caller_id.map(str::to_owned),
         };
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.insert(binding.employee_id.clone(), binding.clone());
         Ok(binding)
+    }
+
+    /// The member `employee_id`'s live managed run acts for, if it holds a live binding that
+    /// acts for one (`caller ∩ tess`, `TASK-80.1`).
+    pub fn acting_for_caller_id(&self, employee_id: &str) -> Option<String> {
+        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.get(employee_id)
+            .and_then(|binding| binding.acting_for_caller_id.clone())
     }
 
     /// Updates the `root_pid` of an issued binding right after the child spawns.

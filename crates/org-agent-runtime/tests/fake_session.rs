@@ -773,6 +773,7 @@ fn spec() -> SessionSpec {
         },
         mcp_servers: BTreeMap::new(),
         tools: None,
+        operator_shell_prefixes: Vec::new(),
     }
 }
 

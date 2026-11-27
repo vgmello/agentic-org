@@ -7,7 +7,7 @@
 use org_command::CommandTable;
 
 use super::identity::Placement;
-use super::{builtin_instructions, HR_LEAD, SAME_USER_ISOLATION_NOTICE};
+use super::{builtin_instructions, CHIEF_OF_STAFF_GUIDANCE, HR_LEAD, SAME_USER_ISOLATION_NOTICE};
 use crate::wake::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
 /// Inputs for assembling an agent's standing prompt.
@@ -30,6 +30,8 @@ pub struct InstructionInput<'a> {
     /// Instruction files of the project repository, when assembled.
     pub repository_instructions: Option<&'a str>,
     pub is_hr_lead: bool,
+    /// The agent is the built-in Chief of Staff (`TASK-80.1`): Part 5 carries her duties.
+    pub is_chief_of_staff: bool,
     pub private_home: &'a str,
     pub workspace: &'a str,
     pub permission_preset: &'a str,
@@ -96,6 +98,12 @@ fn identity_section(input: &InstructionInput<'_>) -> String {
         out.push_str("\n\n");
         out.push_str(HR_LEAD.trim_end());
     }
+    // Her duties belong to Part 5 like the HR lead's: Parts 1 and 2 stay byte-identical for
+    // every agent, so the runtime's prompt cache is shared with hers too.
+    if input.is_chief_of_staff {
+        out.push_str("\n\n");
+        out.push_str(CHIEF_OF_STAFF_GUIDANCE.trim_end());
+    }
     let sandbox = if input.sandbox_enabled {
         "enabled (default-on)"
     } else {
@@ -115,7 +123,8 @@ fn identity_section(input: &InstructionInput<'_>) -> String {
 ///    (release-static, at most 4 KiB);
 /// 3. the organization's processes and standards for the home team chain;
 /// 4. the role's instructions;
-/// 5. identity and boundaries: name, home team and leads by name, HR lead duties, isolation,
+/// 5. identity and boundaries: name, home team and leads by name, HR lead or Chief of Staff
+///    duties, isolation,
 ///    private home, workspace, permission preset and sandbox;
 /// 6. the agent's own prompt;
 /// 7. project repository instructions, returned apart

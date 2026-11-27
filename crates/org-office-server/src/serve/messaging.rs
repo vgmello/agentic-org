@@ -90,6 +90,16 @@ pub(super) fn attach_waiting_messages_hint(
     else {
         return;
     };
+    // The Chief of Staff's count spans every caller's messages to her: never a side channel
+    // into how many another member sent (`TASK-80.1`).
+    if shared
+        .ports
+        .delegation
+        .as_deref()
+        .is_some_and(|port| port.is_chief_of_staff(member))
+    {
+        return;
+    }
     let count = match cached {
         Some((id, counter)) if id == member => counter.load(Ordering::Relaxed),
         _ => {

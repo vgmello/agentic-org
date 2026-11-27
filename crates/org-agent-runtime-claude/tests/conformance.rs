@@ -74,6 +74,7 @@ fn sample_spec() -> SessionSpec {
             ToolName::try_from("Read").unwrap(),
             ToolName::try_from("Edit").unwrap(),
         ]),
+        operator_shell_prefixes: Vec::new(),
     }
 }
 

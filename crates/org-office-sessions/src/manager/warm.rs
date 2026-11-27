@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use org_proto::sessions::{SessionState, SessionView};
 use org_proto::{ApiError, ErrorCode};
 
+use crate::partition::{PartitionKey, PartitionTurn};
 use crate::pump::{PumpCommand, SessionRuntimeState};
 
 use super::reap::{reap_live_handle, ReapMode};
@@ -15,13 +16,16 @@ use super::{is_admissions_closed, LiveSessionHandle, PermitGuard, SessionManager
 
 /// The outcome of reserving a start: a live or warm-send view, or a reserved start slot with
 /// the handle it replaces and the explicit-stop epoch at reservation (`TASK-190`).
-pub(super) struct StartReservation {
-    pub(super) live_view: Option<SessionView>,
-    pub(super) finished_handle: Option<LiveSessionHandle>,
+pub(crate) struct StartReservation {
+    pub(crate) live_view: Option<SessionView>,
+    pub(crate) finished_handle: Option<LiveSessionHandle>,
     pub(super) start_stop_epoch: u64,
+    /// The Chief of Staff turn this reservation counted in its partition, with the
+    /// conversation a cold start resumes (`TASK-80.1`); `None` for anyone else.
+    pub(crate) partition_turn: Option<PartitionTurn>,
 }
 
-pub(super) struct LaunchRouteOpts<'a> {
+pub(crate) struct LaunchRouteOpts<'a> {
     pub(super) resume_runtime_session_id: Option<&'a str>,
     pub(super) task_ref: Option<&'a str>,
     pub(super) is_failover_switch: bool,
@@ -30,6 +34,30 @@ pub(super) struct LaunchRouteOpts<'a> {
     pub(super) tried_connections: Vec<String>,
     /// The explicit-stop epoch when the start slot was reserved (`TASK-190`).
     pub(super) start_stop_epoch: u64,
+    /// The Chief of Staff partition the run serves, and so the caller its binding acts for
+    /// (`TASK-80.1`); `None` for anyone else.
+    pub(crate) partition: Option<PartitionKey>,
+}
+
+impl<'a> LaunchRouteOpts<'a> {
+    /// The options of a fresh (non-failover) launch.
+    pub(super) fn fresh(
+        resume_runtime_session_id: Option<&'a str>,
+        task_ref: Option<&'a str>,
+        start_stop_epoch: u64,
+        partition: Option<PartitionKey>,
+    ) -> Self {
+        Self {
+            resume_runtime_session_id,
+            task_ref,
+            is_failover_switch: false,
+            oauth_refresh_attempted: false,
+            excluded_connections: HashSet::new(),
+            tried_connections: Vec::new(),
+            start_stop_epoch,
+            partition,
+        }
+    }
 }
 
 pub(super) struct WarmHandleTurn<'a> {
@@ -106,6 +134,7 @@ pub(super) fn dispatch_warm_handle_turn(
         live_view: None,
         finished_handle: old,
         start_stop_epoch: turn.start_stop_epoch,
+        partition_turn: None,
     };
     let needs_permit = turn.conn_id.is_some()
         && turn
@@ -141,6 +170,7 @@ pub(super) fn dispatch_warm_handle_turn(
         mgr,
         turn.emp_id,
         &turn.tx,
+        &turn.state,
         turn.start_stop_epoch,
         text,
         slot_guard,
@@ -154,6 +184,7 @@ pub(super) fn dispatch_warm_handle_turn(
             ),
             finished_handle: None,
             start_stop_epoch: turn.start_stop_epoch,
+            partition_turn: None,
         }),
         FencedSend::PumpGone(old) => {
             release_installed_permit(mgr, &turn.active_permit, installed_pid.as_deref());
@@ -180,10 +211,17 @@ pub(super) fn dispatch_warm_handle_turn(
 /// `registry` critical section, so a stop or drain either lands first (and no turn reaches the
 /// child) or finds no start in flight and stops the session itself. `Sender::send` on the pump's unbounded channel never
 /// blocks, so no slow work runs under the lock (rules §3.4).
+///
+/// The turn is counted and the idle session marked busy before it is sent, in the same
+/// critical section ([`crate::pump::queue_turn`]) and before the slot is released: from then on
+/// nothing that reads the registry (a partition switch, a stale-handle recycle, a wake
+/// dispatch) mistakes the session for idle and stops the turn the pump has not picked up yet,
+/// and a pump that refuses or finishes the turn at once can never be overwritten back to busy.
 fn send_turn_fenced<'a>(
     mgr: &'a SessionManager,
     emp_id: &str,
     tx: &Sender<PumpCommand>,
+    state: &Mutex<SessionRuntimeState>,
     start_stop_epoch: u64,
     text: String,
     slot_guard: StartSlotGuard<'a>,
@@ -197,7 +235,7 @@ fn send_turn_fenced<'a>(
         drop(reg);
         return FencedSend::Draining(slot_guard);
     }
-    if tx.send(PumpCommand::SendTurn(text)).is_ok() {
+    if crate::pump::queue_turn(state, tx, text) {
         slot_guard.release_locked(&mut reg);
         return FencedSend::Delivered;
     }

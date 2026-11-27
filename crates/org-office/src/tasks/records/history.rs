@@ -2,8 +2,7 @@
 //! `state/work-history/tasks/<task-id>/<revision>.json` (`doc-79`, `doc-84`, `ADR-0006`).
 //!
 //! The bytes are the canonical JSON (keys in byte order, compact, no trailing newline) the
-//! office already writes for messaging's `canonical-json/2` (`yaml::canonical_json`), the
-//! same bytes `org-work`'s `selected_codec` writes. `payload_sha256` is the SHA-256 of the
+//! office already writes for messaging's `canonical-json/2` (`yaml::canonical_json`). `payload_sha256` is the SHA-256 of the
 //! canonical JSON of the whole event with only that top-level member omitted.
 //!
 //! [`verify_event`] fails closed: bytes that are not exactly their canonical form, a header

@@ -26,7 +26,7 @@ pub fn format_utc(ms: u64) -> Option<String> {
     let secs = (ms / 1000) as i64;
     let days = secs / 86_400;
     let within = secs % 86_400;
-    // Howard Hinnant's civil-from-days algorithm, also used by org-work.
+    // Howard Hinnant's civil-from-days algorithm.
     let z = days + 719_468;
     let era = z / 146_097;
     let doe = z % 146_097;

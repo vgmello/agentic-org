@@ -177,6 +177,16 @@ pub(super) fn serve_connection_as(
                 subscribed = false;
                 held.cancel_all();
             }
+            // The calls answered here, outside the dispatcher, meet the Chief of Staff's gate
+            // too: a run acting for a deactivated member gets nothing (`TASK-80.1`).
+            if is_answered_before_dispatch(&request) {
+                if let Err(refused) = super::delegation::gate(&request, shared, &binding) {
+                    if !send(&out, request.id, &refused, shared.timing) {
+                        break;
+                    }
+                    continue;
+                }
+            }
             if let Some(keep_open) =
                 handle_auth_or_hello(&request, shared, &binding, &mut auth_calls, &out)
             {
@@ -286,6 +296,14 @@ pub(super) fn serve_connection_as(
         }
         generation.fetch_add(1, Ordering::SeqCst);
     });
+}
+
+/// The calls the connection answers itself, before the dispatcher (and its gate) would see
+/// them: sign-in and `auth.whoami`, held `msg.wait`, and `subscribe`.
+fn is_answered_before_dispatch(request: &Request) -> bool {
+    request.method.starts_with("auth.")
+        || request.is::<MsgWait>()
+        || request.is::<org_proto::Subscribe>()
 }
 
 fn handle_auth_or_hello(

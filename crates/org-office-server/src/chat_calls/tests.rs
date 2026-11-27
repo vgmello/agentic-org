@@ -154,6 +154,7 @@ impl LiveOfficeFixture {
                 "run-b6-test",
                 "sess-b6-test",
                 std::process::id() as libc::pid_t,
+                None,
             )
             .unwrap()
             .expose_token()

@@ -160,6 +160,7 @@ impl SessionManager {
         if request.is::<MemberSessionStop>() {
             return Some(handle_call::<MemberSessionStop>(request, member, |m, p| {
                 self.authorize_owner_or_person_inner(m, hq_attested_owner)?;
+                self.authorize_chief_of_staff_target_inner(m, hq_attested_owner, &p.employee_id)?;
                 self.stop_session(&p.employee_id, p.reason.as_deref().unwrap_or("stopped"))
             }));
         }

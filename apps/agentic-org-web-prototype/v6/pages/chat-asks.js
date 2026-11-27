@@ -96,7 +96,9 @@ function needsActions(it, where) {
   const why = inbox ? routeReasonHtml(it, "chat-needs-route") : "";
   const sentTo = where.thread ? " in this thread" : "";
   const note = asks.note === it.id ? `<p class="chat-needs-note" role="status">${ic("check-circle", "ic14")}Follow-up sent to ${esc(M[it.from].name)}${sentTo}. The request stays open until ${settles(it)}.</p>` : "";
-  return `${note}${why}<div class="actions">${[...primary, followUp, open].join("")}</div>`;
+  /* The responses (presets and Answer…, or approve and deny) stay together as one group; the follow-up and the
+     record link follow as a second group, wrapping as a unit onto their own line when space runs out. */
+  return `${note}${why}<div class="actions chat-needs-acts"><span class="chat-needs-answer">${primary.join("")}</span><span class="chat-needs-aside">${followUp}${open}</span></div>`;
 }
 function tradeoff(it) {
   if (!decidedInInbox(it) || !it.why) return "";

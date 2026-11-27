@@ -33,6 +33,14 @@ function lastActivity(ch) {
   const times = ch.msgs.flatMap((m) => [m.time, ...(m.thread || []).map((r) => r.time)]);
   return times.length ? Math.max(...times.map(sentDate)) : 0;
 }
+/* A conversation's last activity in a few characters: "09:33" today, "Yesterday", else "Nov 24". */
+function lastActiveLabel(ch) {
+  const t = lastActivity(ch);
+  if (!t) return "";
+  const d = new Date(t), days = Math.round((new Date(NOW).setHours(0, 0, 0, 0) - new Date(t).setHours(0, 0, 0, 0)) / DAY_MS);
+  if (days <= 0) return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return days === 1 ? "Yesterday" : `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
 const activeToday = (ch) => NOW.getTime() - lastActivity(ch) <= DAY_MS;
 const newestFirst = (a, b) => lastActivity(CH[b]) - lastActivity(CH[a]);
 /* Agents' conversations one agent is in, newest first. */
@@ -120,6 +128,7 @@ export {
   activeToday,
   agentConversations,
   lastActivity,
+  lastActiveLabel,
   matchReason,
   newestFirst,
   sentAt,

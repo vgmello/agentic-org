@@ -12,10 +12,7 @@ import type { Member, OrgSnapshot } from '$lib/proto';
 import type { SearchPageApi } from './api';
 import type { KnowledgeHit, SearchPageResults } from './types';
 
-type Rec = Record<string, unknown>;
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+import { asRec, asStr } from '$lib/platform/http/decode';
 
 function includesNeedle(value: string | undefined, needle: string): boolean {
 	return Boolean(value && value.toLowerCase().includes(needle));

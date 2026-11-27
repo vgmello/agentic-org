@@ -1539,6 +1539,31 @@ class GapPreservationTests(unittest.TestCase):
         assert_refused(self, self.db, "UNIQUE constraint failed: employees", lambda: insert(
             self.db, "employees", **hr, id="hr-2", handle="hr-2", name="HR 2"))
 
+    def test_the_built_in_chief_of_staff_is_one_agent_that_may_hold_the_hiring_permission(self):
+        cos = dict(organization_id="org", schema_version=1, revision=1, kind="agent", home_team_id="payments",
+                   builtin_key="chief_of_staff")
+        for bad in (dict(kind="person"), dict(builtin_key="ceo"), dict(builtin_key="Chief_Of_Staff"),
+                    dict(builtin_key="")):
+            with self.subTest(bad=bad):
+                assert_refused(self, self.db, "CHECK constraint failed", lambda: insert(
+                    self.db, "employees", **(cos | bad), id="bad", handle="bad", name="Bad"))
+        # Unlike the HR lead, the Chief of Staff may hold may_hire (the owner turns it off and on).
+        insert(self.db, "employees", **cos, id="tess", handle="tess", name="Tess", may_hire=1)
+        self.db.commit()
+        self.db.execute("UPDATE employees SET may_hire=0 WHERE id='tess'")
+        self.db.execute("UPDATE employees SET may_hire=1 WHERE id='tess'")
+        self.db.commit()
+        for may_hire in (0, 1):
+            with self.subTest(may_hire=may_hire):
+                assert_refused(self, self.db, "UNIQUE constraint failed: employees", lambda: insert(
+                    self.db, "employees", **cos, id="tess-2", handle="tess-2", name="Tess 2", may_hire=may_hire))
+        # One of each built-in lives beside the other: the two indexes are separate.
+        insert(self.db, "employees", organization_id="org", schema_version=1, revision=1, kind="agent",
+               home_team_id="payments", builtin_key="hr", may_hire=0, id="hr", handle="hr", name="HR")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed: employees",
+                       "UPDATE employees SET builtin_key='chief_of_staff' WHERE id='hr'")
+
     def test_an_affected_feature_is_in_the_task_project(self):
         feature = dict(organization_id="org", schema_version=1, revision=1, title="F", status="planned")
         insert(self.db, "features", **feature, id="here", project_id="project", local_slug="here")
