@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+	DEFAULT_PINNED_WORKSPACE_NAV,
 	STORAGE_KEYS,
 	UI_THEMES,
 	applyUiAttributes,
 	isLightTheme,
 	isUiTheme,
+	moveWorkspaceNavItem,
 	normalizeUiTheme,
+	normalizeWorkspaceNav,
 	resolveInitialPreferences,
+	toggleWorkspaceNavPin,
 	uiPrefs,
 	type StorageLike
 } from './ui-preferences.svelte';
@@ -242,5 +246,37 @@ describe('ui preferences and 7-theme selection', () => {
 				delete (globalThis as { window?: unknown }).window;
 			}
 		}
+	});
+
+	it('persists, normalizes, reorders, and pins/unpins Workspace nav items safely', () => {
+		expect(resolveInitialPreferences().workspaceNav).toEqual([...DEFAULT_PINNED_WORKSPACE_NAV]);
+		expect(normalizeWorkspaceNav(['insights', 'work', 'bogus', 'work'])).toEqual([
+			'insights',
+			'work'
+		]);
+		expect(normalizeWorkspaceNav([])).toEqual([...DEFAULT_PINNED_WORKSPACE_NAV]);
+
+		const reordered = moveWorkspaceNavItem(
+			['work', 'chat', 'activity', 'projects'],
+			'projects',
+			'chat',
+			'pinned'
+		);
+		expect(reordered).toEqual(['work', 'projects', 'chat', 'activity']);
+
+		const movedToMore = moveWorkspaceNavItem(reordered, 'chat', null, 'more');
+		expect(movedToMore).toEqual(['work', 'projects', 'activity']);
+
+		const keptLast = moveWorkspaceNavItem(['work'], 'work', null, 'more');
+		expect(keptLast).toEqual(['work']);
+
+		const pinned = toggleWorkspaceNavPin(['work', 'chat'], 'insights');
+		expect(pinned).toEqual(['work', 'chat', 'insights']);
+		expect(toggleWorkspaceNavPin(['work'], 'work')).toEqual(['work']);
+
+		const stored = resolveInitialPreferences({
+			storage: memoryStorage({ [STORAGE_KEYS.workspaceNav]: JSON.stringify(['chat', 'insights']) })
+		});
+		expect(stored.workspaceNav).toEqual(['chat', 'insights']);
 	});
 });

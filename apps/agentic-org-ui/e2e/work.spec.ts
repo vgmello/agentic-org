@@ -53,11 +53,12 @@ test(
 		await expect(page.getByTestId('work-board')).toBeVisible();
 		await expect(page.getByTestId('board-column')).toHaveCount(4);
 
-		// Saved filter All shows every task across projects, including 7-day Done window + Show all done.
+		// Saved filter All shows every task across projects, including Done history popover (7d / 30d / All done).
 		await selectSavedFilter(page, 'all');
 		const toggleDone = page.getByTestId('toggle-all-done');
-		await expect(toggleDone).toContainText('Show all done (1)');
+		await expect(toggleDone).toContainText('Last 7 days');
 		await toggleDone.click();
+		await page.getByRole('menuitem', { name: 'All done' }).click();
 		await expect(page.locator('[data-testid=work-card][data-ref=T-A29]')).toBeVisible();
 
 		// Move a card via ⋯ Move to menu and verify live announcement (TSK-2).

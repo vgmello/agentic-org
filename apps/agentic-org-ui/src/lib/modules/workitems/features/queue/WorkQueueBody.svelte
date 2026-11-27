@@ -207,6 +207,7 @@
 				stale={isStale}
 				{archivedIds}
 				selectedRef={openRowRef}
+				searchQuery={filters.query}
 				onchanged={onChanged}
 				onopen={isOrgScope ? onOpenDetail : undefined}
 			/>

@@ -4,7 +4,7 @@
   (work-items-ux §4, §9; feature-requests-ux §1; BUG-2..9, TSK-5, RQS-1..3, RQS-13, RQS-17).
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
@@ -35,6 +35,8 @@
 		buildCapturePayload,
 		buildExistingCommentText,
 		classifyChoicesError,
+		formatCaptureHeading,
+		formatCaptureSubmitLabel,
 		formatCreatedToast,
 		getBugSubmitDisabledReason,
 		persistDraftSteps,
@@ -110,7 +112,6 @@
 	const choicesUnavailable = $derived(choicesState !== 'ready');
 	let similar = $state.raw<TaskRow[]>([]);
 	let similarTimer: ReturnType<typeof setTimeout> | undefined;
-
 	let busy = $state(false);
 	let checking = $state(false);
 	let addingId = $state<string | null>(null);
@@ -119,7 +120,6 @@
 	let discardOpen = $state(false);
 	let fieldErrors = $state<Record<string, string | undefined>>({});
 	let formError = $state<string | undefined>();
-
 	let titleInput = $state<HTMLInputElement | null>(null);
 	let whatHappenedInput = $state<HTMLTextAreaElement | null>(null);
 	let teamSelect = $state<HTMLSelectElement | null>(null);
@@ -134,29 +134,21 @@
 			: (choices?.teams.find((t) => t.id === chosenTeamId)?.name ?? '')
 	);
 
-	const dialogHeading = $derived.by(() => {
-		const org = choices?.organizationName ? ` · ${choices.organizationName}` : '';
-		if (fixesTaskId) return `Create fix task${org}`;
-		if (type === 'bug') return `Report a bug${org}`;
-		if (type === 'request') return `New request${org}`;
-		return `New task${org}`;
-	});
-
-	const isDirty = $derived(
-		title.trim().length > 0 ||
-			description.trim().length > 0 ||
-			whatHappened.trim().length > 0 ||
-			expected.trim().length > 0 ||
-			steps.trim().length > 0 ||
-			draftSteps.length > 0
+	const dialogHeading = $derived(
+		formatCaptureHeading(type, fixesTaskId, choices?.organizationName)
 	);
-
+	const isDirty = $derived(
+		Boolean(
+			title.trim() ||
+			description.trim() ||
+			whatHappened.trim() ||
+			expected.trim() ||
+			steps.trim() ||
+			draftSteps.length
+		)
+	);
 	const bugSubmitDisabledReason = $derived(getBugSubmitDisabledReason(type, title, whatHappened));
-	const submitLabel = $derived.by(() => {
-		if (type === 'bug') return busy ? 'Reporting…' : 'Report bug';
-		if (type === 'request') return busy ? 'Saving…' : assigneeId ? 'Send request' : 'Save request';
-		return busy ? 'Creating…' : 'Create task';
-	});
+	const submitLabel = $derived(formatCaptureSubmitLabel(type, busy, Boolean(assigneeId)));
 	const selectedAssigneeName = $derived(choices?.employees.find((e) => e.id === assigneeId)?.name);
 	const tessRouting = $derived(
 		type !== 'bug' && title.trim()
@@ -212,11 +204,14 @@
 
 	$effect(() => {
 		if (!open || unknownOpId) return;
-		type = initialType;
-		createMore = false;
-		resetDraftFields(false);
-		void loadChoices();
-		void tick().then(() => titleInput?.focus());
+		const nextType = initialType;
+		untrack(() => {
+			type = nextType;
+			createMore = false;
+			resetDraftFields(false);
+			void loadChoices();
+			void tick().then(() => titleInput?.focus());
+		});
 	});
 
 	// Similar open bugs (after 3 title characters, up to 3) and similar open requests (up to 2).

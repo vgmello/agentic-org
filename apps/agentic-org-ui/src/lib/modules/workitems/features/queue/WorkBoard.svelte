@@ -1,17 +1,15 @@
 <!--
   @component
-  Work task board (work-items-ux §2, §9, TSK-1..4, TSK-10, CHK-1).
-  Four columns (To do, In progress, Blocked, Done), each an accessible list. Done shows the last 7 days with
-  "Show all done". Cards move by drag-and-drop, ⋯ Move to menu, and Alt+←/→ keyboard shortcuts with live-region
-  announcements. Moving to Blocked prompts for a reason.
+  Work task board (work-items-ux §2, §9, TSK-1..4, TSK-10, CHK-1; TASK-194 / TASK-229).
+  Tinted lanes with borderless raised canonical cards, SVG checklist rings, clamped-title tooltips,
+  board-level Done history popover (7d/30d/all), search empty-lane collapse/reveal with polite live announce,
+  and a phone lane picker (< 640px).
 -->
 <script lang="ts">
-	import { resolve } from '$app/paths';
-	import { mergeProps, Tooltip } from 'bits-ui';
+	import { Tooltip } from 'bits-ui';
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import {
 		Dialog,
 		DialogContent,
@@ -25,25 +23,20 @@
 	import { workItemsApi } from '../../api';
 	import {
 		BOARD_COLUMN_WORD,
-		PRIORITIES,
+		DONE_WINDOW_LABELS,
 		PRIORITY_WORD,
 		STATUS_WORD,
-		TYPE_WORD,
-		assignmentText,
 		boardColumnsForMode,
 		rowSpeech,
-		severityWord,
-		taskHref,
 		typedRef,
 		type BoardColumn,
 		type BoardMode,
-		type BoardStatusColumn
+		type BoardStatusColumn,
+		type DoneWindow
 	} from '../../present';
 	import type { Priority, TaskRow } from '../../types';
-	import Avatar from '$lib/components/Avatar.svelte';
-	import WorkIcon from '../../components/WorkIcon.svelte';
-	import StatusBadge from '../../components/StatusBadge.svelte';
-	import BudgetChip from '../../components/BudgetChip.svelte';
+	import WorkBoardCard from './WorkBoardCard.svelte';
+	import WorkBoardLane from './WorkBoardLane.svelte';
 
 	let {
 		organizationId,
@@ -53,6 +46,7 @@
 		stale = false,
 		archivedIds,
 		selectedRef = null,
+		searchQuery = '',
 		onchanged,
 		onopen
 	}: {
@@ -63,6 +57,7 @@
 		stale?: boolean;
 		archivedIds?: ReadonlySet<string>;
 		selectedRef?: string | null;
+		searchQuery?: string;
 		onchanged: () => void;
 		onopen?: (row: TaskRow, triggerEl: HTMLElement | null) => void;
 	} = $props();
@@ -84,7 +79,9 @@
 	}
 
 	const uid = $props.id();
-	let allDone = $state(false);
+	let doneWindow = $state<DoneWindow>('7d');
+	let revealEmptyInSearch = $state(false);
+	let phoneLane = $state<BoardStatusColumn | null>(null);
 	let announcement = $state('');
 	let dragRow = $state<TaskRow | null>(null);
 	let dragOverCol = $state<BoardStatusColumn | null>(null);
@@ -93,9 +90,22 @@
 
 	// Hold reordering while a card menu is open (WORK-6).
 	const visibleRows = $derived(openMenuId && frozenRows ? frozenRows : rows);
-	const columns = $derived(
-		boardColumnsForMode(visibleRows, boardMode, { allDone, now: new Date() })
+	const allColumns = $derived(
+		boardColumnsForMode(visibleRows, boardMode, { doneWindow, now: new Date() })
 	);
+
+	const trimmedQuery = $derived(searchQuery.trim());
+	const hiddenEmptyCount = $derived(
+		trimmedQuery && !revealEmptyInSearch ? allColumns.filter((c) => c.rows.length === 0).length : 0
+	);
+	const displayedColumns = $derived(
+		trimmedQuery && !revealEmptyInSearch ? allColumns.filter((c) => c.rows.length > 0) : allColumns
+	);
+	const activePhoneLane = $derived.by<BoardStatusColumn>(() => {
+		if (phoneLane && displayedColumns.some((c) => c.column === phoneLane)) return phoneLane;
+		const firstWithRows = displayedColumns.find((c) => c.rows.length > 0);
+		return firstWithRows?.column ?? displayedColumns[0]?.column ?? 'todo';
+	});
 
 	// Blocked reason modal state (TSK-3).
 	let blockTarget = $state<TaskRow | null>(null);
@@ -113,6 +123,20 @@
 	}
 
 	$effect(() => () => clearTimeout(announceTimer));
+
+	function handleDoneWindowChange(next: DoneWindow) {
+		doneWindow = next;
+		announce(`Done column showing ${DONE_WINDOW_LABELS[next].toLowerCase()}.`);
+	}
+
+	function toggleRevealEmptyInSearch() {
+		revealEmptyInSearch = !revealEmptyInSearch;
+		announce(
+			revealEmptyInSearch
+				? `Showing all ${allColumns.length} lanes.`
+				: `Hiding ${allColumns.filter((c) => c.rows.length === 0).length} empty lanes while searching.`
+		);
+	}
 
 	function canMoveTo(row: TaskRow, target: BoardColumn): boolean {
 		// `task.set_status` accepts Tasks only; bugs and requests transition via their detail workflows.
@@ -192,11 +216,11 @@
 		if (!event.altKey || stale) return;
 		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
 			const step = event.key === 'ArrowLeft' ? -1 : 1;
-			const currentIdx = columns.findIndex((c) => c.rows.some((r) => r.id === row.id));
+			const currentIdx = allColumns.findIndex((c) => c.rows.some((r) => r.id === row.id));
 			if (currentIdx < 0) return;
 			let next: BoardColumn | undefined;
-			for (let i = currentIdx + step; i >= 0 && i < columns.length; i += step) {
-				const candidate = columns[i].writableStatus;
+			for (let i = currentIdx + step; i >= 0 && i < allColumns.length; i += step) {
+				const candidate = allColumns[i].writableStatus;
 				if (candidate && canMoveTo(row, candidate)) {
 					next = candidate;
 					break;
@@ -206,13 +230,6 @@
 			event.preventDefault();
 			void moveRow(row, next);
 		}
-	}
-
-	function prioritySignal(priority: Priority): { level: 1 | 2 | 3; strong?: boolean } {
-		if (priority === 'urgent') return { level: 3, strong: true };
-		if (priority === 'high') return { level: 3 };
-		if (priority === 'normal') return { level: 2 };
-		return { level: 1 };
 	}
 
 	function handleMenuOpenChange(rowId: string, isOpen: boolean) {
@@ -227,9 +244,57 @@
 </script>
 
 <div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="board-live-region">
-	{announcement}
+	{#if announcement}
+		{announcement}
+	{:else if trimmedQuery}
+		{displayedColumns.reduce((sum, c) => sum + c.rows.length, 0)} matching items across {displayedColumns.length}
+		{displayedColumns.length === 1 ? 'lane' : 'lanes'}.
+	{/if}
 </div>
+
 <Tooltip.Provider delayDuration={150}>
+	{#if trimmedQuery && (hiddenEmptyCount > 0 || revealEmptyInSearch)}
+		<div
+			class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs/5 text-fg-muted"
+			data-testid="board-search-lanes-bar"
+		>
+			<span>
+				{#if hiddenEmptyCount > 0}
+					{hiddenEmptyCount} empty {hiddenEmptyCount === 1 ? 'lane' : 'lanes'} hidden for “{trimmedQuery}”.
+				{:else}
+					Showing all {allColumns.length} lanes for “{trimmedQuery}”.
+				{/if}
+			</span>
+			<button
+				type="button"
+				onclick={toggleRevealEmptyInSearch}
+				class="rounded-md px-2 py-1 font-medium text-link hover:underline focus-visible:outline-2 focus-visible:outline-focus"
+			>
+				{revealEmptyInSearch ? 'Hide empty lanes' : `Show empty lanes (${hiddenEmptyCount})`}
+			</button>
+		</div>
+	{/if}
+
+	<!-- Phone lane picker (< 640px) -->
+	<div
+		class="phone-lane-picker mb-2 flex items-center gap-1.5 overflow-x-auto pb-1 sm:hidden"
+		role="group"
+		aria-label="Board lane"
+		data-testid="phone-lane-picker"
+	>
+		{#each displayedColumns as col (col.column)}
+			<button
+				type="button"
+				onclick={() => (phoneLane = col.column)}
+				aria-pressed={activePhoneLane === col.column}
+				class={['phone-lane-pill shrink-0', activePhoneLane === col.column && 'is-active']}
+			>
+				<span>{BOARD_COLUMN_WORD[col.column]}</span>
+				<span class="tabular-nums opacity-75">{col.rows.length}</span>
+			</button>
+		{/each}
+	</div>
+
 	<!-- horizontally scrollable board region needs keyboard focus -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
@@ -239,252 +304,67 @@
 		aria-label="Work board"
 		data-testid="work-board"
 		data-board-mode={boardMode}
-		style:--board-column-count={columns.length}
+		style:--board-column-count={displayedColumns.length}
 	>
 		<div class="work-board-columns">
-			{#each columns as col (col.column)}
-				<section
-					aria-labelledby="{uid}-col-{col.column}"
-					data-testid="board-column"
-					data-status={col.column}
-					ondragover={(e) => {
-						if (stale || !col.writableStatus) return;
-						e.preventDefault();
-						dragOverCol = col.column;
-					}}
-					ondragleave={() => {
-						if (dragOverCol === col.column) dragOverCol = null;
-					}}
-					ondrop={(e) => {
-						e.preventDefault();
-						dragOverCol = null;
-						if (dragRow && col.writableStatus) void moveRow(dragRow, col.writableStatus);
-						dragRow = null;
-					}}
-					class="work-bcol flex min-w-0 flex-col gap-3 rounded-xl bg-surface-raised p-3 outline-1 -outline-offset-1 {dragOverCol ===
-					col.column
-						? 'outline-2 outline-brand'
-						: 'outline-line'}"
-				>
-					<div class="flex items-center justify-between gap-2 px-1">
-						<h3 id="{uid}-col-{col.column}" class="text-sm/6 font-semibold text-fg">
-							{BOARD_COLUMN_WORD[col.column]}
-							<span class="ml-1.5 text-xs/5 font-normal text-fg-muted tabular-nums"
-								>{col.rows.length}</span
+			{#each displayedColumns as col (col.column)}
+				<div class={['board-lane-slot min-w-0', activePhoneLane !== col.column && 'max-sm:hidden']}>
+					<WorkBoardLane
+						{uid}
+						column={col.column}
+						rows={col.rows}
+						hiddenDone={col.hiddenDone}
+						{doneWindow}
+						writableStatus={col.writableStatus}
+						dragOver={dragOverCol === col.column}
+						onDoneWindowChange={handleDoneWindowChange}
+						onDragOver={(e) => {
+							if (stale || !col.writableStatus) return;
+							e.preventDefault();
+							dragOverCol = col.column;
+						}}
+						onDragLeave={() => {
+							if (dragOverCol === col.column) dragOverCol = null;
+						}}
+						onDrop={(e) => {
+							e.preventDefault();
+							dragOverCol = null;
+							if (dragRow && col.writableStatus) void moveRow(dragRow, col.writableStatus);
+							dragRow = null;
+						}}
+					>
+						{#snippet renderCard(row)}
+							<!-- card keyboard focus and drag-and-drop paired with keyboard status menu -->
+							<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+							<li
+								draggable={!stale && row.type === 'task' && row.status !== 'cancelled'}
+								tabindex="0"
+								aria-label={rowSpeech(row)}
+								aria-current={selectedRef === row.ref ? 'true' : undefined}
+								data-testid="work-card"
+								data-ref={row.ref}
+								ondragstart={() => (dragRow = row)}
+								ondragend={() => ((dragRow = null), (dragOverCol = null))}
+								onkeydown={(e) => handleCardKeydown(e, row)}
+								class="work-bcard flex flex-col gap-2"
 							>
-						</h3>
-						{#if col.column === 'done' && (col.hiddenDone > 0 || allDone)}
-							<button
-								type="button"
-								onclick={() => (allDone = !allDone)}
-								class="rounded-sm text-xs/5 font-medium text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-								data-testid="toggle-all-done"
-							>
-								{allDone ? 'Last 7 days' : `Show all done (${col.hiddenDone})`}
-							</button>
-						{/if}
-					</div>
-					{#if col.rows.length === 0}
-						<p class="px-1 py-4 text-xs/5 text-fg-muted">
-							{col.column === 'done' && col.hiddenDone > 0
-								? 'No items completed in the last 7 days.'
-								: 'No items.'}
-						</p>
-					{:else}
-						<ul role="list" aria-labelledby="{uid}-col-{col.column}" class="flex flex-col gap-2.5">
-							{#each col.rows as row (row.id)}
-								{@const priSig = prioritySignal(row.priority)}
-								<!-- card keyboard focus and drag-and-drop paired with keyboard status menu -->
-								<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-								<li
-									draggable={!stale && row.type === 'task' && row.status !== 'cancelled'}
-									tabindex="0"
-									aria-label={rowSpeech(row)}
-									aria-current={selectedRef === row.ref ? 'true' : undefined}
-									data-testid="work-card"
-									data-ref={row.ref}
-									ondragstart={() => (dragRow = row)}
-									ondragend={() => ((dragRow = null), (dragOverCol = null))}
-									onkeydown={(e) => handleCardKeydown(e, row)}
-									class="work-bcard flex flex-col gap-2 rounded-lg bg-surface p-3 outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
-								>
-									<div class="flex items-start justify-between gap-2">
-										<div class="flex min-w-0 items-center gap-1.5 text-xs/5 text-fg-muted">
-											<span
-												class="work-priority-mark"
-												data-priority-level={priSig.level}
-												data-tone={priSig.strong ? 'strong' : undefined}
-												aria-hidden="true"
-											>
-												<i class="is-on"></i>
-												<i class={priSig.level >= 2 ? 'is-on' : undefined}></i>
-												<i class={priSig.level >= 3 ? 'is-on' : undefined}></i>
-											</span>
-											<WorkIcon name={row.type} class="size-3.5 text-fg-muted" />
-											<span class="sr-only">{TYPE_WORD[row.type]}</span>
-											<span class="shrink-0 font-mono whitespace-nowrap">{row.ref}</span>
-											{#if showProject && row.project}
-												<span class="truncate">· {row.project.name}</span>
-											{/if}
-										</div>
-
-										{#if !stale}
-											<DropdownMenu.Root
-												open={openMenuId === row.id}
-												onOpenChange={(isOpen) => handleMenuOpenChange(row.id, isOpen)}
-											>
-												<Tooltip.Root disabled={openMenuId === row.id}>
-													<Tooltip.Trigger>
-														{#snippet child({ props: tipProps })}
-															<DropdownMenu.Trigger>
-																{#snippet child({ props: menuProps })}
-																	<button
-																		{...mergeProps(tipProps, menuProps)}
-																		type="button"
-																		aria-label="Actions for {typedRef(row)}"
-																		class="inline-flex size-9 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-focus [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
-																	>
-																		<WorkIcon name="ellipsis" class="size-4" />
-																	</button>
-																{/snippet}
-															</DropdownMenu.Trigger>
-														{/snippet}
-													</Tooltip.Trigger>
-													<Tooltip.Portal>
-														<Tooltip.Content
-															side="top"
-															sideOffset={6}
-															class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-															>Actions for {typedRef(row)}</Tooltip.Content
-														>
-													</Tooltip.Portal>
-												</Tooltip.Root>
-												<DropdownMenu.Content
-													align="end"
-													class="triage-menu-surface w-48 ring-line"
-												>
-													{#if row.type === 'task' && row.status !== 'cancelled'}
-														<DropdownMenu.Group>
-															<DropdownMenu.GroupHeading>Move to</DropdownMenu.GroupHeading>
-															{#each ['todo', 'in_progress', 'blocked', 'done'] as const as dest (dest)}
-																{#if canMoveTo(row, dest)}
-																	<DropdownMenu.Item onSelect={() => moveRow(row, dest)}>
-																		{STATUS_WORD[dest]}
-																	</DropdownMenu.Item>
-																{/if}
-															{/each}
-														</DropdownMenu.Group>
-														<DropdownMenu.Separator class="bg-line-subtle" />
-													{/if}
-													<DropdownMenu.Group>
-														<DropdownMenu.GroupHeading>Priority</DropdownMenu.GroupHeading>
-														{#each PRIORITIES as p (p)}
-															{#if p !== row.priority}
-																<DropdownMenu.Item onSelect={() => changePriority(row, p)}>
-																	{PRIORITY_WORD[p]}
-																</DropdownMenu.Item>
-															{/if}
-														{/each}
-													</DropdownMenu.Group>
-												</DropdownMenu.Content>
-											</DropdownMenu.Root>
-										{/if}
-									</div>
-
-									<a
-										href={resolve(taskHref(row.ref) as '/')}
-										onclick={(e) => handleOpen(e, row)}
-										class="text-sm/5 font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
-									>
-										{row.title}
-									</a>
-
-									{#if row.status === 'blocked' && row.blockedReason}
-										<p class="text-xs/5 text-danger-text [overflow-wrap:anywhere]">
-											Blocked: {row.blockedReason}
-										</p>
-									{/if}
-
-									<div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs/5">
-										{#if row.type === 'bug'}
-											<span
-												class="inline-flex items-center gap-1 {row.severity === 'critical'
-													? 'text-danger-text'
-													: 'text-fg-secondary'}"
-											>
-												<WorkIcon name={row.severity ?? 'unset'} class="size-3.5" />
-												<span>{severityWord(row.severity)}</span>
-											</span>
-										{/if}
-
-										{#if row.priority !== 'normal'}
-											<span
-												class="inline-flex items-center gap-1 text-fg-secondary"
-												data-testid="card-priority"
-											>
-												<WorkIcon name={row.priority} class="size-3.5 text-fg-muted" />
-												<span>{PRIORITY_WORD[row.priority]}</span>
-											</span>
-										{/if}
-
-										{#if row.checklist.total > 0}
-											<span
-												class="inline-flex items-center gap-1 text-fg-muted tabular-nums"
-												data-testid="card-checklist"
-											>
-												<span>{row.checklist.done}/{row.checklist.total}</span>
-												{#if row.checklist.requiredLeft > 0}
-													<WorkIcon name="lock" class="size-3 text-fg-muted" />
-													<span>{row.checklist.requiredLeft} required</span>
-												{/if}
-											</span>
-										{/if}
-
-										{#if row.reopenCount > 0}
-											<span class="inline-flex items-center gap-1 text-fg-muted tabular-nums">
-												<WorkIcon name="rotate" class="size-3" />
-												<span>Reopened {row.reopenCount}</span>
-											</span>
-										{/if}
-
-										{#if row.budget}
-											<BudgetChip budget={row.budget} hold={row.budgetHold} />
-										{/if}
-
-										{#if archivedIds?.has(row.id)}
-											<span
-												class="inline-flex items-center rounded bg-surface-raised px-1.5 py-0.5 text-[11px]/4 font-medium text-fg-muted ring-1 ring-line"
-												data-testid="work-archived-tag"
-											>
-												Archived
-											</span>
-										{/if}
-									</div>
-
-									<div
-										class="flex items-center justify-between gap-2 pt-0.5 text-xs/5 text-fg-muted"
-									>
-										<div class="flex min-w-0 items-center gap-1.5">
-											{#if row.assignee}
-												<Avatar name={row.assignee.name} size="sm" />
-											{/if}
-											<span class="truncate">{assignmentText(row)}</span>
-											{#if row.needsMe}
-												<span class="shrink-0" data-testid="card-needs-you">
-													<StatusBadge status={row.status} needsMe={row.needsMe} />
-												</span>
-											{/if}
-										</div>
-										{#if row.effort !== null}
-											<span class="shrink-0 tabular-nums">{row.effort} pt</span>
-										{/if}
-									</div>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</section>
+								<WorkBoardCard
+									{row}
+									{showProject}
+									{stale}
+									archived={Boolean(archivedIds?.has(row.id))}
+									menuOpen={openMenuId === row.id}
+									{canMoveTo}
+									onMenuOpenChange={(isOpen) => handleMenuOpenChange(row.id, isOpen)}
+									onOpen={handleOpen}
+									onMove={(targetRow, dest) => void moveRow(targetRow, dest)}
+									onChangePriority={(targetRow, p) => void changePriority(targetRow, p)}
+								/>
+							</li>
+						{/snippet}
+					</WorkBoardLane>
+				</div>
 			{/each}
 		</div>
 	</div>
@@ -547,7 +427,7 @@
 	}
 	.work-board-columns {
 		--board-column-width: 15.5rem;
-		--board-column-gap: 1rem;
+		--board-column-gap: 14px;
 		display: grid;
 		grid-template-columns: repeat(
 			var(--board-column-count, 4),
@@ -559,43 +439,63 @@
 				(var(--board-column-count, 4) - 1) * var(--board-column-gap)
 		);
 	}
+	.phone-lane-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 44px;
+		padding: 0 12px;
+		border-radius: 999px;
+		background: var(--bd-lane);
+		color: var(--bd-body);
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+	.phone-lane-pill.is-active {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+	.work-bcard {
+		position: relative;
+		min-width: 0;
+		padding: 14px 16px;
+		border: 1px solid transparent;
+		border-radius: var(--bd-radius-card);
+		background: var(--bd-card);
+		box-shadow: var(--bd-shadow);
+		color: var(--bd-body);
+		transition:
+			transform 0.16s ease,
+			box-shadow 0.16s ease,
+			background-color 0.16s ease;
+	}
+	.work-bcard:hover {
+		transform: translateY(-2px);
+		background: var(--bd-card-hover);
+		box-shadow: var(--bd-lift);
+	}
+	.work-bcard:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+	.work-bcard[aria-current='true'] {
+		box-shadow:
+			0 0 0 2px var(--tone-accent-ink),
+			var(--bd-shadow);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.work-bcard {
+			transition: none;
+		}
+		.work-bcard:hover {
+			transform: none;
+		}
+	}
 	@media (max-width: 639px) {
 		.work-board-columns {
 			grid-template-columns: minmax(0, 1fr);
 			min-width: 0;
 		}
-	}
-	.work-priority-mark {
-		display: inline-flex;
-		flex: none;
-		align-items: flex-end;
-		justify-content: center;
-		gap: 2px;
-		width: 1rem;
-		height: 1rem;
-		padding-bottom: 3px;
-		color: var(--exec-muted, var(--fg-muted));
-	}
-	.work-priority-mark[data-tone='strong'] {
-		color: var(--exec-ink, var(--fg));
-	}
-	.work-priority-mark i {
-		display: block;
-		width: 2.5px;
-		border-radius: 1px;
-		background: currentColor;
-		opacity: 0.24;
-	}
-	.work-priority-mark i:nth-child(1) {
-		height: 4px;
-	}
-	.work-priority-mark i:nth-child(2) {
-		height: 7px;
-	}
-	.work-priority-mark i:nth-child(3) {
-		height: 10px;
-	}
-	.work-priority-mark i.is-on {
-		opacity: 1;
 	}
 </style>
