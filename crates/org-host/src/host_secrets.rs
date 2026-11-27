@@ -26,7 +26,7 @@ use org_platform_host::credentials::{
     KeychainItems, ProtectedStore, ReleaseItems, ReleaseRoot, Sharing,
 };
 
-pub(crate) const MAX_BYTES: usize = 16 * 1024;
+pub const MAX_BYTES: usize = 16 * 1024;
 const _: () = assert!(MAX_BYTES == org_platform_host::credentials::MAX_ITEM_BYTES);
 
 /// The Keychain service the host secrets of instance `instance` are filed under; the account is
@@ -58,10 +58,10 @@ fn is_name(name: &str) -> bool {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct Name(String);
+pub struct Name(String);
 
 impl Name {
-    pub(crate) fn parse(name: &str) -> Result<Self, Error> {
+    pub fn parse(name: &str) -> Result<Self, Error> {
         let valid = name == "registry"
             || name == "writer-device"
             || name.strip_prefix("writer.").is_some_and(|hex| {
@@ -83,25 +83,25 @@ impl Name {
             .then(|| Self(name.to_owned()))
             .ok_or(Error::InvalidName)
     }
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
-    fn is_add_only(&self) -> bool {
+    pub fn is_add_only(&self) -> bool {
         self.0.starts_with("tls.") || self.0 == "writer-device"
     }
 }
 
-pub(crate) struct Value(Vec<u8>);
+pub struct Value(Vec<u8>);
 
 impl Value {
-    pub(crate) fn new(mut bytes: Vec<u8>) -> Result<Self, Error> {
+    pub fn new(mut bytes: Vec<u8>) -> Result<Self, Error> {
         if bytes.len() > MAX_BYTES {
             crate::secrets::zero(&mut bytes);
             return Err(Error::TooLarge);
         }
         Ok(Self(bytes))
     }
-    pub(crate) fn expose(&self) -> &[u8] {
+    pub fn expose(&self) -> &[u8] {
         &self.0
     }
     fn wipe(&mut self) {
@@ -126,7 +126,7 @@ impl fmt::Debug for Value {
     }
 }
 
-pub(crate) trait HostSecrets: Send + Sync {
+pub trait HostSecrets: Send + Sync {
     /// TLS items are add-only; a duplicate preserves the first stored value.
     /// In development custody, an error may follow publication without durability;
     /// reload before deciding recovery, since an error does not imply rollback.
@@ -138,7 +138,7 @@ pub(crate) trait HostSecrets: Send + Sync {
 
 /// Fixed kinds only: filesystem errors cannot carry a secret or a path into logs.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Error {
+pub enum Error {
     InvalidName,
     TooLarge,
     Corrupt,

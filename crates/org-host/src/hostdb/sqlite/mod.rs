@@ -6,6 +6,7 @@
 pub(crate) mod accounts;
 mod administrator;
 mod clock;
+mod host_store;
 pub(crate) mod journal;
 pub(crate) mod links;
 pub(crate) mod local_auth;
@@ -18,20 +19,16 @@ pub(crate) mod sessions;
 mod tests;
 pub(crate) mod web_tls;
 
-use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use org_office_launch::recovery::PublicRecord;
 use rusqlite::{config::DbConfig, Connection, ErrorCode, OpenFlags, TransactionBehavior};
 
-use super::{Error, HostDbInit, HostStore, StoreFault};
-use crate::accounts::identity::{AccountId, LoginKey};
+use super::{Error, HostDbInit, StoreFault};
 use crate::host_secrets::HostSecrets;
-use crate::links::{Issued, LinkKind, Subject};
 
 const DB: &str = "host-registry.db";
 const TMP: &str = "host-registry.db.tmp";
@@ -466,204 +463,6 @@ fn checkpoint(step: u8) -> Result<(), Error> {
     tests::checkpoint(step)?;
     let _ = step;
     Ok(())
-}
-
-impl HostStore for HostDb {
-    fn verify_instance(&self, instance: &str) -> Result<(), Error> {
-        HostDb::verify_instance(self, instance)
-    }
-    fn establish_organization_owner(
-        &self,
-        administrator: &super::accounts::Account,
-        org: &str,
-        member: &str,
-    ) -> Result<(), Error> {
-        HostDb::establish_organization_owner(self, administrator, org, member)
-    }
-    fn verify_selected_owner(&self, org: &str, account: &str, member: &str) -> Result<(), Error> {
-        HostDb::verify_selected_owner(self, org, account, member)
-    }
-    fn has_administrator(&self) -> Result<bool, Error> {
-        HostDb::administrator_exists(self)
-    }
-    fn account_credentials(
-        &self,
-        login_key: &LoginKey,
-    ) -> Result<Option<super::accounts::Credentials>, Error> {
-        HostDb::account_credentials(self, login_key)
-    }
-    fn account_authority(
-        &self,
-        account_id: &AccountId,
-    ) -> Result<Option<super::accounts::Account>, Error> {
-        HostDb::account_authority(self, account_id)
-    }
-    fn issue_unless_administrator(
-        &self,
-        kind: LinkKind,
-        subject: &Subject,
-        now_ms: i64,
-    ) -> Result<Option<Issued>, crate::links::Error> {
-        HostDb::issue_unless_administrator(self, kind, subject, now_ms)
-    }
-    fn login_lockout(
-        &self,
-        socket: super::lockout::Socket,
-        key: &str,
-        wall_ms: u64,
-    ) -> Result<super::lockout::State, Error> {
-        HostDb::login_lockout(self, socket, key, wall_ms)
-    }
-    fn record_login(
-        &self,
-        socket: super::lockout::Socket,
-        key: &str,
-        wall_ms: u64,
-        outcome: super::lockout::Outcome,
-    ) -> Result<super::lockout::State, Error> {
-        HostDb::record_login(self, socket, key, wall_ms, outcome)
-    }
-    fn record_login_capped(
-        &self,
-        socket: super::lockout::Socket,
-        key: &str,
-        wall_ms: u64,
-        outcome: super::lockout::Outcome,
-        cap_ms: i64,
-    ) -> Result<super::lockout::State, Error> {
-        HostDb::record_login_capped(self, socket, key, wall_ms, outcome, cap_ms)
-    }
-    fn prune_login_lockouts(&self, wall_ms: u64) -> Result<usize, Error> {
-        HostDb::prune_login_lockouts(self, wall_ms)
-    }
-    fn provisioning_taken(
-        &self,
-        name: &str,
-        slug: &str,
-    ) -> Result<Option<super::provisioning::Taken>, Error> {
-        HostDb::provisioning_taken(self, name, slug)
-    }
-    fn provisioning_known(&self, operation: &str) -> Result<bool, Error> {
-        HostDb::provisioning_known(self, operation)
-    }
-    fn provisioning_linked_to(
-        &self,
-        org: &str,
-    ) -> Result<Option<super::provisioning::Reservation>, Error> {
-        HostDb::provisioning_linked_to(self, org)
-    }
-    fn provisioning_for_org(
-        &self,
-        org: &str,
-    ) -> Result<Option<super::provisioning::Reservation>, Error> {
-        HostDb::provisioning_for_org(self, org)
-    }
-    fn provisioning_reserved(&self) -> Result<Vec<super::provisioning::Reservation>, Error> {
-        HostDb::provisioning_reserved(self)
-    }
-    fn provisioning_of(
-        &self,
-        account: &str,
-    ) -> Result<Vec<super::provisioning::Reservation>, Error> {
-        HostDb::provisioning_of(self, account)
-    }
-    fn provisioning_lookup(
-        &self,
-        account: &str,
-        operation: &str,
-    ) -> Result<Option<super::provisioning::Reservation>, Error> {
-        HostDb::provisioning_lookup(self, account, operation)
-    }
-    fn provisioning_offices(&self) -> Result<BTreeSet<String>, Error> {
-        HostDb::provisioning_offices(self)
-    }
-    fn provisioning(
-        &self,
-        account: &super::accounts::Account,
-        operation: &str,
-        fingerprint: &[u8; 32],
-        wall: i64,
-    ) -> Result<Option<super::provisioning::Reservation>, Error> {
-        HostDb::provisioning(self, account, operation, fingerprint, wall)
-    }
-    fn reserve_provisioning(
-        &self,
-        account: &super::accounts::Account,
-        frozen: &super::provisioning::Reservation,
-    ) -> Result<super::provisioning::Reservation, Error> {
-        HostDb::reserve_provisioning(self, account, frozen)
-    }
-    fn provision_key_stored(
-        &self,
-        r: &super::provisioning::Reservation,
-        fingerprint: &str,
-    ) -> Result<(), Error> {
-        HostDb::provision_key_stored(self, r, fingerprint)
-    }
-    fn provision_linked(&self, r: &super::provisioning::Reservation) -> Result<(), Error> {
-        HostDb::provision_linked(self, r)
-    }
-    fn recovery_state(&self, operation: &str) -> Result<Option<super::recovery::State>, Error> {
-        HostDb::recovery_state(self, operation)
-    }
-    fn recovery_observed(&self, operation: &str) -> Result<super::recovery::Ledger, Error> {
-        HostDb::recovery_observed(self, operation)
-    }
-    fn recovery_source(&self, org: &str) -> Result<super::provisioning::Reservation, Error> {
-        HostDb::recovery_source(self, org)
-    }
-    fn recovery_status(
-        &self,
-        expected: &super::recovery::Ledger,
-        after: i64,
-    ) -> Result<org_host_control::recovery::StatusResult, Error> {
-        HostDb::recovery_status(self, expected, after)
-    }
-    fn recovery_prepare(&self, public: &PublicRecord) -> Result<super::recovery::Ledger, Error> {
-        HostDb::recovery_prepare(self, public)
-    }
-    fn recovery_delivered(
-        &self,
-        expected: &super::recovery::Ledger,
-        account: &str,
-        redeliver: bool,
-        wall: i64,
-    ) -> Result<super::recovery::Ledger, Error> {
-        HostDb::recovery_delivered(self, expected, account, redeliver, wall)
-    }
-    fn recovery_ack_intent(
-        &self,
-        expected: &super::recovery::Ledger,
-        account: &str,
-        wall: i64,
-    ) -> Result<super::recovery::Ledger, Error> {
-        HostDb::recovery_ack_intent(self, expected, account, wall)
-    }
-    fn recovery_reconcile(&self, custody: &dyn HostSecrets) -> Result<(), Error> {
-        HostDb::recovery_reconcile(self, custody)
-    }
-    fn web_tls_pair(&self) -> Result<Option<super::web_tls::StoredPair>, Error> {
-        HostDb::web_tls_pair(self)
-    }
-    fn set_web_tls_pair(&self, pair: &super::web_tls::StoredPair) -> Result<(), Error> {
-        HostDb::set_web_tls_pair(self, pair)
-    }
-    fn tls_set_lookup(
-        &self,
-        op: &super::journal::Attempt<'_>,
-        wall_ms: i64,
-    ) -> Result<super::web_tls::TlsLookup, Error> {
-        HostDb::tls_set_lookup(self, op, wall_ms)
-    }
-    fn tls_set_write(
-        &self,
-        op: &super::journal::Attempt<'_>,
-        wall_ms: i64,
-        stored: &super::web_tls::TlsStored,
-        pair: Option<&super::web_tls::StoredPair>,
-    ) -> Result<Option<super::web_tls::TlsStored>, Error> {
-        HostDb::tls_set_write(self, op, wall_ms, stored, pair)
-    }
 }
 
 /// Test-only helper kept inside the SQLite adapter so external tests never import `rusqlite`

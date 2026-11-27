@@ -533,3 +533,590 @@ fn recovery_ledger_and_reconciliation_conformance() {
         assert_eq!(status.audit[3].action, "acknowledged");
     });
 }
+
+#[test]
+fn account_preferences_and_local_authless_lifecycle_conformance() {
+    each(|h| {
+        let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
+        assert_eq!(h.store.local_authless_account(), Ok(None));
+        assert_eq!(h.store.auth_enabled(), Ok(true));
+        assert_eq!(h.store.has_administrator(), Ok(false));
+        assert_eq!(h.store.active_administrator_account(), Ok(None));
+
+        let authless_id = h
+            .store
+            .init_local_authless_if_empty(now)
+            .unwrap()
+            .expect("created local authless account");
+        assert_eq!(
+            h.store.init_local_authless_if_empty(now + 1),
+            Ok(Some(authless_id.clone()))
+        );
+        assert_eq!(
+            h.store.local_authless_account(),
+            Ok(Some(authless_id.clone()))
+        );
+        assert_eq!(h.store.auth_enabled(), Ok(false));
+        assert_eq!(h.store.has_administrator(), Ok(false));
+        assert_eq!(h.store.active_administrator_account(), Ok(None));
+
+        let authless = h.store.account_authority(&authless_id).unwrap().unwrap();
+        assert!(authless.admin());
+        h.store
+            .establish_organization_owner(&authless, ORG_ID, MEMBER_ID)
+            .unwrap();
+
+        // Preferences update supplied fields and leave None arguments unchanged.
+        assert_eq!(
+            h.store
+                .set_account_preferences(
+                    &authless_id,
+                    Some(Some("Europe/Berlin")),
+                    Some(Some(ORG_ID)),
+                )
+                .unwrap(),
+            (Some("Europe/Berlin".into()), Some(ORG_ID.into()))
+        );
+        assert_eq!(
+            h.store
+                .set_account_preferences(&authless_id, None, Some(None))
+                .unwrap(),
+            (Some("Europe/Berlin".into()), None)
+        );
+        let reloaded = h.store.account_authority(&authless_id).unwrap().unwrap();
+        assert_eq!(reloaded.time_zone(), Some("Europe/Berlin"));
+        assert_eq!(reloaded.last_org_id(), None);
+
+        // Enabling local auth converts the authless account into the real administrator
+        // while preserving organization ownership.
+        let username = crate::accounts::rules::Username::new("Owner").unwrap();
+        let verifier = Verifier::new(PHC.into()).unwrap();
+        let promoted = h
+            .store
+            .enable_local_auth(&username, &verifier, now + 10)
+            .unwrap();
+        assert_eq!(promoted, authless_id);
+        assert_eq!(h.store.local_authless_account(), Ok(None));
+        assert_eq!(h.store.auth_enabled(), Ok(true));
+        assert_eq!(h.store.has_administrator(), Ok(true));
+        assert_eq!(
+            h.store.active_administrator_account(),
+            Ok(Some((authless_id.clone(), "Owner".into())))
+        );
+        assert_eq!(
+            h.store.active_account_login(&authless_id),
+            Ok(Some("Owner".into()))
+        );
+        assert_eq!(
+            h.store.org_owner(ORG_ID),
+            Ok(Some((authless_id.clone(), MEMBER_ID.into())))
+        );
+        // Second enable_local_auth refuses with Conflict.
+        assert_eq!(
+            h.store.enable_local_auth(&username, &verifier, now + 20),
+            Err(Error::Conflict)
+        );
+    });
+}
+
+#[test]
+fn multi_person_invites_resets_handovers_and_access_removal_conformance() {
+    use super::multi_person::{
+        account_subject, invite_subject, AdminHandoverOutcome, InviteAttach, InviteIssueError,
+        InviteRegistration, OrgOwnerHandoverOutcome, RemoveAccessOutcome, SetPasswordOutcome,
+    };
+    use crate::accounts::rules::Username;
+    use crate::accounts::store::NewAccount;
+    use crate::sessions::{NewSession, Origin, Scheme, SessionDigest};
+
+    const ORG_ID_2: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d0";
+    const MEMBER_2: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d2";
+    const MEMBER_3: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d3";
+    const PHC_2: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA";
+    const PHC_3: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA";
+
+    each(|h| {
+        let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
+        (h.seed)(ADMIN_ID, "Owner", true);
+        let admin_id = AccountId::parse(ADMIN_ID).unwrap();
+        let admin = h.store.account_authority(&admin_id).unwrap().unwrap();
+        h.store
+            .establish_organization_owner(&admin, ORG_ID, MEMBER_ID)
+            .unwrap();
+        h.store
+            .establish_organization_owner(&admin, ORG_ID_2, MEMBER_ID)
+            .unwrap();
+
+        assert_eq!(
+            h.store.org_owner(ORG_ID),
+            Ok(Some((admin_id.clone(), MEMBER_ID.into())))
+        );
+        assert_eq!(
+            h.store
+                .issue_org_invite(ORG_ID, MEMBER_ID, now)
+                .unwrap_err(),
+            InviteIssueError::AlreadyLinked
+        );
+
+        let invite = h.store.issue_org_invite(ORG_ID, MEMBER_2, now).unwrap();
+        assert_eq!(
+            h.store
+                .peek_link_subject(LinkKind::Registration, &invite.token, now + 1)
+                .unwrap(),
+            Ok(invite_subject(ORG_ID, MEMBER_2)
+                .unwrap()
+                .as_str()
+                .to_owned())
+        );
+
+        let entries = h.store.list_org_access(ORG_ID, now + 1).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries
+            .iter()
+            .any(|e| e.member_id == MEMBER_ID && e.owner && e.admin));
+        assert!(entries
+            .iter()
+            .any(|e| e.member_id == MEMBER_2 && e.pending_invite && e.account_id.is_none()));
+
+        let bob_new = NewAccount {
+            account_id: AccountId::parse(MEMBER_ACC_ID).unwrap(),
+            username: Username::new("Bob").unwrap(),
+            verifier: Verifier::new(PHC.into()).unwrap(),
+        };
+        let bob_id = bob_new.account_id.clone();
+        assert_eq!(
+            h.store
+                .redeem_invite_register(&invite.token, &bob_new, now + 5)
+                .unwrap(),
+            InviteRegistration::Registered {
+                account_id: bob_id.clone(),
+                org_id: ORG_ID.into(),
+                member_id: MEMBER_2.into(),
+            }
+        );
+        assert_eq!(
+            h.store
+                .redeem_invite_register(&invite.token, &bob_new, now + 6)
+                .unwrap(),
+            InviteRegistration::Link(Refused::Used)
+        );
+
+        // Attach Bob to a second organization via an invite link.
+        let invite_2 = h
+            .store
+            .issue_org_invite(ORG_ID_2, MEMBER_3, now + 7)
+            .unwrap();
+        assert_eq!(
+            h.store
+                .redeem_invite_attach(&invite_2.token, &bob_id, now + 8)
+                .unwrap(),
+            InviteAttach::Attached {
+                org_id: ORG_ID_2.into(),
+                member_id: MEMBER_3.into(),
+            }
+        );
+
+        // Create two browser sessions for Bob, then reset password via one-time link.
+        let origin = Origin::new(Scheme::Http, "127.0.0.1", 7420).unwrap();
+        let s1 = NewSession::new(
+            bob_id.as_str(),
+            SessionDigest([1; 32]),
+            SessionDigest([2; 32]),
+            origin.clone(),
+        )
+        .unwrap();
+        let s2 = NewSession::new(
+            bob_id.as_str(),
+            SessionDigest([3; 32]),
+            SessionDigest([4; 32]),
+            origin.clone(),
+        )
+        .unwrap();
+        h.store.create(&s1, now + 9).unwrap();
+        h.store.create(&s2, now + 9).unwrap();
+
+        let reset_link = h
+            .store
+            .issue_member_password_reset_link(ORG_ID, MEMBER_2, now + 10)
+            .unwrap();
+        assert_eq!(
+            h.store
+                .peek_link_subject(LinkKind::SetPassword, &reset_link.token, now + 11)
+                .unwrap(),
+            Ok(account_subject(&bob_id).unwrap().as_str().to_owned())
+        );
+
+        let v2 = Verifier::new(PHC_2.into()).unwrap();
+        let SetPasswordOutcome::Updated {
+            account_id,
+            login,
+            ended,
+        } = h
+            .store
+            .redeem_set_password(&reset_link.token, &v2, now + 12)
+            .unwrap()
+        else {
+            panic!("expected password update");
+        };
+        assert_eq!(account_id, bob_id);
+        assert_eq!(login, "Bob");
+        assert_eq!(ended.len(), 2);
+
+        // Own password change preserves the kept session and ends all others.
+        let s3 = NewSession::new(
+            bob_id.as_str(),
+            SessionDigest([5; 32]),
+            SessionDigest([6; 32]),
+            origin.clone(),
+        )
+        .unwrap();
+        let s4 = NewSession::new(
+            bob_id.as_str(),
+            SessionDigest([7; 32]),
+            SessionDigest([8; 32]),
+            origin,
+        )
+        .unwrap();
+        h.store.create(&s3, now + 13).unwrap();
+        h.store.create(&s4, now + 13).unwrap();
+        let v3 = Verifier::new(PHC_3.into()).unwrap();
+        let ended_own = h
+            .store
+            .change_own_password(&bob_id, &s3.id, &v3, now + 14)
+            .unwrap();
+        assert_eq!(ended_own.len(), 1);
+        assert_eq!(ended_own[0].id, s4.id);
+
+        // Admin password reset link targets the active administrator.
+        let (adm_reset_login, _adm_link) = h
+            .store
+            .issue_admin_password_reset_link(now + 15)
+            .unwrap()
+            .expect("admin reset link");
+        assert_eq!(adm_reset_login, "Owner");
+
+        // Org owner handover + restore.
+        assert_eq!(
+            h.store
+                .handover_org_owner(ORG_ID, &admin_id, MEMBER_2)
+                .unwrap(),
+            OrgOwnerHandoverOutcome::Transferred {
+                previous_member_id: MEMBER_ID.into(),
+                to_account_id: bob_id.clone(),
+                to_member_id: MEMBER_2.into(),
+            }
+        );
+        assert_eq!(
+            h.store.org_owner(ORG_ID),
+            Ok(Some((bob_id.clone(), MEMBER_2.into())))
+        );
+        h.store
+            .restore_org_owner(ORG_ID, &admin_id, MEMBER_ID)
+            .unwrap();
+        assert_eq!(
+            h.store.org_owner(ORG_ID),
+            Ok(Some((admin_id.clone(), MEMBER_ID.into())))
+        );
+
+        // Administrator handover to Bob and back to Owner.
+        assert_eq!(
+            h.store.handover_administrator(&admin_id, &bob_id).unwrap(),
+            AdminHandoverOutcome::Transferred
+        );
+        assert_eq!(
+            h.store.active_administrator_account(),
+            Ok(Some((bob_id.clone(), "Bob".into())))
+        );
+        assert_eq!(
+            h.store.handover_administrator(&bob_id, &admin_id).unwrap(),
+            AdminHandoverOutcome::Transferred
+        );
+
+        // Removing the owner refuses; removing Bob succeeds and ends his remaining session.
+        assert_eq!(
+            h.store
+                .remove_org_access(ORG_ID, MEMBER_ID, now + 16)
+                .unwrap(),
+            RemoveAccessOutcome::IsOwner
+        );
+        let RemoveAccessOutcome::Removed {
+            account_id: removed_acct,
+            ended: removed_sessions,
+        } = h
+            .store
+            .remove_org_access(ORG_ID, MEMBER_2, now + 17)
+            .unwrap()
+        else {
+            panic!("expected Removed");
+        };
+        assert_eq!(removed_acct, Some(bob_id));
+        assert_eq!(removed_sessions.len(), 1);
+        assert_eq!(removed_sessions[0].id, s3.id);
+    });
+}
+
+#[test]
+fn operation_journal_lookup_and_commit_conformance() {
+    use super::journal::{Effect, Lookup, Write};
+    use org_host_control::HostOpResult;
+
+    each(|h| {
+        let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
+        let attempt = Attempt {
+            id: OP_ID,
+            kind: "office.restart",
+            fingerprint: [0x42; 32],
+            account: ADMIN_ID,
+        };
+        assert!(matches!(
+            h.store.journal_lookup(&attempt, now).unwrap(),
+            Lookup::Vacant
+        ));
+
+        let payload = HostOpResult::Completed {
+            result: serde_json::json!({"restarted": true}),
+        };
+        assert!(matches!(
+            h.store
+                .journal_commit(
+                    &attempt,
+                    now,
+                    Effect {
+                        stored: payload.clone(),
+                        verifier: None,
+                    },
+                )
+                .unwrap(),
+            Write::Committed(ref stored) if stored == &payload
+        ));
+
+        assert!(matches!(
+            h.store.journal_lookup(&attempt, now + 1).unwrap(),
+            Lookup::Replay(ref stored) if stored == &payload
+        ));
+        assert!(matches!(
+            h.store
+                .journal_commit(
+                    &attempt,
+                    now + 2,
+                    Effect {
+                        stored: payload.clone(),
+                        verifier: None,
+                    },
+                )
+                .unwrap(),
+            Write::Existing(Lookup::Replay(ref stored)) if stored == &payload
+        ));
+
+        // Different fingerprint on the same operation ID is OperationReused.
+        let reused = Attempt {
+            fingerprint: [0x99; 32],
+            ..attempt
+        };
+        assert_eq!(
+            h.store.journal_lookup(&reused, now + 3).err(),
+            Some(Error::OperationReused)
+        );
+    });
+}
+
+#[test]
+fn live_host_subsystems_run_end_to_end_on_memory_host_store() {
+    use std::sync::Arc;
+
+    use org_host_control::admin::AdminLinkResult;
+    use org_host_control::browser::{
+        BrowserOrigin, Digest32, LinkRegisterParams, SessionSignInParams, SessionValidateParams,
+    };
+    use org_host_control::browser_accounts::{
+        InspectLinkKind, LinkInspectParams, LinkInspectResult, LinkSetPasswordParams,
+    };
+    use org_host_control::listen::ListenOrigin;
+    use org_host_control::{LinkToken, Password};
+
+    use crate::admin::{Admin, Presence};
+    use crate::app_auth::AppPolicy;
+    use crate::authentication::Authentication;
+    use crate::control_listener::Connection;
+    use crate::keys::memory::MemoryKeys;
+    use crate::provisioning::Provisioning;
+    use crate::web_tls::WebTls;
+    use crate::writer::Writers;
+
+    struct LocalApprove;
+    impl Presence for LocalApprove {
+        fn local(&self, _: &Connection) -> bool {
+            true
+        }
+        fn confirm(&self, _: &dyn Fn() -> bool) -> Result<(), ()> {
+            Ok(())
+        }
+    }
+
+    let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
+    let store: Arc<dyn HostStore> = Arc::new(MemoryHostStore::new(INSTANCE, now));
+    let secrets: Arc<dyn HostSecrets> = Arc::new(MemorySecrets::default());
+
+    let auth = Authentication::with_store(Arc::clone(&store), Arc::clone(&secrets), INSTANCE)
+        .expect("Authentication wired over MemoryHostStore");
+    let admin = Admin::new(
+        Arc::clone(&store),
+        OP_ID,
+        ListenOrigin::parse("http://127.0.0.1:7420").unwrap(),
+        AppPolicy::new(crate::HOST_SIGNING_ID, None).unwrap(),
+        Arc::new(LocalApprove),
+    );
+
+    // 1. Issue initial admin link through Admin -> register through Authentication -> validate & sign in.
+    let (host_sock, _peer_sock) = std::os::unix::net::UnixStream::pair().unwrap();
+    let root_conn = Connection::accepted_for_tests(&host_sock);
+    root_conn.mark_root_authority();
+    let received = crate::peer::Received {
+        sent_at: 0,
+        buffered_after: 0,
+    };
+    let AdminLinkResult::Issued { url, .. } = admin.reset(&root_conn, received).unwrap() else {
+        panic!("expected initial registration link");
+    };
+    let token_str = url
+        .expose()
+        .strip_prefix("http://127.0.0.1:7420/register#")
+        .expect("registration token")
+        .to_owned();
+    let live_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let origin = BrowserOrigin {
+        scheme: "http".into(),
+        host: "127.0.0.1".into(),
+        port: 7420,
+    };
+    let mut ended = Vec::new();
+    let registered = auth
+        .register(
+            &LinkRegisterParams {
+                link: LinkToken::new(token_str).unwrap(),
+                login: "Alice".into(),
+                password: Password::new("initial-secret-passphrase".into()).unwrap(),
+                client_address: "127.0.0.1".parse().unwrap(),
+                cookie_digest: Digest32([0x11; 32]),
+                proof_digest: Digest32([0x22; 32]),
+                origin: origin.clone(),
+            },
+            live_now + 10,
+            &mut ended,
+        )
+        .expect("browser registration over MemoryHostStore");
+    assert_eq!(store.has_administrator(), Ok(true));
+    assert_eq!(registered.account.login, "Alice");
+
+    let validated = auth
+        .validate_browser(
+            &SessionValidateParams {
+                cookie_digest: Digest32([0x11; 32]),
+                proof_digest: Digest32([0x22; 32]),
+                origin: origin.clone(),
+            },
+            live_now + 20,
+            &mut ended,
+        )
+        .expect("browser session validates over MemoryHostStore");
+    assert_eq!(validated.session_id, registered.session_id);
+
+    let signed_in = auth
+        .sign_in_browser(
+            &SessionSignInParams {
+                login: "alice".into(),
+                password: Password::new("initial-secret-passphrase".into()).unwrap(),
+                client_address: "127.0.0.1".parse().unwrap(),
+                cookie_digest: Digest32([0x33; 32]),
+                proof_digest: Digest32([0x44; 32]),
+                origin,
+            },
+            live_now + 30,
+            &mut ended,
+        )
+        .expect("browser sign-in over MemoryHostStore");
+    assert_eq!(signed_in.account.id, registered.account.id);
+
+    // 2. Admin reset issues password-reset link -> inspect & redeem through Authentication.
+    let AdminLinkResult::ResetPassword { login, url, .. } =
+        admin.reset(&root_conn, received).unwrap()
+    else {
+        panic!("expected ResetPassword link");
+    };
+    assert_eq!(login, "Alice");
+    let reset_token = url
+        .expose()
+        .strip_prefix("http://127.0.0.1:7420/set-password#")
+        .expect("set-password token")
+        .to_owned();
+    let reset_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let inspected = auth
+        .inspect_link(
+            &LinkInspectParams {
+                link: LinkToken::new(reset_token.clone()).unwrap(),
+                kind: InspectLinkKind::SetPassword,
+            },
+            reset_now,
+            |_| String::new(),
+        )
+        .expect("inspect set-password link over MemoryHostStore");
+    assert_eq!(
+        inspected,
+        LinkInspectResult::SetPassword {
+            login: "Alice".into(),
+        }
+    );
+    ended.clear();
+    let updated = auth
+        .redeem_set_password(
+            &LinkSetPasswordParams {
+                link: LinkToken::new(reset_token).unwrap(),
+                password: Password::new("rotated-secret-passphrase".into()).unwrap(),
+                client_address: "127.0.0.1".parse().unwrap(),
+            },
+            reset_now + 10,
+            &mut ended,
+        )
+        .expect("redeem set-password link over MemoryHostStore");
+    assert_eq!(updated.login, "Alice");
+    assert_eq!(ended.len(), 2, "both prior browser sessions ended on reset");
+
+    // 3. WebTls, Writers, and Provisioning compose cleanly over MemoryHostStore + MemorySecrets.
+    let tls = WebTls::start(
+        Arc::clone(&store),
+        Arc::clone(&secrets),
+        ListenOrigin::parse("https://127.0.0.1:8443").unwrap(),
+        None,
+        crate::web_tls::now().unwrap(),
+    )
+    .expect("WebTls over MemoryHostStore");
+    assert!(store.web_tls_pair().unwrap().is_some());
+    drop(tls);
+
+    let root = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let state_root = root.path().canonicalize().unwrap();
+    let office_home = state_root.join("office-state");
+    std::fs::create_dir_all(office_home.join(org_office_launch::OFFICES_DIR_NAME)).unwrap();
+    let writers = Writers::open(
+        Arc::clone(&secrets),
+        Arc::clone(&store),
+        INSTANCE,
+        &state_root,
+    )
+    .expect("Writers over MemoryHostStore");
+    let _provisioning = Provisioning::new(
+        Arc::clone(&store),
+        Arc::clone(&secrets),
+        Arc::new(MemoryKeys::default()),
+        writers,
+        INSTANCE,
+        &office_home,
+    );
+}

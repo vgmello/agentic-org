@@ -23,7 +23,7 @@ mod contract_tests;
 pub(crate) mod memory;
 
 /// How long a registration link stays redeemable.
-pub(crate) const REGISTRATION_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+pub const REGISTRATION_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 const DOMAIN: &[u8] = b"agentic-org/link/v1";
 const TOKEN_BYTES: usize = 32;
 /// Unpadded base64url length of `TOKEN_BYTES`.
@@ -33,7 +33,7 @@ const SUBJECT_MAX: usize = 128;
 /// What a link authorizes. The kind is part of the digest, so a token of one
 /// kind never redeems another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LinkKind {
+pub enum LinkKind {
     /// Creates an administrator while none exists (setup and `admin reset`), or
     /// invites a person to join an organization (`invite:<org_id>:<member_id>`).
     Registration,
@@ -42,13 +42,13 @@ pub(crate) enum LinkKind {
     SetPassword,
 }
 impl LinkKind {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Registration => "registration",
             Self::SetPassword => "set_password",
         }
     }
-    pub(crate) fn ttl_ms(self) -> i64 {
+    pub fn ttl_ms(self) -> i64 {
         match self {
             Self::Registration | Self::SetPassword => REGISTRATION_TTL_MS,
         }
@@ -58,9 +58,9 @@ impl LinkKind {
 /// The thing a link is for, such as the single initial administrator. At most
 /// one link per kind and subject is pending.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Subject(String);
+pub struct Subject(String);
 impl Subject {
-    pub(crate) fn new(value: &str) -> Result<Self, Error> {
+    pub fn new(value: &str) -> Result<Self, Error> {
         let valid = !value.is_empty()
             && value.len() <= SUBJECT_MAX
             && value
@@ -68,14 +68,14 @@ impl Subject {
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'));
         valid.then(|| Self(value.to_owned())).ok_or(Error::Invalid)
     }
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// The link secret. It is returned once, to the caller that issued it, and is
 /// never stored or logged. Its bytes are zeroed when it is dropped.
-pub(crate) struct Token([u8; TOKEN_BYTES]);
+pub struct Token([u8; TOKEN_BYTES]);
 impl Drop for Token {
     fn drop(&mut self) {
         self.0.zeroize();
@@ -92,7 +92,7 @@ impl Token {
     /// is checked before decoding, so oversized input costs nothing. The
     /// decoder refuses set unused low bits, so no re-encoding is needed to
     /// reject a second spelling of the same bytes.
-    pub(crate) fn parse(text: &str) -> Option<Self> {
+    pub fn parse(text: &str) -> Option<Self> {
         if text.len() != TOKEN_TEXT_LEN {
             return None;
         }
@@ -101,7 +101,7 @@ impl Token {
     }
     /// The text that goes after `#` in the link. It is the secret, so it is
     /// zeroed when dropped.
-    pub(crate) fn encode(&self) -> Zeroizing<String> {
+    pub fn encode(&self) -> Zeroizing<String> {
         base64url_encode(&self.0)
     }
 }
@@ -113,13 +113,13 @@ impl std::fmt::Debug for Token {
 
 /// The only form in which a link is stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LinkDigest(pub(crate) [u8; 32]);
+pub struct LinkDigest(pub [u8; 32]);
 impl LinkDigest {
     /// `SHA-256(len(D) ‖ D ‖ len(I) ‖ I ‖ len(K) ‖ K ‖ T)` where `D` is
     /// `agentic-org/link/v1`, `I` the instance ID, `K` the kind name, `T` the
     /// 32 raw token bytes and every `len` a 4-byte big-endian byte count. The
     /// length prefixes give every variable field an explicit boundary.
-    pub(crate) fn of(instance_id: &str, kind: LinkKind, token: &Token) -> Self {
+    pub fn of(instance_id: &str, kind: LinkKind, token: &Token) -> Self {
         Self(digest(instance_id, kind.as_str(), &token.0))
     }
 }
@@ -137,31 +137,23 @@ fn digest(instance_id: &str, kind: &str, token: &[u8; TOKEN_BYTES]) -> [u8; 32] 
 
 /// A newly issued link. `token` is the secret; show it once.
 #[derive(Debug)]
-pub(crate) struct Issued {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
-    pub(crate) link_id: String,
-    pub(crate) token: Token,
-    pub(crate) expires_at_ms: i64,
+pub struct Issued {
+    pub link_id: String,
+    pub token: Token,
+    pub expires_at_ms: i64,
 }
 
 /// A link that can still be redeemed.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "only issue_first has a production caller")
-)]
-pub(crate) struct Pending {
-    pub(crate) link_id: String,
-    pub(crate) issued_at_ms: i64,
-    pub(crate) expires_at_ms: i64,
+pub struct Pending {
+    pub link_id: String,
+    pub issued_at_ms: i64,
+    pub expires_at_ms: i64,
 }
 
 /// Why a token does not redeem. The caller shows one generic message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Refused {
+pub enum Refused {
     Unknown,
     Used,
     Cancelled,
@@ -169,7 +161,7 @@ pub(crate) enum Refused {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Error {
+pub enum Error {
     Invalid,
     Io(io::ErrorKind),
     /// The storage engine failed; the fault says how.
@@ -182,7 +174,7 @@ pub(crate) enum Error {
 /// An engine-independent class of storage failure. Adapters map their own
 /// errors to it so callers can tell a busy store from corruption.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StoreFault {
+pub enum StoreFault {
     /// A uniqueness or check constraint refused the write.
     Constraint,
     /// The store is locked by another writer.
@@ -201,19 +193,19 @@ impl From<io::Error> for Error {
 }
 
 /// The new row an adapter writes, already hashed. Adapters never see a token.
-pub(crate) struct NewLink<'a> {
-    pub(crate) link_id: &'a str,
-    pub(crate) kind: LinkKind,
-    pub(crate) subject: &'a Subject,
-    pub(crate) digest: LinkDigest,
-    pub(crate) issued_at_ms: i64,
-    pub(crate) expires_at_ms: i64,
+pub struct NewLink<'a> {
+    pub link_id: &'a str,
+    pub kind: LinkKind,
+    pub subject: &'a Subject,
+    pub digest: LinkDigest,
+    pub issued_at_ms: i64,
+    pub expires_at_ms: i64,
 }
 
 /// Generates a link for `instance_id` and hands its hashed row to `store`, which writes it
 /// (`true`) or declines (`false`, nothing issued). Adapters with a storage precondition of
 /// their own build on this so the token rules stay here.
-pub(crate) fn issue_with(
+pub fn issue_with(
     instance_id: &str,
     kind: LinkKind,
     subject: &Subject,
@@ -240,21 +232,13 @@ pub(crate) fn issue_with(
 
 /// The host-storage contract for one-time links. Adapters implement the
 /// storage primitives; the shared rules live in the provided methods.
-pub(crate) trait OneTimeLinks {
+pub trait OneTimeLinks {
     /// The instance every digest is bound to.
     fn instance_id(&self) -> &str;
     /// Cancel the pending link of the same kind and subject (ended at
     /// `issued_at_ms`) and insert `link`, in one transaction.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn replace_pending(&self, link: NewLink<'_>) -> Result<(), Error>;
     /// Mark the pending, unexpired link with this digest used at `now_ms`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn redeem(
         &self,
         kind: LinkKind,
@@ -264,31 +248,26 @@ pub(crate) trait OneTimeLinks {
     /// Whether `redeem` would accept the link with this digest at `now_ms`,
     /// without changing it. A caller uses it to refuse a dead link before
     /// costly work; the later `redeem` still decides.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn would_redeem(
         &self,
         kind: LinkKind,
         digest: LinkDigest,
         now_ms: i64,
     ) -> Result<Result<(), Refused>, Error>;
+    /// Non-consuming preview of a pending, unexpired link's subject for `digest` at `now_ms`.
+    fn peek_subject(
+        &self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<Result<String, Refused>, Error>;
     /// Insert `link` only if no link of the same kind and subject was ever
     /// stored, in any state, checked and inserted in one transaction. Returns
     /// whether it was inserted.
     fn insert_first(&self, link: NewLink<'_>) -> Result<bool, Error>;
     /// The pending link of this kind and subject, expired or not.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error>;
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn issue(&self, kind: LinkKind, subject: &Subject, now_ms: i64) -> Result<Issued, Error> {
         issue_with(self.instance_id(), kind, subject, now_ms, |link| {
             self.replace_pending(link).map(|()| true)
@@ -308,10 +287,6 @@ pub(crate) trait OneTimeLinks {
         })
     }
     /// Redeems a token once. A malformed token is `Unknown`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn consume(
         &self,
         kind: LinkKind,
@@ -328,10 +303,6 @@ pub(crate) trait OneTimeLinks {
         )
     }
     /// Whether `token` would redeem now, without redeeming it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn redeemable(
         &self,
         kind: LinkKind,
@@ -344,11 +315,20 @@ pub(crate) trait OneTimeLinks {
             now_ms,
         )
     }
+    /// Non-consuming preview of a pending, unexpired link's subject for `token` at `now_ms`.
+    fn peek_link_subject(
+        &self,
+        kind: LinkKind,
+        token: &Token,
+        now_ms: i64,
+    ) -> Result<Result<String, Refused>, Error> {
+        self.peek_subject(
+            kind,
+            LinkDigest::of(self.instance_id(), kind, token),
+            now_ms,
+        )
+    }
     /// The redeemable link of this kind and subject, if any.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only issue_first has a production caller")
-    )]
     fn pending(
         &self,
         kind: LinkKind,
@@ -362,7 +342,7 @@ pub(crate) trait OneTimeLinks {
 }
 
 /// The state transition every adapter applies when a digest is presented.
-pub(crate) fn redeem_rule(state: &str, expires_at_ms: i64, now_ms: i64) -> Result<(), Refused> {
+pub fn redeem_rule(state: &str, expires_at_ms: i64, now_ms: i64) -> Result<(), Refused> {
     match state {
         "used" => Err(Refused::Used),
         "cancelled" => Err(Refused::Cancelled),

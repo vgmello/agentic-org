@@ -24,44 +24,28 @@ pub(crate) mod memory;
 
 /// Host-wide bound on stored browser sessions (D8). Expired sessions are reaped
 /// before a new one is refused.
-pub(crate) const SESSION_LIMIT: usize = 4096;
+pub const SESSION_LIMIT: usize = 4096;
 /// A session ends after 30 days without activity.
-pub(crate) const IDLE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no production caller applies this digest")
-)]
+pub const IDLE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const COOKIE_DOMAIN: &[u8] = b"agentic-org/session-cookie/v1";
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no production caller applies this digest")
-)]
 const PROOF_DOMAIN: &[u8] = b"agentic-org/session-proof/v1";
 
 /// The only form in which a cookie value or proof reaches the host.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SessionDigest(pub(crate) [u8; 32]);
+pub struct SessionDigest(pub [u8; 32]);
 impl SessionDigest {
     /// `SHA-256("agentic-org/session-cookie/v1" ‖ value)`. The domain is a
     /// fixed-length constant, so the concatenation is unambiguous.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no production caller applies this digest")
-    )]
-    pub(crate) fn cookie(value: &[u8]) -> Self {
+    pub fn cookie(value: &[u8]) -> Self {
         Self(digest(COOKIE_DOMAIN, value))
     }
     /// `SHA-256("agentic-org/session-proof/v1" ‖ value)`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no production caller applies this digest")
-    )]
-    pub(crate) fn proof(value: &[u8]) -> Self {
+    pub fn proof(value: &[u8]) -> Self {
         Self(digest(PROOF_DOMAIN, value))
     }
     /// Constant-time equality: the time taken does not depend on where the
     /// digests first differ.
-    pub(crate) fn ct_eq(&self, other: &Self) -> bool {
+    pub fn ct_eq(&self, other: &Self) -> bool {
         self.0
             .iter()
             .zip(other.0.iter())
@@ -74,10 +58,6 @@ impl std::fmt::Debug for SessionDigest {
         f.write_str("SessionDigest(..)")
     }
 }
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no production caller applies this digest")
-)]
 fn digest(domain: &[u8], value: &[u8]) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(domain);
@@ -88,24 +68,24 @@ fn digest(domain: &[u8], value: &[u8]) -> [u8; 32] {
 /// The browser origin a session is bound to. A session presented from any
 /// other origin is not found.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Origin {
+pub struct Origin {
     scheme: Scheme,
     host: String,
     port: u16,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Scheme {
+pub enum Scheme {
     Http,
     Https,
 }
 impl Scheme {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Http => "http",
             Self::Https => "https",
         }
     }
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "http" => Some(Self::Http),
             "https" => Some(Self::Https),
@@ -115,9 +95,9 @@ impl Scheme {
 }
 /// The origin is not a bounded lowercase host with a nonzero port.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct InvalidOrigin;
+pub struct InvalidOrigin;
 impl Origin {
-    pub(crate) fn new(scheme: Scheme, host: &str, port: u16) -> Result<Self, InvalidOrigin> {
+    pub fn new(scheme: Scheme, host: &str, port: u16) -> Result<Self, InvalidOrigin> {
         let valid = !host.is_empty()
             && host.len() <= 255
             && port != 0
@@ -134,27 +114,27 @@ impl Origin {
             })
             .ok_or(InvalidOrigin)
     }
-    pub(crate) fn scheme(&self) -> Scheme {
+    pub fn scheme(&self) -> Scheme {
         self.scheme
     }
-    pub(crate) fn host(&self) -> &str {
+    pub fn host(&self) -> &str {
         &self.host
     }
-    pub(crate) fn port(&self) -> u16 {
+    pub fn port(&self) -> u16 {
         self.port
     }
 }
 
 /// A session to store. Its ID is a fresh UUIDv7.
-pub(crate) struct NewSession {
-    pub(crate) id: String,
-    pub(crate) account_id: String,
-    pub(crate) cookie: SessionDigest,
-    pub(crate) proof: SessionDigest,
-    pub(crate) origin: Origin,
+pub struct NewSession {
+    pub id: String,
+    pub account_id: String,
+    pub cookie: SessionDigest,
+    pub proof: SessionDigest,
+    pub origin: Origin,
 }
 impl NewSession {
-    pub(crate) fn new(
+    pub fn new(
         account_id: &str,
         cookie: SessionDigest,
         proof: SessionDigest,
@@ -172,44 +152,44 @@ impl NewSession {
 
 /// A stored session as `find` returns it. Digests stay inside the store.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SessionRecord {
-    pub(crate) id: String,
-    pub(crate) account_id: String,
-    pub(crate) created_ms: i64,
-    pub(crate) last_activity_ms: i64,
-    pub(crate) origin: Origin,
+pub struct SessionRecord {
+    pub id: String,
+    pub account_id: String,
+    pub created_ms: i64,
+    pub last_activity_ms: i64,
+    pub origin: Origin,
 }
 
 /// A session that no longer exists. The caller pushes `session.ended` for it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Ended {
-    pub(crate) id: String,
-    pub(crate) account_id: String,
+pub struct Ended {
+    pub id: String,
+    pub account_id: String,
 }
 
 /// The result of `create`. Both arms carry the sessions reaped as expired in
 /// the same transaction, so the caller can push their end. `Full` carries no
 /// account information: every account gets the same `unavailable` reply (SES-6).
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Admission {
+pub enum Admission {
     Created { reaped: Vec<Ended> },
     Full { reaped: Vec<Ended> },
 }
 
 /// Storage failed. A failure is never reported as a valid session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StoreError {
+pub enum StoreError {
     Unavailable,
 }
 
 /// Whether a session last active at `last_activity_ms` is still live at `now_ms`.
-pub(crate) fn is_live(last_activity_ms: i64, now_ms: i64) -> bool {
+pub fn is_live(last_activity_ms: i64, now_ms: i64) -> bool {
     now_ms < last_activity_ms.saturating_add(IDLE_MS)
 }
 
 /// The host-storage contract for browser sessions. Every mutating call runs in
 /// one transaction.
-pub(crate) trait BrowserSessions {
+pub trait BrowserSessions {
     /// Reaps expired sessions, then stores `new` unless `SESSION_LIMIT` live
     /// sessions remain. An unknown account or a duplicate digest is
     /// `Unavailable`; nothing is stored.
@@ -233,9 +213,5 @@ pub(crate) trait BrowserSessions {
     fn end_account(&self, account_id: &str, except: Option<&str>)
         -> Result<Vec<Ended>, StoreError>;
     /// Deletes every expired session, sorted by ID.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no caller reaps through the store yet")
-    )]
     fn reap(&self, now_ms: i64) -> Result<Vec<Ended>, StoreError>;
 }

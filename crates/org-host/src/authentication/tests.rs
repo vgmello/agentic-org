@@ -264,7 +264,7 @@ fn protected_account_changes_revoke_both_independently_issued_session_grants() {
         assert_eq!(auth.sessions.lock().unwrap().len(), 2);
         // Change the actual protected registry fact after both grants exist.
         // No further sign-in/renewal/authorization request triggers the reaper.
-        auth.db
+        auth.sqlite_for_test()
             .change_authority_fixture(&AccountId::parse(&first.account).unwrap(), revoke)
             .unwrap();
         let auth = Arc::new(auth);
@@ -337,7 +337,9 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
     assert_eq!(a.message, b.message);
     let result = login(&auth, &connection);
     let id = AccountId::parse(&result.account).unwrap();
-    auth.db.change_authority_fixture(&id, false).unwrap();
+    auth.sqlite_for_test()
+        .change_authority_fixture(&id, false)
+        .unwrap();
     assert_eq!(
         auth.authorize(&connection, &result.session)
             .unwrap_err()
@@ -345,7 +347,9 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
         ErrorCode::NotAuthorized
     );
     let result = login(&auth, &connection);
-    auth.db.change_authority_fixture(&id, true).unwrap();
+    auth.sqlite_for_test()
+        .change_authority_fixture(&id, true)
+        .unwrap();
     assert_eq!(
         auth.authorize(&connection, &result.session)
             .unwrap_err()
@@ -593,7 +597,7 @@ fn recovery_private_permission_stamp_dies_on_logout_expiry_and_registry_revocati
                 auth.reap();
             }
             _ => {
-                auth.db
+                auth.sqlite_for_test()
                     .change_authority_fixture(&AccountId::parse(&result.account).unwrap(), true)
                     .unwrap();
                 auth.reap();
@@ -744,13 +748,14 @@ fn satellite_operator_channel_survives_reap_while_admin_and_revokes_on_demotion(
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
     let second_acct = crate::ids::generate().unwrap();
     let second_id = AccountId::parse(&second_acct).unwrap();
-    auth.db
+    let sqlite = auth.sqlite_for_test();
+    sqlite
         .seed_account(&second_acct, "Successor", &verifier, false, 10_000)
         .unwrap();
-    auth.db
+    sqlite
         .seed_link_for_test(&signed_in.account, "shared-org", "mem-admin")
         .unwrap();
-    auth.db
+    sqlite
         .seed_link_for_test(&second_acct, "shared-org", "mem-successor")
         .unwrap();
 

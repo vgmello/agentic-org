@@ -11,72 +11,16 @@ use rusqlite::{OptionalExtension, Transaction, TransactionBehavior};
 use super::super::{administrator, clock, local_auth, Error, HostDb};
 use crate::accounts::identity::AccountId;
 use crate::accounts::store::StoreError;
-use crate::links::Subject;
+pub(crate) use crate::hostdb::multi_person::{
+    account_subject, invite_subject, parse_account_subject, parse_invite_subject,
+    AdminHandoverOutcome, InviteAttach, InviteIssueError, InviteRegistration,
+    MemberResetIssueError, OrgOwnerHandoverOutcome, RemoveAccessOutcome, SetPasswordOutcome,
+    ACCOUNT_PREFIX, INVITE_PREFIX,
+};
 use crate::sessions::Ended;
 
 mod invites;
 mod passwords;
-pub(crate) use invites::{InviteAttach, InviteIssueError, InviteRegistration};
-pub(crate) use passwords::{MemberResetIssueError, SetPasswordOutcome};
-
-const INVITE_PREFIX: &str = "invite:";
-const ACCOUNT_PREFIX: &str = "account:";
-
-pub(crate) fn invite_subject(
-    org_id: &str,
-    member_id: &str,
-) -> Result<Subject, crate::links::Error> {
-    Subject::new(&format!("{INVITE_PREFIX}{org_id}:{member_id}"))
-}
-
-pub(crate) fn account_subject(account_id: &AccountId) -> Result<Subject, crate::links::Error> {
-    Subject::new(&format!("{ACCOUNT_PREFIX}{}", account_id.as_str()))
-}
-
-/// Parses `"invite:<org_id>:<member_id>"` into `(org_id, member_id)`.
-pub(crate) fn parse_invite_subject(subject: &str) -> Option<(&str, &str)> {
-    let rest = subject.strip_prefix(INVITE_PREFIX)?;
-    let (org_id, member_id) = rest.split_once(':')?;
-    if org_office_launch::is_storage_id(org_id) && org_proto::is_valid_member_id(member_id) {
-        Some((org_id, member_id))
-    } else {
-        None
-    }
-}
-
-/// Parses `"account:<account_id>"` into `AccountId`.
-pub(crate) fn parse_account_subject(subject: &str) -> Option<AccountId> {
-    let raw = subject.strip_prefix(ACCOUNT_PREFIX)?;
-    AccountId::parse(raw).ok()
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RemoveAccessOutcome {
-    Removed {
-        account_id: Option<AccountId>,
-        ended: Vec<Ended>,
-    },
-    IsOwner,
-    NotFound,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum OrgOwnerHandoverOutcome {
-    Transferred {
-        previous_member_id: String,
-        to_account_id: AccountId,
-        to_member_id: String,
-    },
-    NotOwner,
-    InvalidTarget,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum AdminHandoverOutcome {
-    Transferred,
-    NotAdmin,
-    InvalidTarget,
-}
 
 fn unavailable<T>(_: T) -> StoreError {
     StoreError::Unavailable

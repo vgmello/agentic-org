@@ -213,7 +213,7 @@ impl JoinTestHarness {
         } else {
             crate::authentication::tests::fixture_without_accounts()
         };
-        let (db, _) = authentication.provisioning_storage();
+        let db = authentication.sqlite_for_test();
         let now = super::browser_now_ms().unwrap();
         let session_login = if with_admin {
             let verifier =
@@ -436,12 +436,12 @@ fn office_join_fresh_instance_admits_local_peer_and_accounts_require_admin() {
 
     // Instance with an admin account refuses session-less join AND refuses non-admin owner!
     let mut with_acct = JoinTestHarness::start_with_mode(true, true);
-    let (db, _) = with_acct
+    let db = with_acct
         .service
         .authentication
         .as_ref()
         .unwrap()
-        .provisioning_storage();
+        .sqlite_for_test();
     let verifier =
         hash_password(&Password::new("synthetic nonadmin password".into()).unwrap()).unwrap();
     let non_admin_acct = crate::ids::generate().unwrap();

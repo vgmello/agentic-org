@@ -7,38 +7,10 @@ use crate::accounts::store::{NewAccount, StoreError};
 use crate::hostdb::sqlite::{clock, links, local_auth, HostDb};
 use crate::links::{Issued, LinkDigest, LinkKind, Refused, Token};
 
-use super::{invite_subject, parse_invite_subject, unavailable};
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum InviteIssueError {
-    AlreadyLinked,
-    AuthDisabled,
-    Invalid,
-    Store,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum InviteRegistration {
-    Registered {
-        account_id: AccountId,
-        org_id: String,
-        member_id: String,
-    },
-    Link(Refused),
-    NotAnInvite,
-    AlreadyLinked,
-    LoginTaken,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum InviteAttach {
-    Attached { org_id: String, member_id: String },
-    Link(Refused),
-    NotAnInvite,
-    AlreadyLinked,
-    AlreadyMember,
-    AccountUnavailable,
-}
+use super::{
+    invite_subject, parse_invite_subject, unavailable, InviteAttach, InviteIssueError,
+    InviteRegistration,
+};
 
 impl HostDb {
     /// Issues a one-time invitation link for `(org_id, member_id)`, cancelling any prior pending

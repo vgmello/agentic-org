@@ -135,7 +135,7 @@ impl Fixture {
         now: i64,
     ) -> Result<Arc<WebTls>, StartRefusal> {
         WebTls::start(
-            Arc::clone(&self.db),
+            Arc::clone(&self.db) as Arc<dyn crate::hostdb::HostStore>,
             Arc::clone(&self.secrets) as Arc<dyn HostSecrets>,
             origin.clone(),
             supplied,

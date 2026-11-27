@@ -7,11 +7,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
+use org_host_control::browser_accounts::OrgAccessEntry;
 use org_host_control::ops::TlsRefusal;
 use org_office_launch::recovery::PublicRecord;
 use org_proto::OrganizationName;
 
 use crate::accounts::identity::{AccountId, LoginKey};
+use crate::accounts::rules::Username;
 use crate::accounts::store::{
     backoff_ms, AccountStore, Attempt as AccountAttempt, Credentials as AccountCredentials,
     NewAccount, Registration, StoreError as AccountStoreError, Throttle, ThrottleKey,
@@ -19,15 +21,21 @@ use crate::accounts::store::{
 };
 use crate::host_secrets::{HostSecrets, Name};
 use crate::hostdb::accounts::{Account, Credentials, Link};
-use crate::hostdb::journal::{id_time, Attempt, Verifier, DAY};
+use crate::hostdb::journal::{id_time, Attempt, Effect, Lookup, Stored, Verifier, Write, DAY};
 use crate::hostdb::lockout::{Outcome, Socket, State as LockoutState};
+use crate::hostdb::multi_person::{
+    account_subject, invite_subject, parse_account_subject, parse_invite_subject,
+    AdminHandoverOutcome, InviteAttach, InviteIssueError, InviteRegistration,
+    MemberResetIssueError, OrgOwnerHandoverOutcome, RemoveAccessOutcome, SetPasswordOutcome,
+    ACCOUNT_PREFIX, INVITE_PREFIX,
+};
 use crate::hostdb::provisioning::{Reservation, Taken};
 use crate::hostdb::recovery::{Ledger, State as RecoveryState};
 use crate::hostdb::web_tls::{StoredPair, TlsLookup, TlsStored};
 use crate::hostdb::{Error, HostStore, StoreFault};
 use crate::links::{
     issue_with, redeem_rule, Error as LinkError, Issued, LinkDigest, LinkKind, NewLink,
-    OneTimeLinks, Pending as PendingLink, Refused, StoreFault as LinkStoreFault, Subject,
+    OneTimeLinks, Pending as PendingLink, Refused, StoreFault as LinkStoreFault, Subject, Token,
 };
 use crate::sessions::{
     is_live, Admission, BrowserSessions, Ended, NewSession, Origin, SessionDigest, SessionRecord,
@@ -38,10 +46,12 @@ struct AccountRow {
     account_id: AccountId,
     login_key: String,
     login: String,
-    verifier: Verifier,
+    verifier: Option<Verifier>,
     admin: bool,
     password_changed_at_ms: i64,
     revoked_at_ms: Option<i64>,
+    time_zone: Option<String>,
+    last_org_id: Option<String>,
 }
 
 struct LinkRow {
@@ -89,6 +99,7 @@ struct JournalRow {
 
 struct Inner {
     clock_high_ms: i64,
+    local_authless_account: Option<AccountId>,
     accounts: BTreeMap<String, AccountRow>,
     account_links: BTreeMap<(String, String), String>,
     org_owners: BTreeMap<String, (String, String)>,
@@ -100,6 +111,7 @@ struct Inner {
     recovery_audit: BTreeMap<String, Vec<AuditRow>>,
     web_tls_pair: Option<StoredPair>,
     journal: BTreeMap<String, JournalRow>,
+    op_verifiers: BTreeMap<String, (String, Verifier)>,
 }
 
 impl Inner {
@@ -125,12 +137,36 @@ impl Inner {
     fn any_live_admin(&self) -> bool {
         self.accounts
             .values()
-            .any(|a| a.admin && a.revoked_at_ms.is_none())
+            .any(|a| a.admin && a.revoked_at_ms.is_none() && a.verifier.is_some())
+    }
+
+    fn active_admin(&self) -> Option<(AccountId, String)> {
+        self.accounts
+            .values()
+            .find(|a| a.admin && a.revoked_at_ms.is_none() && a.verifier.is_some())
+            .map(|a| (a.account_id.clone(), a.login.clone()))
+    }
+
+    fn delete_account_sessions(&mut self, account_id: &str, except: Option<&str>) -> Vec<Ended> {
+        let mut gone = Vec::new();
+        self.sessions.retain(|_, row| {
+            if row.account_id == account_id && Some(row.id.as_str()) != except {
+                gone.push(Ended {
+                    id: row.id.clone(),
+                    account_id: row.account_id.clone(),
+                });
+                false
+            } else {
+                true
+            }
+        });
+        gone.sort();
+        gone
     }
 
     fn account_snapshot(&self, account_id: &str) -> Option<Account> {
         let row = self.accounts.get(account_id)?;
-        let links = self
+        let links: Vec<Link> = self
             .account_links
             .iter()
             .filter(|((acc, _), _)| acc == account_id)
@@ -139,6 +175,10 @@ impl Inner {
                 member_id: member_id.clone(),
             })
             .collect();
+        let last_org_id = row
+            .last_org_id
+            .clone()
+            .filter(|org| links.iter().any(|l| l.org_id == *org));
         Some(Account {
             account_id: row.account_id.clone(),
             login: row.login.clone(),
@@ -146,8 +186,8 @@ impl Inner {
             revoked_at_ms: row.revoked_at_ms,
             password_changed_at_ms: row.password_changed_at_ms,
             links,
-            time_zone: None,
-            last_org_id: None,
+            time_zone: row.time_zone.clone(),
+            last_org_id,
         })
     }
 
@@ -185,6 +225,16 @@ impl Inner {
         digest: LinkDigest,
         now_ms: i64,
     ) -> Result<String, Refused> {
+        self.redeem_link_with_subject(kind, digest, now_ms)
+            .map(|(link_id, _)| link_id)
+    }
+
+    fn redeem_link_with_subject(
+        &mut self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<(String, String), Refused> {
         let Some(row) = self
             .links
             .iter_mut()
@@ -195,7 +245,7 @@ impl Inner {
         redeem_rule(row.state, row.expires_at_ms, now_ms)?;
         row.state = "used";
         row.ended_at_ms = Some(now_ms);
-        Ok(row.link_id.clone())
+        Ok((row.link_id.clone(), row.subject.clone()))
     }
 
     fn has_org_reservation(&self, org_id: &str) -> bool {
@@ -288,6 +338,28 @@ impl Inner {
         }
     }
 
+    fn journal_lookup_inner(&self, op: &Attempt<'_>, now: i64) -> Result<Lookup, Error> {
+        let Some((state, result)) = self.stored_journal_row(op, now)? else {
+            return Ok(Lookup::Vacant);
+        };
+        let stored: Stored = serde_json::from_str(&result).map_err(|_| Error::Unsafe)?;
+        if !matches!(
+            (state, &stored),
+            ("completed" | "linked", Stored::Completed { .. })
+                | ("rejected" | "abandoned", Stored::Rejected { .. })
+        ) {
+            return Err(Error::Unsafe);
+        }
+        if op.kind == "account.create" && state == "completed" {
+            let (_, verifier) = self.op_verifiers.get(op.id).ok_or(Error::OperationReused)?;
+            return Ok(Lookup::NeedsVerification {
+                verifier: Verifier::new(verifier.expose().to_owned())?,
+                stored,
+            });
+        }
+        Ok(Lookup::Replay(stored))
+    }
+
     fn maintain_journal(&mut self, now: i64) {
         self.advance_clock(now);
         let mut expired: Vec<(i64, String)> = self
@@ -299,6 +371,7 @@ impl Inner {
         expired.sort();
         for (_, id) in expired.into_iter().take(256) {
             self.journal.remove(&id);
+            self.op_verifiers.remove(&id);
         }
     }
 }
@@ -315,6 +388,7 @@ impl MemoryHostStore {
             instance_id: instance_id.to_owned(),
             inner: Mutex::new(Inner {
                 clock_high_ms,
+                local_authless_account: None,
                 accounts: BTreeMap::new(),
                 account_links: BTreeMap::new(),
                 org_owners: BTreeMap::new(),
@@ -326,6 +400,7 @@ impl MemoryHostStore {
                 recovery_audit: BTreeMap::new(),
                 web_tls_pair: None,
                 journal: BTreeMap::new(),
+                op_verifiers: BTreeMap::new(),
             }),
         }
     }
@@ -352,10 +427,12 @@ impl MemoryHostStore {
                 account_id: id,
                 login_key: key.as_str().to_owned(),
                 login: login.to_owned(),
-                verifier: Verifier::new(verifier.expose().to_owned())?,
+                verifier: Some(Verifier::new(verifier.expose().to_owned())?),
                 admin,
                 password_changed_at_ms: at_ms,
                 revoked_at_ms: None,
+                time_zone: None,
+                last_org_id: None,
             },
         );
         Ok(())
@@ -411,6 +488,29 @@ impl OneTimeLinks for MemoryHostStore {
         Ok(row.map_or(Err(Refused::Unknown), |r| {
             redeem_rule(r.state, r.expires_at_ms, now_ms)
         }))
+    }
+
+    fn peek_subject(
+        &self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<Result<String, Refused>, LinkError> {
+        let s = self
+            .inner
+            .lock()
+            .map_err(|_| LinkError::Store(LinkStoreFault::Poisoned))?;
+        let Some(row) = s
+            .links
+            .iter()
+            .find(|r| r.kind == kind && r.digest == digest)
+        else {
+            return Ok(Err(Refused::Unknown));
+        };
+        if let Err(refused) = redeem_rule(row.state, row.expires_at_ms, now_ms) {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(row.subject.clone()))
     }
 
     fn insert_first(&self, link: NewLink<'_>) -> Result<bool, LinkError> {
@@ -474,30 +574,49 @@ impl AccountStore for MemoryHostStore {
         if s.any_live_admin() {
             return Ok(Registration::AdministratorExists);
         }
+        let local_authless = s.local_authless_account.clone();
         let key = new.username.key().as_str();
-        if s.accounts.values().any(|a| a.login_key == key) {
+        if s.accounts.values().any(|a| {
+            a.login_key == key && local_authless.as_ref().is_none_or(|id| id != &a.account_id)
+        }) {
             return Ok(Registration::LoginTaken);
         }
         let verifier = Verifier::new(new.verifier.expose().to_owned())
             .map_err(|_| AccountStoreError::Unavailable)?;
         s.links[idx].state = "used";
         s.links[idx].ended_at_ms = Some(now);
-        s.accounts.insert(
-            new.account_id.as_str().to_owned(),
-            AccountRow {
-                account_id: new.account_id.clone(),
-                login_key: key.to_owned(),
-                login: new.username.display().to_owned(),
-                verifier,
-                admin: true,
-                password_changed_at_ms: now,
-                revoked_at_ms: None,
-            },
-        );
+        let account_id = if let Some(existing_id) = local_authless {
+            let Some(row) = s.accounts.get_mut(existing_id.as_str()) else {
+                return Err(AccountStoreError::Unavailable);
+            };
+            if !row.admin || row.revoked_at_ms.is_some() {
+                return Err(AccountStoreError::Unavailable);
+            }
+            row.login = new.username.display().to_owned();
+            row.login_key = key.to_owned();
+            row.verifier = Some(verifier);
+            row.password_changed_at_ms = now;
+            s.local_authless_account = None;
+            existing_id
+        } else {
+            s.accounts.insert(
+                new.account_id.as_str().to_owned(),
+                AccountRow {
+                    account_id: new.account_id.clone(),
+                    login_key: key.to_owned(),
+                    login: new.username.display().to_owned(),
+                    verifier: Some(verifier),
+                    admin: true,
+                    password_changed_at_ms: now,
+                    revoked_at_ms: None,
+                    time_zone: None,
+                    last_org_id: None,
+                },
+            );
+            new.account_id.clone()
+        };
         s.advance_clock(now);
-        Ok(Registration::Registered {
-            account_id: new.account_id.clone(),
-        })
+        Ok(Registration::Registered { account_id })
     }
 
     fn credentials(&self, key: &LoginKey) -> Result<Option<AccountCredentials>, AccountStoreError> {
@@ -784,7 +903,10 @@ impl HostStore for MemoryHostStore {
         else {
             return Ok(None);
         };
-        let verifier = Verifier::new(row.verifier.expose().to_owned())?;
+        let Some(stored_verifier) = &row.verifier else {
+            return Ok(None);
+        };
+        let verifier = Verifier::new(stored_verifier.expose().to_owned())?;
         let account = s
             .account_snapshot(row.account_id.as_str())
             .ok_or(Error::Unsafe)?;
@@ -794,6 +916,757 @@ impl HostStore for MemoryHostStore {
     fn account_authority(&self, account_id: &AccountId) -> Result<Option<Account>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
         Ok(s.account_snapshot(account_id.as_str()))
+    }
+
+    fn set_account_preferences(
+        &self,
+        account_id: &AccountId,
+        time_zone: Option<Option<&str>>,
+        last_org_id: Option<Option<&str>>,
+    ) -> Result<(Option<String>, Option<String>), Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let current = s
+            .account_snapshot(account_id.as_str())
+            .ok_or(Error::Unsafe)?;
+        let next_tz = match time_zone {
+            Some(v) => v.map(str::to_owned),
+            None => current.time_zone,
+        };
+        let next_org = match last_org_id {
+            Some(v) => v.map(str::to_owned),
+            None => current.last_org_id,
+        };
+        let row = s
+            .accounts
+            .get_mut(account_id.as_str())
+            .ok_or(Error::Unsafe)?;
+        row.time_zone = next_tz.clone();
+        row.last_org_id = next_org.clone();
+        Ok((next_tz, next_org))
+    }
+
+    fn init_local_authless_if_empty(&self, now_ms: i64) -> Result<Option<AccountId>, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if let Some(existing) = s.local_authless_account.clone() {
+            return Ok(Some(existing));
+        }
+        if !s.accounts.is_empty() || !s.links.is_empty() {
+            return Ok(None);
+        }
+        let ts = s.now(now_ms)?;
+        let raw_id = crate::ids::uuid_v7().map_err(|_| Error::Unsafe)?;
+        let id = AccountId::parse(&raw_id).map_err(|_| Error::Unsafe)?;
+        let key = LoginKey::new("local-owner").map_err(|_| Error::Unsafe)?;
+        s.accounts.insert(
+            id.as_str().to_owned(),
+            AccountRow {
+                account_id: id.clone(),
+                login_key: key.as_str().to_owned(),
+                login: "local-owner".to_owned(),
+                verifier: None,
+                admin: true,
+                password_changed_at_ms: ts,
+                revoked_at_ms: None,
+                time_zone: None,
+                last_org_id: None,
+            },
+        );
+        s.local_authless_account = Some(id.clone());
+        s.advance_clock(ts);
+        Ok(Some(id))
+    }
+
+    fn local_authless_account(&self) -> Result<Option<AccountId>, Error> {
+        let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let Some(id) = s.local_authless_account.clone() else {
+            return Ok(None);
+        };
+        if !s.is_live_admin(id.as_str()) {
+            return Err(Error::Unsafe);
+        }
+        Ok(Some(id))
+    }
+
+    fn enable_local_auth(
+        &self,
+        username: &Username,
+        verifier: &Verifier,
+        now_ms: i64,
+    ) -> Result<AccountId, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let Some(account_id) = s.local_authless_account.clone() else {
+            return Err(Error::Conflict);
+        };
+        let ts = s.now(now_ms)?;
+        let key = username.key().as_str();
+        if s.accounts
+            .values()
+            .any(|a| a.login_key == key && a.account_id != account_id)
+        {
+            return Err(Error::Conflict);
+        }
+        let cloned_verifier = Verifier::new(verifier.expose().to_owned())?;
+        let row = s
+            .accounts
+            .get_mut(account_id.as_str())
+            .ok_or(Error::Unsafe)?;
+        if !row.admin || row.revoked_at_ms.is_some() {
+            return Err(Error::Unsafe);
+        }
+        row.login = username.display().to_owned();
+        row.login_key = key.to_owned();
+        row.verifier = Some(cloned_verifier);
+        row.password_changed_at_ms = ts;
+        s.local_authless_account = None;
+        s.advance_clock(ts);
+        Ok(account_id)
+    }
+
+    fn active_administrator_account(&self) -> Result<Option<(AccountId, String)>, Error> {
+        let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        Ok(s.active_admin())
+    }
+
+    fn active_account_login(&self, account_id: &AccountId) -> Result<Option<String>, Error> {
+        let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        Ok(s.accounts
+            .get(account_id.as_str())
+            .filter(|a| a.revoked_at_ms.is_none() && a.verifier.is_some())
+            .map(|a| a.login.clone()))
+    }
+
+    fn org_owner(&self, org_id: &str) -> Result<Option<(AccountId, String)>, Error> {
+        let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        match s.org_owners.get(org_id) {
+            None => Ok(None),
+            Some((account, member)) => {
+                let id = AccountId::parse(account).map_err(|_| Error::Unsafe)?;
+                Ok(Some((id, member.clone())))
+            }
+        }
+    }
+
+    fn list_org_access(&self, org_id: &str, now_ms: i64) -> Result<Vec<OrgAccessEntry>, Error> {
+        let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let now = s.now(now_ms)?;
+        let owner_member = s.org_owners.get(org_id).map(|(_, m)| m.as_str());
+        let invite_prefix = format!("{INVITE_PREFIX}{org_id}:");
+        let mut pending_invites = BTreeSet::new();
+        let mut pending_resets = BTreeSet::new();
+        for link in &s.links {
+            if link.state != "pending" || link.expires_at_ms <= now {
+                continue;
+            }
+            if link.kind == LinkKind::Registration {
+                if let Some(member_id) = link.subject.strip_prefix(&invite_prefix) {
+                    pending_invites.insert(member_id.to_owned());
+                }
+            } else if link.kind == LinkKind::SetPassword {
+                if let Some(account_id) = link.subject.strip_prefix(ACCOUNT_PREFIX) {
+                    pending_resets.insert(account_id.to_owned());
+                }
+            }
+        }
+        let mut by_member: BTreeMap<String, OrgAccessEntry> = BTreeMap::new();
+        for ((acc_id, linked_org), member_id) in &s.account_links {
+            if linked_org != org_id {
+                continue;
+            }
+            let Some(acc) = s
+                .accounts
+                .get(acc_id)
+                .filter(|a| a.revoked_at_ms.is_none() && a.verifier.is_some())
+            else {
+                continue;
+            };
+            let pending_invite = pending_invites.remove(member_id);
+            let pending_password_reset = pending_resets.contains(acc_id);
+            by_member.insert(
+                member_id.clone(),
+                OrgAccessEntry {
+                    member_id: member_id.clone(),
+                    account_id: Some(acc_id.clone()),
+                    login: Some(acc.login.clone()),
+                    admin: acc.admin,
+                    owner: owner_member == Some(member_id.as_str()),
+                    pending_invite,
+                    pending_password_reset,
+                },
+            );
+        }
+        for member_id in pending_invites {
+            by_member.insert(
+                member_id.clone(),
+                OrgAccessEntry {
+                    owner: owner_member == Some(member_id.as_str()),
+                    member_id,
+                    account_id: None,
+                    login: None,
+                    admin: false,
+                    pending_invite: true,
+                    pending_password_reset: false,
+                },
+            );
+        }
+        Ok(by_member.into_values().collect())
+    }
+
+    fn issue_org_invite(
+        &self,
+        org_id: &str,
+        member_id: &str,
+        now_ms: i64,
+    ) -> Result<Issued, InviteIssueError> {
+        if !org_office_launch::is_storage_id(org_id) || !org_proto::is_valid_member_id(member_id) {
+            return Err(InviteIssueError::Invalid);
+        }
+        let subject = invite_subject(org_id, member_id).map_err(|_| InviteIssueError::Invalid)?;
+        let mut refusal: Option<InviteIssueError> = None;
+        let issued = issue_with(
+            &self.instance_id,
+            LinkKind::Registration,
+            &subject,
+            now_ms,
+            |link| {
+                let mut s = self
+                    .inner
+                    .lock()
+                    .map_err(|_| LinkError::Store(LinkStoreFault::Poisoned))?;
+                if s.local_authless_account.is_some() {
+                    refusal = Some(InviteIssueError::AuthDisabled);
+                    return Ok(false);
+                }
+                let linked = s.account_links.iter().any(|((acc_id, o), m)| {
+                    o == org_id
+                        && m == member_id
+                        && s.accounts
+                            .get(acc_id)
+                            .is_some_and(|a| a.revoked_at_ms.is_none() && a.verifier.is_some())
+                });
+                if linked {
+                    refusal = Some(InviteIssueError::AlreadyLinked);
+                    return Ok(false);
+                }
+                s.replace_link(&link)?;
+                Ok(true)
+            },
+        )
+        .map_err(|_| InviteIssueError::Store)?;
+        issued.ok_or_else(|| refusal.unwrap_or(InviteIssueError::AlreadyLinked))
+    }
+
+    fn redeem_invite_register(
+        &self,
+        token: &Token,
+        new: &NewAccount,
+        now_ms: i64,
+    ) -> Result<InviteRegistration, AccountStoreError> {
+        let digest = LinkDigest::of(&self.instance_id, LinkKind::Registration, token);
+        let mut s = self
+            .inner
+            .lock()
+            .map_err(|_| AccountStoreError::Unavailable)?;
+        let now = s.now(now_ms).map_err(|_| AccountStoreError::Unavailable)?;
+        if s.local_authless_account.is_some() {
+            return Ok(InviteRegistration::Link(Refused::Unknown));
+        }
+        let Some(idx) = s
+            .links
+            .iter()
+            .position(|r| r.kind == LinkKind::Registration && r.digest == digest)
+        else {
+            return Ok(InviteRegistration::Link(Refused::Unknown));
+        };
+        if let Err(refused) = redeem_rule(s.links[idx].state, s.links[idx].expires_at_ms, now) {
+            return Ok(InviteRegistration::Link(refused));
+        }
+        let Some((org_id, member_id)) = parse_invite_subject(&s.links[idx].subject) else {
+            return Ok(InviteRegistration::NotAnInvite);
+        };
+        let (org_id, member_id) = (org_id.to_owned(), member_id.to_owned());
+        let already_linked = s.account_links.iter().any(|((acc_id, o), m)| {
+            o == &org_id
+                && m == &member_id
+                && s.accounts
+                    .get(acc_id)
+                    .is_some_and(|a| a.revoked_at_ms.is_none())
+        });
+        if already_linked {
+            return Ok(InviteRegistration::AlreadyLinked);
+        }
+        let key = new.username.key().as_str();
+        if s.accounts.values().any(|a| a.login_key == key) {
+            return Ok(InviteRegistration::LoginTaken);
+        }
+        let verifier = Verifier::new(new.verifier.expose().to_owned())
+            .map_err(|_| AccountStoreError::Unavailable)?;
+        s.links[idx].state = "used";
+        s.links[idx].ended_at_ms = Some(now);
+        s.accounts.insert(
+            new.account_id.as_str().to_owned(),
+            AccountRow {
+                account_id: new.account_id.clone(),
+                login_key: key.to_owned(),
+                login: new.username.display().to_owned(),
+                verifier: Some(verifier),
+                admin: false,
+                password_changed_at_ms: now,
+                revoked_at_ms: None,
+                time_zone: None,
+                last_org_id: None,
+            },
+        );
+        s.account_links.insert(
+            (new.account_id.as_str().to_owned(), org_id.clone()),
+            member_id.clone(),
+        );
+        s.advance_clock(now);
+        Ok(InviteRegistration::Registered {
+            account_id: new.account_id.clone(),
+            org_id,
+            member_id,
+        })
+    }
+
+    fn redeem_invite_attach(
+        &self,
+        token: &Token,
+        account_id: &AccountId,
+        now_ms: i64,
+    ) -> Result<InviteAttach, AccountStoreError> {
+        let digest = LinkDigest::of(&self.instance_id, LinkKind::Registration, token);
+        let mut s = self
+            .inner
+            .lock()
+            .map_err(|_| AccountStoreError::Unavailable)?;
+        let now = s.now(now_ms).map_err(|_| AccountStoreError::Unavailable)?;
+        if s.local_authless_account.is_some() {
+            return Ok(InviteAttach::Link(Refused::Unknown));
+        }
+        let Some(idx) = s
+            .links
+            .iter()
+            .position(|r| r.kind == LinkKind::Registration && r.digest == digest)
+        else {
+            return Ok(InviteAttach::Link(Refused::Unknown));
+        };
+        if let Err(refused) = redeem_rule(s.links[idx].state, s.links[idx].expires_at_ms, now) {
+            return Ok(InviteAttach::Link(refused));
+        }
+        let Some((org_id, member_id)) = parse_invite_subject(&s.links[idx].subject) else {
+            return Ok(InviteAttach::NotAnInvite);
+        };
+        let (org_id, member_id) = (org_id.to_owned(), member_id.to_owned());
+        let active = s
+            .accounts
+            .get(account_id.as_str())
+            .is_some_and(|a| a.revoked_at_ms.is_none() && a.verifier.is_some());
+        if !active {
+            return Ok(InviteAttach::AccountUnavailable);
+        }
+        if s.account_links
+            .contains_key(&(account_id.as_str().to_owned(), org_id.clone()))
+        {
+            return Ok(InviteAttach::AlreadyMember);
+        }
+        let member_taken = s.account_links.iter().any(|((acc_id, o), m)| {
+            o == &org_id
+                && m == &member_id
+                && s.accounts
+                    .get(acc_id)
+                    .is_some_and(|a| a.revoked_at_ms.is_none())
+        });
+        if member_taken {
+            return Ok(InviteAttach::AlreadyLinked);
+        }
+        s.links[idx].state = "used";
+        s.links[idx].ended_at_ms = Some(now);
+        s.account_links.insert(
+            (account_id.as_str().to_owned(), org_id.clone()),
+            member_id.clone(),
+        );
+        s.advance_clock(now);
+        Ok(InviteAttach::Attached { org_id, member_id })
+    }
+
+    fn issue_admin_password_reset_link(
+        &self,
+        now_ms: i64,
+    ) -> Result<Option<(String, Issued)>, LinkError> {
+        let Some((account_id, login)) = self
+            .inner
+            .lock()
+            .map_err(|_| LinkError::Store(LinkStoreFault::Poisoned))?
+            .active_admin()
+        else {
+            return Ok(None);
+        };
+        let subject = account_subject(&account_id)?;
+        let issued = issue_with(
+            &self.instance_id,
+            LinkKind::SetPassword,
+            &subject,
+            now_ms,
+            |link| {
+                let mut s = self
+                    .inner
+                    .lock()
+                    .map_err(|_| LinkError::Store(LinkStoreFault::Poisoned))?;
+                if s.active_admin().as_ref().map(|(id, _)| id) != Some(&account_id) {
+                    return Ok(false);
+                }
+                s.replace_link(&link)?;
+                Ok(true)
+            },
+        )?;
+        Ok(issued.map(|i| (login, i)))
+    }
+
+    fn issue_member_password_reset_link(
+        &self,
+        org_id: &str,
+        member_id: &str,
+        now_ms: i64,
+    ) -> Result<Issued, MemberResetIssueError> {
+        let account_id = {
+            let s = self
+                .inner
+                .lock()
+                .map_err(|_| MemberResetIssueError::Store)?;
+            let found = s.account_links.iter().find_map(|((acc_id, o), m)| {
+                (o == org_id
+                    && m == member_id
+                    && s.accounts
+                        .get(acc_id)
+                        .is_some_and(|a| a.revoked_at_ms.is_none() && a.verifier.is_some()))
+                .then(|| acc_id.clone())
+            });
+            let Some(raw) = found else {
+                return Err(MemberResetIssueError::NotLinked);
+            };
+            AccountId::parse(&raw).map_err(|_| MemberResetIssueError::Store)?
+        };
+        let subject = account_subject(&account_id).map_err(|_| MemberResetIssueError::Store)?;
+        let issued = issue_with(
+            &self.instance_id,
+            LinkKind::SetPassword,
+            &subject,
+            now_ms,
+            |link| {
+                let mut s = self
+                    .inner
+                    .lock()
+                    .map_err(|_| LinkError::Store(LinkStoreFault::Poisoned))?;
+                let still_linked = s
+                    .account_links
+                    .get(&(account_id.as_str().to_owned(), org_id.to_owned()))
+                    .is_some_and(|m| m == member_id)
+                    && s.accounts
+                        .get(account_id.as_str())
+                        .is_some_and(|a| a.revoked_at_ms.is_none() && a.verifier.is_some());
+                if !still_linked {
+                    return Ok(false);
+                }
+                s.replace_link(&link)?;
+                Ok(true)
+            },
+        )
+        .map_err(|_| MemberResetIssueError::Store)?;
+        issued.ok_or(MemberResetIssueError::NotLinked)
+    }
+
+    fn redeem_set_password(
+        &self,
+        token: &Token,
+        verifier: &Verifier,
+        now_ms: i64,
+    ) -> Result<SetPasswordOutcome, AccountStoreError> {
+        let digest = LinkDigest::of(&self.instance_id, LinkKind::SetPassword, token);
+        let mut s = self
+            .inner
+            .lock()
+            .map_err(|_| AccountStoreError::Unavailable)?;
+        let now = s.now(now_ms).map_err(|_| AccountStoreError::Unavailable)?;
+        let Some(idx) = s
+            .links
+            .iter()
+            .position(|r| r.kind == LinkKind::SetPassword && r.digest == digest)
+        else {
+            return Ok(SetPasswordOutcome::Link(Refused::Unknown));
+        };
+        if let Err(refused) = redeem_rule(s.links[idx].state, s.links[idx].expires_at_ms, now) {
+            return Ok(SetPasswordOutcome::Link(refused));
+        }
+        let Some(account_id) = parse_account_subject(&s.links[idx].subject) else {
+            return Ok(SetPasswordOutcome::Link(Refused::Unknown));
+        };
+        let new_verifier = Verifier::new(verifier.expose().to_owned())
+            .map_err(|_| AccountStoreError::Unavailable)?;
+        let (login, login_key) = {
+            let Some(row) = s
+                .accounts
+                .get_mut(account_id.as_str())
+                .filter(|a| a.revoked_at_ms.is_none() && a.verifier.is_some())
+            else {
+                return Ok(SetPasswordOutcome::Link(Refused::Unknown));
+            };
+            row.verifier = Some(new_verifier);
+            row.password_changed_at_ms = now;
+            (row.login.clone(), row.login_key.clone())
+        };
+        s.links[idx].state = "used";
+        s.links[idx].ended_at_ms = Some(now);
+        s.op_verifiers
+            .retain(|_, (created, _)| created != account_id.as_str());
+        s.lockouts.retain(|(_, k), _| k != &login_key);
+        let ended = s.delete_account_sessions(account_id.as_str(), None);
+        s.advance_clock(now);
+        Ok(SetPasswordOutcome::Updated {
+            account_id,
+            login,
+            ended,
+        })
+    }
+
+    fn change_own_password(
+        &self,
+        account_id: &AccountId,
+        keep_session_id: &str,
+        verifier: &Verifier,
+        now_ms: i64,
+    ) -> Result<Vec<Ended>, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let now = s.now(now_ms)?;
+        let new_verifier = Verifier::new(verifier.expose().to_owned())?;
+        let Some(row) = s
+            .accounts
+            .get_mut(account_id.as_str())
+            .filter(|a| a.revoked_at_ms.is_none() && a.verifier.is_some())
+        else {
+            return Err(Error::Conflict);
+        };
+        row.verifier = Some(new_verifier);
+        row.password_changed_at_ms = now;
+        s.op_verifiers
+            .retain(|_, (created, _)| created != account_id.as_str());
+        let ended = s.delete_account_sessions(account_id.as_str(), Some(keep_session_id));
+        s.advance_clock(now);
+        Ok(ended)
+    }
+
+    fn remove_org_access(
+        &self,
+        org_id: &str,
+        member_id: &str,
+        now_ms: i64,
+    ) -> Result<RemoveAccessOutcome, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let now = s.now(now_ms)?;
+        if s.org_owners
+            .get(org_id)
+            .is_some_and(|(_, m)| m == member_id)
+        {
+            return Ok(RemoveAccessOutcome::IsOwner);
+        }
+        let invite_subj = format!("{INVITE_PREFIX}{org_id}:{member_id}");
+        let mut cancelled_invites = 0usize;
+        for link in &mut s.links {
+            if link.kind == LinkKind::Registration
+                && link.subject == invite_subj
+                && link.state == "pending"
+            {
+                link.state = "cancelled";
+                link.ended_at_ms = Some(now);
+                cancelled_invites += 1;
+            }
+        }
+        let linked = s
+            .account_links
+            .iter()
+            .find_map(|((acc_id, o), m)| (o == org_id && m == member_id).then(|| acc_id.clone()));
+        let Some(raw_account) = linked else {
+            if cancelled_invites > 0 {
+                s.advance_clock(now);
+                return Ok(RemoveAccessOutcome::Removed {
+                    account_id: None,
+                    ended: Vec::new(),
+                });
+            }
+            return Ok(RemoveAccessOutcome::NotFound);
+        };
+        let account_id = AccountId::parse(&raw_account).map_err(|_| Error::Unsafe)?;
+        s.account_links
+            .remove(&(raw_account.clone(), org_id.to_owned()));
+        let ended = s.delete_account_sessions(&raw_account, None);
+        s.advance_clock(now);
+        Ok(RemoveAccessOutcome::Removed {
+            account_id: Some(account_id),
+            ended,
+        })
+    }
+
+    fn handover_org_owner(
+        &self,
+        org_id: &str,
+        from_account: &AccountId,
+        to_member_id: &str,
+    ) -> Result<OrgOwnerHandoverOutcome, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let Some((current_account, previous_member_id)) = s.org_owners.get(org_id).cloned() else {
+            return Ok(OrgOwnerHandoverOutcome::NotOwner);
+        };
+        if current_account != from_account.as_str() {
+            return Ok(OrgOwnerHandoverOutcome::NotOwner);
+        }
+        let target = s.account_links.iter().find_map(|((acc_id, o), m)| {
+            (o == org_id
+                && m == to_member_id
+                && s.accounts
+                    .get(acc_id)
+                    .is_some_and(|a| a.revoked_at_ms.is_none() && a.verifier.is_some()))
+            .then(|| acc_id.clone())
+        });
+        let Some(raw_target) = target else {
+            return Ok(OrgOwnerHandoverOutcome::InvalidTarget);
+        };
+        let to_account_id = AccountId::parse(&raw_target).map_err(|_| Error::Unsafe)?;
+        if to_account_id == *from_account {
+            return Ok(OrgOwnerHandoverOutcome::InvalidTarget);
+        }
+        s.org_owners.insert(
+            org_id.to_owned(),
+            (to_account_id.as_str().to_owned(), to_member_id.to_owned()),
+        );
+        Ok(OrgOwnerHandoverOutcome::Transferred {
+            previous_member_id,
+            to_account_id,
+            to_member_id: to_member_id.to_owned(),
+        })
+    }
+
+    fn restore_org_owner(
+        &self,
+        org_id: &str,
+        account: &AccountId,
+        member_id: &str,
+    ) -> Result<(), Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if let Some(entry) = s.org_owners.get_mut(org_id) {
+            *entry = (account.as_str().to_owned(), member_id.to_owned());
+        }
+        Ok(())
+    }
+
+    fn handover_administrator(
+        &self,
+        from_account: &AccountId,
+        to_account: &AccountId,
+    ) -> Result<AdminHandoverOutcome, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if !s.any_live_admin() {
+            return Ok(AdminHandoverOutcome::NotAdmin);
+        }
+        let is_admin = s
+            .accounts
+            .get(from_account.as_str())
+            .is_some_and(|a| a.admin && a.revoked_at_ms.is_none() && a.verifier.is_some());
+        if !is_admin {
+            return Ok(AdminHandoverOutcome::NotAdmin);
+        }
+        if from_account == to_account {
+            return Ok(AdminHandoverOutcome::InvalidTarget);
+        }
+        let target_valid = s
+            .accounts
+            .get(to_account.as_str())
+            .is_some_and(|a| a.revoked_at_ms.is_none() && a.verifier.is_some());
+        if !target_valid {
+            return Ok(AdminHandoverOutcome::InvalidTarget);
+        }
+        let shared_org = s.account_links.keys().any(|(acc, org)| {
+            acc == from_account.as_str()
+                && s.account_links
+                    .contains_key(&(to_account.as_str().to_owned(), org.clone()))
+        });
+        if !shared_org {
+            return Ok(AdminHandoverOutcome::InvalidTarget);
+        }
+        if let Some(from) = s.accounts.get_mut(from_account.as_str()) {
+            from.admin = false;
+        }
+        if let Some(to) = s.accounts.get_mut(to_account.as_str()) {
+            to.admin = true;
+        }
+        Ok(AdminHandoverOutcome::Transferred)
+    }
+
+    fn journal_lookup(&self, op: &Attempt<'_>, wall_ms: i64) -> Result<Lookup, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let now = s.now(wall_ms)?;
+        let decision = s.journal_lookup_inner(op, now);
+        s.advance_clock(now);
+        decision
+    }
+
+    fn journal_commit(
+        &self,
+        op: &Attempt<'_>,
+        wall_ms: i64,
+        effect: Effect,
+    ) -> Result<Write, Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let now = s.now(wall_ms)?;
+        match s.journal_lookup_inner(op, now) {
+            Ok(Lookup::Vacant) => {}
+            decision => {
+                s.advance_clock(now);
+                return decision.map(Write::Existing);
+            }
+        }
+        if op.kind == "bootstrap" {
+            return Err(Error::Unsafe);
+        }
+        s.maintain_journal(now);
+        let Effect { stored, verifier } = effect;
+        let state = match &stored {
+            Stored::Completed { .. } => "completed",
+            Stored::Rejected { refusal }
+                if matches!(
+                    refusal.code,
+                    org_proto::ErrorCode::AlreadyExists | org_proto::ErrorCode::InvalidName
+                ) =>
+            {
+                "rejected"
+            }
+            _ => return Err(Error::Unsafe),
+        };
+        let needs_verifier = op.kind == "account.create" && state == "completed";
+        if needs_verifier != verifier.is_some() {
+            return Err(Error::Unsafe);
+        }
+        if let Some((created, _)) = &verifier {
+            if !matches!(&stored, Stored::Completed { result } if result.get("account").and_then(|a| a.as_str()) == Some(created))
+            {
+                return Err(Error::Unsafe);
+            }
+        }
+        let result = serde_json::to_string(&stored).map_err(|_| Error::Unsafe)?;
+        let expires = id_time(op.id)? + 30 * DAY;
+        s.journal.insert(
+            op.id.to_owned(),
+            JournalRow {
+                kind: op.kind,
+                fingerprint: op.fingerprint,
+                account: op.account.to_owned(),
+                state,
+                result,
+                expires_at_ms: expires,
+            },
+        );
+        if let Some((created, verifier)) = verifier {
+            s.op_verifiers.insert(op.id.to_owned(), (created, verifier));
+        }
+        Ok(Write::Committed(stored))
     }
 
     fn issue_unless_administrator(

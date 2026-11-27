@@ -199,7 +199,7 @@ fn removed_access_ends_every_session_of_the_account_and_reports_the_pushes() {
     let b = auth
         .sign_in_browser(&sign_in("owner", PASSWORD, "192.0.2.1", 2), t, &mut ended)
         .unwrap();
-    auth.db
+    auth.sqlite_for_test()
         .change_authority_fixture(&AccountId::parse(&a.account.id).unwrap(), true)
         .unwrap();
     let validate = SessionValidateParams {
@@ -551,7 +551,9 @@ fn a_session_created_for_a_revoked_account_is_ended_and_reported() {
         .sign_in_browser(&sign_in("owner", PASSWORD, "192.0.2.1", 1), t, &mut ended)
         .unwrap();
     let account = AccountId::parse(&owner.account.id).unwrap();
-    auth.db.change_authority_fixture(&account, true).unwrap();
+    auth.sqlite_for_test()
+        .change_authority_fixture(&account, true)
+        .unwrap();
     let origin = Origin::new(Scheme::Https, "org.example", 443).unwrap();
     let e = auth
         .start(

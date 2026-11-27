@@ -6,7 +6,7 @@ use crate::hostdb::pending_recovery::{unavailable, Pending};
 use crate::{
     broadcast::Broadcast,
     host_secrets::HostSecrets,
-    hostdb::{provisioning::Reservation, HostDb},
+    hostdb::{provisioning::Reservation, HostStore},
     keys::OfficeSecretsKeys,
     offices::Offices,
     writer::Writers,
@@ -25,8 +25,11 @@ mod requests;
 use drive::RESUME_ATTEMPTS;
 use requests::already_exists;
 
+#[cfg(test)]
+type RevokeHook = Box<dyn FnOnce(&crate::accounts::identity::AccountId) + Send>;
+
 pub(crate) struct Provisioning {
-    db: Arc<HostDb>,
+    db: Arc<dyn HostStore>,
     custody: Arc<dyn HostSecrets>,
     keys: Arc<dyn OfficeSecretsKeys>,
     writers: Arc<Writers>,
@@ -49,10 +52,13 @@ pub(crate) struct Provisioning {
     #[cfg(test)]
     hold_drives: std::sync::atomic::AtomicBool,
     /// 1: the next reservation commit fails; 2: the host is lost between staging the code
-    /// and the commit, so the staged entry stays; 3: the account's administrator authority
-    /// is revoked after every earlier check, just before the reservation commit.
+    /// and the commit, so the staged entry stays.
     #[cfg(test)]
     reservation_fault: std::sync::atomic::AtomicU8,
+    /// Optional test hook that revokes the account's administrator authority between its
+    /// last check and the reservation commit.
+    #[cfg(test)]
+    revoke_hook: Mutex<Option<RevokeHook>>,
 }
 fn generate_recovery_code() -> Result<RecoveryCode, ApiError> {
     use std::fmt::Write as _;
@@ -116,7 +122,7 @@ impl Provisioning {
     /// The organizations' data roots come from `writers` (its instance root), never from a
     /// caller.
     pub(crate) fn new(
-        db: Arc<HostDb>,
+        db: Arc<dyn HostStore>,
         custody: Arc<dyn HostSecrets>,
         keys: Arc<dyn OfficeSecretsKeys>,
         writers: Arc<Writers>,
@@ -141,6 +147,8 @@ impl Provisioning {
             web: Broadcast::default(),
             #[cfg(test)]
             reservation_fault: std::sync::atomic::AtomicU8::new(0),
+            #[cfg(test)]
+            revoke_hook: Mutex::new(None),
         }
     }
     /// Installs the offices this host creates in and continues every create that reserved
@@ -270,9 +278,11 @@ impl Provisioning {
     }
     /// The next admission's account is revoked between its last check and its commit.
     #[cfg(test)]
-    pub(crate) fn revoke_before_next_reservation(&self) {
-        self.reservation_fault
-            .store(3, std::sync::atomic::Ordering::Release);
+    pub(crate) fn revoke_before_next_reservation(
+        &self,
+        revoke: impl FnOnce(&crate::accounts::identity::AccountId) + Send + 'static,
+    ) {
+        *self.revoke_hook.lock().unwrap() = Some(Box::new(revoke));
     }
     /// Starts a creation from `r` as a poll that read `r` earlier would.
     #[cfg(test)]

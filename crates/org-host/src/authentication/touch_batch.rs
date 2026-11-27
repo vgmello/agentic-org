@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::hostdb::HostDb;
 use crate::sessions::BrowserSessions;
 
 /// Flush coalesced session touches at most every 5 seconds (or when `MAX_PENDING` sessions
@@ -43,7 +42,7 @@ impl TouchBatcher {
     /// `MAX_PENDING`, wall time elapsed `FLUSH_INTERVAL`, or `now_ms` advanced past
     /// `FLUSH_INTERVAL_MS` since the last flush (ensuring `last_activity_ms` is never stale by
     /// more than 5 seconds under either wall or injected clocks).
-    pub(crate) fn record(&self, db: &HostDb, session_id: &str, now_ms: i64) {
+    pub(crate) fn record(&self, sessions: &dyn BrowserSessions, session_id: &str, now_ms: i64) {
         let flush_batch = {
             let Ok(mut state) = self.inner.lock() else {
                 return;
@@ -65,12 +64,12 @@ impl TouchBatcher {
             }
         };
         if let Some(batch) = flush_batch {
-            flush_to_db(db, batch, now_ms);
+            flush_to_store(sessions, batch, now_ms);
         }
     }
 
     /// Flush pending touches if `force` is true (shutdown / tests) or `FLUSH_INTERVAL` elapsed.
-    pub(crate) fn flush(&self, db: &HostDb, now_ms: i64, force: bool) {
+    pub(crate) fn flush(&self, sessions: &dyn BrowserSessions, now_ms: i64, force: bool) {
         let batch = {
             let Ok(mut state) = self.inner.lock() else {
                 return;
@@ -87,7 +86,7 @@ impl TouchBatcher {
             state.last_flush_ms = Some(now_ms);
             std::mem::take(&mut state.pending)
         };
-        flush_to_db(db, batch, now_ms);
+        flush_to_store(sessions, batch, now_ms);
     }
 
     /// Drop any buffered touch for ended sessions so they aren't pointlessly re-flushed.
@@ -103,19 +102,18 @@ impl TouchBatcher {
     }
 }
 
-fn flush_to_db(db: &HostDb, batch: BTreeMap<String, i64>, now_ms: i64) {
+fn flush_to_store(sessions: &dyn BrowserSessions, batch: BTreeMap<String, i64>, now_ms: i64) {
     if batch.is_empty() {
         return;
     }
     let refs: Vec<(&str, i64)> = batch.iter().map(|(id, ms)| (id.as_str(), *ms)).collect();
-    let sessions: &dyn BrowserSessions = db;
     let _ = sessions.touch(&refs, now_ms);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hostdb::HostDbInit;
+    use crate::hostdb::{HostDb, HostDbInit};
     use crate::sessions::{NewSession, Origin, Scheme, SessionDigest};
 
     struct NoSecrets;

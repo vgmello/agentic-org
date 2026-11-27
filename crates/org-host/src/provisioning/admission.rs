@@ -120,10 +120,13 @@ impl Provisioning {
         {
             1 => return Err(taken(fresh).unwrap_or_else(unavailable)),
             2 => return Err(unavailable()),
-            3 => crate::accounts::identity::AccountId::parse(account.account_id())
-                .map_err(storage)
-                .and_then(|id| self.db.change_authority_fixture(&id, true).map_err(storage))?,
             _ => {}
+        }
+        #[cfg(test)]
+        if let Some(revoke) = self.revoke_hook.lock().unwrap().take() {
+            let id = crate::accounts::identity::AccountId::parse(account.account_id())
+                .map_err(storage)?;
+            revoke(&id);
         }
         self.db
             .reserve_provisioning(account, &pending.reservation)

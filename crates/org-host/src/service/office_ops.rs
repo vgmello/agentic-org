@@ -41,7 +41,7 @@ pub(super) fn dispatch_session_office_op(
 use crate::hostdb::{
     accounts::Account,
     journal::{Attempt, Effect, Lookup, Stored, Write},
-    Error as DbError, HostDb,
+    Error as DbError, HostStore,
 };
 
 /// Offices visible to `account`: every office belonging to an organization the account is linked
@@ -89,7 +89,7 @@ fn find_linked_office(
 }
 
 fn check_restart_authority(
-    db: &HostDb,
+    db: &dyn HostStore,
     account: &Account,
     org_id: &str,
     member_id: Option<&str>,
@@ -119,7 +119,7 @@ fn check_restart_authority(
 )]
 fn run_journaled_restart(
     service: &Service,
-    db: &HostDb,
+    db: &dyn HostStore,
     account: &Account,
     org_filter: Option<&str>,
     office_id: &str,
@@ -139,7 +139,7 @@ fn run_journaled_restart(
     // (mirroring `WebTls::set`) so simultaneous retries cannot race into false `Conflict` or
     // execute a duplicate restart before `OperationReused` is recorded.
     let _restart_guard = crate::sync::lock(&service.office_restarting);
-    match db.lookup(attempt, now).map_err(journal_error)? {
+    match db.journal_lookup(attempt, now).map_err(journal_error)? {
         Lookup::Replay(stored) => return decode_stored(stored),
         Lookup::NeedsVerification { .. } => {
             return Err(ApiError::new(
@@ -151,14 +151,16 @@ fn run_journaled_restart(
     }
     service.offices.restart_office(&office.id)?;
     let write = db
-        .write(attempt, now, |_| {
-            Ok(Effect {
+        .journal_commit(
+            attempt,
+            now,
+            Effect {
                 stored: Stored::Completed {
                     result: serde_json::json!({}),
                 },
                 verifier: None,
-            })
-        })
+            },
+        )
         .map_err(journal_error)?;
     match write {
         Write::Committed(stored) | Write::Existing(Lookup::Replay(stored)) => decode_stored(stored),
@@ -197,7 +199,7 @@ pub(super) fn restart_browser_office(
         let attempt = Attempt::new(&p, account.account_id()).map_err(journal_error)?;
         run_journaled_restart(
             service,
-            &db,
+            &*db,
             &account,
             Some(&p.org_id),
             &p.office_id,
@@ -275,7 +277,7 @@ pub(super) fn restart_session_office(
             connection.channel_kind() == org_office_launch::ChannelKind::Local;
         run_journaled_restart(
             service,
-            &db,
+            &*db,
             &account,
             None,
             &p.office_id,
