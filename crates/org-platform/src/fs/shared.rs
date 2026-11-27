@@ -9,6 +9,7 @@ use std::os::unix::fs::{
     DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
 };
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::SymlinkOutcome;
 
@@ -207,8 +208,8 @@ fn walk_beneath(root: &Path, relative: &Path) -> io::Result<(File, CString)> {
     };
     let mut dir = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(root)?;
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(normalize_lstat_path(root))?;
     for seg in parents {
         dir = open_dir_component_at(&dir, seg)?;
     }
@@ -244,39 +245,139 @@ pub(super) fn open_regular_beneath(root: &Path, relative: &Path) -> io::Result<F
     Ok(file)
 }
 
-/// Creates or truncates a regular file at `relative` beneath canonical directory `root` (mode
-/// `0600`), walking every intermediate directory and the leaf with `O_NOFOLLOW | O_NONBLOCK |
-/// O_CLOEXEC`, verifying `S_ISREG`, and writing `bytes`.
-pub(super) fn write_regular_beneath(root: &Path, relative: &Path, bytes: &[u8]) -> io::Result<()> {
-    let (dir, leaf) = walk_beneath(root, relative)?;
-    // SAFETY: `dir` is an open directory descriptor we own and `leaf` is a live NUL-terminated
-    // single component; `O_CREAT` passes a `c_uint` mode argument as required by POSIX variadic
-    // `openat(2)`.
-    let fd = unsafe {
-        libc::openat(
-            dir.as_raw_fd(),
-            leaf.as_ptr(),
-            libc::O_WRONLY
-                | libc::O_CREAT
-                | libc::O_TRUNC
-                | libc::O_NOFOLLOW
-                | libc::O_NONBLOCK
-                | libc::O_CLOEXEC,
-            0o600 as libc::c_uint,
-        )
-    };
-    if fd < 0 {
+static TEMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// RAII cleanup guard that unlinks a sibling temporary file inside `dir` unless disarmed after
+/// atomic publish succeeds.
+struct TempUnlinkGuard<'a> {
+    dir: &'a File,
+    name: Option<CString>,
+}
+
+impl<'a> TempUnlinkGuard<'a> {
+    fn new(dir: &'a File, name: CString) -> Self {
+        Self {
+            dir,
+            name: Some(name),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.name = None;
+    }
+}
+
+impl Drop for TempUnlinkGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(name) = self.name.take() {
+            let _ = unlink_at(self.dir, &name);
+        }
+    }
+}
+
+/// Creates a brand-new sibling temporary regular file inside `dir` with mode `0600` (`O_CREAT |
+/// O_EXCL | O_NOFOLLOW | O_CLOEXEC`), retrying on `EEXIST`.
+fn create_exclusive_temp_at(dir: &File) -> io::Result<(File, CString)> {
+    let pid = std::process::id();
+    for _ in 0..64 {
+        let seq = TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let name = CString::new(format!(".org-tmp.{pid}.{seq}")).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "invalid temporary file name")
+        })?;
+        // SAFETY: `dir` is an open directory descriptor we own and `name` is a live NUL-terminated
+        // single component; `O_CREAT` passes a `c_uint` mode argument per POSIX variadic `openat`.
+        let fd = unsafe {
+            libc::openat(
+                dir.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600 as libc::c_uint,
+            )
+        };
+        if fd >= 0 {
+            // SAFETY: `fd` was just opened exclusively by this function and nothing else owns it.
+            return Ok((unsafe { File::from_raw_fd(fd) }, name));
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::AlreadyExists {
+            return Err(err);
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique temporary file in destination directory",
+    ))
+}
+
+/// Writes `bytes` into an exclusive `0600` sibling temporary file in `dir` and atomically publishes
+/// it to `leaf` via `rename_noreplace_at` (when creating) or `renameat` (when replacing a regular
+/// file, never following symlinks). Any error unlinks the temporary file before returning.
+pub(super) fn stage_and_publish_at(
+    dir: &File,
+    leaf: &CStr,
+    bytes: &[u8],
+    replacing: bool,
+) -> io::Result<()> {
+    let (mut tmp_file, tmp_name) = create_exclusive_temp_at(dir)?;
+    let mut guard = TempUnlinkGuard::new(dir, tmp_name.clone());
+    // SAFETY: `tmp_file` is an open descriptor owned by this function; `fchmod` sets mode `0600`
+    // directly on the inode regardless of process umask.
+    if unsafe { libc::fchmod(tmp_file.as_raw_fd(), libc::S_IRUSR | libc::S_IWUSR) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: `fd` was just opened by this function and nothing else owns it.
-    let mut file = unsafe { File::from_raw_fd(fd) };
-    if !file.metadata()?.file_type().is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "output target is not a regular file",
-        ));
+    tmp_file.write_all(bytes)?;
+    drop(tmp_file);
+
+    if replacing {
+        match entry_kind_at(dir, leaf)? {
+            EntryKind::Regular => {}
+            EntryKind::Symlink => return Err(io::Error::from_raw_os_error(libc::ELOOP)),
+            EntryKind::Missing | EntryKind::Directory | EntryKind::Other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "output target is not a regular file",
+                ));
+            }
+        }
+        // SAFETY: `dir` is an open directory descriptor we own and both names are live
+        // NUL-terminated single components; POSIX `renameat` replaces the directory entry without
+        // ever dereferencing a symlink at `leaf`.
+        if unsafe {
+            libc::renameat(
+                dir.as_raw_fd(),
+                tmp_name.as_ptr(),
+                dir.as_raw_fd(),
+                leaf.as_ptr(),
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    } else {
+        super::rename_noreplace_at(dir, &tmp_name, dir, leaf)?;
     }
-    file.write_all(bytes)
+    guard.disarm();
+    Ok(())
+}
+
+/// Atomically writes `bytes` to a regular file at `relative` beneath canonical directory `root`
+/// with mode `0600`, walking `root` and every intermediate directory with `O_NOFOLLOW`, refusing
+/// symlinks, directories, FIFOs, devices, and sockets, and leaving no temporary or partial file on
+/// failure.
+pub(super) fn write_regular_beneath(root: &Path, relative: &Path, bytes: &[u8]) -> io::Result<()> {
+    let (dir, leaf) = walk_beneath(root, relative)?;
+    let replacing = match entry_kind_at(&dir, &leaf)? {
+        EntryKind::Missing => false,
+        EntryKind::Regular => true,
+        EntryKind::Symlink => return Err(io::Error::from_raw_os_error(libc::ELOOP)),
+        EntryKind::Directory | EntryKind::Other => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "output target is not a regular file",
+            ));
+        }
+    };
+    stage_and_publish_at(&dir, &leaf, bytes, replacing)
 }
 
 pub(super) fn create_symlink(original: &Path, link: &Path) -> io::Result<()> {
@@ -505,6 +606,7 @@ pub(super) fn open_or_create_owner_only_child(
 
 enum EntryKind {
     Missing,
+    Regular,
     Symlink,
     Directory,
     Other,
@@ -534,7 +636,9 @@ fn entry_kind_at(dir: &File, name: &CStr) -> io::Result<EntryKind> {
     // SAFETY: `fstatat` returned success, so it initialized `stat`.
     let stat = unsafe { stat.assume_init() };
     let kind = stat.st_mode & libc::S_IFMT;
-    Ok(if kind == libc::S_IFLNK {
+    Ok(if kind == libc::S_IFREG {
+        EntryKind::Regular
+    } else if kind == libc::S_IFLNK {
         EntryKind::Symlink
     } else if kind == libc::S_IFDIR {
         EntryKind::Directory
@@ -593,7 +697,7 @@ pub(super) fn ensure_symlink_at(
     })?;
     match entry_kind_at(dir, &cname)? {
         EntryKind::Directory => return Ok(SymlinkOutcome::RealDirectory),
-        EntryKind::Other => {
+        EntryKind::Regular | EntryKind::Other => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "the entry is neither a symbolic link nor a directory",
@@ -622,6 +726,8 @@ pub(super) fn remove_symlink_at(dir: &File, name: &OsStr) -> io::Result<bool> {
             unlink_at(dir, &cname)?;
             Ok(true)
         }
-        EntryKind::Missing | EntryKind::Directory | EntryKind::Other => Ok(false),
+        EntryKind::Missing | EntryKind::Regular | EntryKind::Directory | EntryKind::Other => {
+            Ok(false)
+        }
     }
 }

@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::file_guard::{
-    prepare_output_path, read_upload_file, with_test_roots, FileRoots, RootEntry,
+    prepare_output_path, read_upload_file, strip_root_prefix_with_case, with_test_roots, FileRoots,
+    RootEntry,
 };
 use crate::runtime::file_transfer::fetch_attachment_to_path;
 use crate::runtime::transport::{OfficeTransport, TransportOffice};
@@ -489,12 +490,16 @@ fn negative_exfiltration_guard_blocks_all_forbidden_paths_and_types() {
         "durable/private/task-notes.db",
         "durable/private/task-notes.db-wal",
         "durable/private/user-space.db",
+        "durable/private/other.db",
+        "durable/messaging/chat.db",
+        "custom/private/user-space.db",
+        "custom/private/task-notes.db-wal",
         "attachment-staging/0193a5c0/raw.txt",
         "blob-outbox/0193a5c0/raw.txt",
         "runtime/off-1/protected/secret.txt",
         "local/offices/off-1/agents/other-agent/secret.txt",
         "agents/other-agent/private_home/secret.txt",
-        "private_home/other-agent/secret.txt",
+        "agents/other-agent/home/secret.txt",
     ];
     for rel in denylisted_paths {
         let full = workspace.join(rel);
@@ -508,6 +513,27 @@ fn negative_exfiltration_guard_blocks_all_forbidden_paths_and_types() {
         );
     }
 
+    // 4b. Own `private_home/note.md` (with or without `private_home` root) and a repo folder
+    //     named `private_home/` must NOT be false-positively denied.
+    let repo_priv_note = workspace.join("private_home/note.md");
+    fs::create_dir_all(repo_priv_note.parent().unwrap()).unwrap();
+    fs::write(&repo_priv_note, b"repo private_home note").unwrap();
+    assert!(read_upload_file("private_home/note.md", &roots).is_ok());
+
+    let ws_own_agent_priv = workspace.join("agents/agent-self/private_home/note.md");
+    fs::create_dir_all(ws_own_agent_priv.parent().unwrap()).unwrap();
+    fs::write(&ws_own_agent_priv, b"self agent private_home note").unwrap();
+    assert!(read_upload_file("agents/agent-self/private_home/note.md", &roots).is_ok());
+
+    let mut roots_without_private_home = roots.clone();
+    roots_without_private_home.private_home = None;
+    assert!(read_upload_file("private_home/note.md", &roots_without_private_home).is_ok());
+    assert!(read_upload_file(
+        "agents/agent-self/private_home/note.md",
+        &roots_without_private_home
+    )
+    .is_ok());
+
     // 5. Global /tmp is NEVER allowed (even if a file exists there).
     let global_tmp_file = tempfile::Builder::new()
         .suffix(".txt")
@@ -517,9 +543,29 @@ fn negative_exfiltration_guard_blocks_all_forbidden_paths_and_types() {
     let err = read_upload_file(global_tmp_file.path().to_str().unwrap(), &roots).unwrap_err();
     assert_eq!(err.code, ErrorCode::NotAuthorized, "{err:?}");
 
-    // 6. Directory and real POSIX FIFO fail closed without blocking.
+    // 6. Directory, trailing `/` / `/.` / `.`, and real POSIX FIFO fail closed without blocking.
     assert!(read_upload_file("real_dir", &roots).is_err());
     assert!(read_upload_file("real_dir/", &roots).is_err());
+    assert_eq!(
+        read_upload_file(".", &roots).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        read_upload_file("real_dir/.", &roots).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        read_upload_file("ok.txt/.", &roots).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        prepare_output_path(".", &roots).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        prepare_output_path("out.txt/.", &roots).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
 
     let fifo_path = workspace.join("pipe.txt");
     let status = Command::new("mkfifo")
@@ -620,4 +666,241 @@ fn negative_exfiltration_guard_blocks_all_forbidden_paths_and_types() {
             "unsafe fetch output `{bad_out}` must fail BEFORE calling attachment.read_chunk"
         );
     }
+}
+
+#[test]
+fn file_roots_reject_global_temp_system_roots_symlinks_and_untrusted_env_wideners() {
+    let dir = tempfile::tempdir().unwrap();
+    let valid_home = dir.path().join("agent-home");
+    let valid_tmp = dir.path().join("session-tmp");
+    fs::create_dir_all(&valid_home).unwrap();
+    fs::create_dir_all(&valid_tmp).unwrap();
+
+    // Symlink pointing at `/tmp` must be rejected by canonical check for every root slot.
+    let link_to_tmp = dir.path().join("link-to-tmp");
+    org_platform::fs::create_symlink(std::path::Path::new("/tmp"), &link_to_tmp).unwrap();
+    let link_to_etc = dir.path().join("link-to-etc");
+    org_platform::fs::create_symlink(std::path::Path::new("/etc"), &link_to_etc).unwrap();
+
+    // Every global temp, root, and OS/system path is rejected as cwd, HOME, or TMPDIR.
+    let forbidden_paths = [
+        "/",
+        "/tmp",
+        "/private/tmp",
+        "/var/tmp",
+        "/private/var/tmp",
+        "/etc",
+        "/etc/ssl",
+        "/var",
+        "/private/var",
+        "/usr",
+        "/System",
+        "/proc",
+        "/sys",
+        "/dev",
+        "/home",
+        "/Users",
+    ];
+    for bad in forbidden_paths {
+        let p = PathBuf::from(bad);
+        let roots = FileRoots::from_parts(
+            p.clone(),
+            Some("agent-1".to_owned()),
+            Some(p.clone()),
+            Some(p),
+        );
+        assert!(
+            roots.workspace_roots.is_empty(),
+            "forbidden cwd `{bad}` must never become a workspace root: {:?}",
+            roots.workspace_roots
+        );
+        assert!(
+            roots.private_home.is_none(),
+            "forbidden HOME `{bad}` must never become private_home: {:?}",
+            roots.private_home
+        );
+        assert!(
+            roots.session_tmpdir.is_none(),
+            "forbidden TMPDIR `{bad}` must never become session_tmpdir: {:?}",
+            roots.session_tmpdir
+        );
+    }
+
+    // Symlinks to `/tmp` or `/etc` are rejected for cwd, HOME, and TMPDIR.
+    for link in [&link_to_tmp, &link_to_etc] {
+        let roots = FileRoots::from_parts(
+            link.clone(),
+            Some("agent-1".to_owned()),
+            Some(link.clone()),
+            Some(link.clone()),
+        );
+        assert!(roots.workspace_roots.is_empty(), "{link:?}");
+        assert!(roots.private_home.is_none(), "{link:?}");
+        assert!(roots.session_tmpdir.is_none(), "{link:?}");
+    }
+
+    // Even when cwd=/tmp, HOME=/tmp, TMPDIR=/private/tmp, reading a file in /tmp fails closed.
+    let global_tmp_file = tempfile::Builder::new()
+        .suffix(".txt")
+        .tempfile_in("/tmp")
+        .unwrap();
+    fs::write(global_tmp_file.path(), b"global tmp secret").unwrap();
+    let poisoned = FileRoots::from_parts(
+        PathBuf::from("/tmp"),
+        Some("agent-1".to_owned()),
+        Some(PathBuf::from("/tmp")),
+        Some(PathBuf::from("/private/tmp")),
+    );
+    let err = read_upload_file(global_tmp_file.path().to_str().unwrap(), &poisoned).unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotAuthorized, "{err:?}");
+
+    // `private_home` is derived from `HOME` ONLY when `AGENT_OS_AGENT_ID` is set.
+    let without_agent = FileRoots::from_parts(
+        valid_tmp.clone(),
+        None,
+        Some(valid_home.clone()),
+        Some(valid_tmp.clone()),
+    );
+    assert!(without_agent.private_home.is_none());
+    assert!(without_agent.session_tmpdir.is_some());
+
+    let with_agent = FileRoots::from_parts(
+        valid_tmp.clone(),
+        Some("agent-1".to_owned()),
+        Some(valid_home.clone()),
+        Some(valid_tmp),
+    );
+    assert_eq!(
+        with_agent.private_home.as_ref().map(|e| &e.canonical),
+        Some(&valid_home.canonicalize().unwrap())
+    );
+
+    // Setting untrusted `AGENT_OS_WORKTREES` / `AGENT_OS_PRIVATE_HOME` env vars MUST have zero
+    // effect on `FileRoots::from_env()` (both `/etc` and an unrelated valid dir are ignored).
+    let rogue_dir = dir.path().join("rogue-widener");
+    fs::create_dir_all(&rogue_dir).unwrap();
+    let rogue_canon = rogue_dir.canonicalize().unwrap();
+    let etc_canon = PathBuf::from("/etc").canonicalize().unwrap();
+
+    struct EnvGuard {
+        prev_wt: Option<std::ffi::OsString>,
+        prev_home: Option<std::ffi::OsString>,
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prev_wt {
+                Some(v) => std::env::set_var("AGENT_OS_WORKTREES", v),
+                None => std::env::remove_var("AGENT_OS_WORKTREES"),
+            }
+            match &self.prev_home {
+                Some(v) => std::env::set_var("AGENT_OS_PRIVATE_HOME", v),
+                None => std::env::remove_var("AGENT_OS_PRIVATE_HOME"),
+            }
+        }
+    }
+    let _guard = EnvGuard {
+        prev_wt: std::env::var_os("AGENT_OS_WORKTREES"),
+        prev_home: std::env::var_os("AGENT_OS_PRIVATE_HOME"),
+    };
+    let joined_wt = std::env::join_paths([PathBuf::from("/etc"), rogue_dir.clone()]).unwrap();
+    std::env::set_var("AGENT_OS_WORKTREES", &joined_wt);
+    std::env::set_var("AGENT_OS_PRIVATE_HOME", "/etc");
+    let from_env = FileRoots::from_env();
+    assert!(
+        !from_env
+            .worktrees
+            .iter()
+            .any(|e| e.canonical == etc_canon || e.canonical == rogue_canon),
+        "AGENT_OS_WORKTREES must be completely ignored: {:?}",
+        from_env.worktrees
+    );
+    assert_ne!(
+        from_env.private_home.as_ref().map(|e| &e.canonical),
+        Some(&etc_canon),
+        "AGENT_OS_PRIVATE_HOME=/etc must be ignored"
+    );
+    std::env::set_var("AGENT_OS_PRIVATE_HOME", &rogue_dir);
+    let from_env2 = FileRoots::from_env();
+    assert_ne!(
+        from_env2.private_home.as_ref().map(|e| &e.canonical),
+        Some(&rogue_canon),
+        "AGENT_OS_PRIVATE_HOME must be completely ignored"
+    );
+}
+
+#[test]
+fn linked_git_worktrees_and_case_insensitive_prefix_stripping_work_cleanly() {
+    // 1. Linked git worktree layout: `.git` is a regular file (`gitdir: ...`) whose `commondir`
+    //    points back to `<main>/.git`, listing sibling linked worktrees under `worktrees/*/gitdir`.
+    let dir = tempfile::tempdir().unwrap();
+    let main_git = dir.path().join("main/.git");
+    let wt_a = dir.path().join("wt-a");
+    let wt_b = dir.path().join("wt-b");
+    fs::create_dir_all(main_git.join("worktrees/wt-a")).unwrap();
+    fs::create_dir_all(main_git.join("worktrees/wt-b")).unwrap();
+    fs::create_dir_all(main_git.join("worktrees/poison")).unwrap();
+    fs::create_dir_all(&wt_a).unwrap();
+    fs::create_dir_all(&wt_b).unwrap();
+
+    fs::write(
+        wt_a.join(".git"),
+        format!("gitdir: {}\n", main_git.join("worktrees/wt-a").display()),
+    )
+    .unwrap();
+    fs::write(main_git.join("worktrees/wt-a/commondir"), "../..\n").unwrap();
+    fs::write(
+        main_git.join("worktrees/wt-a/gitdir"),
+        format!("{}\n", wt_a.join(".git").display()),
+    )
+    .unwrap();
+    fs::write(
+        main_git.join("worktrees/wt-b/gitdir"),
+        format!("{}\n", wt_b.join(".git").display()),
+    )
+    .unwrap();
+    // Poisoned worktree pointing at `/tmp/.git` must still be rejected by forbidden-root screening.
+    fs::write(main_git.join("worktrees/poison/gitdir"), "/tmp/.git\n").unwrap();
+
+    let roots = FileRoots::from_parts(wt_a.clone(), None, None, None);
+    let wt_b_canon = wt_b.canonicalize().unwrap();
+    let tmp_canon = PathBuf::from("/tmp").canonicalize().unwrap();
+    assert!(
+        roots.worktrees.iter().any(|e| e.canonical == wt_b_canon),
+        "sibling linked worktree wt-b must be discovered from commondir: {:?}",
+        roots.worktrees
+    );
+    assert!(
+        !roots.worktrees.iter().any(|e| e.canonical == tmp_canon),
+        "poisoned /tmp worktree must be rejected: {:?}",
+        roots.worktrees
+    );
+
+    fs::write(wt_b.join("sibling.md"), b"from sibling worktree").unwrap();
+    assert!(read_upload_file(wt_b.join("sibling.md").to_str().unwrap(), &roots).is_ok());
+
+    // 2. Case-insensitive prefix stripping for macOS APFS/HFS+ (tested deterministically on Linux).
+    assert_eq!(
+        strip_root_prefix_with_case(
+            std::path::Path::new("/Users/Alice/Repo/Sub/Spec.md"),
+            std::path::Path::new("/users/alice/repo"),
+            true,
+        ),
+        Some(PathBuf::from("Sub/Spec.md"))
+    );
+    assert_eq!(
+        strip_root_prefix_with_case(
+            std::path::Path::new("/Users/Alice/Repo2/Spec.md"),
+            std::path::Path::new("/users/alice/repo"),
+            true,
+        ),
+        None
+    );
+    assert_eq!(
+        strip_root_prefix_with_case(
+            std::path::Path::new("/Users/Alice/Repo/Spec.md"),
+            std::path::Path::new("/users/alice/repo"),
+            false,
+        ),
+        None
+    );
 }

@@ -487,4 +487,119 @@ fn regular_beneath_reads_and_writes_regular_files_and_refuses_symlinks_fifos_and
     assert!(super::open_regular_beneath(&root, Path::new("sub/../sub/ok.txt")).is_err());
     assert!(super::open_regular_beneath(&root, Path::new("sub/ok.txt/")).is_err());
     assert!(super::write_regular_beneath(&root, Path::new("../outside/x"), b"x").is_err());
+
+    // Symlinked root itself is refused (`O_NOFOLLOW` on `walk_beneath`'s root open).
+    let root_link = temp.path().join("root_link");
+    std::os::unix::fs::symlink(&root, &root_link).unwrap();
+    assert!(super::open_regular_beneath(&root_link, Path::new("sub/ok.txt")).is_err());
+    assert!(super::write_regular_beneath(&root_link, Path::new("sub/new.txt"), b"x").is_err());
+}
+
+fn temp_entries_in(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.starts_with(".org-tmp.").then_some(name)
+        })
+        .collect()
+}
+
+#[test]
+fn write_regular_beneath_is_atomic_tightens_0644_to_0600_and_never_leaks_temp_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(root.join("sub")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let root = root.canonicalize().unwrap();
+    let outside = outside.canonicalize().unwrap();
+
+    // 1. Fresh write creates a 0600 regular file with zero temp files left behind.
+    super::write_regular_beneath(&root, Path::new("fresh.txt"), b"fresh-bytes").unwrap();
+    let fresh = root.join("fresh.txt");
+    assert_eq!(fs::read(&fresh).unwrap(), b"fresh-bytes");
+    assert_eq!(fs::symlink_metadata(&fresh).unwrap().mode() & 0o7777, 0o600);
+    assert!(temp_entries_in(&root).is_empty());
+
+    // 2. Overwriting a pre-existing 0644 file atomically replaces bytes AND tightens mode to 0600.
+    let existing = root.join("existing.txt");
+    fs::write(&existing, b"old-content").unwrap();
+    fs::set_permissions(&existing, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(
+        fs::symlink_metadata(&existing).unwrap().mode() & 0o7777,
+        0o644
+    );
+    super::write_regular_beneath(&root, Path::new("existing.txt"), b"new-secret").unwrap();
+    assert_eq!(fs::read(&existing).unwrap(), b"new-secret");
+    assert_eq!(
+        fs::symlink_metadata(&existing).unwrap().mode() & 0o7777,
+        0o600
+    );
+    assert!(temp_entries_in(&root).is_empty());
+
+    // 3. Refusal of symlink, directory, and FIFO leaves targets untouched and leaks zero temp files.
+    let victim = outside.join("victim.txt");
+    fs::write(&victim, b"untouched").unwrap();
+    let sym = root.join("sym.txt");
+    std::os::unix::fs::symlink(&victim, &sym).unwrap();
+    let sym_err = super::write_regular_beneath(&root, Path::new("sym.txt"), b"pwn").unwrap_err();
+    assert_eq!(sym_err.raw_os_error(), Some(libc::ELOOP));
+    assert_eq!(fs::read(&victim).unwrap(), b"untouched");
+    assert!(fs::symlink_metadata(&sym).unwrap().file_type().is_symlink());
+    assert!(temp_entries_in(&root).is_empty());
+
+    fs::write(root.join("sub/keep.txt"), b"keep").unwrap();
+    let dir_err = super::write_regular_beneath(&root, Path::new("sub"), b"pwn").unwrap_err();
+    assert_eq!(dir_err.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(fs::read(root.join("sub/keep.txt")).unwrap(), b"keep");
+    assert!(temp_entries_in(&root).is_empty());
+
+    let fifo = root.join("fifo");
+    let c_fifo = c_path(&fifo);
+    // SAFETY: `c_fifo` is a live NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c_fifo.as_ptr(), 0o644) }, 0);
+    let fifo_err = super::write_regular_beneath(&root, Path::new("fifo"), b"pwn").unwrap_err();
+    assert_eq!(fifo_err.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(
+        fs::symlink_metadata(&fifo).unwrap().mode() & libc::S_IFMT,
+        libc::S_IFIFO
+    );
+    assert!(temp_entries_in(&root).is_empty());
+
+    // 4. Direct publish-failure paths (`rename_noreplace_at` EEXIST, directory/symlink swap before
+    //    `renameat`) trigger RAII temp-file unlink and leave zero `.org-tmp.*` files behind.
+    let dir_fd = File::open(&root).unwrap();
+    let err =
+        super::shared::stage_and_publish_at(&dir_fd, c"existing.txt", b"race", false).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(fs::read(&existing).unwrap(), b"new-secret");
+    assert!(temp_entries_in(&root).is_empty());
+
+    let err = super::shared::stage_and_publish_at(&dir_fd, c"sub", b"race", true).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert!(temp_entries_in(&root).is_empty());
+
+    let err = super::shared::stage_and_publish_at(&dir_fd, c"sym.txt", b"race", true).unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
+    assert_eq!(fs::read(&victim).unwrap(), b"untouched");
+    assert!(temp_entries_in(&root).is_empty());
+
+    // 5. Read-only directory fails cleanly without corrupting an existing file or leaking temp files.
+    if super::effective_uid().unwrap() != 0 {
+        let ro_dir = root.join("ro");
+        fs::create_dir(&ro_dir).unwrap();
+        let ro_file = ro_dir.join("keep.txt");
+        fs::write(&ro_file, b"original").unwrap();
+        fs::set_permissions(&ro_file, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::set_permissions(&ro_dir, fs::Permissions::from_mode(0o500)).unwrap();
+        let res = super::write_regular_beneath(&root, Path::new("ro/keep.txt"), b"overwrite");
+        fs::set_permissions(&ro_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(res.is_err());
+        assert_eq!(fs::read(&ro_file).unwrap(), b"original");
+        assert!(temp_entries_in(&ro_dir).is_empty());
+    }
 }

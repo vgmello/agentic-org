@@ -230,10 +230,11 @@ pub fn open_regular_beneath(root: &Path, relative: &Path) -> io::Result<File> {
     native::open_regular_beneath(root, relative)
 }
 
-/// Create or truncate a regular file at `relative` beneath canonical directory `root` (mode
-/// `0600`) without following any intermediate or leaf symbolic link (`openat` with
-/// `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`), verify `S_ISREG`, and write `bytes`. Every
-/// unsupported target fails closed.
+/// Atomically write `bytes` to a regular file at `relative` beneath canonical directory `root`
+/// (mode `0600`) without following `root` or any intermediate or leaf symbolic link: inspects
+/// existing entries via `fstatat(AT_SYMLINK_NOFOLLOW)`, stages into an exclusive `0600` sibling
+/// temporary file with RAII cleanup on error, and publishes via `rename_noreplace_at` /
+/// `renameat`. Every unsupported target fails closed.
 pub fn write_regular_beneath(root: &Path, relative: &Path, bytes: &[u8]) -> io::Result<()> {
     native::write_regular_beneath(root, relative, bytes)
 }

@@ -700,3 +700,234 @@ fn msg_send_reply_ask_attach_flags_and_zero_overhead_when_omitted() {
         assert_eq!(ask.1["attachment_ids"], json!([STAGED_ID, EXISTING_ID]));
     });
 }
+
+#[test]
+fn msg_attach_aborts_staged_uploads_on_downstream_error_and_accounts_for_answer_attachment_cap() {
+    use org_command::Refusal;
+    use org_proto::attachments::MESSAGE_ATTACHMENTS_MAX;
+    use org_proto::ErrorCode;
+
+    use crate::runtime::file_guard::{with_test_roots, FileRoots, RootEntry};
+    use crate::runtime::transport::{OfficeTransport, TransportOffice};
+
+    const STAGED_ID: &str = "0193a5c0-0000-7000-8000-000000000771";
+    const EXISTING_ID: &str = "0193a5c0-0000-7000-8000-000000000772";
+
+    struct FailingMsgMock {
+        fail_method: &'static str,
+        calls: Vec<(String, Value)>,
+    }
+
+    impl OfficeTransport for FailingMsgMock {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.calls.push((method.to_owned(), params));
+            match method {
+                "attachment.upload_begin" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "note.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 0,
+                        "committed": false,
+                        "expires_at": "2026-11-27T01:00:00.000Z"
+                    },
+                    "chunk_size_bytes": 65536
+                })),
+                "attachment.upload_chunk" => Ok(json!({
+                    "upload_id": STAGED_ID,
+                    "received_bytes": 5,
+                    "complete": true
+                })),
+                "attachment.upload_commit" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "note.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 5,
+                        "committed": true,
+                        "expires_at": "2026-11-27T01:00:00.000Z",
+                        "content_sha256": "0".repeat(64)
+                    }
+                })),
+                "attachment.upload_abort" => Ok(json!({"aborted": true})),
+                m if m == self.fail_method => Err(Refusal::new(
+                    ErrorCode::Unavailable,
+                    format!("{m} failed"),
+                    "retry",
+                )),
+                "chat.answer" => Ok(json!({
+                    "ask_id": M0,
+                    "conversation_id": M2,
+                    "answer": { "by": M0, "at": "2026-11-27T00:00:00.000Z", "answers": [] }
+                })),
+                other => panic!("unexpected RPC: {other}"),
+            }
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("note.md"), b"hello").unwrap();
+    let roots = FileRoots {
+        cwd: tmp.path().to_path_buf(),
+        workspace_roots: vec![RootEntry::from_path(tmp.path().to_path_buf()).unwrap()],
+        ..FileRoots::default()
+    };
+
+    with_test_roots(roots, || {
+        // 1. Downstream failure on chat.send, msg.reply, chat.ask, and chat.answer aborts ONLY the
+        //    freshly staged upload (never the pre-existing `--attachment-id`).
+        let cases: &[(&'static str, Vec<&str>)] = &[
+            (
+                "chat.send",
+                vec![
+                    "msg",
+                    "send",
+                    "--to",
+                    "owner",
+                    "--attach",
+                    "note.md",
+                    "--attachment-id",
+                    EXISTING_ID,
+                ],
+            ),
+            (
+                "msg.reply",
+                vec![
+                    "msg",
+                    "reply",
+                    "--id",
+                    M0,
+                    "--attach",
+                    "note.md",
+                    "--attachment-id",
+                    EXISTING_ID,
+                ],
+            ),
+            (
+                "chat.ask",
+                vec![
+                    "msg",
+                    "ask",
+                    "--to",
+                    "owner",
+                    "--prompt",
+                    "Approve?",
+                    "--attach",
+                    "note.md",
+                    "--attachment-id",
+                    EXISTING_ID,
+                ],
+            ),
+            (
+                "chat.answer",
+                vec![
+                    "msg",
+                    "reply",
+                    "--id",
+                    M0,
+                    "--answer",
+                    r#"[{"question_id":"q1","option_ids":["yes"]}]"#,
+                    "--attach",
+                    "note.md",
+                    "--attachment-id",
+                    EXISTING_ID,
+                ],
+            ),
+        ];
+        for (fail_method, args) in cases {
+            let mut t = TransportOffice(FailingMsgMock {
+                fail_method,
+                calls: vec![],
+            });
+            let owned: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+            let out = crate::execute_with_office("agent-os", &owned, &mut t);
+            assert_ne!(out.exit_code, 0, "{fail_method}: {}", out.stdout);
+            let aborted: Vec<&str> =
+                t.0.calls
+                    .iter()
+                    .filter(|(m, _)| m == "attachment.upload_abort")
+                    .filter_map(|(_, p)| p["upload_id"].as_str())
+                    .collect();
+            assert_eq!(
+                aborted,
+                vec![STAGED_ID],
+                "{fail_method} must abort only staged upload, calls: {:?}",
+                t.0.calls
+            );
+        }
+
+        // 2. `--answer` JSON with `MESSAGE_ATTACHMENTS_MAX` pre-existing IDs + 1 `--attach` fails
+        //    with `too_large` BEFORE staging any upload (zero RPCs).
+        let existing_ten: Vec<String> = (0..MESSAGE_ATTACHMENTS_MAX)
+            .map(|i| format!("0193a5c0-0000-7000-8000-0000000008{i:02}"))
+            .collect();
+        let over_cap_answer = json!({
+            "answers": [{"question_id": "q1", "option_ids": ["yes"]}],
+            "attachment_ids": existing_ten,
+        })
+        .to_string();
+        let mut t = TransportOffice(FailingMsgMock {
+            fail_method: "none",
+            calls: vec![],
+        });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "reply".into(),
+                "--id".into(),
+                M0.into(),
+                "--answer".into(),
+                over_cap_answer,
+                "--attach".into(),
+                "note.md".into(),
+            ],
+            &mut t,
+        );
+        assert_ne!(out.exit_code, 0, "{}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["error"]["code"], "too_large");
+        assert!(
+            t.0.calls.is_empty(),
+            "over-cap --answer must fail before staging any upload: {:?}",
+            t.0.calls
+        );
+
+        // 3. `MESSAGE_ATTACHMENTS_MAX - 1` pre-existing IDs + 1 `--attach` succeeds at exact cap.
+        let existing_nine: Vec<String> = (0..(MESSAGE_ATTACHMENTS_MAX - 1))
+            .map(|i| format!("0193a5c0-0000-7000-8000-0000000009{i:02}"))
+            .collect();
+        let at_cap_answer = json!({
+            "answers": [{"question_id": "q1", "option_ids": ["yes"]}],
+            "attachment_ids": existing_nine,
+        })
+        .to_string();
+        let mut t = TransportOffice(FailingMsgMock {
+            fail_method: "none",
+            calls: vec![],
+        });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "msg".into(),
+                "reply".into(),
+                "--id".into(),
+                M0.into(),
+                "--answer".into(),
+                at_cap_answer,
+                "--attach".into(),
+                "note.md".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let ans = t.0.calls.last().unwrap();
+        assert_eq!(ans.0, "chat.answer");
+        assert_eq!(
+            ans.1["attachment_ids"].as_array().unwrap().len(),
+            MESSAGE_ATTACHMENTS_MAX
+        );
+    });
+}

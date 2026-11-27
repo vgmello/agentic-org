@@ -236,9 +236,11 @@ pub(super) fn write_task_create<T: OfficeTransport + ?Sized>(
         .transpose()?;
     let title = require_str(i, "title")?.to_owned();
     let task_id = entity_id(request, None, "task-create")?;
+    let effort = opt_u64(i, "effort")?;
+    let rank_order = opt_u64(i, "order")?;
     let attach = opt_str_list(i, "attach").unwrap_or_default();
     let att_ids = opt_str_list(i, "attachment_id").unwrap_or_default();
-    let attachment_ids = resolve_attach_ids(transport, &attach, &att_ids, TASK_ATTACHMENTS_MAX)?;
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, TASK_ATTACHMENTS_MAX)?;
     let params = TasksCreateParams {
         command_id,
         task_id,
@@ -251,18 +253,24 @@ pub(super) fn write_task_create<T: OfficeTransport + ?Sized>(
         title,
         body_markdown: opt_string(i, "body").unwrap_or_default(),
         priority,
-        effort: opt_u64(i, "effort")?,
+        effort,
         severity: opt_string(i, "severity"),
-        rank_order: opt_u64(i, "order")?,
+        rank_order,
         labels: opt_str_list(i, "labels").unwrap_or_default(),
         reference_files: opt_str_list(i, "reference_files").unwrap_or_default(),
         modified_files: opt_str_list(i, "modified_files").unwrap_or_default(),
         depends_on: opt_str_list(i, "depends_on").unwrap_or_default(),
-        attachment_ids,
+        attachment_ids: resolved.ids.clone(),
         details: None,
         dod: None,
     };
-    let raw = transport.call_method(TasksCreate::METHOD, json!(params))?;
+    let raw = match transport.call_method(TasksCreate::METHOD, json!(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: TasksMutationResult = serde_json::from_value(raw).map_err(unreadable)?;
     Ok(write_answer(
         request,
@@ -307,7 +315,7 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
     };
     let attach = opt_str_list(i, "attach").unwrap_or_default();
     let add_att = opt_str_list(i, "add_attachment").unwrap_or_default();
-    let add_attachments = resolve_attach_ids(transport, &attach, &add_att, TASK_ATTACHMENTS_MAX)?;
+    let resolved = resolve_attach_ids(transport, &attach, &add_att, TASK_ATTACHMENTS_MAX)?;
     let params = TasksUpdateParams {
         command_id,
         task,
@@ -329,11 +337,17 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
         modified_files: opt_str_list(i, "modified_files"),
         add_modified_files: opt_str_list(i, "add_modified_files").unwrap_or_default(),
         remove_modified_files: opt_str_list(i, "remove_modified_files").unwrap_or_default(),
-        add_attachments,
+        add_attachments: resolved.ids.clone(),
         remove_attachments: opt_str_list(i, "remove_attachment").unwrap_or_default(),
         details: None,
     };
-    let raw = transport.call_method(TasksUpdate::METHOD, json!(params))?;
+    let raw = match transport.call_method(TasksUpdate::METHOD, json!(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: TasksMutationResult = serde_json::from_value(raw).map_err(unreadable)?;
     Ok(write_answer(
         request,
@@ -428,16 +442,21 @@ pub(super) fn write_task_comment<T: OfficeTransport + ?Sized>(
         ));
     }
     let comment_id = entity_id(request, None, "task-comment")?;
-    let attachment_ids =
-        resolve_attach_ids(transport, &attach, &att_ids, TASK_COMMENT_ATTACHMENTS_MAX)?;
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, TASK_COMMENT_ATTACHMENTS_MAX)?;
     let params = TasksCommentParams {
         command_id,
         task,
         comment_id,
         body_markdown,
-        attachment_ids,
+        attachment_ids: resolved.ids.clone(),
     };
-    let raw = transport.call_method(TasksComment::METHOD, json!(params))?;
+    let raw = match transport.call_method(TasksComment::METHOD, json!(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: TasksCommentResult = serde_json::from_value(raw).map_err(unreadable)?;
     Ok(write_answer(
         request,

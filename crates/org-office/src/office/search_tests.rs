@@ -119,6 +119,7 @@ fn task(
         reference_files: vec![],
         modified_files: vec![],
         depends_on: vec![],
+        attachment_ids: vec![],
         details: None,
         dod: None,
     };
@@ -165,6 +166,7 @@ fn world(engine: EngineChoice) -> World {
             task: zebra_task.clone(),
             comment_id: next_uuid(),
             body_markdown: "A public comment about the walrus".into(),
+            attachment_ids: vec![],
         },
     ));
     ok(office.task_checklist_add(

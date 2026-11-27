@@ -142,7 +142,7 @@ pub(super) fn write_msg_send<T: OfficeTransport + ?Sized>(
         ));
     }
     let id = message_id_for(request)?;
-    let resolved_ids = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
     params.insert("to".into(), Value::String(to.to_owned()));
@@ -158,10 +158,16 @@ pub(super) fn write_msg_send<T: OfficeTransport + ?Sized>(
     if opt_bool(request, "also_in_channel").unwrap_or(false) {
         params.insert("also_in_channel".into(), Value::Bool(true));
     }
-    if !resolved_ids.is_empty() {
-        params.insert("attachment_ids".into(), json!(resolved_ids));
+    if !resolved.ids.is_empty() {
+        params.insert("attachment_ids".into(), json!(resolved.ids));
     }
-    let raw = transport.call_method("chat.send", Value::Object(params))?;
+    let raw = match transport.call_method("chat.send", Value::Object(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: ChatSendResult = serde_json::from_value(raw).map_err(|_| decode_err("chat.send"))?;
     let mut obj = Map::new();
     obj.insert("id".into(), json!(res.id));
@@ -209,17 +215,23 @@ pub(super) fn write_msg_reply<T: OfficeTransport + ?Sized>(
         }
     };
     let id = message_id_for(request)?;
-    let resolved_ids = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
     params.insert("to_id".into(), Value::String(to_id.to_owned()));
     params.insert("body".into(), Value::String(body.to_owned()));
     insert_opt(&mut params, "subject", opt_str(request, "subject"));
     insert_opt(&mut params, "priority", opt_str(request, "priority"));
-    if !resolved_ids.is_empty() {
-        params.insert("attachment_ids".into(), json!(resolved_ids));
+    if !resolved.ids.is_empty() {
+        params.insert("attachment_ids".into(), json!(resolved.ids));
     }
-    let raw = transport.call_method("msg.reply", Value::Object(params))?;
+    let raw = match transport.call_method("msg.reply", Value::Object(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: SendResult = serde_json::from_value(raw).map_err(|_| decode_err("msg.reply"))?;
     Ok(with_ack(
         Answer::completed(json!({

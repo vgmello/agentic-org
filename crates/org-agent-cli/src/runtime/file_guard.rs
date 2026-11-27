@@ -6,12 +6,13 @@
 //! `attachment.upload_*` RPCs. Before a single upload RPC opens, this module enforces:
 //!
 //! 1. **Canonicalized allowed-root confinement**: workspace root (`cwd` / git repo root), own
-//!    `private_home`, own active worktrees, and session-scoped `TMPDIR` (NEVER global `/tmp`,
-//!    `/private/tmp`, `/var/tmp`, or `/`).
+//!    `private_home` (derived strictly from `HOME` when `AGENT_OS_AGENT_ID` is set), own active
+//!    git worktrees, and session-scoped `TMPDIR` (NEVER global `/tmp`, `/private/tmp`,
+//!    `/var/tmp`, `/`, or OS/system roots).
 //! 2. **Explicit denylist** (checked both lexically and post-canonicalization, even if nested or
-//!    symlinked): `durable/blobs/`, `durable/private/task-notes.db*`,
-//!    `durable/private/user-space.db*`, `attachment-staging/`, another agent's `private_home`,
-//!    and `runtime/<office>/protected/`.
+//!    symlinked): `durable/blobs/`, `durable/private/`, `durable/messaging/`,
+//!    `private/(task-notes.db*|user-space.db*)`, `attachment-staging/`, `blob-outbox/`, another
+//!    agent's home, and `runtime/<office>/protected/`.
 //! 3. **POSIX safe open via `org_platform::fs`**: component-wise `openat` with
 //!    `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` and `fstat` `S_ISREG` verification (rejecting
 //!    symlinks, FIFOs, devices, sockets, and directories with zero parent-symlink TOCTOU).
@@ -40,11 +41,14 @@ pub(crate) struct RootEntry {
 
 impl RootEntry {
     pub(crate) fn from_path(path: PathBuf) -> Option<Self> {
-        let canonical = fs::canonicalize(&path).ok()?;
-        if !canonical.is_dir() {
+        let raw = lexical_normalize(&path);
+        if is_forbidden_root(&raw) {
             return None;
         }
-        let raw = lexical_normalize(&path);
+        let canonical = fs::canonicalize(&path).ok()?;
+        if !canonical.is_dir() || is_forbidden_root(&canonical) {
+            return None;
+        }
         Some(Self { raw, canonical })
     }
 }
@@ -61,15 +65,20 @@ pub(crate) struct FileRoots {
 }
 
 impl FileRoots {
-    /// Discovers allowed roots from the current process environment and working directory.
-    pub(crate) fn from_env() -> Self {
-        #[cfg(test)]
-        if let Some(overridden) = TEST_ROOTS.with(|cell| cell.borrow().clone()) {
-            return overridden;
-        }
-        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let self_agent_id = env::var("AGENT_OS_AGENT_ID")
-            .ok()
+    /// Builds allowed roots purely from explicit directory and environment inputs without reading
+    /// ambient process environment variables.
+    ///
+    /// Never honors untrusted env wideners (`AGENT_OS_WORKTREES`, `AGENT_OS_PRIVATE_HOME`): own
+    /// `private_home` is derived strictly from `home` when `self_agent_id` is set, worktrees are
+    /// discovered strictly from Git metadata, and every root candidate is screened against global
+    /// temp, root, and OS/system directories (both raw and canonical).
+    pub(crate) fn from_parts(
+        cwd: PathBuf,
+        self_agent_id: Option<String>,
+        home: Option<PathBuf>,
+        tmpdir: Option<PathBuf>,
+    ) -> Self {
+        let self_agent_id = self_agent_id
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty());
 
@@ -77,45 +86,25 @@ impl FileRoots {
         let mut worktrees = Vec::new();
         if let Some(cwd_entry) = RootEntry::from_path(cwd.clone()) {
             if let Some(repo_root) = find_git_root(&cwd_entry.canonical) {
-                for wt in discover_git_worktrees(&repo_root) {
-                    push_unique(&mut worktrees, wt);
-                }
-                if let Some(entry) = RootEntry::from_path(repo_root) {
-                    push_unique(&mut workspace_roots, entry);
+                if let Some(repo_entry) = RootEntry::from_path(repo_root) {
+                    for wt in discover_git_worktrees(&repo_entry.canonical) {
+                        push_unique(&mut worktrees, wt);
+                    }
+                    push_unique(&mut workspace_roots, repo_entry);
                 }
             }
             push_unique(&mut workspace_roots, cwd_entry);
         }
 
-        let private_home_env = env::var_os("AGENT_OS_PRIVATE_HOME")
-            .filter(|v| !v.is_empty())
-            .or_else(|| {
-                self_agent_id
-                    .as_ref()
-                    .and_then(|_| env::var_os("HOME"))
-                    .filter(|v| !v.is_empty())
-            });
-        let private_home = private_home_env
-            .map(PathBuf::from)
-            .and_then(RootEntry::from_path)
-            .filter(|e| !is_global_root(&e.raw) && !is_global_root(&e.canonical));
+        let private_home = self_agent_id
+            .as_ref()
+            .and(home)
+            .filter(|p| !p.as_os_str().is_empty())
+            .and_then(RootEntry::from_path);
 
-        if let Some(raw_list) = env::var_os("AGENT_OS_WORKTREES") {
-            for item in env::split_paths(&raw_list) {
-                if let Some(entry) = RootEntry::from_path(item) {
-                    if !is_global_root(&entry.canonical) {
-                        push_unique(&mut worktrees, entry);
-                    }
-                }
-            }
-        }
-
-        let session_tmpdir = env::var_os("TMPDIR")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .filter(|p| !is_global_temp_or_root(p))
-            .and_then(RootEntry::from_path)
-            .filter(|e| !is_global_temp_or_root(&e.raw) && !is_global_temp_or_root(&e.canonical));
+        let session_tmpdir = tmpdir
+            .filter(|p| !p.as_os_str().is_empty())
+            .and_then(RootEntry::from_path);
 
         Self {
             cwd,
@@ -125,6 +114,23 @@ impl FileRoots {
             session_tmpdir,
             self_agent_id,
         }
+    }
+
+    /// Discovers allowed roots from the current process environment and working directory.
+    pub(crate) fn from_env() -> Self {
+        #[cfg(test)]
+        if let Some(overridden) = TEST_ROOTS.with(|cell| cell.borrow().clone()) {
+            return overridden;
+        }
+        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let self_agent_id = env::var("AGENT_OS_AGENT_ID").ok();
+        let home = env::var_os("HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from);
+        let tmpdir = env::var_os("TMPDIR")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from);
+        Self::from_parts(cwd, self_agent_id, home, tmpdir)
     }
 
     fn all_roots(&self) -> impl Iterator<Item = &RootEntry> {
@@ -337,10 +343,10 @@ fn validate_raw_path(raw: &str) -> Result<(), Refusal> {
             "Pass a valid path to a regular file.",
         ));
     }
-    if raw.ends_with('/') {
+    if raw.ends_with('/') || raw == "." || raw.ends_with("/.") {
         return Err(Refusal::new(
             ErrorCode::InvalidRequest,
-            "File path must not end with `/`.",
+            "File path must not end with `/`, `.`, or `/.`.",
             "Pass a regular file path, not a directory.",
         ));
     }
@@ -377,26 +383,50 @@ fn push_unique(list: &mut Vec<RootEntry>, entry: RootEntry) {
     }
 }
 
-fn is_global_root(path: &Path) -> bool {
-    path == Path::new("/")
-}
+const MAX_GIT_POINTER_BYTES: u64 = 8 * 1024;
 
-fn is_global_temp_or_root(path: &Path) -> bool {
+/// Rejects global temp directories, `/`, top-level shared/user containers, and OS/system trees
+/// so no root candidate (`cwd`, repo root, `private_home`, worktree, or `TMPDIR`) can widen
+/// confinement beyond a real project/session directory.
+fn is_forbidden_root(path: &Path) -> bool {
     let norm = lexical_normalize(path);
-    let raw = norm.to_string_lossy();
-    let cmp = if org_platform::fs::paths_case_insensitive_by_default() {
-        raw.to_ascii_lowercase()
-    } else {
-        raw.into_owned()
-    };
+    if !norm.is_absolute() {
+        return false;
+    }
+    let comps: Vec<String> = norm
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(seg) => Some(seg.to_string_lossy().to_ascii_lowercase()),
+            _ => None,
+        })
+        .collect();
+    let refs: Vec<&str> = comps.iter().map(String::as_str).collect();
     matches!(
-        cmp.as_str(),
-        "/" | "/tmp" | "/private/tmp" | "/var/tmp" | "/private/var/tmp"
+        refs.as_slice(),
+        [] | ["tmp"]
+            | ["private"]
+            | ["private", "tmp"]
+            | ["var", "tmp"]
+            | ["private", "var", "tmp"]
+            | ["var"]
+            | ["private", "var"]
+            | ["home"]
+            | ["users"]
+            | ["etc", ..]
+            | ["private", "etc", ..]
+            | ["usr", ..]
+            | ["system", ..]
+            | ["proc", ..]
+            | ["sys", ..]
+            | ["dev", ..]
     )
 }
 
 fn find_git_root(start: &Path) -> Option<PathBuf> {
     for ancestor in start.ancestors() {
+        if is_forbidden_root(ancestor) {
+            break;
+        }
         if ancestor.join(".git").exists() {
             return Some(ancestor.to_path_buf());
         }
@@ -404,30 +434,92 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
     None
 }
 
+fn read_small_git_text(path: &Path) -> Option<String> {
+    let file = org_platform::fs::open_nofollow_ro(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_GIT_POINTER_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if (bytes.len() as u64) > MAX_GIT_POINTER_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn resolve_git_common_dir(repo_root: &Path) -> Option<PathBuf> {
+    let dot_git = repo_root.join(".git");
+    let meta = fs::symlink_metadata(&dot_git).ok()?;
+    if meta.file_type().is_dir() {
+        return Some(dot_git);
+    }
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let text = read_small_git_text(&dot_git)?;
+    let raw_gitdir = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("gitdir:"))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let gitdir_path = Path::new(raw_gitdir);
+    let gitdir = if gitdir_path.is_absolute() {
+        gitdir_path.to_path_buf()
+    } else {
+        repo_root.join(gitdir_path)
+    };
+    let gitdir = fs::canonicalize(gitdir).ok()?;
+    if !gitdir.is_dir() {
+        return None;
+    }
+    let commondir_file = gitdir.join("commondir");
+    if let Some(common_text) = read_small_git_text(&commondir_file) {
+        let raw_common = common_text.trim();
+        if !raw_common.is_empty() {
+            let common_path = Path::new(raw_common);
+            let common = if common_path.is_absolute() {
+                common_path.to_path_buf()
+            } else {
+                gitdir.join(common_path)
+            };
+            if let Ok(canonical_common) = fs::canonicalize(common) {
+                if canonical_common.is_dir() {
+                    return Some(canonical_common);
+                }
+            }
+        }
+    }
+    Some(gitdir)
+}
+
 fn discover_git_worktrees(repo_root: &Path) -> Vec<RootEntry> {
     let mut out = Vec::new();
-    let git_dir = repo_root.join(".git");
-    let worktrees_dir = if git_dir.is_dir() {
-        git_dir.join("worktrees")
-    } else {
+    let Some(common_dir) = resolve_git_common_dir(repo_root) else {
         return out;
     };
+    let worktrees_dir = common_dir.join("worktrees");
     let Ok(entries) = fs::read_dir(worktrees_dir) else {
         return out;
     };
     for entry in entries.flatten() {
         let gitdir_file = entry.path().join("gitdir");
-        let Ok(text) = fs::read_to_string(gitdir_file) else {
+        let Some(text) = read_small_git_text(&gitdir_file) else {
             continue;
         };
-        let target = PathBuf::from(text.trim());
+        let raw_target = text.trim();
+        if raw_target.is_empty() {
+            continue;
+        }
+        let target_path = Path::new(raw_target);
+        let target = lexical_normalize(&if target_path.is_absolute() {
+            target_path.to_path_buf()
+        } else {
+            entry.path().join(target_path)
+        });
         let Some(wt_root) = target.parent() else {
             continue;
         };
         if let Some(root) = RootEntry::from_path(wt_root.to_path_buf()) {
-            if !is_global_root(&root.canonical) {
-                push_unique(&mut out, root);
-            }
+            push_unique(&mut out, root);
         }
     }
     out
@@ -460,19 +552,54 @@ fn normalized_components(path: &Path) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn strip_root_prefix_with_case(
+    path: &Path,
+    root: &Path,
+    case_insensitive: bool,
+) -> Option<PathBuf> {
+    if !case_insensitive {
+        return path.strip_prefix(root).ok().map(Path::to_path_buf);
+    }
+    let mut path_comps = path.components();
+    for root_comp in root.components() {
+        let path_comp = path_comps.next()?;
+        match (path_comp, root_comp) {
+            (Component::Normal(p), Component::Normal(r)) => {
+                if !p
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&r.to_string_lossy())
+                {
+                    return None;
+                }
+            }
+            (a, b) if a == b => {}
+            _ => return None,
+        }
+    }
+    Some(path_comps.collect())
+}
+
+fn strip_root_prefix(path: &Path, root: &Path) -> Option<PathBuf> {
+    strip_root_prefix_with_case(
+        path,
+        root,
+        org_platform::fs::paths_case_insensitive_by_default(),
+    )
+}
+
 fn match_beneath_root(lexical: &Path, roots: &FileRoots) -> Result<(PathBuf, PathBuf), Refusal> {
     // Match `lexical` directly against an allowed root's canonical or raw path so neither an
     // intermediate symlink inside the root nor an outside symlink pointing into the root is
     // dereferenced before `openat(O_NOFOLLOW)`.
     for entry in roots.all_roots() {
-        if let Ok(rel) = lexical.strip_prefix(&entry.canonical) {
+        if let Some(rel) = strip_root_prefix(lexical, &entry.canonical) {
             if !rel.as_os_str().is_empty() {
-                return Ok((entry.canonical.clone(), rel.to_path_buf()));
+                return Ok((entry.canonical.clone(), rel));
             }
         }
-        if let Ok(rel) = lexical.strip_prefix(&entry.raw) {
+        if let Some(rel) = strip_root_prefix(lexical, &entry.raw) {
             if !rel.as_os_str().is_empty() {
-                return Ok((entry.canonical.clone(), rel.to_path_buf()));
+                return Ok((entry.canonical.clone(), rel));
             }
         }
     }
@@ -480,6 +607,29 @@ fn match_beneath_root(lexical: &Path, roots: &FileRoots) -> Result<(PathBuf, Pat
         "File path is outside allowed attachment roots or traverses a symlink outside them.",
         "Pass a regular file directly inside the workspace root, your private_home, active worktrees, or session-scoped TMPDIR.",
     ))
+}
+
+fn is_own_agent_home_prefix(
+    path: &Path,
+    comps: &[String],
+    prefix_len: usize,
+    roots: &FileRoots,
+) -> bool {
+    let Some(home) = roots.private_home.as_ref() else {
+        return false;
+    };
+    let matches_root = |root_path: &Path| {
+        if !path_is_within(path, root_path) {
+            return false;
+        }
+        let h_comps = normalized_components(root_path);
+        h_comps.len() >= prefix_len
+            && comps[..prefix_len]
+                .iter()
+                .zip(&h_comps[..prefix_len])
+                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    };
+    matches_root(&home.canonical) || matches_root(&home.raw)
 }
 
 fn check_denylisted(path: &Path, roots: &FileRoots) -> Result<(), Refusal> {
@@ -495,25 +645,22 @@ fn check_denylisted(path: &Path, roots: &FileRoots) -> Result<(), Refusal> {
         }
         if eq(seg, "durable") {
             if let Some(next) = comps.get(idx + 1) {
-                if eq(next, "blobs") {
+                if eq(next, "blobs") || eq(next, "private") || eq(next, "messaging") {
                     return Err(denied_path(
-                        "Direct access to durable/blobs/ is forbidden.",
-                        "Reference existing attachments by --attachment-id instead of reading durable/blobs/.",
+                        "Direct access to durable office storage (`durable/blobs`, `durable/private`, `durable/messaging`) is forbidden.",
+                        "Reference existing attachments by --attachment-id or attach a workspace/private_home file instead.",
                     ));
                 }
-                if eq(next, "private") {
-                    if let Some(leaf) = comps.get(idx + 2) {
-                        let lower = leaf.to_ascii_lowercase();
-                        if lower.starts_with("task-notes.db")
-                            || lower.starts_with("user-space.db")
-                            || lower == "blobs"
-                        {
-                            return Err(denied_path(
-                                "Direct access to durable/private/ databases or blobs is forbidden.",
-                                "Attach a workspace or own private_home file instead.",
-                            ));
-                        }
-                    }
+            }
+        }
+        if eq(seg, "private") {
+            if let Some(leaf) = comps.get(idx + 1) {
+                let lower = leaf.to_ascii_lowercase();
+                if lower.starts_with("task-notes.db") || lower.starts_with("user-space.db") {
+                    return Err(denied_path(
+                        "Direct access to private SQLite databases (`task-notes.db*`, `user-space.db*`) is forbidden.",
+                        "Attach a workspace or own private_home file instead.",
+                    ));
                 }
             }
         }
@@ -523,28 +670,28 @@ fn check_denylisted(path: &Path, roots: &FileRoots) -> Result<(), Refusal> {
                 "Attach a workspace or own private_home file instead.",
             ));
         }
-        // Another agent's `private_home` under `local/offices/<office>/agents/<id>/...`,
-        // `agents/<id>/private_home/...`, or `private_home/<id>/...`.
+        // Another agent's home strictly under `local/offices/<office>/agents/<id>/...` or
+        // `agents/<id>/(home|private_home)/...`.
         let other_agent = if eq(seg, "local")
             && comps.get(idx + 1).is_some_and(|c| eq(c, "offices"))
             && comps.get(idx + 3).is_some_and(|c| eq(c, "agents"))
         {
-            comps.get(idx + 4)
-        } else if (eq(seg, "agents") && comps.get(idx + 2).is_some_and(|c| eq(c, "private_home")))
-            || eq(seg, "private_home")
+            comps.get(idx + 4).map(|id| (id, idx + 5))
+        } else if eq(seg, "agents")
+            && comps
+                .get(idx + 2)
+                .is_some_and(|c| eq(c, "home") || eq(c, "private_home"))
         {
-            comps.get(idx + 1)
+            comps.get(idx + 1).map(|id| (id, idx + 3))
         } else {
             None
         };
-        if let Some(agent_seg) = other_agent {
+        if let Some((agent_seg, prefix_len)) = other_agent {
             let is_own_id = roots
                 .self_agent_id
                 .as_deref()
                 .is_some_and(|id| eq(agent_seg, id));
-            let is_own_home = roots.private_home.as_ref().is_some_and(|h| {
-                path_is_within(path, &h.canonical) || path_is_within(path, &h.raw)
-            });
+            let is_own_home = is_own_agent_home_prefix(path, &comps, prefix_len, roots);
             if !is_own_id && !is_own_home {
                 return Err(denied_path(
                     "Access to another agent's private_home is forbidden.",

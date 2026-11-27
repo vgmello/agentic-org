@@ -97,8 +97,29 @@ pub(crate) fn abort_upload_best_effort<T: OfficeTransport + ?Sized>(
     );
 }
 
+/// Result of resolving repeatable `--attach` and `--attachment-id` inputs before a write RPC.
+///
+/// `ids` is the full ordered list passed to the downstream RPC. `staged_upload_ids` contains only
+/// uploads freshly staged during this call so the caller can abort them best-effort if the
+/// downstream RPC fails (without touching caller-supplied `--attachment-id`s).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ResolvedAttachments {
+    pub ids: Vec<String>,
+    pub staged_upload_ids: Vec<String>,
+}
+
+impl ResolvedAttachments {
+    /// Best-effort aborts every freshly staged upload on downstream RPC error.
+    pub(crate) fn abort_staged<T: OfficeTransport + ?Sized>(&self, transport: &mut T) {
+        for id in &self.staged_upload_ids {
+            abort_upload_best_effort(transport, id);
+        }
+    }
+}
+
 /// Resolves repeatable `--attach <path>` and `--attachment-id <id>` flags into a single list of
-/// IDs for `chat.send`, `msg.reply`, `chat.ask`, `tasks.create`, `tasks.update`, or `tasks.comment`.
+/// IDs for `chat.send`, `msg.reply`, `chat.ask`, `chat.answer`, `tasks.create`, `tasks.update`, or
+/// `tasks.comment`.
 ///
 /// Fast path (ADR-0014): when both slices are empty, does zero filesystem work and zero RPCs.
 pub(crate) fn resolve_attach_ids<T: OfficeTransport + ?Sized>(
@@ -106,9 +127,9 @@ pub(crate) fn resolve_attach_ids<T: OfficeTransport + ?Sized>(
     attach_paths: &[String],
     attachment_ids: &[String],
     max_count: usize,
-) -> Result<Vec<String>, Refusal> {
+) -> Result<ResolvedAttachments, Refusal> {
     if attach_paths.is_empty() && attachment_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ResolvedAttachments::default());
     }
     resolve_attach_ids_with_roots(
         transport,
@@ -126,9 +147,9 @@ pub(crate) fn resolve_attach_ids_with_roots<T: OfficeTransport + ?Sized>(
     attachment_ids: &[String],
     max_count: usize,
     roots: &FileRoots,
-) -> Result<Vec<String>, Refusal> {
+) -> Result<ResolvedAttachments, Refusal> {
     if attach_paths.is_empty() && attachment_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ResolvedAttachments::default());
     }
     let total = attach_paths.len().saturating_add(attachment_ids.len());
     if total > max_count {
@@ -155,21 +176,24 @@ pub(crate) fn resolve_attach_ids_with_roots<T: OfficeTransport + ?Sized>(
         }
     }
 
-    let mut staged_ids = Vec::with_capacity(attach_paths.len());
+    let mut staged_upload_ids = Vec::with_capacity(attach_paths.len());
     for path in attach_paths {
         match stage_local_file(transport, path, roots) {
-            Ok(staged) => staged_ids.push(staged.upload_id),
+            Ok(staged) => staged_upload_ids.push(staged.upload_id),
             Err(err) => {
-                for id in &staged_ids {
+                for id in &staged_upload_ids {
                     abort_upload_best_effort(transport, id);
                 }
                 return Err(err);
             }
         }
     }
-    let mut out = staged_ids;
-    out.extend(attachment_ids.iter().cloned());
-    Ok(out)
+    let mut ids = staged_upload_ids.clone();
+    ids.extend(attachment_ids.iter().cloned());
+    Ok(ResolvedAttachments {
+        ids,
+        staged_upload_ids,
+    })
 }
 
 /// Downloads `attachment_id` in `<= 512 KiB` chunks, verifies its SHA-256 digest, and safely
