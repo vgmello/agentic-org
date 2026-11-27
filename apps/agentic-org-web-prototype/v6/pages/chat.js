@@ -1121,3 +1121,5 @@ export {
   startNewMessage,
   toggleChatList,
 };
+/* Agents' conversations are read inside the agent's page (agent-conversations.js), with Chat's own stream. */
+export { streamHtml };
