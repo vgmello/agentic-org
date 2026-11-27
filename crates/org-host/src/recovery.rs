@@ -1,9 +1,10 @@
 //! REC-DEL-1 native orchestration. The production constructor always uses the
 //! SDK adapter; no DTO, environment option or development path supplies presence.
-pub(crate) mod presence;
 use crate::{
     app_auth::AppPolicy,
+    authentication::Authentication,
     broadcast::Broadcast,
+    control_listener::Connection,
     host_secrets::HostSecrets,
     hostdb::{
         recovery::{Ledger, State},
@@ -11,7 +12,8 @@ use crate::{
     },
     offices::Offices,
     peer::Received,
-    service::{authentication::Authentication, listener::Connection},
+    presence,
+    recovery_permission::Permission,
     supervisor::channels::Endpoint,
 };
 use org_host_control::{ops, recovery as dto, SessionHandle};
@@ -19,17 +21,9 @@ use org_office_launch::recovery::PublicRecord;
 use org_proto::{ApiError, ErrorCode, Request};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Weak,
+    Arc,
 };
 
-/// Owned by exactly one connection. Not Clone/Debug/Serialize, and never a
-/// caller-visible capability. A dropped/revoked session invalidates it in place.
-pub(crate) struct Permission {
-    session: [u8; 32],
-    live: Weak<AtomicBool>,
-    account: String,
-    ledger: Ledger,
-}
 pub(crate) struct Recovery {
     auth: Arc<Authentication>,
     db: Arc<HostDb>,
@@ -109,7 +103,7 @@ impl Recovery {
                 return adapter.local(c);
             }
         }
-        presence::local(c)
+        presence::local(c.socket())
     }
     fn confirm(&self, cancelled: impl Fn() -> bool) -> Result<(), ()> {
         #[cfg(test)]
@@ -308,12 +302,8 @@ impl Recovery {
         {
             return Err(denied());
         }
-        *c.recovery_permission.lock().map_err(|_| unavailable())? = Some(Permission {
-            session,
-            live,
-            account,
-            ledger: delivered,
-        });
+        *c.recovery_permission.lock().map_err(|_| unavailable())? =
+            Some(Permission::new(session, live, account, delivered));
         Ok(ops::RecoveryReleaseResult { code })
     }
     pub(crate) fn acknowledge(
@@ -332,12 +322,7 @@ impl Recovery {
         if !matches!(ledger.state, State::Acknowledged | State::AckPending) {
             let permission = permission.ok_or_else(denied)?;
             let (session, live) = self.auth.recovery_session_binding(c, &p.session)?;
-            if permission.account != account
-                || permission.session != session
-                || !permission.live.ptr_eq(&live)
-                || live.upgrade().is_none_or(|l| !l.load(Ordering::SeqCst))
-                || permission.ledger != ledger
-            {
+            if !permission.admits(&account, &session, &live, &ledger) {
                 return Err(denied());
             }
             self.authority(c, r, &p.session, true)?;

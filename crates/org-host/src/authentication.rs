@@ -14,8 +14,8 @@ use org_host_control::{
 use org_proto::{ApiError, ErrorCode};
 use sha2::{Digest, Sha256};
 
-use super::listener::Connection;
 use crate::accounts::identity::AccountId;
+use crate::control_listener::Connection;
 use crate::host_secrets::HostSecrets;
 use crate::hostdb::{accounts::Account, journal::Verifier, HostDb};
 

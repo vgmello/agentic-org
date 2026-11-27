@@ -22,6 +22,7 @@ fn item(reference: &str) -> InboxItem {
         clears: InboxClears::Placed,
         dismissable: false,
         actions: vec![],
+        attachments: Vec::new(),
     }
 }
 
@@ -111,6 +112,7 @@ fn list_and_recount_use_the_same_exact_unfiltered_counts_past_the_item_cap() {
         team: Some("T"),
         after: Some(&after),
         limit: 100,
+        has: Default::default(),
     };
     let list = read(&Clock::new("test".into()), &sources, &query).1;
     assert_eq!(
@@ -177,6 +179,7 @@ fn failure_omits_that_sources_items_and_counts_and_marks_both_paths_degraded() {
         team: None,
         after: None,
         limit: 100,
+        has: Default::default(),
     };
     let result = read(&Clock::new("test".into()), &[&good, &bad], &query).1;
     assert_eq!(
@@ -224,6 +227,7 @@ fn each_count_overflow_degrades_the_whole_source_without_partial_items_or_totals
             team: None,
             after: None,
             limit: 1,
+            has: Default::default(),
         };
         let result = read(&Clock::new("test".into()), &[&good, &bad], &query).1;
         assert_eq!(result.items.len(), 1, "field{field}");
@@ -274,6 +278,7 @@ fn as_of_is_sampled_before_the_first_source_even_when_that_read_commits() {
         team: None,
         after: None,
         limit: 100,
+        has: Default::default(),
     };
     let (position, _) = read(&clock, &[&source], &query);
     assert_eq!(position.seq, 0);
@@ -347,6 +352,7 @@ fn merged_keyset_pages_reach_past_each_source_cap_with_ties_and_unknown_times_la
             team: None,
             after: after.as_ref(),
             limit: 100,
+            has: Default::default(),
         };
         let (_, page) = read(&clock, &[&b, &a], &query);
         assert_eq!(page.totals.counts.total, 1206);
@@ -398,6 +404,7 @@ fn collector_bounds_source_text_before_returning_it() {
         team: None,
         after: None,
         limit: 1,
+        has: Default::default(),
     };
     let (_, page) = read(&Clock::new("instance".into()), &[&Long], &query);
     let row = &page.items[0];

@@ -8,13 +8,13 @@ use org_proto::attachments::{
     AttachmentReadChunkResult, AttachmentResult, AttachmentScope, AttachmentTargetKind,
     ATTACHMENT_CHUNK_MAX_BYTES, ATTACHMENT_LIST_MAX_LIMIT,
 };
-use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
 use super::{invalid, not_found, record_ref, target_ref, Answer, Office};
 use crate::attachments::blobs::ContentHash;
 use crate::attachments::media::{self, MediaType, ModelDerivative};
 use crate::attachments::records::AttachmentRecord;
+use crate::attachments::remote::{bytes_unavailable, BlobPull};
 use crate::attachments::user_space::satellite_refusal;
 use crate::authz::PrincipalContext;
 use crate::error::OfficeError;
@@ -170,11 +170,24 @@ impl Office {
         }))
     }
 
-    /// `attachment.read_chunk`: at most 512 KiB of a readable file from `offset`.
+    /// `attachment.read_chunk`: at most 512 KiB of a readable file from `offset`, from the
+    /// bytes this office holds.
     pub fn attachment_read_chunk(
         &self,
         actor: &str,
         params: AttachmentReadChunkParams,
+    ) -> Answer<AttachmentReadChunkResult> {
+        self.attachment_read_chunk_with(actor, params, None)
+    }
+
+    /// `attachment.read_chunk` that may `pull` a shared file's bytes from HQ when this
+    /// satellite does not hold them (`TASK-98.6`): only after the policy allowed the read, and
+    /// `unavailable` (worth retrying) when HQ cannot be reached.
+    pub fn attachment_read_chunk_with(
+        &self,
+        actor: &str,
+        params: AttachmentReadChunkParams,
+        pull: Option<BlobPull<'_>>,
     ) -> Answer<AttachmentReadChunkResult> {
         let caller = match self.attachment_caller(actor)? {
             Ok(caller) => caller,
@@ -191,11 +204,25 @@ impl Office {
         if params.offset > record.byte_count {
             return Ok(Err(invalid("offset is past the end of the file")));
         }
-        let Some(bytes) = self.blob_range(&record, params.offset, max as usize)? else {
-            return Ok(Err(ApiError::new(
-                ErrorCode::Unavailable,
-                "the attachment's bytes are not on this office",
-            )));
+        let bytes = match self.local_blob_range(&record, params.offset, max as usize)? {
+            Some(bytes) => bytes,
+            None => match pull.filter(|_| self.may_pull(&record)) {
+                None => {
+                    return Ok(Err(bytes_unavailable(
+                        "the attachment's bytes are not on this office",
+                    )))
+                }
+                Some(pull) => match self.pull_shared_blob(&record, pull)? {
+                    Ok(whole) => {
+                        let start = usize::try_from(params.offset)
+                            .unwrap_or(usize::MAX)
+                            .min(whole.len());
+                        let end = start.saturating_add(max as usize).min(whole.len());
+                        whole[start..end].to_vec()
+                    }
+                    Err(refusal) => return Ok(Err(refusal)),
+                },
+            },
         };
         let end = params.offset + bytes.len() as u64;
         Ok(Ok(AttachmentReadChunkResult {
@@ -206,18 +233,6 @@ impl Office {
             total_bytes: record.byte_count,
             content_sha256: record.content_sha256.to_string(),
         }))
-    }
-
-    fn blob_range(
-        &self,
-        record: &AttachmentRecord,
-        offset: u64,
-        max: usize,
-    ) -> Result<Option<Vec<u8>>, OfficeError> {
-        let Some(blobs) = self.blobs_for(record) else {
-            return Ok(None);
-        };
-        blobs.read_range(&record.content_sha256, offset, max)
     }
 
     /// The bounded copy of a readable image a model reads (at most 1568 px on its longest
@@ -240,12 +255,11 @@ impl Office {
                 "only images have a model derivative",
             )));
         };
-        let Some(blobs) = self.blobs_for(&record) else {
+        if record.scope() == AttachmentScope::UserPrivate && self.attachments.private.is_none() {
             return Ok(Err(satellite_refusal()));
-        };
-        let Some(bytes) = blobs.read_all(&record.content_sha256, media.max_bytes())? else {
-            return Ok(Err(ApiError::new(
-                ErrorCode::Unavailable,
+        }
+        let Some(bytes) = self.local_blob_all(&record, media.max_bytes())? else {
+            return Ok(Err(bytes_unavailable(
                 "the attachment's bytes are not on this office",
             )));
         };

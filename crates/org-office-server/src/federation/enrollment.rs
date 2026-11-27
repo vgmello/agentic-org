@@ -271,7 +271,7 @@ pub fn enroll_satellite_with_hq(
     .map_err(|e| format!("failed sending EnrollRequest: {e}"))?;
 
     let mut reader = FrameReader::new();
-    let check_code = match read_client_frame(&mut tls, &mut reader, FIRST_FRAME_DEADLINE)? {
+    let check_code = match read_client_frame(&mut tls, &mut reader, FIRST_FRAME_DEADLINE, None)? {
         Some(SyncFrame::EnrollPending { check_code, .. }) => {
             on_check_code(&check_code);
             check_code
@@ -298,7 +298,7 @@ pub fn enroll_satellite_with_hq(
         other => return Err(format!("unexpected enrollment frame: {other:?}")),
     };
 
-    match read_client_frame(&mut tls, &mut reader, ENROLL_WAIT_MAX)? {
+    match read_client_frame(&mut tls, &mut reader, ENROLL_WAIT_MAX, None)? {
         Some(SyncFrame::EnrollApproved {
             cert_der_b64,
             ca_cert_der_b64,

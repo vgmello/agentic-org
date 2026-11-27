@@ -8,7 +8,7 @@ use org_store::{
 };
 
 use super::{
-    ports::{MessagingRead, MessagingWrite},
+    ports::{BoundMessageFile, MessagingRead, MessagingWrite},
     records::{
         ConversationPreferenceRecord, ConversationReadMarkerRecord, ConversationRecord,
         MessageReactionRecord, MessageRecord, ParticipantAnswerFile, RecipientStateRecord,
@@ -25,6 +25,29 @@ pub struct MessagingTables {
     reactions: BTreeMap<(String, Id), Vec<MessageReactionRecord>>,
     answers: BTreeMap<(String, Id), ParticipantAnswerFile>,
     max_local_seq: u64,
+}
+
+impl MessagingTables {
+    fn message_file(&self, attachment_id: &str) -> Option<BoundMessageFile> {
+        let on_message = self.messages.values().find_map(|(_, m)| {
+            let file = m.attachments.iter().find(|a| a.id == attachment_id)?;
+            Some(BoundMessageFile {
+                message_id: m.id.clone(),
+                answerer: None,
+                file: file.clone(),
+            })
+        });
+        on_message.or_else(|| {
+            self.answers.values().find_map(|answer| {
+                let file = answer.attachments.iter().find(|a| a.id == attachment_id)?;
+                Some(BoundMessageFile {
+                    message_id: answer.message_id.clone(),
+                    answerer: Some(answer.employee_id.clone()),
+                    file: file.clone(),
+                })
+            })
+        })
+    }
 }
 
 impl FamilyTable for MessagingTables {
@@ -49,6 +72,12 @@ impl FamilyTable for MessagingTables {
                 "message {k} conv={} sha={}",
                 v.conversation_id, v.content_sha256
             ));
+            for a in &v.attachments {
+                lines.push(format!(
+                    "message_attachment {k} {} {}",
+                    a.id, a.content_sha256
+                ));
+            }
         }
         for ((mid, eid), v) in &self.recipient_states {
             lines.push(format!(
@@ -70,6 +99,12 @@ impl FamilyTable for MessagingTables {
                 "answer {mid} {eid} accepted_by={:?}",
                 v.accepted_by
             ));
+            for a in &v.attachments {
+                lines.push(format!(
+                    "answer_attachment {mid} {eid} {} {}",
+                    a.id, a.content_sha256
+                ));
+            }
         }
         lines.sort();
         lines
@@ -264,6 +299,13 @@ macro_rules! memory_messaging_read {
 
             fn message_local_seq(&self, message_id: &str) -> Result<Option<u64>, EngineError> {
                 read(self.table(), |t| t.messages.get(message_id).map(|(seq, _)| *seq))
+            }
+
+            fn message_file(
+                &self,
+                attachment_id: &str,
+            ) -> Result<Option<BoundMessageFile>, EngineError> {
+                read(self.table(), |t| t.message_file(attachment_id))
             }
         }
     )+};

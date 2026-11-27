@@ -7,8 +7,10 @@
 //! and deadlines) live in the leaf `federation_link` and are re-exported here; the stream
 //! reaches this module's inbound drain only through the hook `federation_runtime` injects.
 
+mod blob_sync;
 mod client;
 mod enrollment;
+mod hq_blobs;
 mod hq_dispatch;
 mod hq_relay;
 mod hq_server;
@@ -23,6 +25,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::org_feed::FeedWake;
 
+pub(crate) use self::blob_sync::spawn_satellite_blob_shipper;
+pub use self::blob_sync::{
+    blob_cache_max_bytes, ship_blob_outbox, HqBlobRemote, OutboxFlush, BLOB_CACHE_MAX_BYTES_ENV,
+};
 pub use self::enrollment::{enroll_satellite_with_hq, EnrolledCertificateBundle};
 pub use self::hq_server::HqFederationServer;
 pub use self::permits::SatelliteHqPermitCoordinator;

@@ -25,6 +25,7 @@ use crate::sync::lock;
 mod connection;
 mod connections;
 mod outbound;
+mod request;
 mod serve;
 pub(crate) use connection::{Connection, DescriptorError, ServingReport};
 #[cfg(test)]
@@ -33,7 +34,7 @@ pub(crate) use connections::WebConnection;
 pub(crate) use outbound::SecretLine;
 use serve::serve;
 #[cfg(test)]
-pub(in crate::service) use serve::serve_pair;
+pub(crate) use serve::serve_pair;
 
 /// How long the accept thread waits for a connection before checking whether to stop.
 const ACCEPT_POLL: Duration = Duration::from_millis(100);

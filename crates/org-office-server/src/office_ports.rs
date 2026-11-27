@@ -332,6 +332,7 @@ pub(crate) fn build_office_ports(
         Arc::clone(&sync_wake),
     );
     let reads = build_read_ports(&office, &session_manager, &live);
+    let attach_wake = Arc::clone(&sync_wake);
     let task_svc = Arc::new(
         task_calls::TaskService::new(
             Arc::clone(&office),
@@ -395,7 +396,15 @@ pub(crate) fn build_office_ports(
         attachments: {
             let o = Arc::clone(&office);
             Some(gate_rpc_port(&office, move |member, request| {
-                attachment_calls::dispatch_attachment_rpc(&o, member, request)
+                let response = attachment_calls::dispatch_attachment_rpc(&o, member, request);
+                // A new file binds: a satellite's shipper (and every HQ session) goes now.
+                if response
+                    .as_ref()
+                    .is_some_and(|r| attachment_calls::bound_a_file(request, r))
+                {
+                    attach_wake();
+                }
+                response
             }))
         },
         git: Some(gate_rpc_port(&office, move |member, request| {

@@ -100,9 +100,11 @@ impl Fx {
                     reply_to: reply_to.map(str::to_owned),
                     also_in_channel,
                     reason: None,
+                    attachment_ids: Vec::new(),
                 },
                 org_seq: 2,
                 now_utc: at(sec),
+                files: crate::messaging::files::MessageFiles::none(),
             })
             .unwrap()
             .unwrap();
@@ -885,6 +887,7 @@ fn rung4_thread_headers_top_level_snippets_and_attachment_counts() {
                 media_type: "text/plain".into(),
                 byte_count: 3,
                 content_sha256: "0".repeat(64),
+                ..Default::default()
             })
             .collect();
         with_files.content_sha256 = with_files.compute_content_sha256();

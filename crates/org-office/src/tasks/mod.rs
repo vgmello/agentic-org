@@ -6,6 +6,7 @@
 pub mod features;
 pub mod ports;
 pub mod projector;
+pub mod query;
 pub mod records;
 pub mod relocation;
 pub mod replica;

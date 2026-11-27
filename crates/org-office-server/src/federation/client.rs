@@ -98,13 +98,19 @@ fn complete_client_handshake(
     Ok(())
 }
 
+/// The next frame from HQ within `wait`. With `stop`, a shutdown ends the wait at the next
+/// socket read slice (`SOCKET_READ_TIMEOUT`, 250 ms) instead of at the deadline.
 pub(super) fn read_client_frame(
     tls: &mut StreamOwned<ClientConnection, TcpStream>,
     reader: &mut FrameReader,
     wait: Duration,
+    stop: Option<&AtomicBool>,
 ) -> Result<Option<SyncFrame>, String> {
     let deadline = Instant::now() + wait;
     loop {
+        if stop.is_some_and(|stop| stop.load(Ordering::Acquire)) {
+            return Err("cancelled by shutdown while waiting for HQ".into());
+        }
         match reader.read_frame(tls, PARTIAL_FRAME_DEADLINE) {
             Ok(frame) => return Ok(frame),
             Err(FrameCodecError::Io(e))
@@ -265,7 +271,7 @@ fn try_connect_hq_sock_addr(
     )
     .map_err(|e| format!("failed sending Hello: {e}"))?;
     let mut reader = FrameReader::new();
-    let hello_reply = read_client_frame(&mut tls, &mut reader, FIRST_FRAME_DEADLINE)?;
+    let hello_reply = read_client_frame(&mut tls, &mut reader, FIRST_FRAME_DEADLINE, None)?;
     let (hq_office_id, hq_epoch) = match hello_reply {
         Some(SyncFrame::Hello {
             org_id,

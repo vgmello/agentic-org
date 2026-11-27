@@ -129,6 +129,7 @@ fn thread_stats_count_replies_and_latest_reply_in_one_pass() {
         media_type: "text/plain".into(),
         byte_count: 3,
         content_sha256: String::new(),
+        ..Default::default()
     });
     let msgs = vec![
         msg(10, 60, "2026-11-21T12:00:00.000Z", None),

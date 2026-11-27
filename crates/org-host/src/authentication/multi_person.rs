@@ -378,12 +378,12 @@ impl Authentication {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::authentication::tests::fixture;
+    use crate::authentication::tests::fixture;
 
     #[test]
     fn verify_existing_password_throttles_failures_and_clears_on_success() {
         let (_root, auth, _c) = fixture();
-        let now = i64::try_from(crate::service::authentication::wall_ms().unwrap()).unwrap();
+        let now = i64::try_from(crate::authentication::wall_ms().unwrap()).unwrap();
         let (owner_id, login) = auth.db.active_administrator_account().unwrap().unwrap();
         let wrong = Password::new("wrong password here".into()).unwrap();
         let right = Password::new("synthetic test password".into()).unwrap();

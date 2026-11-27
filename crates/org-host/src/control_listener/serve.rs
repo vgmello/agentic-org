@@ -108,12 +108,12 @@ pub(super) fn serve_with_poll(
         let Ok(Some(line)) = frame::read_line(&mut reader) else {
             break;
         };
-        let request = match crate::service::request::decode(&line) {
+        let request = match super::request::decode(&line) {
             Ok(request) => request,
             Err(_) => {
                 connection.clear_recovery_permission();
                 connection.send_response(Response::error(
-                    crate::service::request::salvage_id(&line).unwrap_or(UNREADABLE_REQUEST_ID),
+                    super::request::salvage_id(&line).unwrap_or(UNREADABLE_REQUEST_ID),
                     ApiError::new(ErrorCode::InvalidRequest, "the request couldn't be read"),
                 ));
                 continue;
@@ -176,7 +176,7 @@ pub(super) fn serve_with_poll(
 /// Run the actual connection reader/writer on a connected pair when a test
 /// environment cannot bind UNIX listeners. This does not exercise admission.
 #[cfg(test)]
-pub(in crate::service) fn serve_pair(stream: UnixStream, handler: Arc<dyn Handler>) {
+pub(crate) fn serve_pair(stream: UnixStream, handler: Arc<dyn Handler>) {
     let (connection, queue) =
         Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
     serve(stream, connection, queue, handler, 4);

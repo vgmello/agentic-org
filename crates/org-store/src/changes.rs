@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{change::DurablePath, journal::Entry, sequences::FeedPosition};
+use crate::{journal::Entry, path::DurablePath, sequences::FeedPosition};
 
 /// One committed entry.
 #[derive(Clone, PartialEq, Eq, Debug)]

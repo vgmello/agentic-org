@@ -59,7 +59,7 @@ fn fixture() -> (tempfile::TempDir, Arc<Writers>, Input) {
     db.seed_account(
         &input.account,
         "Owner",
-        &crate::service::authentication::hash_password(&password).unwrap(),
+        &crate::authentication::hash_password(&password).unwrap(),
         true,
         1,
     )

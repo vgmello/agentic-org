@@ -855,6 +855,7 @@ fn dm_message(f: &Fixture, from: &str, to: &str, body: &str) -> (String, String)
                 priority: None,
                 subject: None,
                 body: body.to_owned(),
+                attachment_ids: Vec::new(),
                 meta: Default::default(),
                 reply_to: None,
                 also_in_channel: false,
