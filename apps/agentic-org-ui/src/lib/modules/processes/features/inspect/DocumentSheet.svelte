@@ -10,6 +10,7 @@
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import { mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import {
 		Sheet,
 		SheetClose,
@@ -251,13 +252,13 @@
 				</section>
 			</div>
 		{/if}
-		<span class="absolute top-4 right-4 inline-flex">
+		<ModalTooltip label="Close" side="left" class="absolute top-4 right-4">
 			<SheetClose>
 				{#snippet child({ props })}
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						class="peer focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-focus max-[639px]:size-11"
+						class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-focus max-[639px]:size-11"
 						{...props}
 					>
 						<MiniIcon name="xMark" class="size-5" />
@@ -265,12 +266,6 @@
 					</Button>
 				{/snippet}
 			</SheetClose>
-			<span
-				role="tooltip"
-				data-tooltip-content=""
-				class="pointer-events-none invisible absolute top-1/2 right-full z-[60] mr-1.5 -translate-y-1/2 whitespace-nowrap rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg opacity-0 shadow-md ring-1 ring-line transition-opacity delay-150 peer-hover:visible peer-hover:opacity-100 peer-focus-visible:visible peer-focus-visible:opacity-100 motion-reduce:transition-none"
-				>Close</span
-			>
-		</span>
+		</ModalTooltip>
 	</SheetContent>
 </Sheet>

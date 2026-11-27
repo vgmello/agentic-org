@@ -181,13 +181,15 @@
 			// Recompute focus containment after Bits UI focus restoration or outside click settles
 			// without cancelling any pending pointer-leave collapse timer.
 			const syncFocus = () => {
-				sidebarFocusRaf = undefined;
 				if (sidebarMenuOpen) return;
 				const active = document.activeElement;
 				sidebarFocused = Boolean(active instanceof Node && desktopNavigation?.contains(active));
 			};
 			queueMicrotask(syncFocus);
-			sidebarFocusRaf = requestAnimationFrame(syncFocus);
+			sidebarFocusRaf = requestAnimationFrame(() => {
+				sidebarFocusRaf = undefined;
+				syncFocus();
+			});
 		}
 	}
 

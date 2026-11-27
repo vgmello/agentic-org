@@ -73,7 +73,10 @@ export function resolveChatLocation(
 	};
 }
 
-export function scrollMessageIntoView(messageId: string | undefined, listEl?: HTMLElement): void {
+export function scrollMessageIntoView(
+	messageId: string | undefined,
+	listEl?: HTMLElement | (() => HTMLElement | undefined)
+): void {
 	scrollMessageBelowStickyHeader(listEl, messageId);
 }
 

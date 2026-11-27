@@ -3,6 +3,7 @@
 	import XIcon from '@lucide/svelte/icons/x';
 	import { returnFocus } from '$lib/components/focus';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { cn, type WithoutChildrenOrChild } from '$lib/utils.js';
 	import DialogOverlay from './dialog-overlay.svelte';
 	import DialogPortal from './dialog-portal.svelte';
@@ -53,13 +54,12 @@
 	>
 		{@render children?.()}
 		{#if showCloseButton}
-			<!-- Avoid Bits UI Tooltip inside DialogContent: PopperLayer mounts a FocusScope that pauses the modal focus trap. -->
-			<span class="absolute top-3 right-3 inline-flex">
+			<ModalTooltip label="Close" class="absolute top-3 right-3">
 				<DialogPrimitive.Close data-slot="dialog-close">
 					{#snippet child({ props: closeProps })}
 						<Button
 							variant="ghost"
-							class="peer size-9 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
+							class="size-9 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11"
 							size="icon-sm"
 							aria-label="Close"
 							{...closeProps}
@@ -68,13 +68,7 @@
 						</Button>
 					{/snippet}
 				</DialogPrimitive.Close>
-				<span
-					role="tooltip"
-					data-tooltip-content=""
-					class="pointer-events-none invisible absolute top-full right-0 z-[60] mt-1.5 whitespace-nowrap rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg opacity-0 shadow-md ring-1 ring-line transition-opacity delay-150 peer-hover:visible peer-hover:opacity-100 peer-focus-visible:visible peer-focus-visible:opacity-100 motion-reduce:transition-none"
-					>Close</span
-				>
-			</span>
+			</ModalTooltip>
 		{/if}
 	</DialogPrimitive.Content>
 </DialogPortal>

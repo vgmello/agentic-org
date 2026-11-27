@@ -131,11 +131,20 @@
 
 	const draftStore = useOptionalDraftStore();
 	const conversationId = $derived(conversation?.id);
-	const convDrafts = $derived(
-		draftStore && conversationId
-			? draftStore.forThread(`conversation:${conversationId}`)
-			: undefined
-	);
+	const draftsCache: Record<
+		string,
+		ReturnType<NonNullable<typeof draftStore>['forThread']>
+	> = Object.create(null);
+	function draftsForConversation(id: string | undefined) {
+		if (!draftStore || !id) return undefined;
+		let entry = draftsCache[id];
+		if (!entry) {
+			entry = draftStore.forThread(`conversation:${id}`);
+			draftsCache[id] = entry;
+		}
+		return entry;
+	}
+	const convDrafts = $derived(draftsForConversation(conversationId));
 	let feedScroll = $state<FeedScrollState>({ hasNewer: false, unseenCount: 0 });
 	const jumpLabel = $derived(
 		feedScroll.unseenCount > 0
@@ -158,7 +167,7 @@
 		readOnly={bridgePreview}
 		{officeRunning}
 		active={rowIsActive(m)}
-		askDraftFor={convDrafts?.ask}
+		askDraftFor={draftsForConversation(m.conversation_id)?.ask}
 		{onmenu}
 		where={extra.where}
 		onreact={actions.react}

@@ -16,9 +16,16 @@ export function syncStuckDayHeaders(listEl: HTMLElement): void {
 	const top = listEl.getBoundingClientRect().top;
 	const today = listEl.querySelector<HTMLElement>('.chat-day.is-today');
 	const inToday = today !== null && today.getBoundingClientRect().top - top < 1;
-	for (const d of listEl.querySelectorAll<HTMLElement>('.chat-day:not(.is-today)')) {
-		d.classList.toggle('is-stuck', listEl.scrollTop > 0 && d.getBoundingClientRect().top - top < 1);
-		d.classList.toggle('is-past', inToday);
+	const older = [...listEl.querySelectorAll<HTMLElement>('.chat-day:not(.is-today)')];
+	let stuckIdx = -1;
+	if (listEl.scrollTop > 0 && !inToday) {
+		for (let i = 0; i < older.length; i += 1) {
+			if (older[i].getBoundingClientRect().top - top < 1) stuckIdx = i;
+		}
+	}
+	for (let i = 0; i < older.length; i += 1) {
+		older[i].classList.toggle('is-stuck', i === stuckIdx);
+		older[i].classList.toggle('is-past', inToday || (stuckIdx >= 0 && i < stuckIdx));
 	}
 }
 
@@ -45,27 +52,31 @@ export function computeNewerBelow(listEl: HTMLElement): FeedScrollState {
  * (roughly one-third down the viewport, or just below the sticky day band if tall).
  */
 export function scrollMessageBelowStickyHeader(
-	listEl: HTMLElement | undefined,
+	listEl: HTMLElement | (() => HTMLElement | undefined) | undefined,
 	messageId: string | undefined
 ): void {
 	if (!messageId) return;
 	void tick().then(() => {
-		const scope: ParentNode = listEl ?? document;
+		const initialList = typeof listEl === 'function' ? listEl() : listEl;
+		const scope: ParentNode = initialList ?? document;
 		const el = scope.querySelector<HTMLElement>(`[data-id="${CSS.escape(messageId)}"]`);
 		if (!el) return;
-		if (!listEl || listEl.clientHeight <= 0) {
+		const container =
+			initialList ?? el.closest<HTMLElement>('[data-testid="message-list"]') ?? undefined;
+		if (!container || container.clientHeight <= 0) {
 			el.scrollIntoView({ block: 'center' });
 			return;
 		}
-		const band = listEl.querySelector<HTMLElement>('.chat-day:not(.is-today)')?.offsetHeight || 0;
+		const band =
+			container.querySelector<HTMLElement>('.chat-day:not(.is-today)')?.offsetHeight || 0;
 		const elTop =
-			el.getBoundingClientRect().top - listEl.getBoundingClientRect().top + listEl.scrollTop;
+			el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
 		const desiredOffset = Math.max(
 			BOUNDARY_GAP + band,
-			(listEl.clientHeight - el.offsetHeight) / 3
+			(container.clientHeight - el.offsetHeight) / 3
 		);
-		listEl.scrollTop = Math.max(0, Math.round(elTop - desiredOffset));
-		syncStuckDayHeaders(listEl);
+		container.scrollTop = Math.max(0, Math.round(elTop - desiredOffset));
+		syncStuckDayHeaders(container);
 	});
 }
 
@@ -105,16 +116,28 @@ export interface FeedScrollActionParams {
 export function trackFeedScroll(node: HTMLElement, initial: FeedScrollActionParams) {
 	let params = initial;
 	let rafId: number | undefined;
+	let lastState: FeedScrollState | undefined;
+
+	const emit = (next: FeedScrollState) => {
+		if (
+			lastState &&
+			lastState.hasNewer === next.hasNewer &&
+			lastState.unseenCount === next.unseenCount
+		)
+			return;
+		lastState = next;
+		params.onState(next);
+	};
 
 	const measure = () => {
 		rafId = undefined;
 		if (!node.isConnected) return;
 		if (!params.active) {
-			params.onState({ hasNewer: false, unseenCount: 0 });
+			emit({ hasNewer: false, unseenCount: 0 });
 			return;
 		}
 		syncStuckDayHeaders(node);
-		params.onState(computeNewerBelow(node));
+		emit(computeNewerBelow(node));
 	};
 
 	const schedule = () => {

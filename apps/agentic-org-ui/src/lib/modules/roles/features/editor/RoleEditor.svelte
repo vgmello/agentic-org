@@ -17,6 +17,7 @@
 		textareaClass
 	} from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import {
@@ -367,25 +368,19 @@
 					class="min-w-0 flex-1 basis-[200px] text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
 					>{title}</SheetTitle
 				>
-				<span class="relative -my-1 -mr-1.5 inline-flex shrink-0">
+				<ModalTooltip label="Close" side="left" class="-my-1 -mr-1.5 shrink-0">
 					<SheetClose>
 						{#snippet child({ props })}
 							<Button
 								variant="ghost"
 								size="icon"
-								class="peer text-fg-muted hover:text-fg max-[639px]:size-11"
+								class="text-fg-muted hover:text-fg max-[639px]:size-11"
 								{...props}
 								><MiniIcon name="xMark" class="size-5" /><span class="sr-only">Close</span></Button
 							>
 						{/snippet}
 					</SheetClose>
-					<span
-						role="tooltip"
-						data-tooltip-content=""
-						class="pointer-events-none invisible absolute top-1/2 right-full z-[60] mr-1.5 -translate-y-1/2 whitespace-nowrap rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg opacity-0 shadow-md ring-1 ring-line transition-opacity delay-150 peer-hover:visible peer-hover:opacity-100 peer-focus-visible:visible peer-focus-visible:opacity-100 motion-reduce:transition-none"
-						>Close</span
-					>
-				</span>
+				</ModalTooltip>
 			</div>
 			<SheetDescription class="text-sm/6 text-fg-muted">
 				A role describes an employee's work for teammates. It grants no tools, budgets or authority.

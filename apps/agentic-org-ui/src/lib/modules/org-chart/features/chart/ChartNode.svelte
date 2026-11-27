@@ -63,6 +63,7 @@
 	const pill =
 		'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/5 font-medium whitespace-nowrap ring-1 ring-inset';
 	const meta = 'text-xs/5 text-fg-muted [overflow-wrap:anywhere]';
+	let menuOpen = $state(false);
 </script>
 
 <li data-node={e.id} data-kind={e.kind}>
@@ -131,9 +132,9 @@
 				{#if e.status === 'paused'}<span class="{pill} t-amber">Paused</span>{/if}
 			</p>
 		</div>
-		<DropdownMenu>
+		<DropdownMenu bind:open={menuOpen}>
 			<Tooltip.Provider delayDuration={150}>
-				<Tooltip.Root>
+				<Tooltip.Root disabled={menuOpen}>
 					<Tooltip.Trigger>
 						{#snippet child({ props: tipProps })}
 							<DropdownMenuTrigger>

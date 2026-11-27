@@ -265,17 +265,22 @@
 <style>
 	.chat-day {
 		position: sticky;
-		top: -12px;
+		top: 0;
 		z-index: 2;
 		display: flex;
 		align-items: center;
 		gap: 12px;
-		margin: 8px -8px 4px;
+		margin: 8px -12px 4px;
 		padding: 4px 12px;
 		font-size: 0.75rem;
 		line-height: 1.25rem;
 		font-weight: 600;
 		color: var(--exec-muted, var(--fg-muted));
+	}
+	@media (width <= 640px) {
+		.chat-day {
+			margin-inline: -8px;
+		}
 	}
 	.chat-day::before,
 	.chat-day::after {

@@ -83,7 +83,7 @@ Enforced via real TypeScript + Svelte AST import parsing across tracked and untr
 
 ## 6. Accessibility, CSS Scoping & 7-Theme Tokens
 
-- **Icon-only controls require a tooltip (owner rule, 2026-11-24 — review + Playwright):** Every icon-only button, link, or toggle MUST provide an accessible name (`aria-label`) AND a hover + keyboard-focus tooltip dismissible with `Escape` (WCAG 1.4.13, `bits-ui` `Tooltip`). Panel `Escape` handlers must ignore `Escape` while `[role="tooltip"]` is open.
+- **Icon-only controls require a tooltip (owner rule, 2026-11-24 — review + Playwright):** Every icon-only button, link, or toggle MUST provide an accessible name (`aria-label`) AND a hover + keyboard-focus tooltip dismissible with `Escape` (WCAG 1.4.13, `bits-ui` `Tooltip` outside modals, or `$lib/components/ui/tooltip`'s `ModalTooltip` inside `<Dialog>`/`<Sheet>` because Bits UI `Tooltip.Content` mounts a `PopperLayer` `FocusScope` that pauses the modal focus trap). Panel `Escape` handlers must ignore `Escape` while `[role="tooltip"]` is open.
 - **Scoped CSS only:** Keep component styles inside `<style>` blocks; use `:global(...)` only nested under a scoped parent selector.
 - **Semantic tokens across all 7 themes (enforced by `look-tokens.test.ts`):** Zero hard-coded colors anywhere in `src/` (including `.svelte` and `.css`).
 - **Reduced motion (review + Playwright):** Every custom animation/transition must respect `@media (prefers-reduced-motion: reduce)` / `motion-reduce:`.

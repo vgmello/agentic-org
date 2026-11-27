@@ -190,7 +190,6 @@
 			reading?.removeEventListener('scroll', onViewportChange);
 		};
 	});
-
 	function memberPreviewTracking(node: HTMLElement) {
 		memberNodeEl = node;
 		const resetPreview = () => {
@@ -220,6 +219,7 @@
 		node.addEventListener('focusin', onFocusIn);
 		node.addEventListener('focusout', onFocusOut);
 		return () => {
+			if (clampRaf !== undefined) cancelAnimationFrame(clampRaf);
 			if (memberNodeEl === node) memberNodeEl = null;
 			node.removeEventListener('pointerenter', onEnter);
 			node.removeEventListener('pointerleave', onLeave);

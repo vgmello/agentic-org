@@ -77,6 +77,7 @@
 	const trimmedFind = $derived(findQuery.trim().toLowerCase());
 	const filtered = $derived(filterChatSidebar(bar, ctx.members, findQuery));
 	function handleFindKeydown(event: KeyboardEvent) {
+		if (event.isComposing) return;
 		if (event.key === 'Escape' && findQuery) {
 			event.preventDefault();
 			event.stopPropagation();
@@ -87,7 +88,7 @@
 			if (first) {
 				findQuery = '';
 				onselect({ type: 'conversation', id: first.conversation.id });
-			} else if (filtered.quickDmCandidates[0] && onopendm) {
+			} else if (officeRunning && filtered.quickDmCandidates[0] && onopendm) {
 				const target = filtered.quickDmCandidates[0].id;
 				findQuery = '';
 				onopendm(target);

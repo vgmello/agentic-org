@@ -276,7 +276,7 @@
 		query = resolved.query;
 		if (resolved.threadRoot) ui.threadRoot = resolved.threadRoot;
 		ui.highlight = resolved.highlight;
-		scrollMessageIntoView(resolved.highlight, listEl);
+		scrollMessageIntoView(resolved.highlight, () => listEl);
 	}
 
 	function select(next: ChatView, navigate = true) {
@@ -328,7 +328,7 @@
 		if (compactPanels) ui.showPins = false;
 		if (view.type === 'conversation' && view.id === m.conversation_id) {
 			ui.highlight = m.id;
-			return scrollMessageIntoView(m.id, listEl);
+			return scrollMessageIntoView(m.id, () => listEl);
 		}
 		openMessage(m);
 	}
