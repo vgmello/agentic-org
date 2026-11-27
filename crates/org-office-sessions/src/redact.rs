@@ -1,32 +1,11 @@
-//! The single redaction choke-point of `org-office-sessions` (`doc-8` TASK-178, `doc-7` #12,
-//! `REQ-05`, `ENROLL-3`, `TASK-190`).
-//!
-//! Every external, subprocess, provider, error, transcript, wake and history string goes through
-//! [`redact_text`] (or [`redact_json`] for structured values) before it is logged, persisted,
-//! returned in an error or sent over the wire. This is a leaf module: it imports nothing from
-//! the rest of the crate, so it can never take part in a module cycle.
-//!
-//! Covered secret shapes: the caller's active secrets, PEM private-key blocks (fail closed to
-//! the end of the text when the `END` line is missing), provider key prefixes (`sk-ant-`,
-//! `github_pat_`, `xoxb-`, AWS `AKIA`/`ASIA` key ids, ...), case-insensitive `Bearer`/`Basic`
-//! credentials, JWTs, URL userinfo, sensitive header lines (`Authorization:`, `X-Api-Key:`,
-//! `Cookie:`), quoted secret fields (`"token": "…"`, `'password': '…'`, `\"api_key\":\"…\"`) and
-//! sensitive `KEY=value` / `?token=` assignments. A partial match never hides the rest of the
-//! text: every pass keeps scanning after each redaction. A JSON `\n`, `\r` or `\t` escape is a
-//! word and line boundary, so serialized multi-line strings are redacted like raw text.
+//! Single redaction choke-point for `org-office-sessions` (leaf module; zero internal deps).
 
 use serde_json::Value;
 
-/// The replacement for every redacted secret value.
 pub const REDACTED: &str = "[REDACTED]";
 const REDACTED_PRIVATE_KEY: &str = "[REDACTED PRIVATE KEY]";
-
-/// Active secrets shorter than this are not replaced verbatim (too many false positives); the
-/// shape passes below still apply to them.
 const MIN_ACTIVE_SECRET_LEN: usize = 6;
 
-/// Provider key prefixes and the shortest tail that makes a match a key. Longer, more specific
-/// prefixes come first; the catch-all `sk-` is last.
 const SECRET_PREFIXES: &[(&str, usize)] = &[
     ("sk-ant-", 8),
     ("sk-proj-", 8),
@@ -462,14 +441,7 @@ fn redact_header_values(input: &str) -> String {
     out
 }
 
-/// The end of a sensitive header value: the end of its line, an escaped line break, or the quote
-/// closing the (possibly JSON-escaped) string that holds the header. A quote's escape level is
-/// the trailing ones of its backslash run (`"` and `\\"` are 0, `\"` is 1, `\\\"` is 2). A quote
-/// opening a parameter (after `=`, or at the value start) pairs with the next quote of its level,
-/// and a deeper quote inside that pair is a literal, so `Digest response="…", nc=…` and
-/// `Cookie: a="1", sid=…` are redacted whole while `{"msg":"Authorization: …","ok":true}` keeps
-/// its JSON structure. A quote that could also end a JSON string (`a=",", sid=…`) opens a
-/// parameter when [`pairs_header_param`] finds its partner.
+/// Finds end of a sensitive header value (newline, escaped newline, or enclosing string quote).
 fn header_value_end(bytes: &[u8], start: usize) -> usize {
     let mut open: Option<u32> = None;
     let mut i = start;
@@ -478,7 +450,6 @@ fn header_value_end(bytes: &[u8], start: usize) -> usize {
         let at = i + run;
         match bytes.get(at) {
             Some(b'\n' | b'\r') => return at,
-            // An escaped line break outside any quoted parameter: the header sits in a JSON string.
             Some(b'n' | b'r') if run % 2 == 1 && open.is_none() => return at - 1,
             Some(b'"') => {}
             _ => {
@@ -489,16 +460,13 @@ fn header_value_end(bytes: &[u8], start: usize) -> usize {
         let level = run.trailing_ones();
         match open {
             Some(cur) if level == cur => open = None,
-            // A deeper (more escaped) quote is a literal inside the open parameter.
             Some(cur) if level > cur => {}
-            // A shallower quote closes the string that holds the header.
             Some(_) => return i,
             None if opens_header_param(bytes, start, i)
                 && (!closes_json_string(bytes, at) || pairs_header_param(bytes, at, level)) =>
             {
                 open = Some(level);
             }
-            // An unmatched escaped quote, or a raw one ending a JSON string, ends the value.
             None if level > 0 || closes_json_string(bytes, at) => return i,
             None => {}
         }
@@ -507,8 +475,6 @@ fn header_value_end(bytes: &[u8], start: usize) -> usize {
     bytes.len()
 }
 
-/// `true` when a quote starting at `idx` opens a header parameter value: it starts the header
-/// value or follows `=` (with optional blanks).
 fn opens_header_param(bytes: &[u8], value_start: usize, idx: usize) -> bool {
     let before = bytes[value_start..idx]
         .iter()
@@ -517,10 +483,6 @@ fn opens_header_param(bytes: &[u8], value_start: usize, idx: usize) -> bool {
     matches!(before, None | Some(b'='))
 }
 
-/// `true` when the quote at `idx` (escape `level`) has a same-level partner before the end of
-/// the line, and what follows that partner ends a header parameter (`,`, `;`, a blank, a quote,
-/// an escape or the end) rather than starting a JSON key: `a=",", sid=…` opens a parameter, the
-/// `"` after `{"msg":"Authorization:` ends the JSON string before `"ok":true}`.
 fn pairs_header_param(bytes: &[u8], idx: usize, level: u32) -> bool {
     let mut i = idx + 1;
     while i < bytes.len() {
@@ -535,7 +497,6 @@ fn pairs_header_param(bytes: &[u8], idx: usize, level: u32) -> bool {
                     _ => false,
                 };
             }
-            // A shallower quote ends the enclosing string before any partner.
             Some(b'"') if run.trailing_ones() < level => return false,
             _ => i = at + 1,
         }
@@ -543,7 +504,6 @@ fn pairs_header_param(bytes: &[u8], idx: usize, level: u32) -> bool {
     false
 }
 
-/// `true` when the `"` at `idx` ends a JSON string: what follows is the end, `,`, `}` or `]`.
 fn closes_json_string(bytes: &[u8], idx: usize) -> bool {
     let next = bytes[idx + 1..]
         .iter()
@@ -552,12 +512,8 @@ fn closes_json_string(bytes: &[u8], idx: usize) -> bool {
     matches!(next, None | Some(b',' | b'}' | b']'))
 }
 
-/// Longest quoted key considered before a `:` or `=`.
 const MAX_QUOTED_KEY: usize = 64;
 
-/// Redacts the value of every quoted sensitive key followed by `:` or `=` (`"token": "…"`,
-/// `'password'='…'`, `\"api_key\":\"…\"`, `"secret": 42`). An unterminated quoted value is
-/// redacted to the end of its line.
 fn redact_quoted_key_values(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());

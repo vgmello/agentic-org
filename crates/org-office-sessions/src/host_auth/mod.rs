@@ -1,95 +1,44 @@
-//! Host-local CLI runtime auth helpers for `subscription_cli` bindings (`TASK-120`).
-//!
-//! Claude Code sessions keep `LaunchContext::config_dir = None` so host `~/.claude/plugins` are
-//! never loaded (preserving S1 isolation) and macOS Keychain hashing is avoided; instead, when no
-//! vault credential is enrolled for a `subscription_cli` connection, the host OAuth token is
-//! resolved cleanly and passed via `CLAUDE_CODE_OAUTH_TOKEN` (scrubbed from tool subprocesses by
-//! `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` and redacted from transcripts).
+//! Runtime `TMPDIR` placement and vault-native per-connection OAuth lifecycle (`TASK-132`).
 
+use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
 
-use org_agent_runtime::{LaunchPlan, SpecPath};
+use org_agent_runtime::{AgentRuntime, SpecPath};
 use org_office::organization_family::records::ProviderAuthMode;
 use zeroize::Zeroizing;
 
-mod keychain;
 #[cfg(test)]
 mod tests;
 mod token;
 
-use keychain::{invalidate_keychain_cache, read_claude_keychain_token, CLAUDE_KEYCHAIN_CACHE};
-use token::{parse_claude_oauth_token, ClaudeOAuthToken, MAX_HOST_CLAUDE_CRED_BYTES};
+use crate::credentials::{
+    format_rfc3339_ms, CredentialVault, EnrollmentVaultError, UnwrappedCredential,
+};
 
-/// Process-wide single-flight lock serializing host Claude OAuth refresh probes so concurrent
-/// expiring sessions never race on single-use rotating refresh tokens.
-static CLAUDE_OAUTH_REFRESH_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) use token::{
+    collect_vault_redaction_secrets, hex_short_sha256, is_oauth_expiring,
+    parse_vault_oauth_credential, VaultAuthError, VaultOAuthCredential,
+};
+#[cfg(test)]
+pub(crate) use token::{
+    oauth_token_fingerprint, MAX_VAULT_OAUTH_CRED_BYTES, OAUTH_REFRESH_LEAD_MS,
+};
 
-/// Safe host environment variables forwarded to the bounded host-side Claude OAuth refresh probe.
-/// Never includes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ORG_*`, or `AGENT_OS_*`.
-const REFRESH_SAFE_HOST_ENV: &[&str] = &[
-    "HOME",
-    "PATH",
-    "USER",
-    "LOGNAME",
-    "TMPDIR",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "XDG_CACHE_HOME",
-    "XDG_RUNTIME_DIR",
-    "LANG",
-    "LC_ALL",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-];
-
-/// Maximum byte length for an agent's `TMPDIR` so Linux `bwrap`/`socat` bridge sockets
-/// (`$TMPDIR/<name>.sock`, ~35 bytes) stay well under the 108-byte `sun_path` limit.
 const MAX_SHORT_TMPDIR_BYTES: usize = 70;
-/// Proactive refresh lead time before a host Claude OAuth access token expires (5 minutes).
-pub(crate) const OAUTH_REFRESH_LEAD_MS: u64 = 5 * 60 * 1000;
-/// Upper bound on a host-side `claude` OAuth token refresh probe before session launch.
-const OAUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_REFRESH_DETAIL_BYTES: usize = 200;
+const MAX_REFRESH_LOCK_ENTRIES: usize = 256;
 
-/// Returns `true` when an OAuth token with `expires_at_ms` is already expired or within
-/// [`OAUTH_REFRESH_LEAD_MS`] of expiry.
-pub(crate) fn is_oauth_expiring(expires_at_ms: Option<u64>, now_ms: u64) -> bool {
-    expires_at_ms.is_some_and(|exp| now_ms.saturating_add(OAUTH_REFRESH_LEAD_MS) >= exp)
-}
-
-/// The runtime folder that holds the office's privileged entries (`host.sock`, the launch
-/// rendezvous `r/`, per-agent temporary folders `t/`) beside the office sockets folder: `<run>`
-/// for an office socket at `<run>/o/<handle>/s.sock` (`org_proto::location`), else the socket's own
-/// folder (a socket configured outside the `o/` layout, as tests and older callers do). Every
-/// derivation of those entries from the office socket goes through here.
 pub(crate) fn office_runtime_dir(office_socket: &Path) -> Option<&Path> {
     org_proto::location::runtime_dir_of_office_socket(office_socket)
         .or_else(|| office_socket.parent())
 }
 
-/// Deterministic 8-hex per-agent slug used under `<runtime>/t/<slug>` ([`office_runtime_dir`]).
 pub(crate) fn agent_tmpdir_slug(office_id: &str, employee_id: &str) -> String {
-    let digest = ring::digest::digest(
-        &ring::digest::SHA256,
-        format!("{office_id}:{employee_id}").as_bytes(),
-    );
-    let mut slug = String::with_capacity(8);
-    for &b in &digest.as_ref()[..4] {
-        use std::fmt::Write as _;
-        let _ = write!(slug, "{b:02x}");
-    }
-    slug
+    hex_short_sha256(format!("{office_id}:{employee_id}").as_bytes())[..8].to_owned()
 }
 
-/// Chooses an owner-only per-agent `TMPDIR` inside the office's short runtime socket directory
-/// (`<runtime>/t/<8-hex>`, [`office_runtime_dir`]; never inside the office socket folders `o/`)
-/// whenever that stays within [`MAX_SHORT_TMPDIR_BYTES`] and shorter than `durable_fallback`,
-/// avoiding Linux `ENAMETOOLONG` (`sun_path` > 108 bytes) in Claude's `bubblewrap`/`socat`
-/// sandbox while keeping `TMPDIR` out of shared `/tmp`.
 pub(crate) fn resolve_agent_tmpdir(
     office_socket: &Path,
     durable_fallback: &Path,
@@ -102,27 +51,25 @@ pub(crate) fn resolve_agent_tmpdir(
     let candidate = runtime
         .join("t")
         .join(agent_tmpdir_slug(office_id, employee_id));
-    let cand_len = candidate.as_os_str().len();
-    let fallback_len = durable_fallback.as_os_str().len();
-    if cand_len <= MAX_SHORT_TMPDIR_BYTES && cand_len < fallback_len {
+    if candidate.as_os_str().len() <= MAX_SHORT_TMPDIR_BYTES
+        && candidate.as_os_str().len() < durable_fallback.as_os_str().len()
+    {
         candidate
     } else {
         durable_fallback.to_path_buf()
     }
 }
 
-/// Returns whether an admitted route may fall back to host-local CLI subscription auth.
 pub(crate) fn allows_host_subscription_auth(
     auth_env: &[(OsString, OsString)],
     auth_mode: Option<ProviderAuthMode>,
+    uses_host_oauth_token_injection: bool,
 ) -> bool {
-    auth_env.is_empty() && matches!(auth_mode, None | Some(ProviderAuthMode::SubscriptionCli))
+    !uses_host_oauth_token_injection
+        && auth_env.is_empty()
+        && matches!(auth_mode, None | Some(ProviderAuthMode::SubscriptionCli))
 }
 
-/// Locates the host user's runtime config dir under `$HOME/<subdir>` when host subscription auth
-/// is allowed and the runtime adapter declares a host config subdirectory (e.g. `.codex`,
-/// `.gemini`). Returns `None` when `host_config_subdir` is `None` (e.g. Claude, so host user
-/// plugins are never loaded into isolated sessions).
 pub(crate) fn host_config_dir_for(
     host_config_subdir: Option<&str>,
     allowed: bool,
@@ -130,300 +77,418 @@ pub(crate) fn host_config_dir_for(
     if !allowed {
         return None;
     }
-    let subdir = host_config_subdir?;
-    let candidate = std::env::var_os("HOME").map(PathBuf::from)?.join(subdir);
+    let candidate = std::env::var_os("HOME")
+        .map(PathBuf::from)?
+        .join(host_config_subdir?);
     if !candidate.is_dir() {
         return None;
     }
     let resolved = candidate.canonicalize().unwrap_or(candidate);
-    let text = resolved.display().to_string();
-    SpecPath::try_from(text.as_str()).ok()
+    SpecPath::try_from(resolved.display().to_string().as_str()).ok()
 }
 
-/// Non-secret metadata for a host Claude OAuth token injected into a session launch.
-pub(crate) struct HostOAuthMeta {
+pub(crate) struct ResolvedVaultOAuth {
+    pub access_token: Zeroizing<String>,
     pub expires_at_ms: Option<u64>,
     pub token_fp: String,
 }
 
-/// Non-reversible 16-hex SHA-256 fingerprint of an OAuth access token (never plaintext).
-pub(crate) fn oauth_token_fingerprint(token: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
-    let mut out = String::with_capacity(16);
-    for &b in &digest.as_ref()[..8] {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
-}
-
-/// Appends `CLAUDE_CODE_OAUTH_TOKEN` to `launch_env` when a `subscription_cli` route whose
-/// runtime declares `uses_host_oauth_token_injection` has no vault credential and the runtime
-/// plan both accepts and protects `CLAUDE_CODE_OAUTH_TOKEN`.
-/// Proactively refreshes an expiring/expired host OAuth token via `runtime_binary` before launch
-/// and returns its non-secret expiry and token fingerprint metadata.
-pub(crate) fn append_host_claude_oauth(
-    uses_host_oauth: bool,
-    allowed: bool,
-    runtime_binary: &Path,
-    plan: &LaunchPlan,
-    launch_env: &mut Vec<(OsString, OsString)>,
-) -> Option<HostOAuthMeta> {
-    if !allowed || !uses_host_oauth || !plan_protects_claude_oauth(plan) {
-        return None;
-    }
-    let _keychain_scope = CLAUDE_KEYCHAIN_CACHE.scope();
-    let mut resolved = resolve_host_claude_oauth_entry()?;
-    if is_oauth_expiring(resolved.expires_at_ms, crate::credentials::now_ms()) {
-        refresh_host_claude_oauth(runtime_binary);
-        if let Some(refreshed) = resolve_host_claude_oauth_entry() {
-            resolved = refreshed;
+impl ResolvedVaultOAuth {
+    fn from_credential(cred: VaultOAuthCredential) -> Self {
+        let token_fp = cred.fingerprint();
+        Self {
+            access_token: cred.access_token,
+            expires_at_ms: cred.expires_at_ms,
+            token_fp,
         }
     }
-    let token_fp = oauth_token_fingerprint(resolved.access_token.as_str());
-    launch_env.push((
-        OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
-        OsString::from(resolved.access_token.as_str()),
-    ));
-    Some(HostOAuthMeta {
-        expires_at_ms: resolved.expires_at_ms,
-        token_fp,
+}
+
+pub(crate) trait VaultTokenRefresher: Send + Sync {
+    fn refresh(
+        &self,
+        connection_id: &str,
+        provider: &str,
+        refresh_token: &str,
+    ) -> Result<VaultOAuthCredential, String>;
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct NoopVaultTokenRefresher;
+
+impl VaultTokenRefresher for NoopVaultTokenRefresher {
+    fn refresh(
+        &self,
+        _connection_id: &str,
+        _provider: &str,
+        _refresh_token: &str,
+    ) -> Result<VaultOAuthCredential, String> {
+        Err("no automatic OAuth token refresher is configured".to_owned())
+    }
+}
+
+pub(crate) struct VaultRefreshCoordinator {
+    locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    refresher: Mutex<Arc<dyn VaultTokenRefresher>>,
+}
+
+impl VaultRefreshCoordinator {
+    pub(crate) fn new(refresher: Arc<dyn VaultTokenRefresher>) -> Self {
+        Self {
+            locks: Mutex::new(HashMap::new()),
+            refresher: Mutex::new(refresher),
+        }
+    }
+
+    pub(crate) fn noop() -> Self {
+        Self::new(Arc::new(NoopVaultTokenRefresher))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_refresher(&self, refresher: Arc<dyn VaultTokenRefresher>) {
+        *self.refresher.lock().unwrap_or_else(|p| p.into_inner()) = refresher;
+    }
+
+    /// Resolves a connection's vault OAuth credential for launch, proactively refreshing once
+    /// under per-connection single-flight serialization when expiring or expired.
+    pub(crate) fn resolve_for_launch(
+        &self,
+        vault: &CredentialVault,
+        connection_id: &str,
+        provider: &str,
+        now_ms: u64,
+    ) -> Result<ResolvedVaultOAuth, VaultAuthError> {
+        let (cred, _) = load_vault_oauth_with_meta(vault, connection_id)?;
+        if !is_oauth_expiring(cred.expires_at_ms, now_ms) {
+            return Ok(ResolvedVaultOAuth::from_credential(cred));
+        }
+        let conn_lock = self.connection_lock(connection_id);
+        let _flight = conn_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let (current, meta) = load_vault_oauth_with_meta(vault, connection_id)?;
+        if !is_oauth_expiring(current.expires_at_ms, now_ms) {
+            return Ok(ResolvedVaultOAuth::from_credential(current));
+        }
+        self.perform_refresh_locked(
+            vault,
+            connection_id,
+            provider,
+            &current,
+            meta.account_hint,
+            None,
+            false,
+            now_ms,
+        )
+    }
+
+    /// Reactive single-flight refresh invoked after a pre-side-effect `auth_expired` failure.
+    /// Immediately adopts an already-rotated fresh vault token without calling the refresher.
+    pub(crate) fn refresh_reactive(
+        &self,
+        vault: &CredentialVault,
+        connection_id: &str,
+        provider: &str,
+        failed_token_fp: Option<&str>,
+        now_ms: u64,
+    ) -> Result<ResolvedVaultOAuth, VaultAuthError> {
+        let conn_lock = self.connection_lock(connection_id);
+        let _flight = conn_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let (current, meta) = load_vault_oauth_with_meta(vault, connection_id)?;
+        let already_rotated = failed_token_fp.is_some_and(|fp| current.fingerprint() != fp);
+        if already_rotated && !is_oauth_expiring(current.expires_at_ms, now_ms) {
+            return Ok(ResolvedVaultOAuth::from_credential(current));
+        }
+        self.perform_refresh_locked(
+            vault,
+            connection_id,
+            provider,
+            &current,
+            meta.account_hint,
+            failed_token_fp,
+            true,
+            now_ms,
+        )
+    }
+
+    fn connection_lock(&self, connection_id: &str) -> Arc<Mutex<()>> {
+        let mut map = self.locks.lock().unwrap_or_else(|p| p.into_inner());
+        if map.len() >= MAX_REFRESH_LOCK_ENTRIES {
+            map.retain(|_, lock| Arc::strong_count(lock) > 1);
+        }
+        Arc::clone(
+            map.entry(connection_id.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "single-flight refresh requires vault, connection identity, current credential, custody hint, rejected fingerprint, mode, and clock"
+    )]
+    fn perform_refresh_locked(
+        &self,
+        vault: &CredentialVault,
+        connection_id: &str,
+        provider: &str,
+        current: &VaultOAuthCredential,
+        account_hint: Option<String>,
+        failed_token_fp: Option<&str>,
+        is_reactive: bool,
+        now_ms: u64,
+    ) -> Result<ResolvedVaultOAuth, VaultAuthError> {
+        let reason = if is_reactive {
+            "auth_expired"
+        } else {
+            "vault_oauth_expired"
+        };
+        let Some(ref refresh_token) = current.refresh_token else {
+            return Err(VaultAuthError::ReauthRequired {
+                reason,
+                detail: "vault credential has no refresh_token".to_owned(),
+            });
+        };
+        let refresher = Arc::clone(&self.refresher.lock().unwrap_or_else(|p| p.into_inner()));
+        let mut rotated = refresher
+            .refresh(connection_id, provider, refresh_token.as_str())
+            .map_err(|raw_err| VaultAuthError::ReauthRequired {
+                reason,
+                detail: redact_refresh_detail(
+                    &raw_err,
+                    current.access_token.as_str(),
+                    refresh_token.as_str(),
+                ),
+            })?;
+        validate_rotated_credential(
+            current,
+            &rotated,
+            failed_token_fp,
+            is_reactive,
+            now_ms,
+            reason,
+        )?;
+        if rotated.refresh_token.is_none() {
+            rotated.refresh_token = current.refresh_token.clone();
+        }
+        let encoded = rotated.to_vault_json()?;
+        let meta_expires = rotated.expires_at_ms.map(format_rfc3339_ms);
+        vault
+            .store_wrapped(
+                connection_id,
+                provider,
+                &encoded,
+                meta_expires,
+                account_hint,
+            )
+            .map_err(|_| VaultAuthError::VaultPersistFailed)?;
+        Ok(ResolvedVaultOAuth::from_credential(rotated))
+    }
+}
+
+/// Resolved vault-native auth environment and OAuth expiry metadata for an admitted connection.
+pub(crate) struct ConnectionVaultAuth {
+    pub auth_env: Vec<(OsString, OsString)>,
+    pub oauth_expires_at_ms: Option<u64>,
+    pub oauth_token_fp: Option<String>,
+}
+
+/// Failure resolving a provider connection's vault credential at route admission.
+pub(crate) enum ConnectionAuthError {
+    VaultAuth(VaultAuthError),
+    Fatal(org_proto::ApiError),
+}
+
+/// Resolves per-connection vault auth for any [`ProviderAuthMode`] (`TASK-132`).
+///
+/// For `SubscriptionCli`, parses raw tokens or structured JSON envelopes, proactively refreshes
+/// expiring OAuth tokens under single-flight locking, and fails closed on missing credentials when
+/// the runtime requires injected OAuth tokens (`uses_host_oauth_token_injection`).
+pub(crate) fn resolve_connection_vault_auth(
+    vault: &CredentialVault,
+    coordinator: &VaultRefreshCoordinator,
+    adapter: &dyn AgentRuntime,
+    connection_id: &str,
+    provider_type: &str,
+    auth_mode: ProviderAuthMode,
+    now_ms: u64,
+) -> Result<ConnectionVaultAuth, ConnectionAuthError> {
+    if auth_mode == ProviderAuthMode::SubscriptionCli {
+        return resolve_subscription_cli_vault_auth(
+            vault,
+            coordinator,
+            adapter,
+            connection_id,
+            provider_type,
+            now_ms,
+        )
+        .map_err(|err| match err {
+            VaultAuthError::VaultUnavailable(msg) => ConnectionAuthError::Fatal(
+                org_proto::ApiError::new(org_proto::ErrorCode::Unavailable, msg),
+            ),
+            other => ConnectionAuthError::VaultAuth(other),
+        });
+    }
+    let mut auth_env = Vec::new();
+    if let Some(secret) = vault.load_unwrapped(connection_id).map_err(|_| {
+        ConnectionAuthError::Fatal(org_proto::ApiError::new(
+            org_proto::ErrorCode::Unavailable,
+            "provider credential could not be unwrapped",
+        ))
+    })? {
+        let secret_str = std::str::from_utf8(&secret).map_err(|_| {
+            ConnectionAuthError::Fatal(org_proto::ApiError::new(
+                org_proto::ErrorCode::Unavailable,
+                "provider credential is not UTF-8",
+            ))
+        })?;
+        let var_name = adapter.auth_env_var(false, secret_str).ok_or_else(|| {
+            ConnectionAuthError::Fatal(org_proto::ApiError::new(
+                org_proto::ErrorCode::Unavailable,
+                "agent runtime does not declare an auth environment variable",
+            ))
+        })?;
+        auth_env.push((OsString::from(var_name), OsString::from(secret_str)));
+    }
+    Ok(ConnectionVaultAuth {
+        auth_env,
+        oauth_expires_at_ms: None,
+        oauth_token_fp: None,
     })
 }
 
-/// Triggers a bounded, single-flight, env-scrubbed host-side Claude CLI refresh so expired
-/// `subscription_cli` OAuth access tokens rotate cleanly before spawning an isolated session.
-/// Returns `true` only when the post-refresh host token is verifiably non-expiring or rotated.
-pub(crate) fn refresh_host_claude_oauth(runtime_binary: &Path) -> bool {
-    refresh_host_claude_oauth_with(runtime_binary, false, None, resolve_host_claude_oauth_entry)
-}
-
-/// Reactive variant used after a 401 auth-expired failure: if another session or host CLI has
-/// already rotated the host credentials away from `failed_token_fp` to a fresh token, returns
-/// `true` immediately without probing or poisoning the shared connection. Otherwise runs one
-/// bounded probe and succeeds when the token rotates (or becomes non-expiring if previously stale).
-pub(crate) fn refresh_host_claude_oauth_reactive(
-    runtime_binary: &Path,
-    failed_token_fp: Option<&str>,
-) -> bool {
-    refresh_host_claude_oauth_with(
-        runtime_binary,
-        true,
-        failed_token_fp,
-        resolve_host_claude_oauth_entry,
-    )
-}
-
-fn refresh_host_claude_oauth_with(
-    runtime_binary: &Path,
-    force_probe: bool,
-    failed_token_fp: Option<&str>,
-    read_entry: impl Fn() -> Option<ClaudeOAuthToken>,
-) -> bool {
-    if !runtime_binary.is_file() {
-        return false;
-    }
-    let _single_flight = CLAUDE_OAUTH_REFRESH_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
-    let before = read_entry();
-    let now = crate::credentials::now_ms();
-    let before_fresh = before.as_ref().is_some_and(|tok| {
-        tok.expires_at_ms.is_some() && !is_oauth_expiring(tok.expires_at_ms, now)
-    });
-    if before_fresh && (!force_probe || already_rotated_from(before.as_ref(), failed_token_fp)) {
-        return true;
-    }
-    let Some(scratch) = PrivateRefreshScratch::create() else {
-        return false;
-    };
-    let probed = run_claude_refresh_probe(runtime_binary, &scratch);
-    // The probe may have rotated the Keychain token: never answer from the pre-probe cache.
-    invalidate_keychain_cache();
-    if !probed {
-        return false;
-    }
-    let Some(after) = read_entry() else {
-        return false;
-    };
-    oauth_token_rotated_or_fresh(
-        before.as_ref(),
-        failed_token_fp,
-        &after,
-        crate::credentials::now_ms(),
-        force_probe && before_fresh,
-    )
-}
-
-fn already_rotated_from(before: Option<&ClaudeOAuthToken>, failed_token_fp: Option<&str>) -> bool {
-    match (before, failed_token_fp) {
-        (Some(tok), Some(fp)) => oauth_token_fingerprint(tok.access_token.as_str()) != fp,
-        _ => false,
-    }
-}
-
-fn run_claude_refresh_probe(runtime_binary: &Path, scratch: &PrivateRefreshScratch) -> bool {
-    let mut cmd = Command::new(runtime_binary);
-    cmd.env_clear()
-        .current_dir(&scratch.dir)
-        .args([
-            "-p",
-            "ok",
-            "--model",
-            "haiku",
-            "--no-session-persistence",
-            "--output-format",
-            "text",
-            "--setting-sources",
-            "",
-            "--tools",
-            "",
-            "--disable-slash-commands",
-            "--strict-mcp-config",
-            "--mcp-config",
-        ])
-        .arg(&scratch.empty_mcp)
-        .env("DISABLE_AUTOUPDATER", "1")
-        .env("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    for var in REFRESH_SAFE_HOST_ENV {
-        if let Some(val) = std::env::var_os(var) {
-            cmd.env(var, val);
-        }
-    }
-    let Ok(mut child) = cmd.spawn() else {
-        return false;
-    };
-    let deadline = Instant::now() + OAUTH_REFRESH_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            Ok(None) | Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-        }
-    }
-}
-
-fn oauth_token_rotated_or_fresh(
-    before: Option<&ClaudeOAuthToken>,
-    failed_token_fp: Option<&str>,
-    after: &ClaudeOAuthToken,
+fn resolve_subscription_cli_vault_auth(
+    vault: &CredentialVault,
+    coordinator: &VaultRefreshCoordinator,
+    adapter: &dyn AgentRuntime,
+    connection_id: &str,
+    provider_type: &str,
     now_ms: u64,
-    require_rotation: bool,
-) -> bool {
-    let rotated = match failed_token_fp {
-        Some(fp) => oauth_token_fingerprint(after.access_token.as_str()) != fp,
-        None => before.is_some_and(|b| b.access_token.as_str() != after.access_token.as_str()),
-    };
-    if require_rotation {
-        return rotated;
-    }
-    let not_expiring =
-        after.expires_at_ms.is_some() && !is_oauth_expiring(after.expires_at_ms, now_ms);
-    not_expiring || rotated
-}
-
-struct PrivateRefreshScratch {
-    dir: PathBuf,
-    empty_mcp: PathBuf,
-}
-
-impl PrivateRefreshScratch {
-    fn create() -> Option<Self> {
-        let base = std::env::temp_dir();
-        for _ in 0..8 {
-            let suffix = crate::credentials::random_hex(8).ok()?;
-            let dir = base.join(format!("org-oauth-refresh-{suffix}"));
-            if org_platform::fs::create_owner_only_dir(&dir).is_ok() {
-                let empty_mcp = dir.join("empty-mcp.json");
-                if org_platform::fs::write_owner_only_file(&empty_mcp, b"{\"mcpServers\":{}}\n")
-                    .is_ok()
-                {
-                    return Some(Self { dir, empty_mcp });
-                }
-                let _ = std::fs::remove_dir_all(&dir);
-                return None;
-            }
+) -> Result<ConnectionVaultAuth, VaultAuthError> {
+    let requires_vault_token = adapter.host_profile().uses_host_oauth_token_injection;
+    let resolved = match coordinator.resolve_for_launch(vault, connection_id, provider_type, now_ms)
+    {
+        Ok(cred) => cred,
+        Err(VaultAuthError::MissingCredential) if !requires_vault_token => {
+            return Ok(ConnectionVaultAuth {
+                auth_env: Vec::new(),
+                oauth_expires_at_ms: None,
+                oauth_token_fp: None,
+            });
         }
-        None
+        Err(err) => return Err(err),
+    };
+    let var_name = adapter
+        .auth_env_var(true, resolved.access_token.as_str())
+        .ok_or(VaultAuthError::MalformedCredential(
+            "agent runtime does not declare an auth environment variable",
+        ))?;
+    Ok(ConnectionVaultAuth {
+        auth_env: vec![(
+            OsString::from(var_name),
+            OsString::from(resolved.access_token.as_str()),
+        )],
+        oauth_expires_at_ms: resolved.expires_at_ms,
+        oauth_token_fp: Some(resolved.token_fp),
+    })
+}
+
+fn map_unwrap_error(err: EnrollmentVaultError) -> VaultAuthError {
+    match err {
+        EnrollmentVaultError::MissingSecretsKey => {
+            VaultAuthError::VaultUnavailable("office secrets key is unavailable")
+        }
+        EnrollmentVaultError::Io(_) => {
+            VaultAuthError::VaultUnavailable("provider credential could not be read")
+        }
+        EnrollmentVaultError::Crypto(_) | EnrollmentVaultError::InvalidInput(_) => {
+            VaultAuthError::MalformedCredential("provider credential could not be unwrapped")
+        }
+        _ => VaultAuthError::VaultUnavailable("provider credential vault is unavailable"),
     }
 }
 
-impl Drop for PrivateRefreshScratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+fn load_vault_oauth_with_meta(
+    vault: &CredentialVault,
+    connection_id: &str,
+) -> Result<(VaultOAuthCredential, UnwrappedCredential), VaultAuthError> {
+    let unwrapped = vault
+        .load_unwrapped_with_meta(connection_id)
+        .map_err(map_unwrap_error)?
+        .ok_or(VaultAuthError::MissingCredential)?;
+    let mut cred = parse_vault_oauth_credential(&unwrapped.secret)?;
+    if cred.expires_at_ms.is_none() {
+        if let Some(ref raw_exp) = unwrapped.expires_at {
+            let ms = org_proto::parse_rfc3339_ms(raw_exp).ok_or(
+                VaultAuthError::MalformedCredential("vault credential has invalid expires_at"),
+            )?;
+            cred.expires_at_ms = Some(ms);
+        }
+    }
+    Ok((cred, unwrapped))
+}
+
+fn reauth_required(reason: &'static str, detail: &str) -> VaultAuthError {
+    VaultAuthError::ReauthRequired {
+        reason,
+        detail: detail.to_owned(),
     }
 }
 
-fn plan_protects_claude_oauth(plan: &LaunchPlan) -> bool {
-    let accepts = plan
-        .auth_env_names
-        .iter()
-        .any(|n| n.as_str() == "CLAUDE_CODE_OAUTH_TOKEN");
-    let protects = plan
-        .secret_env_names
-        .iter()
-        .any(|n| n.as_str() == "CLAUDE_CODE_OAUTH_TOKEN");
-    accepts && protects
-}
-
-/// Resolves the host user's local Claude Code OAuth access token (for transcript redaction).
-pub(crate) fn resolve_host_claude_oauth_token() -> Option<Zeroizing<String>> {
-    resolve_host_claude_oauth_entry().map(|e| e.access_token)
-}
-
-/// Resolves the host user's local Claude Code OAuth access token + expiry from
-/// `$HOME/.claude/.credentials.json` and/or macOS Keychain (`Claude Code-credentials`),
-/// preferring whichever source holds the fresher `expiresAt` timestamp.
-pub(crate) fn resolve_host_claude_oauth_entry() -> Option<ClaudeOAuthToken> {
-    let file_tok = read_claude_credentials_file();
-    let keychain_tok = read_claude_keychain_token();
-    pick_fresher_oauth_entry(file_tok, keychain_tok)
-}
-
-fn pick_fresher_oauth_entry(
-    file_tok: Option<ClaudeOAuthToken>,
-    keychain_tok: Option<ClaudeOAuthToken>,
-) -> Option<ClaudeOAuthToken> {
-    match (file_tok, keychain_tok) {
-        (Some(f), Some(k)) => match (f.expires_at_ms, k.expires_at_ms) {
-            (Some(fe), Some(ke)) if ke > fe => Some(k),
-            (None, Some(_)) => Some(k),
-            _ => Some(f),
-        },
-        (Some(f), None) => Some(f),
-        (None, Some(k)) => Some(k),
-        (None, None) => None,
+fn validate_rotated_credential(
+    current: &VaultOAuthCredential,
+    rotated: &VaultOAuthCredential,
+    failed_token_fp: Option<&str>,
+    is_reactive: bool,
+    now_ms: u64,
+    reason: &'static str,
+) -> Result<(), VaultAuthError> {
+    rotated
+        .validate()
+        .map_err(|_| reauth_required(reason, "OAuth refresh returned an invalid access token"))?;
+    if is_oauth_expiring(rotated.expires_at_ms, now_ms) {
+        return Err(reauth_required(
+            reason,
+            "OAuth refresh returned an already-expiring token",
+        ));
     }
+    ensure_token_progressed(current, rotated, failed_token_fp, is_reactive, reason)
 }
 
-fn read_claude_credentials_file() -> Option<ClaudeOAuthToken> {
-    let cred_path = std::env::var_os("HOME")
-        .map(PathBuf::from)?
-        .join(".claude")
-        .join(".credentials.json");
-    read_claude_credentials_from_path(&cred_path)
+fn ensure_token_progressed(
+    current: &VaultOAuthCredential,
+    rotated: &VaultOAuthCredential,
+    failed_token_fp: Option<&str>,
+    is_reactive: bool,
+    reason: &'static str,
+) -> Result<(), VaultAuthError> {
+    if failed_token_fp.is_some_and(|fp| rotated.fingerprint() == fp) {
+        return Err(reauth_required(
+            reason,
+            "OAuth refresh did not rotate the access token",
+        ));
+    }
+    if rotated.access_token.as_str() != current.access_token.as_str() {
+        return Ok(());
+    }
+    if is_reactive || rotated.expires_at_ms.is_none() {
+        return Err(reauth_required(
+            reason,
+            "OAuth refresh did not rotate the access token",
+        ));
+    }
+    if rotated.expires_at_ms <= current.expires_at_ms {
+        return Err(reauth_required(
+            reason,
+            "OAuth refresh did not extend token expiry",
+        ));
+    }
+    Ok(())
 }
 
-fn read_claude_credentials_from_path(cred_path: &Path) -> Option<ClaudeOAuthToken> {
-    let file = org_platform::fs::open_nofollow_ro(cred_path).ok()?;
-    let meta = file.metadata().ok()?;
-    if !meta.is_file() || meta.len() > MAX_HOST_CLAUDE_CRED_BYTES as u64 {
-        return None;
+fn redact_refresh_detail(raw: &str, access_token: &str, refresh_token: &str) -> String {
+    let scrubbed = crate::redact::redact_text(raw, &[access_token, refresh_token]);
+    let trimmed = scrubbed.trim();
+    if trimmed.is_empty() {
+        return "OAuth token refresh failed".to_owned();
     }
-    let mut bytes = Zeroizing::new(Vec::new());
-    file.take(MAX_HOST_CLAUDE_CRED_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if bytes.len() > MAX_HOST_CLAUDE_CRED_BYTES {
-        return None;
-    }
-    parse_claude_oauth_token(&bytes)
+    let cut = trimmed.floor_char_boundary(MAX_REFRESH_DETAIL_BYTES.min(trimmed.len()));
+    trimmed[..cut].to_owned()
 }

@@ -1,5 +1,5 @@
 //! Per-run directories, standing instructions, and the scrubbed session environment (including
-//! the host Claude OAuth launch variables).
+//! vault-native launch auth and endpoint variables).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -520,20 +520,7 @@ pub(super) fn combine_agent_instructions(
 pub(super) fn assemble_launch_env(
     mut launch_env: Vec<(OsString, OsString)>,
     endpoint_env: Vec<(OsString, OsString)>,
-    uses_host_oauth: bool,
-    allow_host_auth: bool,
-    runtime_path: &Path,
-    plan: &org_agent_runtime::LaunchPlan,
-) -> (Vec<(OsString, OsString)>, Option<u64>, Option<String>) {
-    let host_oauth = crate::host_auth::append_host_claude_oauth(
-        uses_host_oauth,
-        allow_host_auth,
-        runtime_path,
-        plan,
-        &mut launch_env,
-    );
-    let expires_at_ms = host_oauth.as_ref().and_then(|m| m.expires_at_ms);
-    let token_fp = host_oauth.map(|m| m.token_fp);
+) -> Vec<(OsString, OsString)> {
     launch_env.extend(endpoint_env);
-    (launch_env, expires_at_ms, token_fp)
+    launch_env
 }

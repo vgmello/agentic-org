@@ -28,18 +28,16 @@ pub(crate) use warm_permit::{acquire_warm_permit_for_office, WarmPermitOutcome};
 #[cfg(test)]
 pub(crate) use warm_permit::{compute_route_digest_with_wt, compute_worktree_sandbox_digest};
 
-/// Fully admitted connection route ready to spawn a supervised agent session.
 pub(crate) struct AdmittedRoute {
     pub adapter: Arc<dyn AgentRuntime>,
     pub model_token: Option<Token>,
-    /// Whether the discovered model supports vision/image inputs (`TASK-98.3`).
     pub model_supports_vision: bool,
-    /// The agent's reasoning effort (`TASK-181`) as the session spec's token, in the office's
-    /// names; each runtime adapter maps it onto its own. `None` keeps the runtime's default.
     pub effort: Option<Token>,
     pub auth_mode: Option<ProviderAuthMode>,
     pub auth_env: Vec<(OsString, OsString)>,
     pub endpoint_env: Vec<(OsString, OsString)>,
+    pub oauth_expires_at_ms: Option<u64>,
+    pub oauth_token_fp: Option<String>,
     pub preset: PermissionPreset,
     pub sandbox_enabled: bool,
     pub connection_id: Option<String>,
@@ -47,7 +45,6 @@ pub(crate) struct AdmittedRoute {
     pub route_digest_suffix: String,
 }
 
-/// Maps a validated per-connection `endpoint_url` into `adapter`'s non-secret base-URL env var.
 pub fn endpoint_env_for_adapter(
     adapter: &dyn AgentRuntime,
     endpoint_url: &str,
@@ -67,7 +64,6 @@ pub fn endpoint_env_for_adapter(
     Ok((var, endpoint_url.to_owned()))
 }
 
-/// Maps a validated per-connection `endpoint_url` into the registered runtime's base-URL env var.
 pub fn endpoint_env_for(
     driver: &str,
     endpoint_url: &str,
@@ -85,7 +81,6 @@ pub fn endpoint_env_for(
     endpoint_env_for_adapter(adapter.as_ref(), endpoint_url)
 }
 
-/// Maps an adapter and auth mode to the runtime's allowlisted auth env variable name.
 pub fn auth_env_var_for_adapter(
     adapter: &dyn AgentRuntime,
     mode: ProviderAuthMode,
@@ -148,12 +143,27 @@ pub fn classify_failover_error(errors: &[String], rate_limited: bool) -> Option<
     None
 }
 
+struct CandidateSkip {
+    reason: String,
+    cooldown_until: Option<String>,
+    auth_error: Option<String>,
+    is_auth_expired: bool,
+}
+
+impl CandidateSkip {
+    fn plain(reason: String) -> CandidateOutcome {
+        CandidateOutcome::Skipped(Self {
+            reason,
+            cooldown_until: None,
+            auth_error: None,
+            is_auth_expired: false,
+        })
+    }
+}
+
 enum CandidateOutcome {
     Admitted(AdmittedRoute),
-    Skipped {
-        reason: String,
-        cooldown_until: Option<String>,
-    },
+    Skipped(CandidateSkip),
 }
 
 /// Parameters for requesting a shared `HqPool` turn permit from HQ (`TASK-52` M-21).
@@ -238,6 +248,7 @@ struct RouteWalkCtx<'a> {
     vault: &'a CredentialVault,
     runtimes: &'a RuntimeRegistry,
     hq_permits: Option<&'a dyn HqPermitCoordinator>,
+    oauth_refresh: &'a crate::host_auth::VaultRefreshCoordinator,
     employee_id: &'a str,
     task_id: Option<&'a str>,
     model_id: &'a str,
@@ -265,12 +276,23 @@ fn permit_authority_for(office: &Office, conn: &ProviderConnection) -> PermitAut
     }
 }
 
+struct CandidatePermitGuard<'a> {
+    office: &'a Office,
+    hq_permits: Option<&'a dyn HqPermitCoordinator>,
+    permit: Option<(String, u64)>,
+}
+
+impl Drop for CandidatePermitGuard<'_> {
+    fn drop(&mut self) {
+        if let Some((pid, _)) = self.permit.take() {
+            release_turn_permit_any(self.office, self.hq_permits, &pid);
+        }
+    }
+}
+
 fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOutcome, ApiError> {
     if ctx.excluded.contains(cid) {
-        return Ok(CandidateOutcome::Skipped {
-            reason: format!("{cid}:ALREADY_TRIED"),
-            cooldown_until: None,
-        });
+        return Ok(CandidateSkip::plain(format!("{cid}:ALREADY_TRIED")));
     }
     let Some(conn) = ctx.office.load_provider_connection(cid).map_err(|_| {
         ApiError::new(
@@ -279,52 +301,87 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
         )
     })?
     else {
-        return Ok(CandidateOutcome::Skipped {
-            reason: format!("{cid}:CONNECTION_NOT_FOUND"),
-            cooldown_until: None,
-        });
+        return Ok(CandidateSkip::plain(format!("{cid}:CONNECTION_NOT_FOUND")));
     };
     if conn.archived || !conn.enabled {
-        return Ok(CandidateOutcome::Skipped {
-            reason: format!("{cid}:CONNECTION_DISABLED"),
-            cooldown_until: None,
-        });
+        return Ok(CandidateSkip::plain(format!("{cid}:CONNECTION_DISABLED")));
     }
     let (binding_rev, resolved_model, model_supports_vision) =
         match check_local_readiness(ctx.office, &conn, ctx.model_id, ctx.now_ms)? {
             Ok(v) => v,
             Err(reason) => {
-                return Ok(CandidateOutcome::Skipped {
+                return Ok(CandidateOutcome::Skipped(CandidateSkip {
                     reason: format!("{cid}:{reason}"),
                     cooldown_until: None,
-                });
+                    auth_error: None,
+                    is_auth_expired: reason == "AUTH_EXPIRED",
+                }));
             }
         };
-    let authority = permit_authority_for(ctx.office, &conn);
-    // On a satellite, shared `HqPool` capacity MUST be granted by HQ's coordinator; if HQ is
-    // unavailable or unconfigured, fail closed on shared bindings while `OfficeLocal` proceeds.
+    let permit = match acquire_candidate_permit(ctx, &conn, cid)? {
+        Ok(p) => p,
+        Err(skip) => return Ok(skip),
+    };
+    let mut permit_guard = CandidatePermitGuard {
+        office: ctx.office,
+        hq_permits: ctx.hq_permits,
+        permit: Some(permit.clone()),
+    };
+    match finalize_admitted_connection(
+        ctx,
+        &conn,
+        binding_rev,
+        &resolved_model,
+        model_supports_vision,
+        permit,
+    ) {
+        Ok(route) => {
+            permit_guard.permit = None;
+            Ok(CandidateOutcome::Admitted(route))
+        }
+        Err(crate::host_auth::ConnectionAuthError::VaultAuth(auth_err)) => {
+            drop(permit_guard);
+            let _ = ctx
+                .office
+                .mark_connection_auth_expired_internal(cid, auth_err.issue_code());
+            Ok(CandidateOutcome::Skipped(CandidateSkip {
+                reason: format!("{cid}:AUTH_EXPIRED({})", auth_err.issue_code()),
+                cooldown_until: None,
+                auth_error: Some(auth_err.actionable_message(&conn.key)),
+                is_auth_expired: true,
+            }))
+        }
+        Err(crate::host_auth::ConnectionAuthError::Fatal(err)) => Err(err),
+    }
+}
+
+fn acquire_candidate_permit(
+    ctx: &RouteWalkCtx<'_>,
+    conn: &ProviderConnection,
+    cid: &str,
+) -> Result<Result<(String, u64), CandidateOutcome>, ApiError> {
+    let authority = permit_authority_for(ctx.office, conn);
     let permit_outcome = if ctx.office.info().role == org_office::OfficeRole::Satellite
         && authority == PermitAuthority::HqPool
     {
         let Some(coord) = ctx.hq_permits else {
-            return Ok(CandidateOutcome::Skipped {
-                reason: format!("{cid}:HQ_POOL_UNAVAILABLE"),
-                cooldown_until: None,
-            });
+            return Ok(Err(CandidateSkip::plain(format!(
+                "{cid}:HQ_POOL_UNAVAILABLE"
+            ))));
         };
-        match coord.acquire_permit(HqPermitAcquireSpec {
+        let spec = HqPermitAcquireSpec {
             connection_id: cid.to_owned(),
             employee_id: ctx.employee_id.to_owned(),
             task_id: ctx.task_id.map(str::to_owned),
             model_id: ctx.model_id.to_owned(),
             is_failover_switch: ctx.is_failover_switch,
-        }) {
+        };
+        match coord.acquire_permit(spec) {
             Ok(outcome) => outcome,
             Err(_) => {
-                return Ok(CandidateOutcome::Skipped {
-                    reason: format!("{cid}:HQ_POOL_UNAVAILABLE"),
-                    cooldown_until: None,
-                });
+                return Ok(Err(CandidateSkip::plain(format!(
+                    "{cid}:HQ_POOL_UNAVAILABLE"
+                ))))
             }
         }
     } else {
@@ -341,43 +398,19 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
                 ApiError::new(ErrorCode::StorageError, "could not acquire turn permit")
             })??
     };
-    let permit = match permit_outcome {
-        PermitAcquireOutcome::Granted(p) => p,
+    match permit_outcome {
+        PermitAcquireOutcome::Granted(p) => Ok(Ok((p.id, p.coordinator_generation))),
         PermitAcquireOutcome::CoolingDown { cooldown_until } => {
-            return Ok(CandidateOutcome::Skipped {
+            Ok(Err(CandidateOutcome::Skipped(CandidateSkip {
                 reason: format!("{cid}:COOLDOWN({cooldown_until})"),
                 cooldown_until: Some(cooldown_until),
-            });
+                auth_error: None,
+                is_auth_expired: false,
+            })))
         }
-        PermitAcquireOutcome::CapacityFull { occupied, max } => {
-            return Ok(CandidateOutcome::Skipped {
-                reason: format!("{cid}:CAPACITY_FULL({occupied}/{max})"),
-                cooldown_until: None,
-            });
-        }
-    };
-    match finalize_admitted_connection(
-        ctx.office,
-        ctx.vault,
-        ctx.runtimes,
-        &conn,
-        AdmitParams {
-            employee_id: ctx.employee_id,
-            preset: ctx.preset,
-            resolved_model: &resolved_model,
-            model_supports_vision,
-            profile_key: ctx.profile_key,
-            effort: ctx.effort,
-            binding_rev,
-            exec_rev: ctx.exec_rev,
-            permit: (permit.id.clone(), permit.coordinator_generation),
-        },
-    ) {
-        Ok(route) => Ok(CandidateOutcome::Admitted(route)),
-        Err(err) => {
-            release_turn_permit_any(ctx.office, ctx.hq_permits, &permit.id);
-            Err(err)
-        }
+        PermitAcquireOutcome::CapacityFull { occupied, max } => Ok(Err(CandidateSkip::plain(
+            format!("{cid}:CAPACITY_FULL({occupied}/{max})"),
+        ))),
     }
 }
 
@@ -387,6 +420,7 @@ pub(crate) struct AdmitRouteRequest<'a> {
     pub vault: &'a CredentialVault,
     pub runtimes: &'a RuntimeRegistry,
     pub hq_permits: Option<&'a dyn HqPermitCoordinator>,
+    pub oauth_refresh: Option<&'a crate::host_auth::VaultRefreshCoordinator>,
     pub employee_id: &'a str,
     pub task_id: Option<&'a str>,
     pub is_failover_switch: bool,
@@ -402,6 +436,7 @@ pub(crate) fn select_and_admit_route(
         vault,
         runtimes,
         hq_permits,
+        oauth_refresh,
         employee_id,
         task_id,
         is_failover_switch,
@@ -422,6 +457,8 @@ pub(crate) fn select_and_admit_route(
             auth_mode: None,
             auth_env: Vec::new(),
             endpoint_env: Vec::new(),
+            oauth_expires_at_ms: None,
+            oauth_token_fp: None,
             preset: PermissionPreset::SafeAsk,
             sandbox_enabled: true,
             connection_id: None,
@@ -464,11 +501,13 @@ pub(crate) fn select_and_admit_route(
             .map(|id| id.as_str())
             .collect()
     };
+    let fallback_refresh = crate::host_auth::VaultRefreshCoordinator::noop();
     let walk = RouteWalkCtx {
         office,
         vault,
         runtimes,
         hq_permits,
+        oauth_refresh: oauth_refresh.unwrap_or(&fallback_refresh),
         employee_id,
         task_id,
         model_id: &cfg.model_id,
@@ -483,30 +522,56 @@ pub(crate) fn select_and_admit_route(
 
     let mut skips = Vec::new();
     let mut earliest_cd: Option<String> = None;
+    let mut first_auth_error: Option<String> = None;
+    let mut all_auth_expired = true;
     for cid in ordered_ids {
         match try_admit_candidate(&walk, cid)? {
             CandidateOutcome::Admitted(route) => return Ok(route),
-            CandidateOutcome::Skipped {
-                reason,
-                cooldown_until,
-            } => {
-                if let Some(cd) = cooldown_until {
+            CandidateOutcome::Skipped(skip) => {
+                if let Some(cd) = skip.cooldown_until {
                     if earliest_cd.as_deref().is_none_or(|e| cd.as_str() < e) {
                         earliest_cd = Some(cd);
                     }
                 }
-                skips.push(reason);
+                if first_auth_error.is_none() {
+                    first_auth_error = skip.auth_error;
+                }
+                all_auth_expired &= skip.is_auth_expired;
+                skips.push(skip.reason);
             }
         }
     }
 
+    Err(exhausted_pool_error(
+        skips,
+        earliest_cd,
+        first_auth_error,
+        all_auth_expired,
+    ))
+}
+
+fn exhausted_pool_error(
+    skips: Vec<String>,
+    earliest_cd: Option<String>,
+    first_auth_error: Option<String>,
+    all_auth_expired: bool,
+) -> ApiError {
+    if !skips.is_empty() && all_auth_expired {
+        let detail = first_auth_error.unwrap_or_else(|| {
+            "all provider connections require vault credential enrollment or token rotation via `agentic-org` provider connection enrollment".to_owned()
+        });
+        return ApiError::new(
+            ErrorCode::NotAuthorized,
+            format!("AUTH_EXPIRED: {detail} (pool: [{}])", skips.join(", ")),
+        );
+    }
     let cd_note = earliest_cd
         .map(|u| format!("; earliest_cooldown={u}"))
         .unwrap_or_default();
-    Err(ApiError::new(
+    ApiError::new(
         ErrorCode::Conflict,
         format!("POOL_EXHAUSTED: [{}]{cd_note}", skips.join(", ")),
-    ))
+    )
 }
 
 fn check_local_readiness(
@@ -553,73 +618,57 @@ fn check_local_readiness(
     }
 }
 
-struct AdmitParams<'a> {
-    employee_id: &'a str,
-    preset: PermissionPreset,
-    resolved_model: &'a str,
-    model_supports_vision: bool,
-    profile_key: &'a str,
-    effort: Option<ReasoningEffort>,
-    binding_rev: u64,
-    exec_rev: u64,
-    permit: (String, u64),
-}
-
 fn finalize_admitted_connection(
-    office: &Office,
-    vault: &CredentialVault,
-    runtimes: &RuntimeRegistry,
+    ctx: &RouteWalkCtx<'_>,
     conn: &ProviderConnection,
-    params: AdmitParams<'_>,
-) -> Result<AdmittedRoute, ApiError> {
-    let AdmitParams {
-        employee_id,
-        preset,
-        resolved_model,
-        model_supports_vision,
-        profile_key,
-        effort,
-        binding_rev,
-        exec_rev,
-        permit,
-    } = params;
-    let adapter = runtimes
-        .resolve(&conn.runtime_driver)
-        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
-    let mut auth_env = Vec::new();
-    if let Some(secret) = vault.load_unwrapped(conn.id.as_str()).map_err(|_| {
-        ApiError::new(
+    binding_rev: u64,
+    resolved_model: &str,
+    model_supports_vision: bool,
+    permit: (String, u64),
+) -> Result<AdmittedRoute, crate::host_auth::ConnectionAuthError> {
+    use crate::host_auth::ConnectionAuthError;
+    let adapter = ctx.runtimes.resolve(&conn.runtime_driver).map_err(|_| {
+        ConnectionAuthError::Fatal(ApiError::new(
             ErrorCode::Unavailable,
-            "provider credential could not be unwrapped",
-        )
-    })? {
-        let secret_str = std::str::from_utf8(&secret).map_err(|_| {
-            ApiError::new(ErrorCode::Unavailable, "provider credential is not UTF-8")
-        })?;
-        let var_name = auth_env_var_for_adapter(adapter.as_ref(), conn.auth_mode, secret_str)?;
-        auth_env.push((OsString::from(var_name), OsString::from(secret_str)));
-    }
+            "agent runtime is unavailable",
+        ))
+    })?;
+    let auth = crate::host_auth::resolve_connection_vault_auth(
+        ctx.vault,
+        ctx.oauth_refresh,
+        adapter.as_ref(),
+        conn.id.as_str(),
+        &conn.provider_type,
+        conn.auth_mode,
+        ctx.now_ms,
+    )?;
     let mut endpoint_env = Vec::new();
     if let Some(ref url) = conn.endpoint_url {
-        let (var, val) = endpoint_env_for_adapter(adapter.as_ref(), url)?;
+        let (var, val) =
+            endpoint_env_for_adapter(adapter.as_ref(), url).map_err(ConnectionAuthError::Fatal)?;
         endpoint_env.push((OsString::from(var), OsString::from(val)));
     }
     let model_token = Token::try_from(resolved_model)
         .ok()
-        .or_else(|| Token::try_from(profile_key).ok());
-    // Every level is a valid token; were one ever not, refuse rather than drop the effort.
-    let effort_token = effort
+        .or_else(|| Token::try_from(ctx.profile_key).ok());
+    let effort_token = ctx
+        .effort
         .map(|e| Token::try_from(e.as_str()))
         .transpose()
-        .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid reasoning effort"))?;
+        .map_err(|_| {
+            ConnectionAuthError::Fatal(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "invalid reasoning effort",
+            ))
+        })?;
     let route_digest_suffix = compute_route_digest(
-        office,
-        employee_id,
+        ctx.office,
+        ctx.employee_id,
         conn,
         binding_rev,
         resolved_model,
-        effort,
-        exec_rev,
+        ctx.effort,
+        ctx.exec_rev,
     );
     Ok(AdmittedRoute {
         adapter,
@@ -627,9 +676,11 @@ fn finalize_admitted_connection(
         model_supports_vision,
         effort: effort_token,
         auth_mode: Some(conn.auth_mode),
-        auth_env,
+        auth_env: auth.auth_env,
         endpoint_env,
-        preset,
+        oauth_expires_at_ms: auth.oauth_expires_at_ms,
+        oauth_token_fp: auth.oauth_token_fp,
+        preset: ctx.preset,
         sandbox_enabled: true,
         connection_id: Some(conn.id.as_str().to_owned()),
         permit: Some(permit),
@@ -638,12 +689,5 @@ fn finalize_admitted_connection(
 }
 
 fn hex_short_sha256(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
-    let mut out = String::with_capacity(16);
-    for &b in &digest.as_ref()[..8] {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
+    crate::host_auth::hex_short_sha256(bytes)
 }

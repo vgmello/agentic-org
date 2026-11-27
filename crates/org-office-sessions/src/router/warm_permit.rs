@@ -199,8 +199,11 @@ pub(crate) fn compute_route_digest_with_wt(
     hex_short_sha256(digest_input.as_bytes())
 }
 
-/// Validates that an existing warm session still matches current config/readiness/route digest,
-/// and acquires a fresh turn permit on `connection_id` (`doc-88` §6 steps 3–4, `AE-04`, `AE-11`).
+fn warm_conflict(msg: &str) -> WarmPermitOutcome {
+    WarmPermitOutcome::Refused(ApiError::new(ErrorCode::Conflict, msg))
+}
+
+/// Validates warm-session config/readiness/route digest and acquires a fresh turn permit.
 pub(crate) fn acquire_warm_permit_for_office(
     office: &Office,
     hq_permits: Option<&dyn HqPermitCoordinator>,
@@ -210,28 +213,16 @@ pub(crate) fn acquire_warm_permit_for_office(
     expected_route_digest: Option<&str>,
 ) -> WarmPermitOutcome {
     let Ok(Some(cfg)) = office.load_agent_execution(employee_id) else {
-        return WarmPermitOutcome::Refused(ApiError::new(
-            ErrorCode::Conflict,
-            "EXECUTION_DISABLED: agent execution configuration missing",
-        ));
+        return warm_conflict("EXECUTION_DISABLED: agent execution configuration missing");
     };
     if !cfg.enabled {
-        return WarmPermitOutcome::Refused(ApiError::new(
-            ErrorCode::Conflict,
-            "EXECUTION_DISABLED: agent execution configuration is disabled",
-        ));
+        return warm_conflict("EXECUTION_DISABLED: agent execution configuration is disabled");
     }
     let Ok(Some(profile)) = office.load_model_profile(cfg.model_profile_id.as_str()) else {
-        return WarmPermitOutcome::Refused(ApiError::new(
-            ErrorCode::Conflict,
-            "PROFILE_NOT_FOUND: assigned model profile does not exist",
-        ));
+        return warm_conflict("PROFILE_NOT_FOUND: assigned model profile does not exist");
     };
     if profile.archived {
-        return WarmPermitOutcome::Refused(ApiError::new(
-            ErrorCode::Conflict,
-            "PROFILE_ARCHIVED: assigned model profile is archived",
-        ));
+        return warm_conflict("PROFILE_ARCHIVED: assigned model profile is archived");
     }
     let member_of_profile = profile
         .connection_ids
@@ -256,20 +247,16 @@ pub(crate) fn acquire_warm_permit_for_office(
         };
     if let Some(expected) = expected_route_digest {
         let wt_digest = compute_worktree_sandbox_digest(office, employee_id);
-        // Never allow a persistent `"err"` sentinel to match a prior `"err"` digest; fail closed
-        // into `StaleWarm` so topology or repository changes are never masked.
-        if wt_digest == "err" {
-            return WarmPermitOutcome::StaleWarm;
-        }
-        let current_digest = compute_route_digest_with_wt(
-            &conn,
-            binding_rev,
-            &resolved_model,
-            cfg.effort,
-            cfg.meta.revision,
-            &wt_digest,
-        );
-        if current_digest != expected {
+        if wt_digest == "err"
+            || compute_route_digest_with_wt(
+                &conn,
+                binding_rev,
+                &resolved_model,
+                cfg.effort,
+                cfg.meta.revision,
+                &wt_digest,
+            ) != expected
+        {
             return WarmPermitOutcome::StaleWarm;
         }
     }
@@ -277,21 +264,20 @@ pub(crate) fn acquire_warm_permit_for_office(
     let permit_res = if office.info().role == org_office::OfficeRole::Satellite
         && authority == PermitAuthority::HqPool
     {
-        let Some(coord) = hq_permits else {
-            return WarmPermitOutcome::Unavailable {
-                multi_connection,
-                reason: format!("{connection_id}:HQ_POOL_UNAVAILABLE"),
-            };
-        };
-        match coord.acquire_permit(HqPermitAcquireSpec {
-            connection_id: connection_id.to_owned(),
-            employee_id: employee_id.to_owned(),
-            task_id: task_id.map(str::to_owned),
-            model_id: cfg.model_id.clone(),
-            is_failover_switch: false,
-        }) {
-            Ok(outcome) => Ok(Ok(outcome)),
-            Err(_) => {
+        let hq_outcome = hq_permits.and_then(|coord| {
+            coord
+                .acquire_permit(HqPermitAcquireSpec {
+                    connection_id: connection_id.to_owned(),
+                    employee_id: employee_id.to_owned(),
+                    task_id: task_id.map(str::to_owned),
+                    model_id: cfg.model_id.clone(),
+                    is_failover_switch: false,
+                })
+                .ok()
+        });
+        match hq_outcome {
+            Some(outcome) => Ok(Ok(outcome)),
+            None => {
                 return WarmPermitOutcome::Unavailable {
                     multi_connection,
                     reason: format!("{connection_id}:HQ_POOL_UNAVAILABLE"),

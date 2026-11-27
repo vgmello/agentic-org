@@ -130,20 +130,42 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
         office.durable_root().to_path_buf(),
         info.org_id.clone(),
         info.office_id.clone(),
-        None,
+        Some([0x33u8; 32]),
     );
+    let future_exp = crate::credentials::now_ms() + 3_600_000;
+    let initial_envelope = serde_json::json!({
+        "access_token": "sk-ant-oat01-warm-vault-token",
+        "refresh_token": "rt-warm-1",
+        "expires_at_ms": future_exp,
+    })
+    .to_string();
+    vault
+        .store_wrapped(
+            &conn_id,
+            "anthropic",
+            initial_envelope.as_bytes(),
+            None,
+            None,
+        )
+        .unwrap();
     let excluded = std::collections::HashSet::new();
     let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
         office: &office,
         vault: &vault,
         runtimes: &registry,
         hq_permits: None,
+        oauth_refresh: None,
         employee_id: &agent_id,
         task_id: None,
         is_failover_switch: false,
         excluded_connections: &excluded,
     })
     .unwrap();
+    assert_eq!(admitted.oauth_expires_at_ms, Some(future_exp));
+    assert_eq!(
+        admitted.oauth_token_fp.as_deref(),
+        Some(crate::host_auth::oauth_token_fingerprint("sk-ant-oat01-warm-vault-token").as_str())
+    );
     let digest_v1 = admitted.route_digest_suffix.clone();
     if let Some((pid, _)) = admitted.permit {
         let _ = office.release_turn_permit(&pid);
@@ -208,6 +230,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
         vault: &vault,
         runtimes: &registry,
         hq_permits: None,
+        oauth_refresh: None,
         employee_id: &agent_id,
         task_id: None,
         is_failover_switch: false,
@@ -265,6 +288,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
             vault: &vault,
             runtimes: &registry,
             hq_permits: None,
+            oauth_refresh: None,
             employee_id: &agent_id,
             task_id: None,
             is_failover_switch: false,
@@ -290,20 +314,42 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
         "corrupt git-state.json must never match stored err digest on warm permit acquisition"
     );
 
-    // Verify `claude-code` runtime_driver is eligible for host subscription OAuth refresh.
-    let mut mgr_cfg = SessionManagerConfig::production(office.durable_root().join("sock"));
-    let fake_bin = tempfile::tempdir().unwrap();
-    let fake_claude = fake_bin.path().join("claude");
-    std::fs::write(&fake_claude, "#!/bin/sh\nexit 0\n").unwrap();
-    mgr_cfg.runtimes.register(
-        Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()),
-        Some(fake_claude.clone()),
+    // TASK-132: revoking the vault credential on a Claude `subscription_cli` connection MUST fail
+    // closed with actionable `AUTH_EXPIRED` status and mark `vault_credential_missing`, never
+    // borrowing ambient personal host credentials.
+    vault.revoke(&conn_id).unwrap();
+    let missing_err = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+        office: &office,
+        vault: &vault,
+        runtimes: &registry,
+        hq_permits: None,
+        oauth_refresh: None,
+        employee_id: &agent_id,
+        task_id: None,
+        is_failover_switch: false,
+        excluded_connections: &excluded,
+    })
+    .err()
+    .expect("missing vault credential on claude subscription_cli must fail closed");
+    assert_eq!(missing_err.code, org_proto::ErrorCode::NotAuthorized);
+    assert!(
+        missing_err.message.contains("AUTH_EXPIRED")
+            && missing_err.message.contains("vault")
+            && missing_err.message.contains("agentic-org"),
+        "missing vault error must be actionable: {}",
+        missing_err.message
     );
-    let mgr = SessionManager::new(Arc::clone(&office), mgr_cfg);
+    let state_after_missing = office
+        .load_connection_state(&conn_id)
+        .unwrap()
+        .expect("connection state recorded");
     assert_eq!(
-        crate::manager::is_host_claude_subscription_refresh_eligible(&mgr, &conn_id),
-        Some(fake_claude.canonicalize().unwrap()),
-        "claude-code subscription_cli connection must be eligible for host OAuth refresh"
+        state_after_missing.status,
+        org_proto::providers::ConnectionReadinessStatus::AuthExpired
+    );
+    assert_eq!(
+        state_after_missing.issue_code.as_deref(),
+        Some("vault_credential_missing")
     );
 
     // Verify classify_turn_failover_reason covers SignedOut, Failed reason, non-claude exclusion, and length cap.

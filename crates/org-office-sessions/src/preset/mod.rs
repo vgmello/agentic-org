@@ -221,11 +221,7 @@ pub enum EscalationDisposition {
     EscalateToOwner { warning: String },
 }
 
-/// Evaluates an [`ApprovalRequest`] against the session's policy and ADR-0032 escalation rules.
-/// - `Escalation::SandboxBypass` is ALWAYS auto-denied (fixed denies win; no override in v1).
-/// - `Escalation::PermissionChange` and `Escalation::Unknown` ALWAYS go to the owner.
-/// - `Escalation::None` checks deny rules first (deny beats allow, including scoped Path /
-///   CommandPrefix / McpServer rules; fails closed on opaque shell invocations when path denies exist).
+/// Evaluates an [`ApprovalRequest`] against policy and ADR-0032 escalation rules.
 pub fn decide_escalation(
     request: &ApprovalRequest,
     policy: &PermissionPolicy,
@@ -234,13 +230,6 @@ pub fn decide_escalation(
     decide_escalation_with_tools(request, policy, preset, None)
 }
 
-/// Evaluates an [`ApprovalRequest`] against the session's policy, optional `allowed_tools`
-/// allowlist, and ADR-0032 escalation rules.
-///
-/// Hard refusals (`SandboxBypass`, policy `deny` rules, and `allowed_tools` allowlist
-/// exclusions) are ALWAYS applied before routing escalated requests (`PermissionChange` /
-/// `Unknown`) to the owner so an escalated request can never bypass fixed denies or a
-/// `ReadOnly` tool allowlist.
 pub fn decide_escalation_with_tools(
     request: &ApprovalRequest,
     policy: &PermissionPolicy,
@@ -250,10 +239,7 @@ pub fn decide_escalation_with_tools(
     decide_escalation_with_roots(request, policy, preset, allowed_tools, None)
 }
 
-/// Evaluates an [`ApprovalRequest`] against the session's policy, optional `allowed_tools`
-/// allowlist, optional sandbox `writable_roots` (for file-editing tools running outside OS shell
-/// confinement such as Claude's built-in `Write`/`Edit` tools, per `doc-29`), and ADR-0032
-/// escalation rules.
+/// Evaluates an [`ApprovalRequest`] against policy, optional `allowed_tools`, and `writable_roots`.
 pub fn decide_escalation_with_roots(
     request: &ApprovalRequest,
     policy: &PermissionPolicy,
@@ -267,23 +253,17 @@ pub fn decide_escalation_with_roots(
             reason: "Sandbox bypass requests are refused by office security policy.".to_owned(),
         };
     }
-
     let mut strings = Vec::new();
     collect_json_strings(&request.input, &mut strings);
     if let Some(blocked_path) = &request.blocked_path {
         strings.push(blocked_path.clone());
     }
-    // Include extracted concrete file targets (including map-shaped `changes` object keys and
-    // rename destinations) so every target path is checked against fixed path denies.
     let (concrete_targets, has_opaque_targets) = extract_concrete_file_targets(request);
     for target in &concrete_targets {
         if !strings.contains(target) {
             strings.push(target.clone());
         }
     }
-    // Build a separate deny-check vector augmented with canonicalized/normalized target paths
-    // so `/./`, `//`, OS path aliases (`/var` -> `/private/var`), and in-root symlinks cannot
-    // evade fixed path denies while keeping `matches_any_allow` strictly on raw `strings`.
     let deny_strings = build_deny_strings(&strings, &concrete_targets);
     if matches_any_deny(&policy.deny, request, &deny_strings) {
         return EscalationDisposition::AutoDeny {
@@ -315,7 +295,6 @@ pub fn decide_escalation_with_roots(
             };
         }
     }
-
     match escalation {
         Escalation::PermissionChange => EscalationDisposition::EscalateToOwner {
             warning: format!(
@@ -350,33 +329,17 @@ pub fn build_grants_summary(
     for rule in &config.policy.allow {
         rules.push(rule_to_view("allow", rule));
     }
+    let map_spec = |v: &[SpecPath]| v.iter().map(|p| p.as_str().to_owned()).collect();
+    let map_pat = |v: &[PathPattern]| v.iter().map(|p| p.as_str().to_owned()).collect();
     SessionGrantsResult {
         employee_id: employee_id.to_owned(),
         permission_preset: config.preset.as_str().to_owned(),
         permission_mode: mode_name(config.permission_mode).to_owned(),
         sandbox_enabled: config.sandbox.enabled,
-        writable_roots: config
-            .sandbox
-            .writable_roots
-            .iter()
-            .map(|p| p.as_str().to_owned())
-            .collect(),
-        read_only_dirs: read_only_dirs
-            .iter()
-            .map(|p| p.as_str().to_owned())
-            .collect(),
-        denied_write_patterns: config
-            .sandbox
-            .deny_write
-            .iter()
-            .map(|p| p.as_str().to_owned())
-            .collect(),
-        denied_read_patterns: config
-            .sandbox
-            .deny_read
-            .iter()
-            .map(|p| p.as_str().to_owned())
-            .collect(),
+        writable_roots: map_spec(&config.sandbox.writable_roots),
+        read_only_dirs: map_spec(read_only_dirs),
+        denied_write_patterns: map_pat(&config.sandbox.deny_write),
+        denied_read_patterns: map_pat(&config.sandbox.deny_read),
         allowed_tools: config
             .allowed_tools
             .as_ref()

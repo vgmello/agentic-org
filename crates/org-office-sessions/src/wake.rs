@@ -1,6 +1,4 @@
-//! Durable autonomous wake-up queue, required-ask suspension state, mid-turn delivery
-//! guardrails/fencing, and hourly wake quota (`TASK-47`, `TASK-115`, `ADR-0020`, `ADR-0023`,
-//! `ADR-0028`, `ADR-0030`, `doc-101`).
+//! Durable autonomous wake queue, ask suspension state, mid-turn fencing, and wake quotas.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -12,37 +10,16 @@ use crate::credentials::rfc3339_now;
 pub use org_turn_attachments::sanitize::sanitize_untrusted_body;
 pub(crate) use org_turn_attachments::sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
-/// Default maximum agent-initiated turns per rolling hour per target agent (`ADR-0023` d5).
 pub const DEFAULT_HOURLY_WAKE_LIMIT: usize = 12;
-
-/// Default rolling window for agent-initiated wake limits: 1 hour (`ADR-0023` d5).
 pub const DEFAULT_WAKE_WINDOW: Duration = Duration::from_secs(3600);
-
-/// Default grace period after required-ask wind-down notice before forced suspension (`ADR-0020` d10).
 pub const DEFAULT_SUSPEND_GRACE: Duration = Duration::from_secs(120);
-
-/// Default coalescing delay for agent-originated mid-turn messages (`doc-101` §4C).
 pub const DEFAULT_MID_TURN_COALESCE_AGENT: Duration = Duration::from_millis(3_000);
-
-/// Default coalescing delay for person-originated mid-turn messages (`doc-101` §4C).
 pub const DEFAULT_MID_TURN_COALESCE_PERSON: Duration = Duration::from_millis(750);
-
-/// Default per-turn cap on agent-originated mid-turn batches (`doc-101` §4C).
 pub const DEFAULT_MID_TURN_PER_TURN_AGENT_CAP: u32 = 5;
-
-/// Default hard safety cap on total mid-turn batches per turn (including person-sent, `doc-101` §4C).
 pub const DEFAULT_MID_TURN_PER_TURN_HARD_CAP: u32 = 20;
-
-/// Default per-(sender, conversation) cooldown between agent mid-turn deliveries (`doc-101` §4C).
 pub const DEFAULT_MID_TURN_SENDER_COOLDOWN: Duration = Duration::from_secs(15);
-
-/// Default rolling hourly cap on agent-originated mid-turn batches (`doc-101` §4C).
 pub const DEFAULT_MID_TURN_HOURLY_AGENT_CAP: usize = 30;
-
-/// Maximum UTF-8 byte budget for one fenced message body (`INSTR-5`, `doc-101` §4C).
 pub const MAX_WAKE_ITEM_BODY_BYTES: usize = 2_048;
-
-/// Maximum UTF-8 byte budget for one mid-turn notice batch (`doc-101` §4C, under Claude 10k char cap).
 pub const MAX_MID_TURN_BATCH_BYTES: usize = 8_000;
 
 pub(crate) const UNTRUSTED_OPEN: &str = "<<<UNTRUSTED_MESSAGE";
@@ -241,11 +218,10 @@ pub struct PendingAskAnswer {
     pub attachment_ids: Vec<String>,
 }
 
-/// Collects deduplicated attachment IDs from a batch of wake items in queue order (`TASK-98.3`).
-pub(crate) fn collect_wake_attachment_ids(items: &[PendingWakeItem]) -> Vec<String> {
+fn collect_unique_attachment_ids<'a>(groups: impl Iterator<Item = &'a [String]>) -> Vec<String> {
     let mut out = Vec::new();
-    for item in items {
-        for id in &item.attachment_ids {
+    for ids in groups {
+        for id in ids {
             if !id.is_empty() && !out.contains(id) {
                 out.push(id.clone());
             }
@@ -254,17 +230,12 @@ pub(crate) fn collect_wake_attachment_ids(items: &[PendingWakeItem]) -> Vec<Stri
     out
 }
 
-/// Collects deduplicated attachment IDs from a batch of ask answers in order (`TASK-98.3`).
+pub(crate) fn collect_wake_attachment_ids(items: &[PendingWakeItem]) -> Vec<String> {
+    collect_unique_attachment_ids(items.iter().map(|i| i.attachment_ids.as_slice()))
+}
+
 pub(crate) fn collect_answer_attachment_ids(answers: &[PendingAskAnswer]) -> Vec<String> {
-    let mut out = Vec::new();
-    for ans in answers {
-        for id in &ans.attachment_ids {
-            if !id.is_empty() && !out.contains(id) {
-                out.push(id.clone());
-            }
-        }
-    }
-    out
+    collect_unique_attachment_ids(answers.iter().map(|a| a.attachment_ids.as_slice()))
 }
 
 /// Durable required-ask suspension record persisted in `suspended-asks.v1.json` (`ASK-6`).

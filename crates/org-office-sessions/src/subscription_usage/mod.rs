@@ -137,18 +137,34 @@ impl ProviderSubscriptionUsageCollector {
     }
 }
 
+fn extract_usage_bearer_token(
+    auth_source: SubscriptionUsageAuthSource,
+    raw: &[u8],
+) -> Option<Zeroizing<String>> {
+    let candidate = if auth_source == SubscriptionUsageAuthSource::EnrolledSubscriptionCredential
+        || raw.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'{')
+    {
+        crate::host_auth::parse_vault_oauth_credential(raw)
+            .ok()?
+            .access_token
+    } else {
+        Zeroizing::new(std::str::from_utf8(raw).ok()?.trim().to_owned())
+    };
+    is_valid_bearer_token(candidate.as_str()).then_some(candidate)
+}
+
 impl SubscriptionUsageCollector for ProviderSubscriptionUsageCollector {
     fn collect(&self, req: &SubscriptionUsageCollectRequest) -> SubscriptionUsageCollectOutcome {
         let provider = canonical_provider_namespace(&req.provider_type);
-        let token = match std::str::from_utf8(&req.credential) {
-            Ok(s) if is_valid_bearer_token(s.trim()) => s.trim(),
-            _ => {
-                return SubscriptionUsageCollectOutcome::AuthRequired {
-                    issue_code: "INVALID_CREDENTIAL_FORMAT".into(),
-                    message: "Stored credential cannot be encoded as an HTTPS bearer token; re-authenticate.".into(),
-                };
-            }
+        let Some(token_owned) = extract_usage_bearer_token(req.auth_source, &req.credential) else {
+            return SubscriptionUsageCollectOutcome::AuthRequired {
+                issue_code: "INVALID_CREDENTIAL_FORMAT".into(),
+                message:
+                    "Stored credential cannot be encoded as an HTTPS bearer token; re-authenticate."
+                        .into(),
+            };
         };
+        let token = token_owned.as_str();
         let (url, extra_headers) =
             match resolve_provider_endpoint(&provider, req.endpoint_url.as_deref()) {
                 Ok(pair) => pair,

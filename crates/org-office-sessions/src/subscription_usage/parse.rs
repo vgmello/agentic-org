@@ -83,37 +83,23 @@ enum ResetAtRaw {
     EpochFloat(f64),
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(default)]
 struct RawWindow {
-    #[serde(default)]
     starts_at: Option<String>,
-    #[serde(default)]
     ends_at: Option<String>,
-    #[serde(default)]
     resets_at: Option<String>,
-    #[serde(default)]
     reset_at: Option<ResetAtRaw>,
-    #[serde(default)]
     window_seconds: Option<u64>,
-    #[serde(default)]
     limit_window_seconds: Option<u64>,
-    #[serde(default)]
     utilization_bps: Option<u64>,
-    #[serde(default)]
     utilization: Option<f64>,
-    #[serde(default)]
     used_percent: Option<f64>,
-    #[serde(default)]
     requests: Option<u64>,
-    #[serde(default)]
     input_tokens: Option<u64>,
-    #[serde(default)]
     output_tokens: Option<u64>,
-    #[serde(default)]
     cache_read_tokens: Option<u64>,
-    #[serde(default)]
     cache_write_tokens: Option<u64>,
-    #[serde(default)]
     total_tokens: Option<u64>,
 }
 
@@ -139,17 +125,13 @@ struct StructuredModelRow {
     short_term: Option<RawWindow>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(default)]
 struct AnthropicOAuthPayload {
-    #[serde(default)]
     five_hour: Option<RawWindow>,
-    #[serde(default)]
     seven_day: Option<RawWindow>,
-    #[serde(default)]
     seven_day_opus: Option<RawWindow>,
-    #[serde(default)]
     seven_day_sonnet: Option<RawWindow>,
-    #[serde(default)]
     seven_day_haiku: Option<RawWindow>,
 }
 
@@ -160,25 +142,20 @@ struct OpenAiWhamPayload {
     additional_rate_limits: Option<Vec<OpenAiExtraLimit>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(default)]
 struct OpenAiRateLimit {
-    #[serde(default)]
     primary_window: Option<RawWindow>,
-    #[serde(default)]
     secondary_window: Option<RawWindow>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(default)]
 struct OpenAiExtraLimit {
-    #[serde(default)]
     limit_name: Option<String>,
-    #[serde(default)]
     model: Option<String>,
-    #[serde(default)]
     rate_limit: Option<OpenAiRateLimit>,
-    #[serde(default)]
     primary_window: Option<RawWindow>,
-    #[serde(default)]
     secondary_window: Option<RawWindow>,
 }
 

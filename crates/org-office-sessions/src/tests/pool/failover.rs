@@ -444,3 +444,851 @@ done
 
     mgr.stop_all("test-end");
 }
+
+#[test]
+fn task132_missing_and_expired_vault_oauth_fail_closed_without_host_borrowing() {
+    let script = r#"#!/bin/sh
+echo '{"kind":"ready","endpoint":"should-never-run"}'
+while IFS= read -r line; do
+  echo '{"kind":"reply","text":"should-never-reply"}'
+done
+"#;
+    let (_tmp, office, mgr, recorded, owner) = setup_office_and_manager(script);
+    let conn_id = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-sub-missing",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let profile_id = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: profile_id.clone(),
+                key: "sub-missing-pool".into(),
+                name: "Subscription Missing Pool".into(),
+                description: "Vault-native OAuth required".into(),
+                connection_ids: vec![conn_id.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent = hire_agent(
+        &office,
+        &owner,
+        "sub-no-vault",
+        &profile_id,
+        "claude-sonnet-4",
+    );
+
+    // Plant a decoy `.claude/.credentials.json` inside the agent's home to confirm ambient files
+    // are never borrowed when the office vault has no enrolled credential.
+    let agent_home = office.ensure_private_home(&agent).unwrap();
+    fs::create_dir_all(agent_home.join(".claude")).unwrap();
+    fs::write(
+        agent_home.join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-ambient-decoy","expiresAt":9999999999999}}"#,
+    )
+    .unwrap();
+
+    // 1. Missing vault credential MUST fail closed with NotAuthorized + actionable message +
+    //    mark connection AuthExpired (`vault_credential_missing`), never spawning the child.
+    let err = mgr
+        .start_session(
+            &owner,
+            &MemberSessionStartParams {
+                command_id: "run-sub-missing".into(),
+                employee_id: agent.clone(),
+                instruction: Some("Hello".into()),
+                workspace: None,
+            },
+        )
+        .expect_err("missing vault credential must refuse session launch");
+    assert_eq!(err.code, org_proto::ErrorCode::NotAuthorized);
+    assert!(
+        err.message.contains("AUTH_EXPIRED")
+            && err.message.contains("vault")
+            && err.message.contains("agentic-org"),
+        "expected actionable vault enrollment guidance: {}",
+        err.message
+    );
+    let state = office.load_connection_state(&conn_id).unwrap().unwrap();
+    assert_eq!(
+        state.status,
+        org_proto::providers::ConnectionReadinessStatus::AuthExpired
+    );
+    assert_eq!(
+        state.issue_code.as_deref(),
+        Some("vault_credential_missing")
+    );
+    assert!(recorded.observed_endpoints.lock().unwrap().is_empty());
+
+    // 2. Re-ready the connection and store an EXPIRED vault OAuth envelope without refresh_token:
+    //    MUST fail closed, mark AuthExpired (`vault_oauth_expired`), and never spawn.
+    refresh_subscription_connection_ready(
+        &office,
+        &owner,
+        &conn_id,
+        "claude-sub-missing",
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let expired_json = serde_json::json!({
+        "access_token": "sk-ant-oat01-expired-only",
+        "expires_at_ms": 1_u64,
+    })
+    .to_string();
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_id, "anthropic", expired_json.as_bytes(), None, None)
+        .unwrap();
+    let exp_err = mgr
+        .start_session(
+            &owner,
+            &MemberSessionStartParams {
+                command_id: "run-sub-expired".into(),
+                employee_id: agent,
+                instruction: Some("Hello again".into()),
+                workspace: None,
+            },
+        )
+        .expect_err("expired unrefreshable vault OAuth must refuse session launch");
+    assert_eq!(exp_err.code, org_proto::ErrorCode::NotAuthorized);
+    assert!(
+        exp_err.message.contains("AUTH_EXPIRED") && exp_err.message.contains("agentic-org"),
+        "expected actionable re-auth guidance: {}",
+        exp_err.message
+    );
+    let exp_state = office.load_connection_state(&conn_id).unwrap().unwrap();
+    assert_eq!(
+        exp_state.status,
+        org_proto::providers::ConnectionReadinessStatus::AuthExpired
+    );
+    assert_eq!(exp_state.issue_code.as_deref(), Some("vault_oauth_expired"));
+    assert!(recorded.observed_endpoints.lock().unwrap().is_empty());
+
+    mgr.stop_all("test-end");
+}
+
+#[test]
+fn task132_proactive_and_reactive_vault_refresh_rotate_token_without_subprocess_probe() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use zeroize::Zeroizing;
+
+    struct ScriptedRefresher {
+        calls: AtomicUsize,
+        next_token: &'static str,
+        next_refresh: &'static str,
+        next_exp: u64,
+    }
+
+    impl crate::host_auth::VaultTokenRefresher for ScriptedRefresher {
+        fn refresh(
+            &self,
+            _connection_id: &str,
+            _provider: &str,
+            _refresh_token: &str,
+        ) -> Result<crate::host_auth::VaultOAuthCredential, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::host_auth::VaultOAuthCredential {
+                access_token: Zeroizing::new(self.next_token.to_owned()),
+                refresh_token: Some(Zeroizing::new(self.next_refresh.to_owned())),
+                expires_at_ms: Some(self.next_exp),
+            })
+        }
+    }
+
+    // Script rejects `revoked-t1` with auth_expired_fail and accepts rotated tokens.
+    let script = r#"#!/bin/sh
+echo '{"kind":"ready","endpoint":"vault-oauth"}'
+while IFS= read -r line; do
+  case "$CLAUDE_CODE_OAUTH_TOKEN" in
+    sk-ant-oat01-proactive-t2)
+      echo '{"kind":"reply","text":"accepted-proactive-t2"}'
+      ;;
+    sk-ant-oat01-revoked-t1)
+      echo '{"kind":"auth_expired_fail"}'
+      ;;
+    sk-ant-oat01-reactive-t2)
+      echo '{"kind":"reply","text":"accepted-reactive-t2"}'
+      ;;
+    *)
+      echo '{"kind":"auth_expired_fail"}'
+      ;;
+  esac
+done
+"#;
+    let (_tmp, office, mgr, _recorded, owner) = setup_office_and_manager(script);
+    let conn_pro = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-proactive",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let prof_pro = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof_pro.clone(),
+                key: "pool-proactive".into(),
+                name: "Proactive Refresh Pool".into(),
+                description: "Proactive vault refresh".into(),
+                connection_ids: vec![conn_pro.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent_pro = hire_agent(&office, &owner, "pro-ada", &prof_pro, "claude-sonnet-4");
+
+    // 1. Proactive launch refresh: expiring vault envelope rotates once and persists before spawn.
+    let future_exp = now_ms() + 3_600_000;
+    let pro_refresher = Arc::new(ScriptedRefresher {
+        calls: AtomicUsize::new(0),
+        next_token: "sk-ant-oat01-proactive-t2",
+        next_refresh: "rt-pro-2",
+        next_exp: future_exp,
+    });
+    mgr.vault_oauth_refresh
+        .set_refresher(Arc::clone(&pro_refresher) as Arc<dyn crate::host_auth::VaultTokenRefresher>);
+    let expiring_env = serde_json::json!({
+        "access_token": "sk-ant-oat01-expiring-t1",
+        "refresh_token": "rt-pro-1",
+        "expires_at_ms": 1_u64,
+    })
+    .to_string();
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_pro, "anthropic", expiring_env.as_bytes(), None, None)
+        .unwrap();
+
+    mgr.start_session(
+        &owner,
+        &MemberSessionStartParams {
+            command_id: "run-proactive-1".into(),
+            employee_id: agent_pro.clone(),
+            instruction: Some("Proactive turn".into()),
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(6), || {
+            mgr.inspect_session(&owner, Some(&agent_pro))
+                .ok()
+                .and_then(|r| r.session.last_reply)
+                .as_deref()
+                == Some("accepted-proactive-t2")
+        }),
+        "proactive vault refresh must inject rotated token: {:?}",
+        mgr.inspect_session(&owner, Some(&agent_pro)).ok()
+    );
+    assert_eq!(pro_refresher.calls.load(Ordering::SeqCst), 1);
+    {
+        let reg = mgr.registry.lock().unwrap();
+        let live = reg.live.get(&agent_pro).expect("live session handle");
+        assert_eq!(live.oauth_expires_at_ms, Some(future_exp));
+    }
+    let redaction = mgr.active_redaction_secrets(&agent_pro);
+    let redaction_strs: Vec<&str> = redaction.iter().map(|s| s.as_str()).collect();
+    assert!(redaction_strs.contains(&"sk-ant-oat01-proactive-t2"));
+    assert!(redaction_strs.contains(&"rt-pro-2"));
+
+    // 2. Reactive `auth_expired` failover: revoked future-dated token rotates in vault & retries once.
+    let conn_react = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-reactive",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let prof_react = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof_react.clone(),
+                key: "pool-reactive".into(),
+                name: "Reactive Refresh Pool".into(),
+                description: "Reactive vault refresh".into(),
+                connection_ids: vec![conn_react.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent_react = hire_agent(&office, &owner, "react-ada", &prof_react, "claude-sonnet-4");
+    let react_exp = now_ms() + 7_200_000;
+    let react_refresher = Arc::new(ScriptedRefresher {
+        calls: AtomicUsize::new(0),
+        next_token: "sk-ant-oat01-reactive-t2",
+        next_refresh: "rt-react-2",
+        next_exp: react_exp,
+    });
+    mgr.vault_oauth_refresh.set_refresher(
+        Arc::clone(&react_refresher) as Arc<dyn crate::host_auth::VaultTokenRefresher>
+    );
+    let revoked_env = serde_json::json!({
+        "access_token": "sk-ant-oat01-revoked-t1",
+        "refresh_token": "rt-react-1",
+        "expires_at_ms": future_exp,
+    })
+    .to_string();
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_react, "anthropic", revoked_env.as_bytes(), None, None)
+        .unwrap();
+
+    mgr.start_session(
+        &owner,
+        &MemberSessionStartParams {
+            command_id: "run-reactive-1".into(),
+            employee_id: agent_react.clone(),
+            instruction: Some("Reactive turn".into()),
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(6), || {
+            mgr.inspect_session(&owner, Some(&agent_react))
+                .ok()
+                .and_then(|r| r.session.last_reply)
+                .as_deref()
+                == Some("accepted-reactive-t2")
+        }),
+        "reactive vault refresh must rotate token and relaunch cleanly: {:?}",
+        mgr.inspect_session(&owner, Some(&agent_react)).ok()
+    );
+    assert_eq!(react_refresher.calls.load(Ordering::SeqCst), 1);
+    let stored_raw = mgr
+        .enrollment()
+        .vault()
+        .load_unwrapped(&conn_react)
+        .unwrap()
+        .unwrap();
+    let stored = crate::host_auth::parse_vault_oauth_credential(&stored_raw).unwrap();
+    assert_eq!(stored.access_token.as_str(), "sk-ant-oat01-reactive-t2");
+    assert_eq!(stored.expires_at_ms, Some(react_exp));
+    let conn_state = office.load_connection_state(&conn_react).unwrap().unwrap();
+    assert_eq!(
+        conn_state.status,
+        org_proto::providers::ConnectionReadinessStatus::Ready
+    );
+
+    mgr.stop_all("test-end");
+}
+
+#[test]
+fn task132_operator_vault_rotation_and_unrefreshable_auth_expired_failover() {
+    let tmp_gate = tempfile::tempdir().unwrap();
+    let gate_file = tmp_gate.path().join("emit_401");
+    let script = format!(
+        r#"#!/bin/sh
+echo '{{"kind":"ready","endpoint":"op-rotate"}}'
+while IFS= read -r line; do
+  case "$CLAUDE_CODE_OAUTH_TOKEN" in
+    sk-ant-oat01-op-t1)
+      while [ ! -f "{gate}" ]; do sleep 0.05; done
+      echo '{{"kind":"auth_expired_fail"}}'
+      ;;
+    sk-ant-oat01-op-t2)
+      echo '{{"kind":"reply","text":"accepted-operator-t2"}}'
+      ;;
+    sk-ant-oat01-bad-conn)
+      echo '{{"kind":"auth_expired_fail"}}'
+      ;;
+    sk-ant-oat01-backup-ok)
+      echo '{{"kind":"reply","text":"accepted-backup-conn"}}'
+      ;;
+    *)
+      echo '{{"kind":"auth_expired_fail"}}'
+      ;;
+  esac
+done
+"#,
+        gate = gate_file.display()
+    );
+    let (_tmp, office, mgr, _recorded, owner) = setup_office_and_manager(&script);
+
+    // 1. Operator rotates vault T1 -> T2 while Turn 1 is in flight; when T1 hits 401 with default
+    //    NoopVaultTokenRefresher, failover re-reads the vault, adopts T2, and completes cleanly.
+    let conn_op = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-op-rot",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let prof_op = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof_op.clone(),
+                key: "pool-op-rot".into(),
+                name: "Operator Rotation Pool".into(),
+                description: "Adopts operator vault re-enrollment".into(),
+                connection_ids: vec![conn_op.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent_op = hire_agent(&office, &owner, "op-ada", &prof_op, "claude-sonnet-4");
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_op, "anthropic", b"sk-ant-oat01-op-t1", None, None)
+        .unwrap();
+    mgr.start_session(
+        &owner,
+        &MemberSessionStartParams {
+            command_id: "run-op-1".into(),
+            employee_id: agent_op.clone(),
+            instruction: Some("Wait then fail 401".into()),
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert!(wait_until(Duration::from_secs(3), || {
+        mgr.inspect_session(&owner, Some(&agent_op))
+            .ok()
+            .is_some_and(|r| r.session.state == SessionState::Running)
+    }));
+    // Operator re-enrolls fresh token T2 into the vault before T1's 401 arrives.
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_op, "anthropic", b"sk-ant-oat01-op-t2", None, None)
+        .unwrap();
+    fs::write(&gate_file, "go").unwrap();
+    assert!(
+        wait_until(Duration::from_secs(6), || {
+            mgr.inspect_session(&owner, Some(&agent_op))
+                .ok()
+                .and_then(|r| r.session.last_reply)
+                .as_deref()
+                == Some("accepted-operator-t2")
+        }),
+        "operator-rotated vault token must be adopted on auth_expired failover: {:?}",
+        mgr.inspect_session(&owner, Some(&agent_op)).ok()
+    );
+
+    // 2. Unrefreshable 401 on conn_a marks conn_a AuthExpired and fails over to healthy conn_b.
+    let conn_a = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-bad-a",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let conn_b = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-good-b",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_a, "anthropic", b"sk-ant-oat01-bad-conn", None, None)
+        .unwrap();
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_b, "anthropic", b"sk-ant-oat01-backup-ok", None, None)
+        .unwrap();
+    let prof_ab = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof_ab.clone(),
+                key: "pool-ab-auth".into(),
+                name: "Auth Failover Pool".into(),
+                description: "Failover on unrefreshable auth_expired".into(),
+                connection_ids: vec![conn_a.clone(), conn_b],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent_ab = hire_agent(&office, &owner, "ab-ada", &prof_ab, "claude-sonnet-4");
+    mgr.start_session(
+        &owner,
+        &MemberSessionStartParams {
+            command_id: "run-ab-auth".into(),
+            employee_id: agent_ab.clone(),
+            instruction: Some("Fail over to conn-b".into()),
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(6), || {
+            mgr.inspect_session(&owner, Some(&agent_ab))
+                .ok()
+                .and_then(|r| r.session.last_reply)
+                .as_deref()
+                == Some("accepted-backup-conn")
+        }),
+        "unrefreshable auth_expired must fail over to conn_b: {:?}",
+        mgr.inspect_session(&owner, Some(&agent_ab)).ok()
+    );
+    let state_a = office.load_connection_state(&conn_a).unwrap().unwrap();
+    assert_eq!(
+        state_a.status,
+        org_proto::providers::ConnectionReadinessStatus::AuthExpired
+    );
+    assert_eq!(state_a.issue_code.as_deref(), Some("auth_expired"));
+
+    // 3. Single-connection unrefreshable 401 exhausts pool with actionable AUTH_EXPIRED last_error.
+    let conn_solo = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-bad-solo",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(
+            &conn_solo,
+            "anthropic",
+            b"sk-ant-oat01-bad-conn",
+            None,
+            None,
+        )
+        .unwrap();
+    let prof_solo = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof_solo.clone(),
+                key: "pool-solo-auth".into(),
+                name: "Solo Auth Pool".into(),
+                description: "Exhausts into actionable re-auth error".into(),
+                connection_ids: vec![conn_solo.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent_solo = hire_agent(&office, &owner, "solo-auth", &prof_solo, "claude-sonnet-4");
+    mgr.start_session(
+        &owner,
+        &MemberSessionStartParams {
+            command_id: "run-solo-auth".into(),
+            employee_id: agent_solo.clone(),
+            instruction: Some("Exhaust auth".into()),
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(6), || {
+            mgr.inspect_session(&owner, Some(&agent_solo))
+                .ok()
+                .and_then(|r| r.session.last_error)
+                .is_some_and(|e| e.contains("AUTH_EXPIRED") && e.contains("agentic-org"))
+        }),
+        "exhausted auth_expired failover must surface actionable re-auth error: {:?}",
+        mgr.inspect_session(&owner, Some(&agent_solo)).ok()
+    );
+    let state_solo = office.load_connection_state(&conn_solo).unwrap().unwrap();
+    assert_eq!(
+        state_solo.status,
+        org_proto::providers::ConnectionReadinessStatus::AuthExpired
+    );
+
+    mgr.stop_all("test-end");
+}
+
+#[test]
+fn task132_mixed_pool_exhaustion_preserves_pool_exhausted_and_earliest_cooldown() {
+    let script = "#!/bin/sh\necho '{\"kind\":\"ready\"}'\n";
+    let (_tmp, office, mgr, _recorded, owner) = setup_office_and_manager(script);
+    let conn_missing = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-mixed-missing",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let conn_cd = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-mixed-cd",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_cd, "anthropic", b"sk-ant-oat01-cd-ok", None, None)
+        .unwrap();
+    office
+        .record_connection_cooldown_internal(&conn_cd, None, Some("2027-01-01T00:00:00Z"), None)
+        .unwrap();
+
+    let prof = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof.clone(),
+                key: "pool-mixed-auth-cd".into(),
+                name: "Mixed Pool".into(),
+                description: "Missing vault + cooldown".into(),
+                connection_ids: vec![conn_missing.clone(), conn_cd],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent = hire_agent(&office, &owner, "mixed-ada", &prof, "claude-sonnet-4");
+
+    // Both Pass 1 (conn_missing fails vault lookup) and Pass 2 (conn_missing already AuthExpired)
+    // must classify as Conflict / POOL_EXHAUSTED and preserve earliest_cooldown=.
+    for cmd in ["run-mixed-pass1", "run-mixed-pass2"] {
+        let err = mgr
+            .start_session(
+                &owner,
+                &MemberSessionStartParams {
+                    command_id: cmd.into(),
+                    employee_id: agent.clone(),
+                    instruction: Some("Check mixed pool".into()),
+                    workspace: None,
+                },
+            )
+            .expect_err("mixed pool must refuse launch");
+        assert_eq!(err.code, org_proto::ErrorCode::Conflict, "{cmd}: {err:?}");
+        assert!(
+            err.message.contains("POOL_EXHAUSTED") && err.message.contains("earliest_cooldown="),
+            "{cmd}: expected POOL_EXHAUSTED with earliest_cooldown, got: {}",
+            err.message
+        );
+    }
+    let state_missing = office
+        .load_connection_state(&conn_missing)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        state_missing.status,
+        org_proto::providers::ConnectionReadinessStatus::AuthExpired
+    );
+    mgr.stop_all("test-end");
+}
+
+#[test]
+fn task132_single_slot_permit_never_leaks_on_auth_rejection_panic_or_keyless_vault() {
+    struct PanickingRefresher;
+    impl crate::host_auth::VaultTokenRefresher for PanickingRefresher {
+        fn refresh(
+            &self,
+            _connection_id: &str,
+            _provider: &str,
+            _refresh_token: &str,
+        ) -> Result<crate::host_auth::VaultOAuthCredential, String> {
+            panic!("simulated refresher panic");
+        }
+    }
+
+    let script = r#"#!/bin/sh
+echo '{"kind":"ready","endpoint":"single-slot"}'
+while IFS= read -r line; do
+  echo '{"kind":"reply","text":"single-slot-ok"}'
+done
+"#;
+    let (_tmp, office, mgr, _recorded, owner) = setup_office_and_manager(script);
+    let conn_id = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-solo-1",
+        None,
+        1, // max_concurrent_turns = 1
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let prof = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof.clone(),
+                key: "pool-solo-slot".into(),
+                name: "Single Slot Pool".into(),
+                description: "Zero permit leak guard".into(),
+                connection_ids: vec![conn_id.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent = hire_agent(&office, &owner, "solo-slot-ada", &prof, "claude-sonnet-4");
+    let active_permits = || {
+        office
+            .provider_quota_status(
+                &owner,
+                ProviderQuotaStatusParams {
+                    connection_id: Some(conn_id.clone()),
+                },
+            )
+            .unwrap()
+            .unwrap()
+            .active_permits
+            .len()
+    };
+
+    // 1. Missing vault rejection must release the sole turn permit.
+    assert!(mgr
+        .start_session(
+            &owner,
+            &MemberSessionStartParams {
+                command_id: "solo-missing".into(),
+                employee_id: agent.clone(),
+                instruction: Some("missing".into()),
+                workspace: None,
+            },
+        )
+        .is_err());
+    assert_eq!(active_permits(), 0);
+
+    // 2. Expired vault rejection must release the sole turn permit.
+    refresh_subscription_connection_ready(
+        &office,
+        &owner,
+        &conn_id,
+        "claude-solo-1",
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let exp_json = serde_json::json!({
+        "access_token": "sk-ant-oat01-expired",
+        "refresh_token": "rt-solo",
+        "expires_at_ms": 1_u64,
+    })
+    .to_string();
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_id, "anthropic", exp_json.as_bytes(), None, None)
+        .unwrap();
+    assert!(mgr
+        .start_session(
+            &owner,
+            &MemberSessionStartParams {
+                command_id: "solo-expired".into(),
+                employee_id: agent.clone(),
+                instruction: Some("expired".into()),
+                workspace: None,
+            },
+        )
+        .is_err());
+    assert_eq!(active_permits(), 0);
+
+    // 3. Panic inside VaultTokenRefresher::refresh must unwind RAII guard and release permit.
+    refresh_subscription_connection_ready(
+        &office,
+        &owner,
+        &conn_id,
+        "claude-solo-1",
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let panic_coord = crate::host_auth::VaultRefreshCoordinator::new(Arc::new(PanickingRefresher));
+    let excluded = std::collections::HashSet::new();
+    let runtimes = RuntimeRegistry::production();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+            office: &office,
+            vault: mgr.enrollment().vault(),
+            runtimes: &runtimes,
+            hq_permits: None,
+            oauth_refresh: Some(&panic_coord),
+            employee_id: &agent,
+            task_id: None,
+            is_failover_switch: false,
+            excluded_connections: &excluded,
+        });
+    }));
+    assert!(panicked.is_err(), "refresher panic should unwind");
+    assert_eq!(
+        active_permits(),
+        0,
+        "RAII guard must release candidate permit when refresher panics"
+    );
+
+    // 4. Keyless vault (MissingSecretsKey) returns Unavailable WITHOUT poisoning AuthExpired or leaking permit.
+    let info = office.info();
+    let keyless_vault = crate::credentials::CredentialVault::new(
+        office.durable_root().to_path_buf(),
+        info.org_id.clone(),
+        info.office_id.clone(),
+        None,
+    );
+    let unavail = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+        office: &office,
+        vault: &keyless_vault,
+        runtimes: &runtimes,
+        hq_permits: None,
+        oauth_refresh: None,
+        employee_id: &agent,
+        task_id: None,
+        is_failover_switch: false,
+        excluded_connections: &excluded,
+    })
+    .err()
+    .expect("MissingSecretsKey must return Unavailable");
+    assert_eq!(unavail.code, org_proto::ErrorCode::Unavailable);
+    assert_eq!(
+        office
+            .load_connection_state(&conn_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        org_proto::providers::ConnectionReadinessStatus::Ready,
+        "MissingSecretsKey must NOT poison connection readiness as AuthExpired"
+    );
+    assert_eq!(active_permits(), 0);
+
+    // 5. After enrolling a valid token, launching on max_concurrent_turns = 1 succeeds cleanly.
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(
+            &conn_id,
+            "anthropic",
+            b"sk-ant-oat01-solo-valid",
+            None,
+            None,
+        )
+        .unwrap();
+    mgr.start_session(
+        &owner,
+        &MemberSessionStartParams {
+            command_id: "solo-valid".into(),
+            employee_id: agent.clone(),
+            instruction: Some("run ok".into()),
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(5), || {
+            mgr.inspect_session(&owner, Some(&agent))
+                .ok()
+                .and_then(|r| r.session.last_reply)
+                .as_deref()
+                == Some("single-slot-ok")
+        }),
+        "valid launch must succeed after prior rejections without permit leaks"
+    );
+    mgr.stop_all("test-end");
+}
