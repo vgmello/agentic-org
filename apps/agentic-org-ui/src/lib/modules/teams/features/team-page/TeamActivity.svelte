@@ -13,7 +13,9 @@
 
 	const team = teamPageContext();
 
-	const activity = new Resource(() => teamsApi.activity(team.organizationId, team.teamId));
+	const activity = new Resource((signal) =>
+		teamsApi.activity(team.organizationId, team.teamId, signal)
+	);
 	reloadOnChange(activity, () => team.loads);
 </script>
 

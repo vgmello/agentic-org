@@ -142,11 +142,14 @@ export function createHttpOfficeApi({
 	getSelectedOrganizationId: () => string | undefined;
 	selectOrganization: (organizationId: string) => void;
 }): OfficeApi {
-	async function fetchOrganizations(): Promise<Organization[]> {
+	async function fetchOrganizations(signal?: AbortSignal): Promise<Organization[]> {
 		let reply: Reply;
 		try {
-			reply = await http.read('/api/v1/organizations');
-		} catch {
+			reply = await (signal
+				? http.read('/api/v1/organizations', signal)
+				: http.read('/api/v1/organizations'));
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			throw {
 				source: 'api',
 				code: 'unavailable',

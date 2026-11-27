@@ -18,7 +18,9 @@
 	import { projectFrame } from '../frame/context';
 
 	const frame = projectFrame();
-	const view = new Resource(() => projectsApi.team(frame.organizationId, frame.projectId));
+	const view = new Resource((signal) =>
+		projectsApi.team(frame.organizationId, frame.projectId, signal)
+	);
 
 	const gutters = 'px-4 min-[640px]:px-6 min-[1024px]:px-8';
 	const h4 = 'text-xs/5 font-semibold tracking-wider uppercase text-fg-muted';

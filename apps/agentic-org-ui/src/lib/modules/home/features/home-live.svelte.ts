@@ -135,7 +135,7 @@ export class HomeLiveState<TOverview = unknown> {
 		const workPromise = this.#loadWorkSlice(targetOrgId, signal, isStale);
 		const inboxPromise = this.#loadInboxSlice(targetOrgId, signal, isStale);
 		this.#loadOfficeSlices(targetOrgId, baseConnectionOffices, signal, isStale);
-		this.#loadSecondarySlices(targetOrgId, isStale);
+		this.#loadSecondarySlices(targetOrgId, signal, isStale);
 
 		return Promise.allSettled([workPromise, inboxPromise]).then(() => undefined);
 	}
@@ -207,7 +207,7 @@ export class HomeLiveState<TOverview = unknown> {
 			this.offices = this.#officesAdapter.layer(latestBaseOffices, latestOverview);
 		};
 
-		void officeApi.peekOrganizations().then(
+		void officeApi.peekOrganizations(signal).then(
 			(orgs) => {
 				latestBaseOffices =
 					orgs.find((o) => o.id === targetOrgId)?.offices ?? baseConnectionOffices;
@@ -225,7 +225,7 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 	}
 
-	#loadSecondarySlices(targetOrgId: string, isStale: () => boolean): void {
+	#loadSecondarySlices(targetOrgId: string, signal: AbortSignal, isStale: () => boolean): void {
 		const settle = <T>(promise: Promise<T>, onValue: (value: T) => void, onError: () => void) => {
 			void promise.then(
 				(value) => {
@@ -247,10 +247,14 @@ export class HomeLiveState<TOverview = unknown> {
 				.catch(() => undefined)
 				.then(() => {
 					if (isStale()) return undefined;
-					return costsApi.organizationCost(targetOrgId, {
-						kind: 'this_month',
-						timeZone: accountZone.zone || 'UTC'
-					});
+					return costsApi.organizationCost(
+						targetOrgId,
+						{
+							kind: 'this_month',
+							timeZone: accountZone.zone || 'UTC'
+						},
+						signal
+					);
 				}),
 			(cost) => {
 				if (cost !== undefined) this.orgCost = cost;
@@ -261,7 +265,7 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 
 		settle(
-			costsApi.agentBudgets(targetOrgId),
+			costsApi.agentBudgets(targetOrgId, signal),
 			(budgets) => {
 				this.agentBudgets = budgets;
 			},
@@ -271,7 +275,7 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 
 		settle(
-			membersApi.directory(targetOrgId),
+			membersApi.directory(targetOrgId, signal),
 			(rows) => {
 				this.memberRows = rows;
 			},
@@ -281,7 +285,7 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 
 		settle(
-			projectsApi.list(targetOrgId),
+			projectsApi.list(targetOrgId, signal),
 			(res) => {
 				this.projectRows = res.projects;
 			},
@@ -291,7 +295,7 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 
 		settle(
-			homeApi.projects(targetOrgId),
+			homeApi.projects(targetOrgId, signal),
 			(rows) => {
 				this.homeProjects = rows;
 			},
@@ -301,7 +305,7 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 
 		settle(
-			activityApi.feed(targetOrgId, { kind: 'all' }, 12),
+			activityApi.feed(targetOrgId, { kind: 'all' }, 12, signal),
 			(res) => {
 				this.activityRows = res.rows;
 			},

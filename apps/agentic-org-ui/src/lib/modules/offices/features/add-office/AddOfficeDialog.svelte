@@ -5,7 +5,7 @@
   separately, and may wait for running agents to stop; closing the dialog doesn't cancel it.
 -->
 <script lang="ts">
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/proto';
 	import { trimWhiteSpace, validateName } from '$lib/name';
@@ -61,29 +61,26 @@
 	let ended = false;
 	onDestroy(() => clearInterval(timer));
 
-	$effect(() => {
-		if (!open) return;
+	function resetOnOpen() {
 		// Only opening resets the form: a list that reloads behind the dialog must not clear what was typed.
-		untrack(() => {
-			clearInterval(timer);
-			error = undefined;
-			note = undefined;
-			nameError = undefined;
-			issued = undefined;
-			progress = undefined;
-			if (resume) {
-				name = resume.name;
-				operationId = resume.id;
-				stage = 'waiting';
-				watch(resume.id);
-			} else {
-				name = '';
-				operationId = undefined;
-				stage = 'form';
-				where = canAddOnInstance ? 'instance' : 'machine';
-			}
-		});
-	});
+		clearInterval(timer);
+		error = undefined;
+		note = undefined;
+		nameError = undefined;
+		issued = undefined;
+		progress = undefined;
+		if (resume) {
+			name = resume.name;
+			operationId = resume.id;
+			stage = 'waiting';
+			watch(resume.id);
+		} else {
+			name = '';
+			operationId = undefined;
+			stage = 'form';
+			where = canAddOnInstance ? 'instance' : 'machine';
+		}
+	}
 
 	const trimmed = $derived(trimWhiteSpace(name));
 	function checkName(): string | undefined {
@@ -198,7 +195,11 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+	<DialogContent
+		onOpenAutoFocus={resetOnOpen}
+		{onCloseAutoFocus}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+	>
 		<DialogHeader>
 			<DialogTitle text={title} />
 			<DialogDescription class="[overflow-wrap:anywhere]">

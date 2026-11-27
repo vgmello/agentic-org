@@ -628,19 +628,6 @@
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
-	:global(.activity-tooltip-content) {
-		z-index: 60;
-		padding: 4px 8px;
-		border: 1px solid var(--line-strong);
-		border-radius: var(--exec-sm-radius, 6px);
-		background: var(--side-panel-surface, var(--surface-overlay, var(--exec-surface)));
-		color: var(--exec-ink);
-		font-size: 0.75rem;
-		font-weight: 500;
-		line-height: 1.3;
-		box-shadow: var(--tooltip-shadow);
-		pointer-events: none;
-	}
 	@container activity (max-width: 42.5rem) {
 		.activity-body,
 		.activity-body[data-panel-open] {

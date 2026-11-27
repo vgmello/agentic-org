@@ -53,8 +53,10 @@
 
 	const organizationId = $derived(connection.organization.id);
 	const session = $derived(sessionFor(orgApi, organizationId));
-	const team = new Resource(() => lookUpTeam(() => teamsApi.team(organizationId, teamId)));
-	const work = new Resource(() => teamsApi.work(organizationId, teamId));
+	const team = new Resource((signal) =>
+		lookUpTeam(() => teamsApi.team(organizationId, teamId, signal))
+	);
+	const work = new Resource((signal) => teamsApi.work(organizationId, teamId, signal));
 	// Live changes, New › Add a person and this page's own actions apply in place, keeping what's shown until then.
 	reloadOnChange(team, () => loads);
 	reloadOnChange(work, () => loads);

@@ -1,4 +1,4 @@
-import type { AppError, Member, OrgSnapshot, Team } from '$lib/proto';
+import type { AppError, OrgSnapshot, Team } from '$lib/proto';
 import {
 	gatewayStatusCode,
 	readGatewayAppError,
@@ -6,138 +6,42 @@ import {
 	type GatewayHttpTransport,
 	type GatewayReply
 } from '$lib/platform/http/gateway-errors';
-import { formatUuidV7 } from '$lib/platform/http/clock';
-import { readOperationId } from '$lib/platform/http/wire';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { newStableId } from '$lib/modules/organization/commands';
-import type { TeamRef } from '$lib/modules/members';
 import type { WorkItemsApi } from '$lib/modules/workitems/api';
 import type { TaskRow } from '$lib/modules/workitems/types';
 import {
 	aggregateProjectWork,
 	buildProjectActivity,
-	emptyBugCounts,
-	emptyTaskCounts,
-	readProjectConversations,
-	type ProjectWorkTotals
+	readProjectConversations
 } from './live-hydration';
+import {
+	defaultUuidV7,
+	inferProjectField,
+	isMemberActive,
+	isProjectRecord,
+	normalizeUuidV7,
+	teamPath,
+	teamRef,
+	toProjectRow,
+	toProjectTeamEntry,
+	ZERO_FEATURES,
+	type GatewayProjectRecord
+} from './http-api-map';
 import { OUTCOME_UNKNOWN } from './outcome';
 import type { ProjectsApi } from './api';
 import type {
 	CreateOutcome,
 	NewProject,
 	ProjectDetail,
-	ProjectField,
 	ProjectMember,
-	ProjectRow,
-	ProjectTeamEntry,
 	ProjectTeamView,
 	ProjectsOverview,
 	TeamChoice
 } from './types';
 
-export interface GatewayProjectRecord {
-	id: string;
-	number: number;
-	key: string;
-	slug: string;
-	name: string;
-	owner_team_id: string;
-	contributing_team_ids: string[];
-	archived: boolean;
-	revision: number;
-}
-
-const ZERO_FEATURES = Object.freeze({ planned: 0, inProgress: 0, live: 0 });
-
-function teamRef(team: Team | undefined, fallbackId: string): TeamRef {
-	if (!team) return { id: fallbackId, name: fallbackId, ref: '' };
-	return { id: team.id, name: team.name, ref: '' };
-}
-
-function teamPath(team: Team, byId: ReadonlyMap<string, Team>): string {
-	const names: string[] = [];
-	const seen = new Set<string>();
-	let current: Team | undefined = team;
-	while (current && !seen.has(current.id)) {
-		seen.add(current.id);
-		names.unshift(current.name);
-		current = current.owner_team_id ? byId.get(current.owner_team_id) : undefined;
-	}
-	return names.join(' › ');
-}
-
-function isProjectRecord(value: unknown): value is GatewayProjectRecord {
-	if (!value || typeof value !== 'object') return false;
-	const r = value as Partial<GatewayProjectRecord>;
-	return (
-		typeof r.id === 'string' &&
-		typeof r.number === 'number' &&
-		typeof r.slug === 'string' &&
-		typeof r.name === 'string' &&
-		typeof r.owner_team_id === 'string' &&
-		Array.isArray(r.contributing_team_ids) &&
-		typeof r.archived === 'boolean' &&
-		typeof r.revision === 'number'
-	);
-}
-
-function toProjectRow(
-	record: GatewayProjectRecord,
-	teamsById: ReadonlyMap<string, Team>,
-	totals?: ProjectWorkTotals
-): ProjectRow {
-	return {
-		id: record.id,
-		number: record.number,
-		slug: record.slug,
-		name: record.name,
-		ownerTeam: teamRef(teamsById.get(record.owner_team_id), record.owner_team_id),
-		contributors: record.contributing_team_ids.map((id) => teamRef(teamsById.get(id), id)),
-		archived: record.archived,
-		tasks: totals ? { ...totals.tasks } : emptyTaskCounts(),
-		bugs: totals ? { ...totals.bugs } : emptyBugCounts(),
-		developmentProcess: null
-	};
-}
-
-function isMemberActive(m: Member): boolean {
-	return m.agent?.status !== 'offboarded';
-}
-
-function toProjectTeamEntry(
-	teamId: string,
-	teamsById: ReadonlyMap<string, Team>,
-	membersById: ReadonlyMap<string, Member>
-): ProjectTeamEntry {
-	const t = teamsById.get(teamId);
-	const lead = t?.lead_member_id ? membersById.get(t.lead_member_id) : undefined;
-	return {
-		...teamRef(t, teamId),
-		...(lead && isMemberActive(lead) ? { lead: { id: lead.id, name: lead.name } } : {})
-	};
-}
-
-function inferProjectField(error: AppError): ProjectField | undefined {
-	const msg = error.message.toLowerCase();
-	if (msg.includes('slug')) return 'slug';
-	if (msg.includes('team')) return 'owner';
-	if (error.code === 'invalid_name' || msg.includes('name')) return 'name';
-	return undefined;
-}
-
-function defaultUuidV7(): string {
-	return formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
-}
-
-function normalizeUuidV7(candidate: string, fallback: () => string): string {
-	try {
-		return readOperationId(candidate);
-	} catch {
-		return readOperationId(fallback());
-	}
-}
+export type { GatewayProjectRecord } from './http-api-map';
 
 interface PendingCreate {
 	operationId: string;
@@ -166,23 +70,27 @@ export function createHttpProjectsApi({
 }): ProjectsApi {
 	const pendingCreates = new Map<string, PendingCreate>();
 
-	async function safeWorkRows(organizationId: string): Promise<TaskRow[]> {
+	async function safeWorkRows(organizationId: string, signal?: AbortSignal): Promise<TaskRow[]> {
 		if (!workItemsApi) return [];
 		try {
-			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' }, signal);
 			return queue.rows;
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return [];
 		}
 	}
 
-	async function readProjects(organizationId: string): Promise<GatewayProjectRecord[]> {
+	async function readProjects(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<GatewayProjectRecord[]> {
 		let reply: GatewayReply;
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/projects?include_archived=true`;
 		try {
-			reply = await http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/projects?include_archived=true`
-			);
-		} catch {
+			reply = await (signal ? http.read(path, signal) : http.read(path));
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			throw {
 				source: 'api',
 				code: 'unavailable',
@@ -202,14 +110,15 @@ export function createHttpProjectsApi({
 
 	async function readProject(
 		organizationId: string,
-		projectId: string
+		projectId: string,
+		signal?: AbortSignal
 	): Promise<GatewayProjectRecord> {
 		let reply: GatewayReply;
+		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/projects/${encodeURIComponent(projectId)}`;
 		try {
-			reply = await http.read(
-				`/api/v1/organizations/${encodeURIComponent(organizationId)}/projects/${encodeURIComponent(projectId)}`
-			);
-		} catch {
+			reply = await (signal ? http.read(path, signal) : http.read(path));
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			throw {
 				source: 'api',
 				code: 'unavailable',
@@ -418,11 +327,11 @@ export function createHttpProjectsApi({
 	}
 
 	return Object.freeze({
-		async list(organizationId: string): Promise<ProjectsOverview> {
+		async list(organizationId: string, signal?: AbortSignal): Promise<ProjectsOverview> {
 			const [records, view, workRows] = await Promise.all([
-				readProjects(organizationId),
-				orgApi.view(organizationId),
-				safeWorkRows(organizationId)
+				readProjects(organizationId, signal),
+				orgApi.view(organizationId, signal),
+				safeWorkRows(organizationId, signal)
 			]);
 			const teamsById = new Map(view.snapshot.teams.map((t) => [t.id, t]));
 			const totals = aggregateProjectWork(workRows);
@@ -432,11 +341,15 @@ export function createHttpProjectsApi({
 			};
 		},
 
-		async project(organizationId: string, projectId: string): Promise<ProjectDetail> {
+		async project(
+			organizationId: string,
+			projectId: string,
+			signal?: AbortSignal
+		): Promise<ProjectDetail> {
 			const [record, view, workRows] = await Promise.all([
-				readProject(organizationId, projectId),
-				orgApi.view(organizationId),
-				safeWorkRows(organizationId)
+				readProject(organizationId, projectId, signal),
+				orgApi.view(organizationId, signal),
+				safeWorkRows(organizationId, signal)
 			]);
 			const teamsById = new Map(view.snapshot.teams.map((t) => [t.id, t]));
 			const totals = aggregateProjectWork(workRows);
@@ -452,10 +365,14 @@ export function createHttpProjectsApi({
 			};
 		},
 
-		async team(organizationId: string, projectId: string): Promise<ProjectTeamView> {
+		async team(
+			organizationId: string,
+			projectId: string,
+			signal?: AbortSignal
+		): Promise<ProjectTeamView> {
 			const [record, view] = await Promise.all([
-				readProject(organizationId, projectId),
-				orgApi.view(organizationId)
+				readProject(organizationId, projectId, signal),
+				orgApi.view(organizationId, signal)
 			]);
 			const teamsById = new Map(view.snapshot.teams.map((t) => [t.id, t]));
 			const membersById = new Map(view.snapshot.members.map((m) => [m.id, m]));
@@ -468,8 +385,8 @@ export function createHttpProjectsApi({
 			};
 		},
 
-		async activity(organizationId: string, projectId: string) {
-			const rows = await safeWorkRows(organizationId);
+		async activity(organizationId: string, projectId: string, signal?: AbortSignal) {
+			const rows = await safeWorkRows(organizationId, signal);
 			return buildProjectActivity(rows, projectId);
 		},
 

@@ -4,10 +4,8 @@ import {
 	type GatewayHttpTransport,
 	type GatewayReply
 } from '$lib/platform/http/gateway-errors';
-import { readJsonObject, readResponse } from '$lib/platform/http/wire';
-import { asRec, asStr, type Rec } from '$lib/platform/http/decode';
-import { readOrganizationsList } from '$lib/platform/organizations/readers';
-import type { AppError, OrgSnapshot } from '$lib/proto';
+import { asRec, asStr } from '$lib/platform/http/decode';
+import type { AppError } from '$lib/proto';
 import type { HttpCostsReadApi } from './http-api';
 import {
 	buildMemberBreakdowns,
@@ -22,13 +20,13 @@ import {
 	decodeUsageRecord,
 	sumRecords
 } from './http-full-decode';
+import { createCostsFullTransport, type HttpCostsFullApi } from './http-full-transport';
 import type {
 	AgentBudgetAction,
 	AgentBudgetDraft,
 	AgentBudgetOperationOutcome,
 	BreakdownKey,
 	BudgetPeriodState,
-	Coverage,
 	MemberCostOverview,
 	MemberRecordsFilter,
 	OperationOutcome,
@@ -40,65 +38,12 @@ import type {
 	ProjectBreakdownKey,
 	ProjectInvestment,
 	ProjectInvestmentRow,
-	ResolvedPeriod,
 	UsageExportResult,
 	UsageRecord,
 	UsageRecordPage
 } from './types';
 
-export interface HttpCostsFullApi {
-	prices(organizationId: string): Promise<PricesOverview>;
-	addPrice(organizationId: string, draft: PriceDraft): Promise<PriceVersion>;
-	priceOperation(organizationId: string, operationId: string): Promise<OperationOutcome>;
-	organizationCost(organizationId: string, period: PeriodRequest): Promise<OrganizationCost>;
-	records(
-		organizationId: string,
-		period: PeriodRequest,
-		key: BreakdownKey | { all: true },
-		cursor?: string
-	): Promise<UsageRecordPage>;
-	projectInvestment(
-		organizationId: string,
-		request: { timeZone: string }
-	): Promise<ProjectInvestment>;
-	projectRecords(
-		organizationId: string,
-		projectId: string,
-		period: PeriodRequest,
-		key: ProjectBreakdownKey,
-		cursor?: string
-	): Promise<UsageRecordPage>;
-	exportRecords(
-		organizationId: string,
-		scope: { kind: 'organization' } | { kind: 'project'; projectId: string },
-		period: PeriodRequest
-	): Promise<UsageExportResult>;
-	memberCost(
-		organizationId: string,
-		memberId: string,
-		request: { timeZone: string }
-	): Promise<MemberCostOverview>;
-	memberRecords(
-		organizationId: string,
-		memberId: string,
-		request: { timeZone: string; filter: MemberRecordsFilter },
-		cursor?: string
-	): Promise<UsageRecordPage>;
-	setAgentBudget(
-		organizationId: string,
-		memberId: string,
-		draft: AgentBudgetDraft
-	): Promise<BudgetPeriodState>;
-	agentBudgetAction(
-		organizationId: string,
-		memberId: string,
-		action: AgentBudgetAction
-	): Promise<{ message: string }>;
-	agentBudgetOperation(
-		organizationId: string,
-		operationId: string
-	): Promise<AgentBudgetOperationOutcome>;
-}
+export type { HttpCostsFullApi } from './http-full-transport';
 
 export function createHttpCostsFullApi(deps: {
 	http: GatewayHttpTransport;
@@ -108,91 +53,21 @@ export function createHttpCostsFullApi(deps: {
 	now?: () => string;
 }): HttpCostsFullApi {
 	const now = deps.now ?? (() => new Date().toISOString());
+	const { loadSnapshot, isOwnerOrAdmin, queryCosts, toResolvedPeriod, toCoverage, queryBody } =
+		createCostsFullTransport({
+			http: deps.http,
+			orgApi: deps.orgApi,
+			session: deps.session,
+			now
+		});
 
-	async function loadSnapshot(organizationId: string): Promise<OrgSnapshot | undefined> {
-		try {
-			return (await deps.orgApi.view(organizationId)).snapshot;
-		} catch {
-			return undefined;
-		}
-	}
-
-	async function isOwnerOrAdmin(
-		organizationId: string,
-		snapshot: OrgSnapshot | undefined
-	): Promise<boolean> {
-		if (deps.session()?.accountAdmin) return true;
-		try {
-			const reply = await deps.http.read('/api/v1/organizations');
-			if (reply.status !== 200) return false;
-			const env = readResponse(reply.body, readJsonObject);
-			if ('error' in env) return false;
-			const org = readOrganizationsList(env.result).organizations.find(
-				(o) => o.id === organizationId
-			);
-			const viewer = org?.employee_id
-				? snapshot?.members.find((m) => m.id === org.employee_id)
-				: undefined;
-			return Boolean(viewer?.owner);
-		} catch {
-			return false;
-		}
-	}
-
-	async function queryCosts(organizationId: string, body: Record<string, unknown>): Promise<Rec> {
-		const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/costs/query`;
-		let reply: GatewayReply;
-		try {
-			reply = await deps.http.submit(path, body);
-		} catch {
-			throw {
-				source: 'api',
-				code: 'unavailable',
-				message: 'Cost data could not be reached.'
-			} satisfies AppError;
-		}
-		return unwrapGatewayResult(reply, 'Cost data could not be loaded.');
-	}
-
-	function toResolvedPeriod(result: Rec, period: PeriodRequest): ResolvedPeriod {
-		const endsAt = asStr(result.ends_at) ?? now();
-		const startsAt = asStr(result.starts_at);
-		return {
-			kind: period.kind,
-			...(startsAt ? { startsAt } : {}),
-			endsAt,
-			timeZone: asStr(result.time_zone) ?? period.timeZone,
-			toNow:
-				period.kind === 'this_week' || period.kind === 'this_month' || period.kind === 'all_time'
-		};
-	}
-
-	function toCoverage(result: Rec): Coverage {
-		const summary = asRec(result.summary);
-		return {
-			checkpointAt: asStr(summary?.coverage_as_of) ?? asStr(result.ends_at) ?? now(),
-			gaps: []
-		};
-	}
-
-	function queryBody(
-		period: PeriodRequest,
-		extra: Record<string, unknown> = {}
-	): Record<string, unknown> {
-		return {
-			period: period.kind,
-			time_zone: period.timeZone,
-			...(period.from ? { from_date: period.from } : {}),
-			...(period.to ? { to_date: period.to } : {}),
-			...extra
-		};
-	}
-
-	async function readPrices(organizationId: string): Promise<PricesOverview> {
+	async function readPrices(organizationId: string, signal?: AbortSignal): Promise<PricesOverview> {
+		const pricesPath = `/api/v1/organizations/${encodeURIComponent(organizationId)}/costs/prices`;
 		const [reply, snapshot] = await Promise.all([
-			deps.http
-				.read(`/api/v1/organizations/${encodeURIComponent(organizationId)}/costs/prices`)
-				.catch(() => undefined),
+			(signal ? deps.http.read(pricesPath, signal) : deps.http.read(pricesPath)).catch((err) => {
+				if (signal?.aborted) throw err;
+				return undefined;
+			}),
 			loadSnapshot(organizationId)
 		]);
 		if (!reply) {
@@ -273,10 +148,15 @@ export function createHttpCostsFullApi(deps: {
 
 		async organizationCost(
 			organizationId: string,
-			period: PeriodRequest
+			period: PeriodRequest,
+			signal?: AbortSignal
 		): Promise<OrganizationCost> {
 			const [result, snapshot] = await Promise.all([
-				queryCosts(organizationId, queryBody(period, { include_records: true, limit: 500 })),
+				queryCosts(
+					organizationId,
+					queryBody(period, { include_records: true, limit: 500 }),
+					signal
+				),
 				loadSnapshot(organizationId)
 			]);
 			const rawRecords = Array.isArray(result.records) ? result.records : [];

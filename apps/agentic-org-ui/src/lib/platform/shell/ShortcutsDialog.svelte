@@ -60,7 +60,7 @@
 		showCloseButton={false}
 		data-testid="shortcuts-help-dialog"
 		overlayClass="z-90 bg-[var(--exec-scrim-bg,color-mix(in_srgb,var(--surface-sunken)_75%,transparent))] backdrop-blur-[6px]"
-		class="z-100 w-[min(620px,calc(100vw-32px))] max-w-none gap-0 rounded-xl border border-[var(--exec-notif-border,var(--exec-border-hi,var(--line-strong)))] bg-[var(--exec-notif-bg,var(--exec-cmdk-menu-bg,var(--surface)))] p-6 text-[var(--exec-ink,var(--fg))] shadow-[var(--exec-notif-shadow,var(--exec-cmdk-menu-shadow,none))] ring-0 [backdrop-filter:var(--exec-notif-blur,var(--exec-cmdk-menu-blur,none))] sm:max-w-[620px]"
+		class="z-100 w-[min(620px,calc(100vw-32px))] max-w-none gap-0 rounded-xl border border-[var(--exec-notif-border,var(--exec-border-hi,var(--line-strong)))] bg-[var(--exec-notif-bg,var(--exec-cmdk-menu-bg,var(--surface)))] p-6 text-[var(--exec-ink,var(--fg))] shadow-[var(--exec-notif-shadow,var(--exec-cmdk-menu-shadow,none))] ring-0 [-webkit-backdrop-filter:var(--exec-notif-blur,var(--exec-cmdk-menu-blur,none))] [backdrop-filter:var(--exec-notif-blur,var(--exec-cmdk-menu-blur,none))] sm:max-w-[620px]"
 	>
 		<DialogTitle
 			class="text-base/7 font-semibold text-[var(--exec-ink,var(--fg))]"

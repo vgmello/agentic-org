@@ -5,7 +5,6 @@
   asks once, in the same dialog.
 -->
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
@@ -50,19 +49,17 @@
 	let busy = $state<'approve' | 'decline' | undefined>();
 	let input = $state<HTMLInputElement | null>(null);
 	// The request is kept while the dialog closes, so its words don't vanish mid-animation.
-	let shown = $state<JoinRequest | undefined>();
-	$effect(() => {
+	let lastRequest = $state<JoinRequest | undefined>();
+	const shown = $derived(open ? (request ?? lastRequest) : lastRequest);
+
+	function resetOnOpen() {
 		// Only opening resets the dialog: the list reloading behind it (a wrong code) must not clear its stage or what was typed.
-		if (open)
-			untrack(() => {
-				if (!request) return;
-				shown = request;
-				stage = 'approve';
-				typed = '';
-				hint = false;
-				error = undefined;
-			});
-	});
+		if (request) lastRequest = request;
+		stage = 'approve';
+		typed = '';
+		hint = false;
+		error = undefined;
+	}
 	const read = $derived(readCheckCode(typed));
 	const name = $derived(shown?.officeName ?? 'this office');
 	const created = $derived(shown ? madeAtText(shown.invitationCreatedAt, Date.now()) : '');
@@ -118,6 +115,7 @@
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent
+		onOpenAutoFocus={resetOnOpen}
 		{onCloseAutoFocus}
 		class="max-h-[calc(100dvh-2rem)] min-w-0 overflow-y-auto sm:max-w-lg"
 	>

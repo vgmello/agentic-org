@@ -28,7 +28,7 @@
 
 	let { organizationId, snapshot }: { organizationId: string; snapshot: OrgSnapshot } = $props();
 
-	const teams = new Resource(() => teamsApi.list(organizationId));
+	const teams = new Resource((signal) => teamsApi.list(organizationId, signal));
 	const active = $derived((teams.data ?? []).filter((t) => t.status === 'active'));
 	const archived = $derived((teams.data ?? []).filter((t) => t.status === 'archived'));
 	const rows = $derived(indentTeams(active));

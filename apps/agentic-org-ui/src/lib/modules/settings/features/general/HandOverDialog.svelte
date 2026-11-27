@@ -4,6 +4,7 @@
   Both accounts change in one operation, so there is never a moment with two administrators or none.
 -->
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/proto';
@@ -53,6 +54,10 @@
 		error = undefined;
 	}
 
+	onDestroy(() => {
+		password = '';
+	});
+
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy || !person) return;
@@ -70,6 +75,7 @@
 				password
 			);
 			open = false;
+			password = '';
 			ondone(next);
 			toast.success(`${person.name} is now this instance's administrator.`);
 		} catch (e) {
@@ -82,7 +88,15 @@
 	}
 </script>
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
+<Dialog
+	bind:open
+	onOpenChange={(next) => {
+		if (!next) {
+			if (busy) open = true;
+			else password = '';
+		}
+	}}
+>
 	<DialogContent
 		onOpenAutoFocus={resetOnOpen}
 		{onCloseAutoFocus}
@@ -154,7 +168,11 @@
 					variant="outline"
 					class={mobileButton}
 					disabled={busy}
-					onclick={() => (open = false)}>Cancel</Button
+					onclick={() => {
+						if (busy) return;
+						password = '';
+						open = false;
+					}}>Cancel</Button
 				>
 				{#if general.handOverCandidates.length > 0}
 					<Button

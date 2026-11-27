@@ -19,7 +19,7 @@
 	import RecoveryRow from './RecoveryRow.svelte';
 
 	let { organizationId }: { organizationId: string } = $props();
-	const resource = new Resource(() => settingsApi.general(organizationId));
+	const resource = new Resource((signal) => settingsApi.general(organizationId, signal));
 	let handOver = $state(false);
 	let handOverButton = $state<HTMLButtonElement | null>(null);
 

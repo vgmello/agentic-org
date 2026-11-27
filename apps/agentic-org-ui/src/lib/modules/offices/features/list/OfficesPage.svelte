@@ -56,7 +56,7 @@
 	const here = $derived(connection.office);
 
 	// ---- what joined, who wants to join and what is queued: layered beside the connection's own offices ----------
-	const extra = new Resource(() => officesApi.overview(orgId));
+	const extra = new Resource((signal) => officesApi.overview(orgId, signal));
 	const overview = $derived(extra.data);
 	const reload = () => extra.reload();
 	let now = $state(Date.now());

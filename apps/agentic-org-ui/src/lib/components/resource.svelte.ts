@@ -2,6 +2,7 @@
 // unavailable (the production adapter does not serve it yet: never sample data), unsupported (the office answered
 // `unsupported`: not available in this version, no Retry), error (what failed, with Retry) and ready. It loads when
 // created; a later `reload` keeps the shown data until the new answer arrives.
+import { onDestroy } from 'svelte';
 import { toAppError } from '$lib/proto';
 import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 
@@ -27,6 +28,11 @@ export class Resource<T> {
 
 	constructor(load: (signal?: AbortSignal) => Promise<T>) {
 		this.#load = load;
+		try {
+			onDestroy(() => this.dispose());
+		} catch {
+			/* Constructed outside component initialization; caller owns dispose(). */
+		}
 		void this.reload();
 	}
 

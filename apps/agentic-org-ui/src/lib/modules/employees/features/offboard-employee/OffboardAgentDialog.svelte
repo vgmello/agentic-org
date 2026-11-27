@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -32,29 +31,16 @@
 
 	let busy = $state(false);
 	let error = $state<string | undefined>();
-	let shown = $state<Member | undefined>();
-	$effect(() => {
-		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
-		if (open) {
-			untrack(() => {
-				if (!agent) return;
-				shown = agent;
-				error = undefined;
-			});
-		}
-	});
+	let lastAgent = $state<Member | undefined>();
+	// While open, reflect live agent updates (e.g. version bump on stale reload); while closing, keep lastAgent so the title does not flash empty.
+	const shown = $derived(open ? (agent ?? lastAgent) : lastAgent);
 	const lines = $derived(shown ? offboardSummary(snapshot, shown) : []);
 	const isBuiltIn = $derived(isBuiltInAgent(shown));
 
-	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
-	// version to send, but leave anything the owner typed alone, so "Here's the latest" is true and a retry can work.
-	$effect(() => {
-		const latest = agent;
-		untrack(() => {
-			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version)
-				shown = latest;
-		});
-	});
+	function resetOnOpen() {
+		if (agent) lastAgent = agent;
+		error = undefined;
+	}
 
 	async function confirm() {
 		if (!shown || busy) return;
@@ -82,7 +68,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent>
+	<DialogContent onOpenAutoFocus={resetOnOpen}>
 		<DialogHeader>
 			<div
 				class="mb-2 flex size-12 items-center justify-center rounded-full bg-danger-emphasis/15 text-danger"

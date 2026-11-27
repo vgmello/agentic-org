@@ -20,7 +20,9 @@
 
 	const team = teamPageContext();
 
-	const projects = new Resource(() => teamsApi.projects(team.organizationId, team.teamId));
+	const projects = new Resource((signal) =>
+		teamsApi.projects(team.organizationId, team.teamId, signal)
+	);
 	reloadOnChange(projects, () => team.loads);
 	const openWork = (n: number | undefined) =>
 		n === undefined

@@ -51,12 +51,16 @@
 	// The UI's initial cost period is This month (§3 "Cost reads and periods").
 	let chosen = $state<Omit<PeriodRequest, 'timeZone'>>({ kind: 'this_month' });
 	const period = $derived<PeriodRequest>({ ...chosen, timeZone: zone });
-	const cost = new Resource(() => scoped(() => costsApi.organizationCost(organizationId, period)));
-	const budgets = new Resource(() => scoped(() => costsApi.agentBudgets(organizationId)));
+	const cost = new Resource((signal) =>
+		scoped(() => costsApi.organizationCost(organizationId, period, signal))
+	);
+	const budgets = new Resource((signal) =>
+		scoped(() => costsApi.agentBudgets(organizationId, signal))
+	);
 	const subscriptionUsage = new Resource(() =>
 		scoped(() => costsApi.subscriptionUsage(organizationId))
 	);
-	const prices = new Resource(() => costsApi.prices(organizationId));
+	const prices = new Resource((signal) => costsApi.prices(organizationId, signal));
 
 	const unavailable = $derived(
 		cost.state === 'unavailable' &&

@@ -1542,12 +1542,9 @@ describe('selector', () => {
 	});
 
 	it('maps the project components to projects-work and refuses an unknown e2e helper', () => {
-		expect(
-			plan(
-				[ui('src/lib/modules/organization/features/project-teams/ProjectTeams.svelte')],
-				manifest
-			).categories
-		).toEqual(['projects-work']);
+		expect(plan([ui('src/lib/modules/organization/projects.ts')], manifest).categories).toEqual([
+			'projects-work'
+		]);
 		expect(classify(ui('e2e/projects-new-helper.ts'), manifest)).toEqual([
 			expect.objectContaining({ kind: 'unknown' })
 		]);

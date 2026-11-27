@@ -57,8 +57,8 @@
 		content: Snippet;
 	} = $props();
 
-	const read = new Resource(() =>
-		lookUpProject(() => projectsApi.project(organizationId, projectId))
+	const read = new Resource((signal) =>
+		lookUpProject(() => projectsApi.project(organizationId, projectId, signal))
 	);
 	const project = $derived(read.data?.found ? read.data.project : undefined);
 	const tabs = $derived(project ? projectTabs(project) : []);
@@ -277,7 +277,7 @@
 														side="bottom"
 														sideOffset={6}
 														escapeKeydownBehavior="defer-otherwise-close"
-														class="project-tooltip-content"
+														class="pointer-events-none z-60 rounded-[var(--exec-sm-radius,6px)] border border-line-strong bg-[var(--side-panel-surface,var(--surface-overlay,var(--exec-surface)))] px-2 py-1 text-xs leading-[1.3] font-medium text-[var(--exec-ink)] shadow-[var(--tooltip-shadow)]"
 													>
 														More actions
 													</Tooltip.Content>
@@ -455,19 +455,6 @@
 	.project-more-btn:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
-	}
-	:global(.project-tooltip-content) {
-		z-index: 60;
-		padding: 4px 8px;
-		border: 1px solid var(--line-strong);
-		border-radius: var(--exec-sm-radius, 6px);
-		background: var(--side-panel-surface, var(--surface-overlay, var(--exec-surface)));
-		color: var(--exec-ink);
-		font-size: 0.75rem;
-		font-weight: 500;
-		line-height: 1.3;
-		box-shadow: var(--tooltip-shadow);
-		pointer-events: none;
 	}
 	.proj-pill-accent {
 		background: var(--tone-accent-bg);

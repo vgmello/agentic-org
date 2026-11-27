@@ -307,4 +307,41 @@ describe('HomeLiveState', () => {
 		expect(inboxSignals).toHaveLength(3);
 		expect(officeSignals).toHaveLength(3);
 	});
+
+	it('forwards the shared AbortSignal to all secondary Home loads as well', async () => {
+		const { officeApi } = await import('$lib/modules/offices/office-api');
+		const { costsApi } = await import('$lib/modules/costs/api');
+		const { membersApi } = await import('$lib/modules/members/api');
+		const { projectsApi } = await import('$lib/modules/projects/api');
+		const { homeApi } = await import('$lib/modules/home/api');
+		const { activityApi } = await import('$lib/modules/activity/api');
+
+		workSnapshot.mockResolvedValue({ items: [] });
+		inboxList.mockResolvedValue([]);
+		const live = new HomeLiveState({
+			overview: vi.fn().mockResolvedValue(undefined),
+			layer: (base) => base
+		});
+		const cancel = live.connect('org-1', baseOffices);
+		await flushMicrotasks();
+
+		const passedSignals = [
+			(officeApi.peekOrganizations as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0],
+			(costsApi.organizationCost as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[2],
+			(costsApi.agentBudgets as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1],
+			(membersApi.directory as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1],
+			(projectsApi.list as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1],
+			(homeApi.projects as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1],
+			(activityApi.feed as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[3]
+		];
+		for (const sig of passedSignals) {
+			expect(sig).toBeInstanceOf(AbortSignal);
+			expect((sig as AbortSignal).aborted).toBe(false);
+		}
+		cancel();
+		for (const sig of passedSignals) {
+			expect((sig as AbortSignal).aborted).toBe(true);
+		}
+		live.destroy();
+	});
 });

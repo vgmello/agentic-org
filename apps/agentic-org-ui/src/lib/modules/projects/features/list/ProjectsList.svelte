@@ -52,7 +52,7 @@
 
 	let { organizationId }: { organizationId: string } = $props();
 
-	const resource = new Resource(() => projectsApi.list(organizationId));
+	const resource = new Resource((signal) => projectsApi.list(organizationId, signal));
 	const investment = investmentResource(() => organizationId);
 	const overview = $derived(resource.data);
 	const rows = $derived(overview ? sortProjects(overview.projects) : []);

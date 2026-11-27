@@ -126,7 +126,7 @@
 		color: var(--tone-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
 	}
-	:global(.member-owner-pill) {
+	li :global(.member-owner-pill) {
 		background: var(--tone-accent-bg);
 		color: var(--tone-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);

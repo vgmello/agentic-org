@@ -305,15 +305,18 @@ function buildChatRows(
 }
 
 export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
-	async function collectRows(organizationId: string): Promise<{
+	async function collectRows(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<{
 		rows: ActivityRow[];
 		messaging: 'connected' | 'not-connected';
 	}> {
-		const { snapshot } = await deps.orgApi.view(organizationId);
+		const { snapshot } = await deps.orgApi.view(organizationId, signal);
 		const viewerId = deps.viewerId?.(organizationId) ?? snapshot.members.find((m) => m.owner)?.id;
 		const [workRes, inboxRes, chatRes] = await Promise.allSettled([
-			deps.workItemsApi.queue(organizationId, { kind: 'organization' }),
-			deps.inboxApi.list(organizationId),
+			deps.workItemsApi.queue(organizationId, { kind: 'organization' }, signal),
+			deps.inboxApi.list(organizationId, signal),
 			readChatFeed(deps.http, organizationId, viewerId)
 		]);
 
@@ -331,8 +334,13 @@ export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
 	}
 
 	return Object.freeze<ActivityApi>({
-		async feed(organizationId: string, query: ActivityQuery, limit: number): Promise<ActivityPage> {
-			const { rows, messaging } = await collectRows(organizationId);
+		async feed(
+			organizationId: string,
+			query: ActivityQuery,
+			limit: number,
+			signal?: AbortSignal
+		): Promise<ActivityPage> {
+			const { rows, messaging } = await collectRows(organizationId, signal);
 			const matching = rows.filter((row) => matchesQuery(row, query));
 			return {
 				rows: matching.slice(0, limit),

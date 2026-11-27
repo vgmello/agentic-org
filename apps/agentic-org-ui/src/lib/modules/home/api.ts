@@ -9,8 +9,8 @@ import type { HomeProject, MonthSummary, WorkingNow } from './types';
  * Each is its own call, so each Home section loads, fails and retries on its own.
  */
 export interface HomeApi {
-	projects(organizationId: string): Promise<HomeProject[]>;
-	workingNow(organizationId: string): Promise<WorkingNow>;
+	projects(organizationId: string, signal?: AbortSignal): Promise<HomeProject[]>;
+	workingNow(organizationId: string, signal?: AbortSignal): Promise<WorkingNow>;
 	/** Null when costs are not served or the viewer may not see amounts: Home then omits the line. */
 	month(organizationId: string): Promise<MonthSummary | null>;
 }
@@ -27,10 +27,10 @@ const gatewayHomeApi = createHttpHomeApi({ orgApi });
  * Under `bun run dev:mock`, `e2e/fakes/modules/home.ts` stands in for this file.
  */
 export const homeApi: HomeApi = Object.freeze<HomeApi>({
-	projects: (organizationId) =>
-		signedInSession() ? gatewayHomeApi.projects(organizationId) : unavailableCall(),
-	workingNow: (organizationId) =>
-		signedInSession() ? gatewayHomeApi.workingNow(organizationId) : unavailableCall(),
+	projects: (organizationId, signal) =>
+		signedInSession() ? gatewayHomeApi.projects(organizationId, signal) : unavailableCall(),
+	workingNow: (organizationId, signal) =>
+		signedInSession() ? gatewayHomeApi.workingNow(organizationId, signal) : unavailableCall(),
 	month: (organizationId) =>
 		signedInSession() ? gatewayHomeApi.month(organizationId) : unavailableCall()
 });

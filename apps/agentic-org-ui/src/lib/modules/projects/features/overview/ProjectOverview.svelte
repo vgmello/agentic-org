@@ -49,7 +49,9 @@
 		shellData = undefined;
 	}
 
-	const activity = new Resource(() => projectsApi.activity(frame.organizationId, frame.projectId));
+	const activity = new Resource((signal) =>
+		projectsApi.activity(frame.organizationId, frame.projectId, signal)
+	);
 	const investment = investmentResource(() => frame.organizationId);
 	const amounts = $derived(investment.data?.allowed ? investment.data.value : undefined);
 	// A project manager sees the amounts of the projects they lead and of no other (costs §1 "Who sees amounts").

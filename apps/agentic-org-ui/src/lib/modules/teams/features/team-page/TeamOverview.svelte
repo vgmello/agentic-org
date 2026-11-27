@@ -29,8 +29,8 @@
 	}
 
 	const work = team.work;
-	const projects = new Resource(() => teamsApi.projects(team.organizationId, team.teamId));
-	const activity = new Resource(() => teamsApi.activity(team.organizationId, team.teamId));
+	const projects = new Resource((s) => teamsApi.projects(team.organizationId, team.teamId, s));
+	const activity = new Resource((s) => teamsApi.activity(team.organizationId, team.teamId, s));
 
 	reloadOnChange(projects, () => team.loads);
 	reloadOnChange(activity, () => team.loads);

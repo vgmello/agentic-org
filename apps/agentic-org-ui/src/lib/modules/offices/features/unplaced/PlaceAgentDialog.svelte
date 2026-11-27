@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
@@ -32,18 +31,17 @@
 		onCloseAutoFocus?: (event: Event) => void;
 	} = $props();
 
-	let shown = $state<Member | undefined>();
+	let lastAgent = $state<Member | undefined>();
+	const shown = $derived(open ? (agent ?? lastAgent) : lastAgent);
 	let office = $state('');
 	let busy = $state(false);
 	let error = $state<string | undefined>();
-	$effect(() => {
-		if (open)
-			untrack(() => {
-				shown = agent;
-				office = '';
-				error = undefined;
-			});
-	});
+
+	function resetOnOpen() {
+		if (agent) lastAgent = agent;
+		office = '';
+		error = undefined;
+	}
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
@@ -70,7 +68,11 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+	<DialogContent
+		onOpenAutoFocus={resetOnOpen}
+		{onCloseAutoFocus}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+	>
 		<form class="grid gap-5" onsubmit={submit} novalidate>
 			<DialogHeader>
 				<DialogTitle text={`Place ${shown?.name ?? ''}`} />

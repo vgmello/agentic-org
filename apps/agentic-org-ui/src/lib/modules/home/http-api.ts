@@ -16,8 +16,8 @@ export function createHttpHomeApi({
 	now = () => new Date().toISOString()
 }: HttpHomeApiOptions): HomeApi {
 	return Object.freeze({
-		async projects(organizationId: string): Promise<HomeProject[]> {
-			const { snapshot } = await orgApi.view(organizationId);
+		async projects(organizationId: string, signal?: AbortSignal): Promise<HomeProject[]> {
+			const { snapshot } = await orgApi.view(organizationId, signal);
 			const projectTeams = snapshot.project_teams ?? [];
 			return (snapshot.projects ?? [])
 				.filter((p) => !p.archived)
@@ -49,8 +49,8 @@ export function createHttpHomeApi({
 				.sort((a, b) => a.name.localeCompare(b.name));
 		},
 
-		async workingNow(organizationId: string): Promise<WorkingNow> {
-			const { snapshot } = await orgApi.view(organizationId);
+		async workingNow(organizationId: string, signal?: AbortSignal): Promise<WorkingNow> {
+			const { snapshot } = await orgApi.view(organizationId, signal);
 			const fallbackSince = now();
 			const agents = snapshot.members
 				.filter((m) => m.kind === 'agent' && m.agent?.status === 'active')

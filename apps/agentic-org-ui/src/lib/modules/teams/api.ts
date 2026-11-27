@@ -19,12 +19,16 @@ import type {
  */
 export interface TeamsApi {
 	/** Every team, active and archived, in any order; the screen builds the tree. */
-	list(organizationId: string): Promise<TeamRow[]>;
-	team(organizationId: string, teamId: string): Promise<TeamDetail>;
-	work(organizationId: string, teamId: string): Promise<WorkRow[]>;
-	projects(organizationId: string, teamId: string): Promise<TeamProjectRow[]>;
-	activity(organizationId: string, teamId: string): Promise<ActivityEntry[]>;
-	conversations(organizationId: string, teamId: string): Promise<ConversationRow[]>;
+	list(organizationId: string, signal?: AbortSignal): Promise<TeamRow[]>;
+	team(organizationId: string, teamId: string, signal?: AbortSignal): Promise<TeamDetail>;
+	work(organizationId: string, teamId: string, signal?: AbortSignal): Promise<WorkRow[]>;
+	projects(organizationId: string, teamId: string, signal?: AbortSignal): Promise<TeamProjectRow[]>;
+	activity(organizationId: string, teamId: string, signal?: AbortSignal): Promise<ActivityEntry[]>;
+	conversations(
+		organizationId: string,
+		teamId: string,
+		signal?: AbortSignal
+	): Promise<ConversationRow[]>;
 	/**
 	 * Archive keeps the team's ID and history (§7.10). Refused (`conflict`, the blockers named) while teams under it,
 	 * home employees, projects it owns or its open tasks remain.
@@ -56,17 +60,18 @@ const gatewayTeamsApi = createHttpTeamsApi({
 // Production teams API backed by `/api/v1/organizations/{org}/snapshot` and projects/team mutations.
 // Under `bun run dev:mock`, e2e/fakes/modules/teams.ts stands in for this file.
 export const teamsApi: TeamsApi = Object.freeze<TeamsApi>({
-	list: (orgId) => (signedInSession() ? gatewayTeamsApi.list(orgId) : unavailableCall()),
-	team: (orgId, teamId) =>
-		signedInSession() ? gatewayTeamsApi.team(orgId, teamId) : unavailableCall(),
-	work: (orgId, teamId) =>
-		signedInSession() ? gatewayTeamsApi.work(orgId, teamId) : unavailableCall(),
-	projects: (orgId, teamId) =>
-		signedInSession() ? gatewayTeamsApi.projects(orgId, teamId) : unavailableCall(),
-	activity: (orgId, teamId) =>
-		signedInSession() ? gatewayTeamsApi.activity(orgId, teamId) : unavailableCall(),
-	conversations: (orgId, teamId) =>
-		signedInSession() ? gatewayTeamsApi.conversations(orgId, teamId) : unavailableCall(),
+	list: (orgId, signal) =>
+		signedInSession() ? gatewayTeamsApi.list(orgId, signal) : unavailableCall(),
+	team: (orgId, teamId, signal) =>
+		signedInSession() ? gatewayTeamsApi.team(orgId, teamId, signal) : unavailableCall(),
+	work: (orgId, teamId, signal) =>
+		signedInSession() ? gatewayTeamsApi.work(orgId, teamId, signal) : unavailableCall(),
+	projects: (orgId, teamId, signal) =>
+		signedInSession() ? gatewayTeamsApi.projects(orgId, teamId, signal) : unavailableCall(),
+	activity: (orgId, teamId, signal) =>
+		signedInSession() ? gatewayTeamsApi.activity(orgId, teamId, signal) : unavailableCall(),
+	conversations: (orgId, teamId, signal) =>
+		signedInSession() ? gatewayTeamsApi.conversations(orgId, teamId, signal) : unavailableCall(),
 	archive: unavailableCall,
 	delete: (orgId, teamId) =>
 		signedInSession() ? gatewayTeamsApi.delete(orgId, teamId) : unavailableCall(),
