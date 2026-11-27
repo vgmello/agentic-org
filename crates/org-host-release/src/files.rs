@@ -1,6 +1,8 @@
 //! Descriptor-relative bounded inventory/copy. Input names never address an
 //! instance, custody store, installation target or arbitrary output path.
+
 mod output;
+
 use super::Error;
 use org_release::VerifiedManifest;
 #[cfg(test)]
@@ -14,6 +16,7 @@ use std::{
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Component, Path},
 };
+
 #[derive(PartialEq, Eq)]
 pub(super) struct Identity {
     dev: u64,
@@ -23,9 +26,14 @@ pub(super) struct Identity {
     ctime: (i64, i64),
     mode: u32,
 }
+
 pub(super) fn identity(file: &File) -> Result<Identity, Error> {
     let m = file.metadata()?;
-    if !m.is_file() || m.uid() != crate::home::euid() || m.nlink() != 1 || m.mode() & 0o6022 != 0 {
+    if !m.is_file()
+        || m.uid() != org_platform::posix::effective_uid()
+        || m.nlink() != 1
+        || m.mode() & 0o6022 != 0
+    {
         return Err(Error::UnsafeInput);
     }
     Ok(Identity {
@@ -37,6 +45,7 @@ pub(super) fn identity(file: &File) -> Result<Identity, Error> {
         mode: m.mode(),
     })
 }
+
 /// `name` of the retained directory `parent` opened with `flags` (and `mode` when it
 /// creates), as a file this module owns.
 fn owned_at(
@@ -47,15 +56,17 @@ fn owned_at(
 ) -> io::Result<File> {
     org_platform::posix::open_at(parent, name, flags, mode).map(File::from)
 }
+
 fn component(name: &OsStr) -> Result<CString, Error> {
     let p = Path::new(name);
     if p.components().count() != 1
-        || !matches!(p.components().next(),Some(Component::Normal(n)) if n==name)
+        || !matches!(p.components().next(), Some(Component::Normal(n)) if n == name)
     {
         return Err(Error::UnsafeInput);
     }
     CString::new(name.as_bytes()).map_err(|_| Error::UnsafeInput)
 }
+
 fn open_at(parent: &File, name: &OsStr, directory: bool) -> Result<File, Error> {
     let name = component(name)?;
     let flags = libc::O_RDONLY
@@ -66,18 +77,22 @@ fn open_at(parent: &File, name: &OsStr, directory: bool) -> Result<File, Error> 
     // A retained descriptor plus a validated single NUL-terminated component.
     Ok(owned_at(parent, &name, flags, 0)?)
 }
+
 fn directory(file: &File, final_part: bool) -> Result<(), Error> {
     let m = file.metadata()?;
+    let euid = org_platform::posix::effective_uid();
     if !m.is_dir()
-        || (m.uid() != 0 && m.uid() != crate::home::euid())
+        || (m.uid() != 0 && m.uid() != euid)
         || (m.mode() & 0o022 != 0 && (final_part || m.mode() & 0o1000 == 0))
-        || (final_part && (m.uid() != crate::home::euid() || m.mode() & 0o7000 != 0))
+        || (final_part && (m.uid() != euid || m.mode() & 0o7000 != 0))
     {
         return Err(Error::UnsafeInput);
     }
     Ok(())
 }
+
 pub(super) struct Directory(File);
+
 impl Directory {
     /// Freeze bounded compressed input into a caller's already-private prepared
     /// directory. Names are module-generated, never taken from archive members.
@@ -123,6 +138,7 @@ impl Directory {
         frozen.rewind()?;
         Ok(frozen)
     }
+
     pub(super) fn open(path: &Path) -> Result<Self, Error> {
         if !path.is_absolute() || path.as_os_str().len() > 4096 || path.to_str().is_none() {
             return Err(Error::UnsafeInput);
@@ -144,16 +160,19 @@ impl Directory {
         }
         Ok(Self(current))
     }
+
     fn child(&self, name: &str) -> Result<Self, Error> {
         let file = open_at(&self.0, OsStr::new(name), true)?;
         directory(&file, true)?;
         Ok(Self(file))
     }
+
     fn file(&self, name: &str) -> Result<File, Error> {
         let file = open_at(&self.0, OsStr::new(name), false)?;
         identity(&file)?;
         Ok(file)
     }
+
     pub(super) fn payload(&self, path: &str) -> Result<File, Error> {
         let mut parts = path.split('/').peekable();
         let mut current = Self(self.0.try_clone()?);
@@ -165,6 +184,7 @@ impl Directory {
         }
         Err(Error::UnsafeInput)
     }
+
     pub(super) fn read(&self, name: &str, max: usize) -> Result<Vec<u8>, Error> {
         let file = self.file(name)?;
         let before = identity(&file)?;
@@ -179,6 +199,7 @@ impl Directory {
         }
         Ok(bytes)
     }
+
     fn names(&self, limit: usize) -> Result<BTreeSet<String>, Error> {
         // A new open description of the retained directory itself, for an independent
         // enumeration offset: dup would share it, making repeat verification incorrectly see
@@ -192,6 +213,7 @@ impl Directory {
         }
         Ok(names)
     }
+
     pub(super) fn verify_inventory(&self, manifest: &VerifiedManifest) -> Result<(), Error> {
         let mut children = BTreeMap::<String, BTreeSet<String>>::new();
         let mut payloads = BTreeSet::new();

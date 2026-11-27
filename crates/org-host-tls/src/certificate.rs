@@ -1,4 +1,5 @@
 //! The instance's own certificate (ADR-0017 decision 10): made with rcgen over ring.
+
 use org_host_control::listen::{ListenOrigin, OriginHost};
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
@@ -19,7 +20,7 @@ const BACKDATED_SECS: i64 = 300;
 /// [`VALIDITY_DAYS`] days from five minutes before `now` (Unix seconds), with a random
 /// 128-bit serial number. The pair is checked as any other pair ([`super::check`]) before it
 /// is returned. An error names the step, never key material.
-pub(crate) fn make(origin: &ListenOrigin, now: i64) -> Result<Checked, String> {
+pub fn make(origin: &ListenOrigin, now: i64) -> Result<Checked, String> {
     let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(fail("the key"))?;
     let mut params = CertificateParams::default();
     params.subject_alt_names = vec![match origin.host() {

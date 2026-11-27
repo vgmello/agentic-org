@@ -2,8 +2,8 @@
 //! HTTP headers, quoted JSON/log key-value fields, unquoted `key: value` secret fields,
 //! `KEY=value` / query parameter assignments, and recovery codes.
 
-/// Replacement for every redacted secret value.
-pub(crate) const REDACTED: &str = "[REDACTED]";
+/// Replacement for every redacted secret value (re-exported from Layer-0 `org_redact`).
+pub(crate) const REDACTED: &str = org_redact::REDACTED;
 
 pub(super) fn odd_backslashes_before(bytes: &[u8], idx: usize) -> bool {
     bytes[..idx]
@@ -49,53 +49,20 @@ pub(super) fn unquoted_token_len(bytes: &[u8], stops: &[u8]) -> usize {
     len
 }
 
-const SENSITIVE_KEYS: &[&str] = &[
-    "authorization",
-    "proxyauthorization",
-    "apikey",
-    "accesstoken",
-    "refreshtoken",
-    "idtoken",
-    "sessiontoken",
+const CLI_SENSITIVE_KEYS: &[&str] = &[
     "invitetoken",
     "invitationtoken",
     "registrationtoken",
     "resettoken",
-    "clientsecret",
-    "password",
-    "passwd",
-    "pwd",
-    "passphrase",
-    "privatekey",
-    "secret",
-    "secretkey",
     "secretaccesskey",
     "awssecretaccesskey",
     "accesskey",
     "secrethex",
     "secretb64",
     "secretbase64",
-    "token",
-    "credential",
-    "credentials",
-    "sig",
     "signature",
     "recoverycode",
     "recoverycodes",
-    "agentossessiontoken",
-    "anthropicapikey",
-    "anthropicauthtoken",
-    "openaiapikey",
-    "geminiapikey",
-    "googleapikey",
-    "claudecodeoauthtoken",
-    "claudecodeoauthrefreshtoken",
-    "claudecodesessionsoauthtoken",
-    "codexapikey",
-    "xapikey",
-    "xauthtoken",
-    "cookie",
-    "setcookie",
     "masterkey",
     "signingkey",
     "encryptionkey",
@@ -109,40 +76,22 @@ const SENSITIVE_KEYS: &[&str] = &[
     "invite",
 ];
 
-const SENSITIVE_HEADERS: &[&str] = &[
-    "authorization",
-    "proxyauthorization",
-    "cookie",
-    "setcookie",
-    "xapikey",
-    "apikey",
-    "xauthtoken",
-    "authtoken",
-    "privatetoken",
-    "xgoogapikey",
-    "xamzsecuritytoken",
-    "xvaulttoken",
-    "xaccesstoken",
-];
-
 const MAX_QUOTED_KEY: usize = 64;
 
 /// Returns true when a key, header, or variable name identifies a secret value.
+/// Delegates to Layer-0 [`org_redact::is_sensitive_key`] first and adds CLI-specific keys.
 pub(super) fn is_sensitive_key(key: &str) -> bool {
+    if org_redact::is_sensitive_key(key) {
+        return true;
+    }
     let norm = normalize_key(key);
-    if SENSITIVE_KEYS.contains(&norm.as_str()) {
+    if CLI_SENSITIVE_KEYS.contains(&norm.as_str()) {
         return true;
     }
     [
-        "token",
-        "secret",
         "secretkey",
         "accesskey",
-        "apikey",
-        "password",
         "passphrase",
-        "privatekey",
-        "signature",
         "recoverycode",
         "credential",
         "credentials",
@@ -161,44 +110,6 @@ fn normalize_key(key: &str) -> String {
         .collect()
 }
 
-pub(super) fn redact_header_values(input: &str, total: &mut usize) -> String {
-    let bytes = input.as_bytes();
-    let mut out = String::with_capacity(input.len());
-    let mut copied = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b':' || bytes.get(i + 1) == Some(&b':') {
-            i += 1;
-            continue;
-        }
-        let Some((value_start, value_end)) = header_value_span(input, i) else {
-            i += 1;
-            continue;
-        };
-        if &input[value_start..value_end] != REDACTED {
-            out.push_str(&input[copied..value_start]);
-            out.push_str(REDACTED);
-            *total += 1;
-            copied = value_end;
-        }
-        i = value_end.max(i + 1);
-    }
-    out.push_str(&input[copied..]);
-    out
-}
-
-fn header_value_span(input: &str, colon: usize) -> Option<(usize, usize)> {
-    let (name, starts_word) = unquoted_name_before_colon(input, colon);
-    if name.is_empty() || !starts_word || !SENSITIVE_HEADERS.contains(&normalize_key(name).as_str())
-    {
-        return None;
-    }
-    let rest = &input[colon + 1..];
-    let value_start = colon + 1 + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
-    let value_end = header_value_end(input.as_bytes(), value_start);
-    (value_end > value_start).then_some((value_start, value_end))
-}
-
 fn unquoted_name_before_colon(input: &str, colon: usize) -> (&str, bool) {
     let bytes = input.as_bytes();
     let mut name_start = colon
@@ -214,29 +125,6 @@ fn unquoted_name_before_colon(input: &str, colon: usize) -> (&str, bool) {
         starts_word = true;
     }
     (&input[name_start..colon], starts_word)
-}
-
-fn header_value_end(bytes: &[u8], start: usize) -> usize {
-    let mut i = start;
-    while i < bytes.len() {
-        let run = bytes[i..].iter().take_while(|&&b| b == b'\\').count();
-        let at = i + run;
-        match bytes.get(at) {
-            Some(b'\n' | b'\r') => return at,
-            Some(b'n' | b'r') if run % 2 == 1 => return at - 1,
-            Some(b'"') if run % 2 == 1 || closes_json_string(bytes, at) => return i,
-            _ => i = at + 1,
-        }
-    }
-    bytes.len()
-}
-
-fn closes_json_string(bytes: &[u8], idx: usize) -> bool {
-    let next = bytes[idx + 1..]
-        .iter()
-        .find(|b| !matches!(b, b' ' | b'\t'))
-        .copied();
-    matches!(next, None | Some(b',' | b'}' | b']'))
 }
 
 pub(super) fn redact_quoted_key_values(input: &str, total: &mut usize) -> String {

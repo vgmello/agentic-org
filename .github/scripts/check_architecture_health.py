@@ -58,9 +58,9 @@ in pure Python 3 stdlib (zero third-party dependencies, < 2s full-repo execution
    - Verifies Layer-0 foundation crates (`org-proto`, `org-platform`, `org-pki`,
      `org-redact`, `org-store`, `org-agent-runtime`, `org-command`,
      `org-command-catalogue`, `org-sync-proto`, `org-host-control`,
-     `org-office-launch`, plus zero-dep leaf `org-docs` used by `org-command`
-     for bounded YAML parsing) have zero `[dependencies]` or `[build-dependencies]`
-     edges to any higher-layer application/server/host/office/CLI crate.
+     `org-office-launch`, plus zero-dep leaves `org-docs` and `org-release`) have
+     zero `[dependencies]` or `[build-dependencies]` edges to any higher-layer
+     application/server/host/office/CLI crate.
 
 4. Shrink-Only Base Diff (`--base <commit-sha>`):
    - Compares `.github/architecture-boundaries.allow` at `<base>` with the working tree.
@@ -142,9 +142,8 @@ SANDBOX_ADAPTER_PREFIXES = (
 )
 
 # Layer-0 foundation crates (dynamically intersected with actual workspace members).
-# `org-docs` is a zero-workspace-dep pure Markdown/YAML leaf used by `org-command`
-# for `--input-format yaml` and is guarded at Layer-0 too so it cannot create a
-# transitive upward edge from `org-command`.
+# `org-docs` and `org-release` are pure leaf crates guarded at Layer-0 so they cannot
+# acquire upward workspace dependencies into higher-layer crates.
 LAYER_0_FOUNDATION_CRATES = frozenset(
     {
         "org-proto",
@@ -160,7 +159,7 @@ LAYER_0_FOUNDATION_CRATES = frozenset(
         "org-office-launch",
     }
 )
-LAYER_0_LEAF_CRATES = frozenset({"org-docs"})
+LAYER_0_LEAF_CRATES = frozenset({"org-docs", "org-release"})
 LAYER_0_ALLOWED_WORKSPACE_DEPS = LAYER_0_FOUNDATION_CRATES | LAYER_0_LEAF_CRATES
 
 # Dedicated test file/directory names (aligned with file_size_ratchet.rs + testkit*).
@@ -206,6 +205,7 @@ FAST_PATH_TRIGGERS = (
 )
 
 _LEX_MARKERS = ("//", "/*", '"', "'")
+_LEX_PREFIX_MARKERS = ('r"', 'r#', 'b"', 'c"', "b'")
 _DEP_TABLE_KEYS = ("dependencies", "build-dependencies", "build_dependencies")
 _SEMICOLON_ITEM_KWS = frozenset({"use", "type", "static", "const"})
 _BLOCK_ITEM_KWS = frozenset(
@@ -233,16 +233,21 @@ _LEX_RE = re.compile(
     re.VERBOSE,
 )
 
-# Fast regex for files with no `/*` block comments (runs match loop in compiled C).
-_LEX_NO_BLOCK_RE = re.compile(
+# Fast regex for files with no `/*` block comments and no r/b/c string/char prefixes.
+_LEX_SIMPLE_RE = re.compile(
     r"""
       (?P<line_comment>//[^\n]*)
-    | (?P<raw_str>(?<![A-Za-z0-9_])(?:b|c)?r(?P<hashes>\#*)"[\s\S]*?"(?P=hashes))
-    | (?P<str>(?<![A-Za-z0-9_])(?:b|c)?"(?:\\[\s\S]|[^"\\])*")
-    | (?P<char>(?<![A-Za-z0-9_])b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|[^\n])|[^'\\\n])')
+    | (?P<str>"(?:\\[\s\S]|[^"\\])*")
+    | (?P<char>'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|[^\n])|[^'\\\n])')
     """,
     re.VERBOSE,
 )
+
+# Three-character trigger scanner (`//`, `"`, `'`) avoiding `'b'`/`'c'`/`'r'` backtracking
+# on files with raw/byte/c strings and no `/*` block comments.
+_LEX_TRIGGER_RE = re.compile(r'//[^\n]*|"|\'')
+_PLAIN_STR_AT_QUOTE_RE = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+_CHAR_AT_QUOTE_RE = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|[^\n])|[^'\\\n])'")
 
 _CFG_ATTR_START_RE = re.compile(r"#\s*\[\s*cfg\s*\(")
 _STRUCT_TOK_RE = re.compile(
@@ -502,15 +507,99 @@ def _skip_block_comment(src: str, pos: int) -> int:
     return pos
 
 
+def _is_ascii_ident_char(ch: str) -> bool:
+    return ("a" <= ch <= "z") or ("A" <= ch <= "Z") or ("0" <= ch <= "9") or ch == "_"
+
+
+def _has_ident_before(src: str, idx: int) -> bool:
+    return idx > 0 and _is_ascii_ident_char(src[idx - 1])
+
+
+def _prefix_start(src: str, idx: int, min_pos: int, allowed: str) -> int | None:
+    if idx > min_pos and src[idx - 1] in allowed and not _has_ident_before(src, idx - 1):
+        return idx - 1
+    return None if _has_ident_before(src, idx) else idx
+
+
+def _raw_str_prefix_start(src: str, quote_idx: int, min_pos: int) -> tuple[int, int] | None:
+    """Return `(start_idx, hash_count)` if `quote_idx` opens a raw string, else `None`."""
+    j = quote_idx
+    while j > min_pos and src[j - 1] == "#":
+        j -= 1
+    if j <= min_pos or src[j - 1] != "r":
+        return None
+    start = _prefix_start(src, j - 1, min_pos, "bc")
+    return None if start is None else (start, quote_idx - j)
+
+
+def _match_quote_token(src: str, quote_idx: int, min_pos: int) -> tuple[int, int] | None:
+    raw_info = _raw_str_prefix_start(src, quote_idx, min_pos)
+    if raw_info is not None:
+        start, hashes = raw_info
+        closing = '"' + ("#" * hashes)
+        close_idx = src.find(closing, quote_idx + 1)
+        return None if close_idx == -1 else (start, close_idx + len(closing))
+    start = _prefix_start(src, quote_idx, min_pos, "bc")
+    if start is None:
+        return None
+    sm = _PLAIN_STR_AT_QUOTE_RE.match(src, quote_idx)
+    return (start, sm.end()) if sm is not None else None
+
+
+def _match_char_token(src: str, quote_idx: int, min_pos: int) -> tuple[int, int] | None:
+    cm = _CHAR_AT_QUOTE_RE.match(src, quote_idx)
+    if cm is None:
+        return None
+    start = _prefix_start(src, quote_idx, min_pos, "b")
+    return None if start is None else (start, cm.end())
+
+
+def _mask_no_block_with_prefixes(src: str) -> tuple[str, list[tuple[int, int, str]]]:
+    strings: list[tuple[int, int, str]] = []
+    out: list[str] = []
+    pos = 0
+    last = 0
+    n = len(src)
+    while pos < n:
+        m = _LEX_TRIGGER_RE.search(src, pos)
+        if m is None:
+            break
+        q = m.start()
+        ch = src[q]
+        if ch == "/":
+            span: tuple[int, int] | None = (q, m.end())
+        elif ch == "'":
+            span = _match_char_token(src, q, last)
+        else:
+            span = _match_quote_token(src, q, last)
+        if span is None:
+            pos = q + 1
+            continue
+        start, end = span
+        seg = src[start:end]
+        if ch == '"':
+            strings.append((start, end, seg))
+        out.append(src[last:start])
+        out.append(_blank_preserving_newlines(seg))
+        last = pos = end
+    out.append(src[last:])
+    return "".join(out), strings
+
+
 def _mask_without_block_comments(src: str) -> tuple[str, list[tuple[int, int, str]]]:
+    if any(marker in src for marker in _LEX_PREFIX_MARKERS):
+        return _mask_no_block_with_prefixes(src)
     strings: list[tuple[int, int, str]] = []
 
     def _repl(m: re.Match[str]) -> str:
-        if m.lastgroup in ("str", "raw_str"):
-            strings.append((m.start(), m.end(), m.group(0)))
-        return _blank_preserving_newlines(m.group(0))
+        seg = m.group(0)
+        if m.lastgroup == "str":
+            strings.append((m.start(), m.end(), seg))
+        if "\n" not in seg:
+            return " " * len(seg)
+        return "\n".join(" " * len(part) for part in seg.split("\n"))
 
-    return _LEX_NO_BLOCK_RE.sub(_repl, src), strings
+    return _LEX_SIMPLE_RE.sub(_repl, src), strings
 
 
 def mask_comments_and_strings(src: str) -> tuple[str, list[tuple[int, int, str]]]:
@@ -1062,30 +1151,55 @@ def _count_sandbox(
     return code_hits + _count_sandbox_strings(text, string_spans, ranges)
 
 
-def scan_production_file(
+@dataclass
+class CachedRsFile:
+    """Shared raw/masked/cfg-test cache entry reused between scan_workspace and Check #5."""
+
+    raw: str
+    masked: str | None = None
+    cfg_test_ranges: list[tuple[int, int]] | None = None
+
+
+@dataclass
+class WorkspaceSourceCache:
+    """Per-run cache avoiding duplicate directory walks, file reads, and lexical masking."""
+
+    member_files: dict[str, list[Path]] = field(default_factory=dict)
+    files: dict[Path, CachedRsFile] = field(default_factory=dict)
+
+
+def _scan_production_text(
     rel_posix: str, text: str
-) -> tuple[int, int, int, int, int]:
-    """Return `(non_test_loc, rusqlite, unix_socket, sandbox, dead_code_trait)` for one file."""
+) -> tuple[tuple[int, int, int, int, int], str | None, list[tuple[int, int]]]:
     has_fast_trigger = any(trigger in text for trigger in FAST_PATH_TRIGGERS)
     if not has_fast_trigger:
         lower_text = text.lower()
         has_fast_trigger = "bwrap" in lower_text or "seatbelt" in lower_text
     if not has_fast_trigger:
         loc = text.count("\n") + (0 if not text or text.endswith("\n") else 1)
-        return loc, 0, 0, 0, 0
+        return (loc, 0, 0, 0, 0), None, []
 
     code, string_spans = mask_comments_and_strings(text)
     ranges = find_cfg_test_ranges(code)
     loc = count_non_test_lines(text, ranges)
     prod_code = blank_ranges(code, ranges)
 
-    return (
+    metrics = (
         loc,
         _count_rusqlite(rel_posix, prod_code),
         _count_unix_socket(rel_posix, prod_code),
         _count_sandbox(rel_posix, text, prod_code, string_spans, ranges),
         len(find_dead_code_traits(prod_code)),
     )
+    return metrics, code, ranges
+
+
+def scan_production_file(
+    rel_posix: str, text: str
+) -> tuple[int, int, int, int, int]:
+    """Return `(non_test_loc, rusqlite, unix_socket, sandbox, dead_code_trait)` for one file."""
+    metrics, _code, _ranges = _scan_production_text(rel_posix, text)
+    return metrics
 
 
 # ---------------------------------------------------------------------------
@@ -1320,23 +1434,50 @@ def _iter_crate_rs_files(crate_dir: Path) -> list[Path]:
     return found
 
 
+def _rel_posix_fast(path: Path, base: Path, base_prefix: str) -> str:
+    raw = path.as_posix()
+    if raw.startswith(base_prefix):
+        return raw[len(base_prefix) :]
+    return path.relative_to(base).as_posix()
+
+
+def _resolve_rs_fast(rs_path: Path) -> Path:
+    return rs_path.resolve() if os.path.islink(rs_path) else rs_path
+
+
 def scan_workspace(
-    repo_root: Path, members: list[tuple[str, Path, dict[str, Any]]]
+    repo_root: Path,
+    members: list[tuple[str, Path, dict[str, Any]]],
+    *,
+    source_cache: WorkspaceSourceCache | None = None,
 ) -> ScanReport:
     crate_locs: dict[str, int] = {}
     coupling: dict[str, dict[str, int]] = {sec: {} for sec in COUPLING_SECTIONS}
     files_scanned = 0
+    repo_root_res = repo_root.resolve()
+    repo_prefix = f"{repo_root_res.as_posix().rstrip('/')}/"
 
     for pkg_name, member_dir, _data in members:
         loc_total = 0
-        for rs_path in _iter_crate_rs_files(member_dir):
-            rel_to_crate = rs_path.relative_to(member_dir).as_posix()
+        member_res = member_dir.resolve()
+        member_prefix = f"{member_res.as_posix().rstrip('/')}/"
+        rs_files = _iter_crate_rs_files(member_res)
+        if source_cache is not None:
+            source_cache.member_files[pkg_name] = rs_files
+        for rs_path in rs_files:
+            rel_to_crate = _rel_posix_fast(rs_path, member_res, member_prefix)
             if is_test_source_path(rel_to_crate):
                 continue
-            rel_posix = rs_path.relative_to(repo_root).as_posix()
+            rel_posix = _rel_posix_fast(rs_path, repo_root_res, repo_prefix)
             files_scanned += 1
             text = rs_path.read_text(encoding="utf-8", errors="replace")
-            loc, rusq, unix, sbox, dct = scan_production_file(rel_posix, text)
+            (loc, rusq, unix, sbox, dct), masked, ranges = _scan_production_text(rel_posix, text)
+            if source_cache is not None:
+                source_cache.files[_resolve_rs_fast(rs_path)] = CachedRsFile(
+                    raw=text,
+                    masked=masked,
+                    cfg_test_ranges=ranges,
+                )
             loc_total += loc
             if rusq:
                 coupling[SECTION_RUSQLITE][rel_posix] = rusq
@@ -1704,7 +1845,8 @@ def run_health_check(
         allowlist_label = resolved_allowlist.as_posix()
 
     members, workspace_dep_renames = _load_workspace(repo_root)
-    report = scan_workspace(repo_root, members)
+    source_cache = WorkspaceSourceCache()
+    report = scan_workspace(repo_root, members, source_cache=source_cache)
     dag_errors, layer0_checked = check_cargo_dag_and_layer0(
         members, workspace_dep_renames=workspace_dep_renames
     )
@@ -1718,6 +1860,7 @@ def run_health_check(
         cfg_test_fn=find_cfg_test_ranges,
         prev_attr_fn=_prev_outer_attr_span,
         skip_balanced_fn=_skip_balanced,
+        source_cache=source_cache,
     )
 
     if not resolved_allowlist.is_file():

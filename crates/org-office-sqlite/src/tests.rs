@@ -590,6 +590,56 @@ fn partial_commit_failure_poisons_engine_and_reopen_resets_diverged_cursors() {
 }
 
 #[test]
+fn messaging_db_and_sidecars_are_owner_only_0600_inside_0700_protected_dir() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (path, _dir) = place();
+    let engine = SqliteEngine::open(&path).unwrap();
+    commit(&engine, 1);
+
+    let msg_path = super::messaging::messaging_db_path(&path);
+    let protected_dir = msg_path.parent().unwrap();
+    assert_eq!(
+        fs::symlink_metadata(protected_dir)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o700
+    );
+    assert_eq!(
+        fs::symlink_metadata(&msg_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+
+    // Loosen sidecars and verify reopening tightens messaging.db + -wal/-shm back to 0600.
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = beside(&msg_path, suffix);
+        if sidecar.exists() {
+            fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
+    drop(engine);
+
+    let _reopened = SqliteEngine::open(&path).unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+        let target = beside(&msg_path, suffix);
+        if target.exists() {
+            assert_eq!(
+                fs::symlink_metadata(&target).unwrap().permissions().mode() & 0o7777,
+                0o600,
+                "expected 0600 on {}",
+                target.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn corrupt_companion_databases_rebuild_cleanly_and_torn_jsonl_tail_is_tolerated() {
     use org_office::accounting::AccountingStore;
     use org_office::budgets::{BudgetAggregate, BudgetPolicyVersion, BudgetRecord, BudgetStore};

@@ -32,7 +32,17 @@ fn active_satellite_imports() -> &'static Mutex<BTreeSet<PathBuf>> {
 pub(super) struct StagedImportGuard(PathBuf);
 
 fn remove_abandoned_staging_entry(path: &Path) -> Result<(), String> {
-    let remove_res = if path.is_dir() {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(format!(
+                "failed reconciling abandoned snapshot staging {}: {err}",
+                path.display()
+            ));
+        }
+    };
+    let remove_res = if meta.file_type().is_dir() {
         fs::remove_dir_all(path)
     } else {
         fs::remove_file(path)

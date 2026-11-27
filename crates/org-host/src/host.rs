@@ -434,7 +434,7 @@ fn start_tls_renewal(
         return Ok(None);
     };
     let announcing = Arc::downgrade(service);
-    let renewal = web_tls::Renewal::start(
+    let renewal = web_tls::start_renewal(
         tls,
         web_tls::RENEW_EVERY,
         Box::new(move || {

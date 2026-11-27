@@ -1,7 +1,8 @@
 //! Actual child SIGKILL recovery; private generated-key mechanical fixtures only.
+
 use super::*;
 use std::{
-    io::Write,
+    io::{Read, Write},
     os::unix::process::ExitStatusExt,
     process::{Command, Stdio},
 };
@@ -69,8 +70,6 @@ fn killed_process_reopens_frozen_publication_without_new_decisions_or_source_rea
         Step::Pinned,
     ] {
         let mut f = Fixture::new();
-        // Only this fixture uses the child protocol; no environmental pathname
-        // can make the helper operate on an unmarked directory.
         let child_root = tempfile::Builder::new()
             .prefix("org-release-crash-")
             .tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())
@@ -92,7 +91,7 @@ fn killed_process_reopens_frozen_publication_without_new_decisions_or_source_rea
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "release::store::tests::process::release_crash_child_entry",
+                "store::tests::process::release_crash_child_entry",
                 "--nocapture",
                 "--test-threads=1",
             ])
@@ -136,6 +135,5 @@ fn killed_process_reopens_frozen_publication_without_new_decisions_or_source_rea
                 b"abc"
             );
         }
-        println!("actual generated release child SIGKILL {boundary:?}: exact frozen recovery PASS");
     }
 }

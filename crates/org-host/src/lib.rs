@@ -76,7 +76,7 @@ mod provisioning;
 mod recovery;
 mod recovery_permission;
 mod registered;
-pub mod release;
+pub use org_host_release as release;
 mod secrets;
 mod server_check;
 mod service;
@@ -92,7 +92,7 @@ pub mod web_tls;
 mod writer;
 
 #[cfg(test)]
-mod test_programs;
+mod test_programs_tests;
 
 pub use config::{
     default_office_home, default_release_store_dir, default_server_program, harden_process, Config,
@@ -106,17 +106,11 @@ pub use ports::{HostPorts, HostStoreOpener};
 pub mod test_support;
 
 pub use crate::app_auth::APP_BUNDLE_ID;
-pub use crate::server_check::OFFICE_SIGNING_ID;
-pub use crate::server_check::WEB_SIGNING_ID;
-
-/// The host's own signing identifier (ADR-0003 §2.1), for the bundle's signing of
-/// the agentic-org executable in host mode. The signing identifier remains stable
-/// across the executable migration; agent-os must never receive this entitlement.
-pub const HOST_SIGNING_ID: &str = "com.vgmello.agentic-org.org-office-host";
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
 pub use crate::web::BrowserListener;
+pub use org_host_release::signing::{HOST_SIGNING_ID, OFFICE_SIGNING_ID, WEB_SIGNING_ID};
 
 /// The office server's program name, looked for next to the host's own executable.
 pub const SERVER_PROGRAM_NAME: &str = "agentic-org-office";
