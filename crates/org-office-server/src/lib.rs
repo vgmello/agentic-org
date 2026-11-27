@@ -22,6 +22,7 @@ mod bounded;
 mod chat_calls;
 mod cost_calls;
 mod directory;
+mod doc_calls;
 mod failure;
 pub mod fdswap;
 pub mod federation;

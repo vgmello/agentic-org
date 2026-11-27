@@ -132,7 +132,7 @@ impl ApiReply {
                 WebErrorCode::InvalidRequest,
                 "Method not allowed.",
             )
-            .with_header(ALLOW, HeaderValue::from_static("GET, HEAD, POST")),
+            .with_header(ALLOW, HeaderValue::from_static("GET, HEAD, POST, PATCH")),
             ApiRefusal::CrossSite | ApiRefusal::Origin => Self::error(
                 StatusCode::FORBIDDEN,
                 WebErrorCode::NotAuthorized,

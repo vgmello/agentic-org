@@ -55,7 +55,7 @@ impl RequestAdmission {
         if !self.accepts_api_origin(request) {
             return Err(ApiRefusal::Origin);
         }
-        if request.method == Method::POST && !json_content_type(request) {
+        if matches!(request.method, Method::POST | Method::PATCH) && !json_content_type(request) {
             return Err(ApiRefusal::MediaType);
         }
         Ok(())
