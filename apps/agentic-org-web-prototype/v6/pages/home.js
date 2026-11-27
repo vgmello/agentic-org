@@ -486,7 +486,9 @@ function spotlightClearedHtml(st, queue, open, allQueueCleared) {
       </section>`;
 }
 
-function spotlightUpNextHtml(queue, it) {
+/* Owner: Home doesn't show an "Up next" row; the dots and arrows already step through the queue */
+function spotlightUpNextHtml() { return ""; }
+function spotlightUpNextHtmlUnused(queue, it) {
   if (queue.length < 2) return "";
   let nextIdx = -1;
   for (let step = 1; step < queue.length; step++) {

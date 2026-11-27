@@ -1441,3 +1441,19 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 /* Where task time goes: header outside like the other Home sections */
 .hb-time-sec { display: flex; flex-direction: column; gap: 12px; }
 .hb-time-sec > .sec-head { margin: 0; }
+
+/* Owner: every theme lays out Home's decision card and Executive digest like Report — flat on the page, no outer
+   panel box; a thin rule separates the two columns. (Report's own rules are more specific and still apply.) */
+@media (min-width: 900px) {
+  #main html:not([data-theme^="report"]) .hb-spot, html:not([data-theme^="report"]) #main .hb-spot {
+    border-radius: 0; border: 0; box-shadow: none; background: transparent; padding: 0 38px 0 0;
+  }
+  html:not([data-theme^="report"]) #main .hb-spot::before { display: none; }
+  html:not([data-theme^="report"]) #main .hb-catchup {
+    border-radius: 0; border: 0; box-shadow: none; background: transparent;
+    border-inline-start: 1px solid var(--line); padding: 0 0 0 38px;
+  }
+}
+/* No stretched gap above the actions: the footer follows the content instead of sinking to the column bottom */
+html #main .hb-spot > .hb-spot-main { flex-grow: 0; }
+html #main .hb-spot > .hb-spot-foot { margin-top: 4px; }
