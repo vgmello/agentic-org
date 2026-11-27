@@ -10,13 +10,15 @@ use org_store::{Actor, Id, Outcome, StoreError};
 use crate::error::OfficeError;
 use crate::git;
 use crate::office::{storage, Office};
-use crate::organization::features::{OrgRejection, RejectCode};
+use crate::organization::ops::{OrgRejection, NOT_AUTHORIZED};
 use crate::organization::records::{is_stable_id, Repository};
-use crate::projects::features::{resolve_repository, AttachProjectRepository, RegisterRepository};
+use crate::projects::features::{AttachProjectRepository, RegisterRepository};
+use crate::projects::records::resolve_repository;
 use crate::store::open::{
     AttachProjectRepositoryOp, ProjectInspectByRef, RecordTaskRepoBranchOp, RegisterRepositoryOp,
     RepositoriesList, RepositoryResolve, TaskGitContext, TaskGitContextRead,
 };
+use crate::structure::wire::rejection_code;
 
 /// One listed repository with optional per-project `integration_branch`.
 #[derive(Debug, Clone)]
@@ -25,23 +27,9 @@ pub struct ListedRepository {
     pub integration_branch: Option<String>,
 }
 
-fn rejection_to_api(rej: OrgRejection) -> ApiError {
-    let code = match rej.code {
-        RejectCode::NotFound => ErrorCode::NotFound,
-        RejectCode::InvalidRequest => ErrorCode::InvalidRequest,
-        RejectCode::InvalidName => ErrorCode::InvalidName,
-        RejectCode::OwnerProtected => ErrorCode::OwnerProtected,
-        RejectCode::Cycle => ErrorCode::Cycle,
-        RejectCode::NotEmpty => ErrorCode::NotEmpty,
-        RejectCode::Conflict => ErrorCode::Conflict,
-        RejectCode::AlreadyExists => ErrorCode::AlreadyExists,
-    };
-    ApiError::new(code, rej.message)
-}
-
 fn decode_org_reply(bytes: &[u8]) -> ApiError {
     serde_json::from_slice::<OrgRejection>(bytes)
-        .map(rejection_to_api)
+        .map(|rej| ApiError::new(rejection_code(rej.code), rej.message))
         .unwrap_or_else(|_| {
             ApiError::new(ErrorCode::InvalidRequest, "repository operation refused")
         })
@@ -64,10 +52,7 @@ impl Office {
         remote_url: Option<String>,
     ) -> Result<Result<Repository, ApiError>, OfficeError> {
         if member != self.owner.as_str() {
-            return Ok(Err(ApiError::new(
-                ErrorCode::NotAuthorized,
-                crate::organization::features::NOT_AUTHORIZED,
-            )));
+            return Ok(Err(ApiError::new(ErrorCode::NotAuthorized, NOT_AUTHORIZED)));
         }
         if !is_stable_id(command_id) {
             return Ok(Err(ApiError::new(
@@ -129,10 +114,7 @@ impl Office {
         integration_branch: String,
     ) -> Result<Result<ProjectRepositoryLinkWire, ApiError>, OfficeError> {
         if member != self.owner.as_str() {
-            return Ok(Err(ApiError::new(
-                ErrorCode::NotAuthorized,
-                crate::organization::features::NOT_AUTHORIZED,
-            )));
+            return Ok(Err(ApiError::new(ErrorCode::NotAuthorized, NOT_AUTHORIZED)));
         }
         if !is_stable_id(command_id) {
             return Ok(Err(ApiError::new(
@@ -269,11 +251,7 @@ impl Office {
         branch: String,
         integrated_commit: Option<String>,
     ) -> Result<Result<(), ApiError>, OfficeError> {
-        if let Err(err) = super::tasks::ensure_local_task_write_authority(self, task_id.as_str())? {
-            return Ok(Err(err));
-        }
-        let enforce_satellite_office_id = (self.info.role == crate::model::OfficeRole::Satellite)
-            .then(|| self.identity.office_id.clone());
+        let authority = self.task_write_authority()?;
         let res = self
             .store
             .run(RecordTaskRepoBranchOp {
@@ -283,7 +261,7 @@ impl Office {
                 repository_id: repository_id.clone(),
                 branch,
                 integrated_commit,
-                enforce_satellite_office_id,
+                authority,
             })
             .map_err(storage)?;
         if res.is_ok() {

@@ -1,4 +1,9 @@
-//! High-level unified tasks facade on [`Office`] (`TASK-49`, `TASK-77`).
+//! High-level unified tasks facade on [`Office`] (`TASK-49`, `TASK-77`, `TASK-218`).
+//!
+//! Single-office task write authority (`TASK-52`, `TASK-192`) is enforced atomically inside each
+//! mutation's `UnitOfWork` via [`TaskWriteAuthority`] rather than via a pre-commit snapshot check.
+
+use std::collections::BTreeSet;
 
 use org_proto::attachments::{TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX};
 use org_proto::tasks::{
@@ -10,11 +15,12 @@ use org_proto::tasks::{
     TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams, TasksUpdateParams,
     TasksWatchParams,
 };
-use org_proto::{ApiError, ErrorCode};
+use org_proto::ApiError;
 
 use crate::error::OfficeError;
 use crate::model::OfficeRole;
 use crate::office::{storage, Office};
+use crate::organization::records::OfficeRole as RecordOfficeRole;
 use crate::store::open::task_ops::{
     TaskAddDependencyOp, TaskAssignOp, TaskChecklistAddOp, TaskChecklistCheckOp,
     TaskChecklistEditOp, TaskChecklistMoveOp, TaskChecklistRemoveOp, TaskCommentOp,
@@ -23,56 +29,64 @@ use crate::store::open::task_ops::{
     TaskUnwatchOp, TaskUpdateOp, TaskWatchOp,
 };
 use crate::tasks::features::TaskWriteOutcome;
-
-/// Enforces single-office task writer authority BEFORE committing a task mutation (`TASK-52` P3-#9 /
-/// P4-#6 / P5-#7):
-/// - A satellite may only locally mutate tasks whose `office_code` belongs to that satellite.
-/// - HQ may locally mutate tasks owned by HQ OR recovered tasks whose `office_code` was retired
-///   (e.g. R1/D25 lost-HQ replacement), while refusing edits to tasks owned by an active satellite.
-pub(super) fn ensure_local_task_write_authority(
-    office: &Office,
-    task_ref: &str,
-) -> Result<Result<(), ApiError>, OfficeError> {
-    if office.info.role == OfficeRole::Hq && !office.is_multi_office()? {
-        return Ok(Ok(()));
-    }
-    let inspect = match office.task_inspect(task_ref)? {
-        Ok(res) => res,
-        // Let the underlying command return canonical `NotFound` / `InvalidRequest`;
-        // fail closed on `StorageError` or any other non-lookup error (`TASK-192`).
-        Err(api_err)
-            if matches!(
-                api_err.code,
-                ErrorCode::NotFound | ErrorCode::InvalidRequest
-            ) =>
-        {
-            return Ok(Ok(()));
-        }
-        Err(api_err) => return Ok(Err(api_err)),
-    };
-    if office.has_local_task_write_authority_for_code(&inspect.task.office_code)? {
-        return Ok(Ok(()));
-    }
-    Ok(Err(ApiError::new(
-        ErrorCode::NotAuthorized,
-        format!(
-            "office {} cannot locally modify task {} owned by office code {}; submit edits to the owning office",
-            office.info.office_id, inspect.task.key, inspect.task.office_code
-        ),
-    )))
-}
+use crate::tasks::ops::TaskWriteAuthority;
 
 impl Office {
+    /// Builds the [`TaskWriteAuthority`] checked atomically inside every task mutation's
+    /// `UnitOfWork` against the live transaction view (`TASK-218`).
+    pub(super) fn task_write_authority(&self) -> Result<TaskWriteAuthority, OfficeError> {
+        let role = match self.info.role {
+            OfficeRole::Hq => RecordOfficeRole::Hq,
+            OfficeRole::Satellite => RecordOfficeRole::Satellite,
+        };
+        let removed_offices = if role == RecordOfficeRole::Hq {
+            crate::office::invitations::removed_satellite_offices(self)?
+        } else {
+            BTreeSet::new()
+        };
+        Ok(TaskWriteAuthority::Local {
+            office_id: self.identity.office_id.clone(),
+            role,
+            removed_offices,
+        })
+    }
+
     /// Returns whether this office holds local write authority for a task numbered with
     /// `task_office_code` (`TASK-52`, `TASK-192`).
     pub fn has_local_task_write_authority_for_code(
         &self,
         task_office_code: &str,
     ) -> Result<bool, OfficeError> {
-        if self.info.role == OfficeRole::Hq && !self.is_multi_office()? {
-            return Ok(true);
-        }
         crate::office::satellite::has_local_task_write_authority(self, task_office_code)
+    }
+
+    fn run_task_write<O>(&self, op: O) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError>
+    where
+        O: crate::store::open::StoreOp<
+            Out = Result<Result<TaskWriteOutcome, ApiError>, org_store::StoreError>,
+        >,
+    {
+        let res = self.store.run(op).map_err(storage)?;
+        if res.is_ok() {
+            let _ = self.sync_satellite_work_outbox();
+        }
+        Ok(res)
+    }
+
+    fn run_checklist_write<O>(
+        &self,
+        op: O,
+    ) -> Result<Result<(TasksChecklistResult, bool), ApiError>, OfficeError>
+    where
+        O: crate::store::open::StoreOp<
+            Out = Result<Result<(TasksChecklistResult, bool), ApiError>, org_store::StoreError>,
+        >,
+    {
+        let res = self.store.run(op).map_err(storage)?;
+        if res.is_ok() {
+            let _ = self.sync_satellite_work_outbox();
+        }
+        Ok(res)
     }
 
     pub fn task_create(
@@ -113,9 +127,7 @@ impl Office {
         actor: &str,
         params: TasksUpdateParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
+        let authority = self.task_write_authority()?;
         let prepared_files = match self.prepare_task_files(
             actor,
             Some(&params.task),
@@ -133,6 +145,7 @@ impl Office {
                 actor: actor.to_owned(),
                 params,
                 prepared_files,
+                authority,
             })
             .map_err(storage)?;
         if res.is_ok() {
@@ -147,20 +160,12 @@ impl Office {
         actor: &str,
         params: TasksTransitionParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskTransitionOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_task_write(TaskTransitionOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     /// Sets a task's attributed final summary (`TASK-88`).
@@ -169,20 +174,12 @@ impl Office {
         actor: &str,
         params: TasksFinalSummaryParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskFinalSummaryOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_task_write(TaskFinalSummaryOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_assign(
@@ -190,20 +187,12 @@ impl Office {
         actor: &str,
         params: TasksAssignParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskAssignOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_task_write(TaskAssignOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_comment(
@@ -211,9 +200,7 @@ impl Office {
         actor: &str,
         params: TasksCommentParams,
     ) -> Result<Result<(TasksCommentResult, bool), ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
+        let authority = self.task_write_authority()?;
         let prepared_files = match self.prepare_task_files(
             actor,
             Some(&params.task),
@@ -231,6 +218,7 @@ impl Office {
                 actor: actor.to_owned(),
                 params,
                 prepared_files,
+                authority,
             })
             .map_err(storage)?;
         if res.is_ok() {
@@ -245,20 +233,12 @@ impl Office {
         actor: &str,
         params: TasksWatchParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskWatchOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_task_write(TaskWatchOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_unwatch(
@@ -266,20 +246,12 @@ impl Office {
         actor: &str,
         params: TasksUnwatchParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskUnwatchOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_task_write(TaskUnwatchOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_add_dependency(
@@ -287,20 +259,12 @@ impl Office {
         actor: &str,
         params: TasksAddDependencyParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskAddDependencyOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_task_write(TaskAddDependencyOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_remove_dependency(
@@ -308,20 +272,12 @@ impl Office {
         actor: &str,
         params: TasksRemoveDependencyParams,
     ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskRemoveDependencyOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_task_write(TaskRemoveDependencyOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_checklist_add(
@@ -329,20 +285,12 @@ impl Office {
         actor: &str,
         params: TasksChecklistAddParams,
     ) -> Result<Result<(TasksChecklistResult, bool), ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskChecklistAddOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_checklist_write(TaskChecklistAddOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_checklist_check(
@@ -350,20 +298,12 @@ impl Office {
         actor: &str,
         params: TasksChecklistCheckParams,
     ) -> Result<Result<(TasksChecklistResult, bool), ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskChecklistCheckOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_checklist_write(TaskChecklistCheckOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_checklist_edit(
@@ -371,20 +311,12 @@ impl Office {
         actor: &str,
         params: TasksChecklistEditParams,
     ) -> Result<Result<(TasksChecklistResult, bool), ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskChecklistEditOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_checklist_write(TaskChecklistEditOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_checklist_remove(
@@ -392,20 +324,12 @@ impl Office {
         actor: &str,
         params: TasksChecklistRemoveParams,
     ) -> Result<Result<(TasksChecklistResult, bool), ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskChecklistRemoveOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_checklist_write(TaskChecklistRemoveOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_checklist_move(
@@ -413,20 +337,12 @@ impl Office {
         actor: &str,
         params: TasksChecklistMoveParams,
     ) -> Result<Result<(TasksChecklistResult, bool), ApiError>, OfficeError> {
-        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
-            return Ok(Err(err));
-        }
-        let res = self
-            .store
-            .run(TaskChecklistMoveOp {
-                actor: actor.to_owned(),
-                params,
-            })
-            .map_err(storage)?;
-        if res.is_ok() {
-            let _ = self.sync_satellite_work_outbox();
-        }
-        Ok(res)
+        let authority = self.task_write_authority()?;
+        self.run_checklist_write(TaskChecklistMoveOp {
+            actor: actor.to_owned(),
+            params,
+            authority,
+        })
     }
 
     pub fn task_list(

@@ -20,8 +20,8 @@ use crate::time::format_rfc3339_ms;
 use super::attachments::stale_revision_refusal;
 use super::summary::validate_final_summary;
 use super::{
-    parse_uuid_v7, refuse, require_active_employee, require_task, rewrite_task, storage_refusal,
-    validate_i64_u64,
+    parse_uuid_v7, refuse, require_active_employee, require_local_task_write_authority,
+    require_task, rewrite_task, storage_refusal, validate_i64_u64, TaskWriteAuthority,
 };
 
 /// How many unticked steps a `checklist_incomplete` message names, and how much of each.
@@ -66,6 +66,8 @@ fn incomplete(unticked: &[&ChecklistStepRecord]) -> Refusal {
 pub struct TransitionTask {
     pub actor_member_id: String,
     pub params: TasksTransitionParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl TransitionTask {
@@ -76,6 +78,7 @@ impl TransitionTask {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         if task.meta.revision != self.params.expected_revision {
             return Err(stale_revision_refusal(
                 uow.view(),

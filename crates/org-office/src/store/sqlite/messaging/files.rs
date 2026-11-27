@@ -162,6 +162,16 @@ pub(super) fn message_files(
     Ok(files)
 }
 
+/// Attaches a message's projected file rows onto a decoded [`MessageRecord`].
+pub(super) fn attach_attachments(
+    db: &Connection,
+    scope: &str,
+    mut msg: MessageRecord,
+) -> Result<MessageRecord, EngineError> {
+    msg.attachments = message_files(db, scope, &msg)?;
+    Ok(msg)
+}
+
 /// Replaces one participant's answer file rows with those its answer names.
 pub(super) fn put_answer_files(
     db: &Connection,

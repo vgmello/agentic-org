@@ -13,6 +13,14 @@ pub trait ProcessesRead: OrganizationRead {
     fn structure_documents(&self) -> Result<Vec<StructureDocument>, EngineError>;
 }
 
+/// Minimal project metadata needed when validating a project-scoped process write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessProjectInfo {
+    pub id: Id,
+    pub owner_team_id: Id,
+    pub archived: bool,
+}
+
 /// The projects a structure document may be scoped to. The processes family declares the one
 /// read of projects it needs; the projects family provides it for every [`ProjectsRead`]
 /// (`crate::projects::ports`), so this family never depends on that one.
@@ -21,6 +29,11 @@ pub trait ProcessesRead: OrganizationRead {
 pub trait KnownProjects {
     /// The ID of every project in this organization.
     fn project_ids(&self) -> Result<Vec<Id>, EngineError>;
+    /// Resolves a project by ID, `P-<number>` reference, or slug for process write scoping.
+    fn resolve_process_project(
+        &self,
+        reference: &str,
+    ) -> Result<Option<ProcessProjectInfo>, EngineError>;
 }
 
 /// Write operations on projected `structure_documents` inside a store transaction.

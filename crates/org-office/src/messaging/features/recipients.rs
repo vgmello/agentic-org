@@ -9,6 +9,7 @@ use org_proto::ErrorCode;
 use org_store::{Change, Id, OfficeIdentity, Refusal};
 
 use crate::messaging::{
+    auto_channels::all_conversations_including_auto,
     mentions::MentionCandidate,
     ports::MessagingRead,
     records::{
@@ -18,8 +19,8 @@ use crate::messaging::{
 };
 use crate::organization::records::Employee;
 
-use super::conversations::{all_conversations_including_auto, find_channel};
-use super::{is_active_employee, refusal, resolve_employee};
+use super::conversations::find_channel;
+use super::{is_addressable_employee, refusal, resolve_employee};
 
 pub(in crate::messaging) fn resolve_send_target(
     read: &impl MessagingRead,
@@ -58,7 +59,7 @@ pub(in crate::messaging) fn resolve_send_target(
     }
     // 3. Employee (DM) by owner / id / handle
     if let Ok(target_emp) = resolve_employee(employees, owner, trimmed) {
-        if !is_active_employee(target_emp) {
+        if !is_addressable_employee(target_emp) {
             return Err(refusal(
                 ErrorCode::UnknownRecipient,
                 "recipient is not active",
@@ -272,7 +273,7 @@ pub(crate) fn build_mention_candidates(
 ) -> Vec<MentionCandidate> {
     let mut out = Vec::new();
     for e in employees {
-        if !is_active_employee(e) || !active_members.contains(&e.id) {
+        if !is_addressable_employee(e) || !active_members.contains(&e.id) {
             continue;
         }
         out.push(MentionCandidate {

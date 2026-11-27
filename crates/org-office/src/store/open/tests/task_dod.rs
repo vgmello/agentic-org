@@ -31,6 +31,7 @@ use crate::store::open::{
     ProjectInspectByRef, SetOrganizationDefaultDodOp, SetProjectDefaultDodOp, UpdateTeamOp,
 };
 use crate::tasks::features::create::dod_step_id;
+use crate::tasks::ops::TaskWriteAuthority;
 
 use super::*;
 
@@ -265,6 +266,7 @@ impl Org {
                     required,
                     section,
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("step added");
@@ -281,6 +283,7 @@ impl Org {
                     step_id: step.to_owned(),
                     done: true,
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("step checked");
@@ -297,6 +300,7 @@ impl Org {
                     position,
                     section,
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("step moved");
@@ -323,6 +327,7 @@ impl Org {
                     done_anyway_reason: change.reason.map(str::to_owned),
                     final_summary: change.summary.map(str::to_owned),
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .map(|o| o.task)
@@ -345,6 +350,7 @@ impl Org {
                     expected_revision: revision,
                     final_summary: text.to_owned(),
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .map(|o| o.task)
@@ -457,6 +463,7 @@ fn sections(s: &Org, task: &str) {
                 task: task.to_owned(),
                 step_id: ac2,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .expect("removed");
@@ -831,6 +838,7 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
                     attachment_ids: vec![],
                 },
                 prepared_files: Default::default(),
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("commented");
@@ -841,6 +849,7 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
                     command_id: uuid(),
                     task: task.clone(),
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("watched");
@@ -859,6 +868,7 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
                 actor: s.carol.as_str().to_owned(),
                 params: update,
                 prepared_files: Default::default(),
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("updated");

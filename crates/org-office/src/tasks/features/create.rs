@@ -34,6 +34,7 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::organization::records::EmployeeKind;
+use crate::tasks::ops::{child_bytes, derive_link_id, derived_id, task_location, too_deep, Writer};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{
     self, normalize_file_paths, normalize_labels, ChecklistStepRecord, OfficeTaskCounterRecord,
@@ -42,8 +43,6 @@ use crate::tasks::records::{
 use crate::time::format_rfc3339_ms;
 
 use super::attachments::PreparedTaskFiles;
-use super::core::{derive_link_id, derived_id};
-use super::write::{child_bytes, task_location, too_deep, Writer};
 use super::{
     parse_details, parse_uuid_v7, refuse, require_active_employee, require_office_code,
     require_task, storage_refusal, validate_active_employee, validate_active_team, validate_body,

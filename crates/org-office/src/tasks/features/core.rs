@@ -10,69 +10,24 @@ use org_proto::attachments::{
 use org_proto::tasks::{PatchField, TasksAssignParams, TasksUpdateParams, TASK_MAX_DEPENDENCIES};
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::attachments::records::AttachmentRecord;
 use crate::organization::records::EmployeeKind;
+use crate::tasks::ops::{
+    current_attachments, current_links, derive_link_id, require_local_task_write_authority,
+    rewrite_task, task_location, TaskWriteAuthority, Writer,
+};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{normalize_file_paths, normalize_labels, TaskLinkRecord, TaskRecord};
 use crate::time::format_rfc3339_ms;
 
 use super::attachments::{stale_revision_refusal, PreparedTaskFiles};
-use super::write::{current_attachments, current_links, task_location, Writer};
 use super::{
     check_dependency_acyclic, parse_details, parse_uuid_v7, refuse, require_active_employee,
     require_task, storage_refusal, validate_active_employee, validate_active_team, validate_body,
     validate_task_type, validate_title,
 };
-
-/// A core mutation of `task`, already advanced to its next revision: `task.md` with the
-/// task's links and attachments as they stand and that revision's event, answered `durable` (`doc-79`).
-pub(crate) fn rewrite_task<R: TasksRead>(
-    view: &R,
-    task: &TaskRecord,
-    actor_id: &Id,
-    at: &str,
-    command_id: &str,
-    event: Value,
-) -> Result<Change, Refusal> {
-    let location = task_location(view, task)?;
-    let links = current_links(view, task)?;
-    let attachments = current_attachments(view, task)?;
-    Writer::new(view, actor_id, at, command_id)?.task_and_event(
-        Change::new(Ack::Durable),
-        &location,
-        task,
-        &links,
-        &attachments,
-        event,
-    )
-}
-
-pub(crate) fn derive_link_id(source: &Id, target: &Id, salt: u32) -> Id {
-    let salt_bytes = salt.to_be_bytes();
-    derived_id(&[
-        b"task-link-v1:",
-        source.as_str().as_bytes(),
-        b"->",
-        target.as_str().as_bytes(),
-        &salt_bytes,
-    ])
-}
-
-/// A UUIDv7-shaped ID derived from `parts` alone, so a retry derives the same one.
-pub(crate) fn derived_id(parts: &[&[u8]]) -> Id {
-    let digest = org_store::Sha256::of_parts(parts);
-    let mut b = [0u8; 16];
-    b.copy_from_slice(&digest.as_bytes()[..16]);
-    b[6] = (b[6] & 0x0f) | 0x70;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let formatted = format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
-    );
-    Id::parse(&formatted).expect("derived UUIDv7 id")
-}
 
 /// Updates core task fields, `rank_order`, `labels`, `reference_files`, `modified_files`,
 /// `details`, and task attachments (`TASK-98.4`).
@@ -81,6 +36,8 @@ pub struct UpdateTask {
     pub params: TasksUpdateParams,
     /// Validated, blob-promoted files for `params.add_attachments` (`TASK-98.4`).
     pub prepared_files: PreparedTaskFiles,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl UpdateTask {
@@ -91,6 +48,7 @@ impl UpdateTask {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         if task.meta.revision != self.params.expected_revision {
             return Err(stale_revision_refusal(
                 uow.view(),
@@ -373,6 +331,8 @@ fn apply_file_role_update(
 pub struct AssignTask {
     pub actor_member_id: String,
     pub params: TasksAssignParams,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl AssignTask {
@@ -386,6 +346,7 @@ impl AssignTask {
         let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         if task.meta.revision != self.params.expected_revision {
             return Err(stale_revision_refusal(
                 uow.view(),

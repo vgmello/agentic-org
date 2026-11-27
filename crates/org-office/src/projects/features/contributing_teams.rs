@@ -4,11 +4,7 @@ use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 use serde::Serialize;
 
 use crate::organization::{
-    features::{
-        changed,
-        shared::{admit, check_revision, reject, touched},
-        stable, Op, RejectCode,
-    },
+    ops::{admit, changed, check_revision, reject, stable, touched, Op, RejectCode},
     ports::OrganizationRead,
 };
 use crate::projects::{ports::ProjectsRead, records};

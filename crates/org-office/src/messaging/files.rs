@@ -14,15 +14,13 @@ use std::collections::BTreeSet;
 use org_proto::attachments::{ArtifactStatus, AttachmentFilter, AttachmentMeta};
 use org_proto::chat::ConversationKind;
 use org_proto::ErrorCode;
-use org_store::{EngineError, Id, Refusal, Sha256};
+use org_store::{Id, Refusal, Sha256};
 
 use crate::authz::{
     AuthorizationPolicy, Denied, ParentFacts, PrincipalContext, ResourceFacts, ResourceRef,
 };
-use crate::error::OfficeError;
+use crate::error::{api_refusal as refusal, OfficeError};
 
-use super::features::{effective_auto_members, refusal};
-use super::ports::MessagingRead;
 use super::records::{ConversationRecord, MessageAttachmentRecord};
 
 /// The scope a message's files are bound in.
@@ -307,24 +305,6 @@ pub fn metas(
         .iter()
         .map(|f| to_meta(f, created_at, uploaded_by))
         .collect()
-}
-
-/// Who may read a conversation's files and post into it, as the policy needs it: its effective
-/// members, and whether it is a channel (which every employee reads). `None` when it is not
-/// held here.
-pub fn conversation_access(
-    read: &impl MessagingRead,
-    conversation_id: &Id,
-    owner: &Id,
-) -> Result<Option<(BTreeSet<String>, bool)>, EngineError> {
-    let Some(conversation) = read.conversation(conversation_id)? else {
-        return Ok(None);
-    };
-    let members = effective_auto_members(read, &conversation, owner)?;
-    Ok(Some((
-        members.iter().map(Id::to_string).collect(),
-        conversation.kind == ConversationKind::Channel,
-    )))
 }
 
 /// Whether a record with these files passes a `has:image` / `has:file` filter.

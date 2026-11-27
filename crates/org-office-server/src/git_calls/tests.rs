@@ -668,12 +668,44 @@ fn git_stderr_redaction_and_strict_ssh_host_validation() {
         "benign task-123 corrupted: {redacted}"
     );
     assert!(
-        redacted.contains("HTTPS://<redacted>@github.com/org/repo.git?"),
+        redacted.contains("HTTPS://[REDACTED]@github.com/org/repo.git?"),
         "{redacted}"
     );
     let utf8_boundary = format!("{}ééé", "a".repeat(511));
     let truncated = scrub_git_log_text(&utf8_boundary);
     assert!(truncated.ends_with("...[truncated]"), "{truncated}");
+    assert!(
+        truncated.len() <= 512,
+        "truncated exceeds 512 bytes: {}",
+        truncated.len()
+    );
+
+    // Adversarial redaction checks via org_office_sessions::redact choke-point + Git env scrubbing:
+    // multi-byte UTF-8 straddling the truncation cut, mixed-case headers/env vars, multiple
+    // secrets on one line, and unterminated PEM blocks failing closed.
+    let utf8_cut = format!("{}é{}", "a".repeat(497), "b".repeat(30));
+    let cut_out = scrub_git_log_text(&utf8_cut);
+    assert!(cut_out.ends_with("...[truncated]"), "{cut_out}");
+    assert!(
+        cut_out.len() <= 512,
+        "cut_out exceeds 512 bytes: {}",
+        cut_out.len()
+    );
+
+    let adversarial = "authorization: bearer MIXED_CASE_TOK1 cookie: sid=COOKIE_SECRET_2\n\
+        git_ssh_command=ssh -i /home/u/.ssh/id_ed25519\n\
+        GIT_ASKPASS=/tmp/secret-askpass.sh\n\
+        -----BEGIN RSA PRIVATE KEY-----\nUNTERMINATED_KEY_MATERIAL_NEVER_LEAKS";
+    let adv_out = scrub_git_log_text(adversarial);
+    for secret in [
+        "MIXED_CASE_TOK1",
+        "COOKIE_SECRET_2",
+        "id_ed25519",
+        "secret-askpass.sh",
+        "UNTERMINATED_KEY_MATERIAL_NEVER_LEAKS",
+    ] {
+        assert!(!adv_out.contains(secret), "leaked `{secret}` in: {adv_out}");
+    }
 
     // Strict SSH authority validation rejects ambiguous `@`, userinfo `:`, query, bad port, `+22`.
     for bad_ssh in [

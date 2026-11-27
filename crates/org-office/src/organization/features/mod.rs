@@ -41,15 +41,15 @@ use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Operation, Refusal};
 use serde::Serialize;
 
 pub(crate) use super::ops::{changed, invalid, operation, reply, require, stable};
-pub use super::ops::{Changed, Op, OrgRejection, RejectCode};
+pub use super::ops::{Changed, Op, OrgRejection, RejectCode, NOT_AUTHORIZED};
 
+pub use super::authority::HIRE_DENIED;
 pub use add_person::AddPerson;
 pub use agent_lifecycle::{
     CreateProviderConnection, MoveAgent, OffboardAgent, SetAgentStatus, SetWatchingModel,
     UpdateAgent, UpsertAgentExecution,
 };
 pub use archive_team::ArchiveTeam;
-pub use authority::HIRE_DENIED;
 pub use create_organization::{CreateOrganization, Creator, OrganizationCreated};
 pub use create_team::{CreateTeam, TeamCreated};
 pub use deactivate_person::DeactivatePerson;
@@ -68,9 +68,6 @@ pub use update_person::{Edit, UpdatePerson};
 pub use update_team::UpdateTeam;
 
 use crate::organization::ports::TeamDependents;
-
-/// The text of the unrecorded refusal of an actor who is not the organization's owner.
-pub const NOT_AUTHORIZED: &str = "only the organization's owner changes its structure";
 
 /// A structure change the owner asks for: its operation and its decision. `owner` is the
 /// owner's employee ID, which the office knows from the creation; `by` is who asked.

@@ -14,12 +14,14 @@ use crate::attachments::blobs::ContentHash;
 use crate::attachments::ports::AttachmentsRead;
 use crate::attachments::records::{AttachmentRecord, MetaPatch};
 use crate::messaging::ports::MessagingRead;
+use crate::tasks::ops::{
+    current_attachments, current_links, derived_id, require_local_task_write_authority,
+    task_location, TaskWriteAuthority, Writer,
+};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::TaskRecord;
 use crate::time::format_rfc3339_ms;
 
-use super::core::derived_id;
-use super::write::{current_attachments, current_links, task_location, Writer};
 use super::{refuse, require_active_employee, require_task, storage_refusal};
 
 /// One validated, blob-promoted file ready to bind inside a task or task-comment commit.
@@ -184,6 +186,8 @@ pub struct AttachToTask {
     pub actor_member_id: String,
     pub command_id: String,
     pub record: AttachmentRecord,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl AttachToTask {
@@ -215,6 +219,7 @@ impl AttachToTask {
             return Err(refuse(ErrorCode::AlreadyExists, "attachment id in use"));
         }
         let mut task = require_task(uow.view(), task_id.as_str())?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut attachments = current_attachments(uow.view(), &task)?;
         if attachments.len() >= TASK_ATTACHMENTS_MAX {
             return Err(refuse(
@@ -250,6 +255,8 @@ pub struct UpdateTaskAttachmentMeta {
     pub command_id: String,
     pub attachment_id: Id,
     pub patch: MetaPatch,
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 impl UpdateTaskAttachmentMeta {
@@ -278,6 +285,7 @@ impl UpdateTaskAttachmentMeta {
             return Err(refuse(ErrorCode::NotFound, "attachment not found"));
         };
         let mut task = require_task(uow.view(), task_id.as_str())?;
+        require_local_task_write_authority(uow.view(), &self.authority, &task)?;
         let mut attachments = current_attachments(uow.view(), &task)?;
         let Some(slot) = attachments.iter_mut().find(|a| a.id == self.attachment_id) else {
             return Err(refuse(ErrorCode::NotFound, "attachment not found"));

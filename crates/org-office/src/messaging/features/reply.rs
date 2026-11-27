@@ -9,17 +9,16 @@ use org_proto::ErrorCode;
 use org_store::{Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::{
+    auto_channels::{all_conversations_including_auto, effective_auto_members},
     files::MessageFiles,
     ports::{MessagingRead, MessagingWrite},
     records::{ConversationRecord, SenderKind},
 };
 use crate::organization::records::Employee;
 
-use super::auto_channels::effective_auto_members;
-use super::conversations::all_conversations_including_auto;
 use super::recipients::upsert_participant_snapshot;
 use super::send::{decide_chat_send, ChatSendCommitted};
-use super::{is_active_employee, refusal};
+use super::{is_addressable_employee, refusal};
 
 fn ensure_dm_peer_active(
     conv: &ConversationRecord,
@@ -37,7 +36,7 @@ fn ensure_dm_peer_active(
     {
         if !employees
             .iter()
-            .any(|e| e.id == m.employee_id && is_active_employee(e))
+            .any(|e| e.id == m.employee_id && is_addressable_employee(e))
         {
             return Err(refusal(
                 ErrorCode::UnknownRecipient,
@@ -88,7 +87,7 @@ fn resolve_reply_target_conv(
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read employees"))?;
     if !employees
         .iter()
-        .any(|e| e.id == *caller && is_active_employee(e))
+        .any(|e| e.id == *caller && is_addressable_employee(e))
     {
         return Err(refusal(
             ErrorCode::NotBound,

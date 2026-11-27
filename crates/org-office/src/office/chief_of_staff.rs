@@ -8,8 +8,9 @@ use org_store::{Actor, Id, Outcome, StoreError};
 use super::{storage, Office};
 use crate::error::OfficeError;
 use crate::organization::{
+    authority,
     chief_of_staff::ensure_operation_id,
-    features::{authority, ChiefOfStaffEnsured, EnsureChiefOfStaff},
+    features::{ChiefOfStaffEnsured, EnsureChiefOfStaff},
     records::{BuiltinKey, Employee, EmployeeKind, EmployeeStatus},
 };
 use crate::store::open::{ReadOp, StructureOp};
@@ -142,7 +143,7 @@ impl ReadOp for ReadMemberReference {
         let owner = crate::organization::owner::effective_owner_id(read, &self.owner)?;
         let employees = read.employees()?;
         Ok(
-            crate::messaging::features::resolve_employee(&employees, &owner, &self.reference)
+            crate::messaging::access::resolve_employee(&employees, &owner, &self.reference)
                 .ok()
                 .map(|employee| employee.id.as_str().to_owned()),
         )

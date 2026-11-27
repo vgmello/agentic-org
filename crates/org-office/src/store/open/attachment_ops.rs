@@ -11,7 +11,8 @@ use org_store::{Ack, Actor, Change, Id, Operation, Outcome, Refusal, Store, Stor
 use crate::attachments::ports::AttachmentsRead;
 use crate::attachments::records::{self, AttachmentRecord, MetaPatch};
 use crate::authz::{ParentFacts, PrincipalContext, PrincipalKind, ResourceRef};
-use crate::messaging::files::conversation_access;
+use crate::error::api_refusal as refused;
+use crate::messaging::access::conversation_access;
 use crate::messaging::ports::BoundMessageFile;
 use crate::organization::records::{EmployeeKind, EmployeeStatus};
 use crate::tasks::ports::TasksRead;
@@ -34,10 +35,6 @@ pub enum AttachmentWrite {
 pub struct AttachmentWriteOp {
     pub operation: Operation,
     pub write: AttachmentWrite,
-}
-
-fn refused(code: ErrorCode, message: &str) -> Refusal {
-    Refusal::rejected(serde_json::to_vec(&ApiError::new(code, message)).expect("an error encodes"))
 }
 
 fn decide<S: TasksRead + AttachmentsRead>(

@@ -12,13 +12,17 @@ use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
 use crate::messaging::{
+    access::may_read,
+    auto_channels::all_conversations_including_auto,
     ports::MessagingRead,
     records::{ConversationRecord, MessageRecord, RecipientStateRecord},
 };
 
-use super::catchup::{delta_bounds, is_top_level, sent_by, snippet, ThreadStats};
-use super::conversations::{all_conversations_including_auto, find_channel};
-use crate::messaging::access::may_read;
+use super::catchup::{
+    delta_bounds, is_top_level, new_messages, sent_by, snippet, watermark_boundary, ChannelCatchup,
+    ThreadStats,
+};
+use super::conversations::find_channel;
 
 /// Resolves a conversation UUIDv7, `#channel` or channel name the caller may read.
 pub(super) fn resolve_conversation_ref(
@@ -444,4 +448,45 @@ pub fn channel_messages_for_caller(
         msgs = msgs.split_off(skip);
     }
     Ok((conv, msgs))
+}
+
+/// The caller's new messages in a channel, oldest first, at most `limit` (clamped to
+/// `1..=MAX_SUMMARIZE_WINDOW`), with the same visibility as `chat.messages`.
+pub fn channel_catchup_for_caller(
+    read: &impl MessagingRead,
+    owner: &Id,
+    caller: &Id,
+    channel_ref: &str,
+    limit: usize,
+    now_utc: &str,
+) -> Result<ChannelCatchup, ApiError> {
+    let conv = resolve_conversation_ref(read, owner, caller, channel_ref, now_utc)?;
+    if conv.kind != ConversationKind::Channel {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "channel summarize only operates on channels",
+        ));
+    }
+    let msgs = read
+        .messages_in_conversation(&conv.id)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read channel messages"))?;
+    let marker = read
+        .read_marker(&conv.id, caller)
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read the read marker"))?;
+    let boundary = watermark_boundary(&msgs, marker.as_ref());
+    let cap = limit.clamp(1, org_proto::chat::MAX_SUMMARIZE_WINDOW as usize);
+    let mut new_total = 0u64;
+    let mut window = Vec::new();
+    for msg in new_messages(&msgs, boundary, caller) {
+        new_total += 1;
+        if window.len() < cap {
+            window.push(msg.clone());
+        }
+    }
+    Ok(ChannelCatchup {
+        conversation: conv,
+        messages: window,
+        new_total,
+        last_read_message_id: marker.and_then(|m| m.last_read_message_id),
+    })
 }
