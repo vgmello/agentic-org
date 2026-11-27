@@ -365,11 +365,14 @@ Contract rules every command follows:
 - **Office error details reach you.** `error.retry_after_ms` (with `rate_limited`) and `error.field` / `error.rule` (an input that broke a rule) are printed when the office reports them.
 - **Yes-or-no flags take no value.** Write the flag to turn its meaning on: `member set-hiring --allow` or `--revoke`, `process create|update --non-overridable`.
 - **Flags are never dropped.** A combination a command cannot honor (for example `msg reply --answer` with `--body`, `msg list --channel` with `--unread-only`, which points to `--since-read`) is refused with `invalid_request`.
-- **Shorthands are one command everywhere**: `who` = `directory list`, `task note` = `task-note`, `context` = `session context`, in a command line, its `--help` and `--schema`, and `session attach` lines.
+- **Shorthands are one command everywhere**: `who` = `directory list`, `task note` = `task-note`, `context` = `session context`, `resume` / `me` = `session resume`, in a command line, its `--help` and `--schema`, and `session attach` lines.
 
 - `agent-os context` (shorthand for `agent-os session context`)
   One envelope with the mode-appropriate standing rules (`mode: managed` receives managed-turn rules; `mode: external` receives external-workspace rules without managed-only wake copy), the grouped command catalogue, the guide index and, when bound, who you are and the must-follow (non-overridable) processes and standards that apply, whole, within 8 KiB (`mandatory_truncated` and `mandatory_omitted` name any left out, to read with `process inspect`). `--offline` (or a shell without a binding) answers from the binary alone, without the office, in at most 6 KiB; `--project <project>` adds a project's must-follow processes. When a session token or binding file is set, an office or auth failure fails the command; it never falls back to offline.
   **Use when:** reloading rules, catalogue, guides, identity, and must-follow processes after context compaction (`agent-os context --format yaml`) or inspecting offline rules before signing in (`agent-os context --offline --format yaml`).
+- `agent-os resume` / `agent-os me` (shorthands for `agent-os session resume`)
+  Single-RPC bounded wake/resume snapshot returning your compact `identity`, caller-scoped `unread_inbox` summary, open `active_tasks` assigned to you (each with an optional `latest_note` pointer/excerpt to your own latest private working note, omitted when none exists, enforcing `ADR-0031` author-only isolation), `open_asks` sent by or awaiting you, caller-owned `active_worktrees`, and optional own `budget` summary (omitted when unconfigured). Supports `--tasks-limit`, `--inbox-limit`, `--asks-limit`, `--worktrees-limit`, `--fields`, `--format json|yaml|compact`, `--json`, and `AGENT_OS_FORMAT`.
+  **Use when:** starting a wake turn, recovering after a context reset, or checking your inbox, assigned tasks, asks, worktrees, and budget in one round-trip (`agent-os resume --format compact` or `agent-os me --fields identity,unread_inbox,active_tasks`).
 
 - `agent-os msg send|ask|reply|accept|withdraw|inbox|read|list|done|defer|unsnooze|wait`
   Direct messages (DMs), channel messages, handoffs, inbox triage, and structured asks. Send a DM with `agent-os msg send --to <handle|employee_id|owner>` or browse a DM with `agent-os msg list --participant <handle>`.
@@ -386,8 +389,8 @@ Contract rules every command follows:
   Step-level checklist tracking on tasks.
   **Use when:** adding, checking/unchecking, editing, removing, or reordering checklist steps on a task.
 - `agent-os task-note add|list|get|update|remove|publish` (alias: `agent-os task note ...`)
-  Private task notes with optional copy-to-comment publishing.
-  **Use when:** recording private working notes on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
+  Private task notes with optional copy-to-comment publishing and optional sparse `--checkpoint` upsert (`task-note add --task <task> --checkpoint --text <text>`) / filter (`task-note list --task <task> --checkpoint`).
+  **Use when:** recording sparse private working notes or updating one pinned working checkpoint on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
 - `agent-os repo register|list|attach|status|fetch|push`
   Git repository registry, office bare-cache status, on-demand origin fetch, and task-branch pushes.
   **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, seeing branches pushed to the origin after your worktree was prepared (`repo fetch --repo <id-or-key>`), or pushing your task branch (`repo push`).
@@ -407,9 +410,9 @@ Contract rules every command follows:
 - `agent-os skill list|read`
   Built-in on-demand `agent-os` product skills: `agent-os-basics`, `tasks-create`, `tasks-execute`, `tasks-finalize`, `messaging-and-asks`, `channels`, `code-and-worktrees`, `hiring-and-directory`, `processes-and-standards`, `budgets`, `errors-and-recovery` and `batch-and-attach` (bodies in `crates/org-process/skills/`, each checked flag by flag against the live command table).
   **Use when:** discovering (`skill list`) or loading (`skill read --name <key>`) built-in operational guides on demand.
-- `agent-os session context|inspect|attach`
-  Session context (`session context`, above), self-inspection and persistent JSON-line batching over one office socket.
-  **Use when:** loading your rules and catalogue (`session context`), inspecting your live session/usage (`session inspect`) or pipelining multiple commands in one shell turn without rebinding (`session attach`).
+- `agent-os session context|resume|inspect|list|attach`
+  Session context (`session context`, above), one-call wake/resume dashboard (`session resume`, shorthands `resume`/`me`), self-inspection, session history, and persistent JSON-line batching over one office socket.
+  **Use when:** loading your rules and catalogue (`session context`), fetching your bounded wake/resume snapshot (`session resume` / `resume` / `me`), inspecting your live session/usage (`session inspect`), listing sessions (`session list`), or pipelining multiple commands in one shell turn without rebinding (`session attach`).
   `session attach` takes no flags (exit 2 otherwise) and exits 1 with the office's hint when it cannot bind. A line has only `command`, `input` and `options`; every answer is one line of JSON, so a line with another key, a `format` other than `json`, `stdin` or `help` is refused before anything is sent.
 - `agent-os grant list`
   Effective permission preset, tool rules, and sandbox boundaries.

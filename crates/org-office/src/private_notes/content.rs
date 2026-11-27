@@ -52,12 +52,16 @@ impl NoteContent {
             Some(title) => title,
             None => derive_title(&body_markdown),
         };
+        let mut raw_tags = params.tags.clone();
+        if params.checkpoint {
+            raw_tags.push(org_proto::private_notes::PRIVATE_NOTE_CHECKPOINT_TAG.to_owned());
+        }
         Ok(Self {
             kind: params.kind,
             title: Some(title),
             why: rationale(params.why.as_deref(), "why")?,
             alternatives: rationale(params.alternatives.as_deref(), "alternatives")?,
-            tags: normalize_tags(&params.tags)?,
+            tags: normalize_tags(&raw_tags)?,
             body_markdown,
         })
     }

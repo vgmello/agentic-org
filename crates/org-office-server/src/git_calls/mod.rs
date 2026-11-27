@@ -29,6 +29,7 @@ use org_proto::git::{
     RepoStatus, RepoStatusParams, RepoStatusResult, RepositoryKindWire, RepositoryRecordWire,
     WorktreeList, WorktreeListParams, WorktreeListResult, WorktreePrepare,
 };
+use org_proto::resume::ResumeWorktreeItem;
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use self::credentials::{
@@ -307,6 +308,37 @@ impl GitService {
                 .then_with(|| a.repository_id.cmp(&b.repository_id))
         });
         Ok(WorktreeListResult { worktrees })
+    }
+
+    /// Returns caller-owned active worktrees for `agent.resume`, strictly scoped to
+    /// `w.employee_id == member` and bounded by `limit` (`TASK-220`).
+    pub(crate) fn active_worktrees_for_member(
+        &self,
+        member: &str,
+        limit: usize,
+    ) -> Vec<ResumeWorktreeItem> {
+        let state_guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut items: Vec<ResumeWorktreeItem> = state_guard
+            .workspaces
+            .values()
+            .filter(|w| w.state == "active" && w.employee_id == member)
+            .map(|w| ResumeWorktreeItem {
+                task_id: w.task_id.clone(),
+                task_key: w.task_key.clone(),
+                repository_id: w.repository_id.clone(),
+                repository_key: w.repository_key.clone(),
+                branch: w.branch.clone(),
+                worktree_path: w.worktree_path.clone(),
+                pushed_head: w.pushed_head.clone(),
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            a.task_key
+                .cmp(&b.task_key)
+                .then_with(|| a.repository_id.cmp(&b.repository_id))
+        });
+        items.truncate(limit);
+        items
     }
 }
 

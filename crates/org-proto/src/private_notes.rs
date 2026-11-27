@@ -24,6 +24,8 @@ pub const PRIVATE_NOTE_RATIONALE_MAX_CHARS: usize = 2_000;
 pub const PRIVATE_NOTE_MAX_TAGS: usize = 8;
 /// Maximum tag length in ASCII bytes (the task-label grammar `[a-z0-9._:/-]`).
 pub const PRIVATE_NOTE_TAG_MAX_LEN: usize = 64;
+/// Normalized tag used by sparse, updatable per-task working-checkpoint notes (`TASK-220`).
+pub const PRIVATE_NOTE_CHECKPOINT_TAG: &str = "checkpoint";
 /// Page size of `tasks.notes.list` when `limit` is absent.
 pub const PRIVATE_NOTE_LIST_DEFAULT_LIMIT: u32 = 100;
 /// Largest accepted `tasks.notes.list` page.
@@ -187,6 +189,10 @@ pub struct PrivateNoteAddParams {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     pub body_markdown: String,
+    /// When true, updates the caller's existing active `"checkpoint"`-tagged note on `task`
+    /// (or creates one if none exists) instead of creating a duplicate note (`TASK-220`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checkpoint: bool,
 }
 
 impl fmt::Debug for PrivateNoteAddParams {
@@ -202,6 +208,7 @@ impl fmt::Debug for PrivateNoteAddParams {
             .field("alternatives", &redacted(&self.alternatives))
             .field("tags", &redacted_tags(&self.tags))
             .field("body_markdown", &"<redacted>")
+            .field("checkpoint", &self.checkpoint)
             .finish()
     }
 }
@@ -358,100 +365,8 @@ pub struct TaskNotePublishResult {
     pub task: TaskView,
 }
 
-/// The task-scoped `tasks.notes.add` request `agent-os task note add` builds (`TASK-50`). Its
-/// JSON is a subset of [`PrivateNoteAddParams`]; retire it when ADEC-3 moves that command.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TasksNotesAddParams {
-    pub command_id: String,
-    /// Task UUIDv7 or office-coded key (`T-A1`).
-    pub task: String,
-    pub note_id: String,
-    pub body_markdown: String,
-}
-
-impl fmt::Debug for TasksNotesAddParams {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TasksNotesAddParams")
-            .field("command_id", &self.command_id)
-            .field("task", &self.task)
-            .field("note_id", &self.note_id)
-            .field("body_markdown", &"<redacted>")
-            .finish()
-    }
-}
-
-impl From<TasksNotesAddParams> for PrivateNoteAddParams {
-    fn from(p: TasksNotesAddParams) -> Self {
-        Self {
-            command_id: p.command_id,
-            note_id: p.note_id,
-            task: Some(p.task),
-            project_id: None,
-            kind: PrivateNoteKind::Note,
-            title: None,
-            why: None,
-            alternatives: None,
-            tags: Vec::new(),
-            body_markdown: p.body_markdown,
-        }
-    }
-}
-
-/// The task-scoped `tasks.notes.list` request `agent-os task note list` builds (`TASK-50`).
-/// Its JSON is a subset of [`PrivateNoteListParams`]; retire it with ADEC-3.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TasksNotesListParams {
-    pub task: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author_id: Option<String>,
-}
-
-impl From<TasksNotesListParams> for PrivateNoteListParams {
-    fn from(p: TasksNotesListParams) -> Self {
-        Self {
-            task: Some(p.task),
-            author_id: p.author_id,
-            ..Self::default()
-        }
-    }
-}
-
-/// The body-only `tasks.notes.update` request `agent-os task note update` builds (`TASK-50`).
-/// Its JSON is a subset of [`PrivateNoteUpdateParams`]; retire it with ADEC-3.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TasksNotesUpdateParams {
-    pub command_id: String,
-    pub note_id: String,
-    pub expected_revision: u64,
-    pub body_markdown: String,
-}
-
-impl fmt::Debug for TasksNotesUpdateParams {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TasksNotesUpdateParams")
-            .field("command_id", &self.command_id)
-            .field("note_id", &self.note_id)
-            .field("expected_revision", &self.expected_revision)
-            .field("body_markdown", &"<redacted>")
-            .finish()
-    }
-}
-
-impl From<TasksNotesUpdateParams> for PrivateNoteUpdateParams {
-    fn from(p: TasksNotesUpdateParams) -> Self {
-        Self {
-            command_id: p.command_id,
-            note_id: p.note_id,
-            expected_revision: p.expected_revision,
-            kind: None,
-            title: None,
-            why: None,
-            alternatives: None,
-            tags: None,
-            body_markdown: Some(p.body_markdown),
-        }
-    }
-}
+mod legacy;
+pub use legacy::{TasksNotesAddParams, TasksNotesListParams, TasksNotesUpdateParams};
 
 /// `tasks.notes.add`
 pub struct TasksNotesAdd;

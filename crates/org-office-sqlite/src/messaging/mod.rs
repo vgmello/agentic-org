@@ -21,6 +21,7 @@ use super::{
 mod files;
 mod mirror;
 mod read;
+mod resume;
 mod rows;
 mod write;
 

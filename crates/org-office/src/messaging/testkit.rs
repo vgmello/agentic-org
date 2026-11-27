@@ -1,5 +1,7 @@
 //! MemoryEngine `FamilyTable` implementation for [`MessagingRead`] and [`MessagingWrite`].
 
+mod resume;
+
 use std::{any::Any, collections::BTreeMap};
 
 use org_store::{
@@ -306,6 +308,22 @@ macro_rules! memory_messaging_read {
                 attachment_id: &str,
             ) -> Result<Option<BoundMessageFile>, EngineError> {
                 read(self.table(), |t| t.message_file(attachment_id))
+            }
+
+            fn unread_inbox_summary(
+                &self,
+                employee_id: &Id,
+                limit: usize,
+            ) -> Result<org_proto::resume::ResumeInboxSummary, EngineError> {
+                read(self.table(), |t| t.unread_inbox_summary(employee_id, limit))
+            }
+
+            fn open_asks_for_employee(
+                &self,
+                employee_id: &Id,
+                limit: usize,
+            ) -> Result<Vec<(MessageRecord, bool)>, EngineError> {
+                read(self.table(), |t| t.open_asks_for_employee(employee_id, limit))
             }
         }
     )+};

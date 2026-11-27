@@ -9,8 +9,8 @@ use crate::federation_runtime::HqFederationSlot;
 use crate::session_proxy::build_session_hooks;
 use crate::{
     attachment_calls, chat_calls, cost_calls, directory, doc_calls, federation_calls, follow,
-    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, search_calls, serve,
-    task_calls, tess_calls, wake_bridge, watcher,
+    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, resume_calls,
+    search_calls, serve, task_calls, tess_calls, wake_bridge, watcher,
 };
 use org_office::{Office, OfficeError};
 
@@ -423,6 +423,10 @@ pub(crate) fn build_office_ports(
         Arc::clone(&office),
         Arc::clone(&live),
     ));
+    let resume_svc = Arc::new(resume_calls::ResumeService::new(
+        Arc::clone(&office),
+        Arc::clone(&git_svc),
+    ));
     let delegation_gate = Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
         Arc::clone(&office),
         Arc::clone(&session_manager),
@@ -533,6 +537,18 @@ pub(crate) fn build_office_ports(
             }))
         },
         tess: Some(tess),
+        resume: {
+            let o = Arc::clone(&office);
+            Some(Box::new(move |member, session_mode, request| {
+                if snapshot_pending(&o) {
+                    return Some(org_proto::Response::error(
+                        request.id,
+                        snapshot_unavailable_api_error(),
+                    ));
+                }
+                resume_svc.dispatch(member, session_mode, request)
+            }))
+        },
         directory: messaging.directory,
         submit,
     }

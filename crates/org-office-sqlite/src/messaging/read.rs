@@ -353,6 +353,24 @@ macro_rules! sqlite_messaging_read {
                 let (db, scope) = self.msg_view()?;
                 message_file(db, scope, attachment_id)
             }
+
+            fn unread_inbox_summary(
+                &self,
+                employee_id: &Id,
+                limit: usize,
+            ) -> Result<org_proto::resume::ResumeInboxSummary, EngineError> {
+                let (db, scope) = self.msg_view()?;
+                super::resume::unread_inbox_summary(db, scope, employee_id, limit)
+            }
+
+            fn open_asks_for_employee(
+                &self,
+                employee_id: &Id,
+                limit: usize,
+            ) -> Result<Vec<(MessageRecord, bool)>, EngineError> {
+                let (db, scope) = self.msg_view()?;
+                super::resume::open_asks_for_employee(db, scope, employee_id, limit)
+            }
         }
     )+};
 }

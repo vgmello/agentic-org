@@ -19,6 +19,7 @@ pub mod processes;
 pub mod projects;
 pub mod providers;
 pub mod session;
+pub mod session_resume;
 pub mod shared;
 pub mod tess;
 pub mod work;
@@ -137,6 +138,8 @@ pub const POLICY_OVERRIDES: &[PolicyOverride] = &[
 /// Every shorthand alias, in the order the catalogue lists them.
 pub const ALIASES: &[Alias] = &[
     session::CONTEXT_ALIAS,
+    session_resume::RESUME_ALIAS,
+    session_resume::ME_ALIAS,
     work::TASK_NOTE_ALIAS,
     organization::WHO_ALIAS,
 ];

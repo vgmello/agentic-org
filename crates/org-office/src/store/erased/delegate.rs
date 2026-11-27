@@ -162,6 +162,8 @@ fwd_read!(MessagingRead for BoxedTx, BoxedSnapshot {
     max_local_seq() -> u64;
     message_local_seq(message_id: &str) -> Option<u64>;
     message_file(attachment_id: &str) -> Option<BoundMessageFile>;
+    unread_inbox_summary(employee_id: &Id, limit: usize) -> org_proto::resume::ResumeInboxSummary;
+    open_asks_for_employee(employee_id: &Id, limit: usize) -> Vec<(MessageRecord, bool)>;
 });
 
 fwd_read!(AttachmentsRead for BoxedTx, BoxedSnapshot {

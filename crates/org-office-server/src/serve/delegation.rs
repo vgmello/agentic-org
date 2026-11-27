@@ -101,6 +101,7 @@ pub(crate) enum Access {
 }
 
 const NEVER: &[&str] = &[
+    "agent.resume",
     "chat.events_poll",
     "chat.read_as_owner",
     "chat.wait_ask",

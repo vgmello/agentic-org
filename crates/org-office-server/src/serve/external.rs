@@ -105,6 +105,7 @@ pub(super) const MAX_AUTH_CALLS_PER_CONNECTION: u32 = 64;
 
 /// Calls an externally bound connection may make by exact name.
 const EXTERNAL_CALLS: &[&str] = &[
+    "agent.resume",
     "who",
     "status.set",
     "org.snapshot",

@@ -216,6 +216,7 @@ fn cli_reference_documents_every_top_level_and_office_command() {
     );
     for pointer in [
         "`agent-os context`",
+        "`agent-os resume`",
         "`agent-os msg",
         "`agent-os channel",
         "`agent-os task ",

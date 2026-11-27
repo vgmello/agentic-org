@@ -119,6 +119,7 @@ fn add(kind: PrivateNoteKind, task: Option<&str>, body: &str) -> PrivateNoteAddP
         alternatives: None,
         tags: Vec::new(),
         body_markdown: body.into(),
+        checkpoint: false,
     }
 }
 
