@@ -18,7 +18,8 @@
 //! office implements [`RunLog`]; a [`RunRecord`] has no body in it), and the wire types (they
 //! move to `org-proto` when the office wires the calls).
 //!
-//! Depends on `serde` and `serde_json` only. Nothing depends on a runtime or on the office.
+//! Depends on `org-redact` (Layer-0), `serde`, and `serde_json` only. Nothing depends on a
+//! runtime or on the office.
 
 #![forbid(unsafe_code)]
 

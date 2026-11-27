@@ -660,10 +660,65 @@ fn text_that_looks_like_a_secret_is_refused_without_echoing_it() {
         "commit 3f2a9c1 broke it",
         "ask-me-anything",
         "I forgot my password",
-        "Bearer authentication-and-authorization-flow is unclear",
+        "Bearer authentication flow is unclear",
+        "a basic understanding of bearer instruments",
         "the eyJ prefix of a token",
     ] {
         assert!(!text_has_secret(fine), "{fine}");
+    }
+    assert_eq!(c.runtime.started(), 0);
+}
+
+#[test]
+fn adversarial_auth_headers_json_yaml_and_pem_secrets_are_refused() {
+    let basic_payload = ["dXNl", "cjpwYXNz"].join("");
+    let npm_tok = ["npm_", "abcdefghijklmnopqrstuvwxyzABCD1234"].join("");
+    let pem_rsa = format!(
+        "{}BEGIN RSA PRIVATE KEY{}\nMIIEowIBAAKCAQEAtest\n{}END RSA PRIVATE KEY{}",
+        "-----", "-----", "-----", "-----"
+    );
+    let pem_trunc = format!("{}BEGIN EC PRIVATE KEY", "-----");
+    let adversarial = [
+        format!("Authorization: Basic {basic_payload}"),
+        format!("authorization: basic {basic_payload}"),
+        "Authorization: BEARER ABCDEFGHIJKLMNOPQRSTUVWXYZ".to_owned(),
+        "Authorization: Bearer short".to_owned(),
+        "Proxy-Authorization: Basic abcdef".to_owned(),
+        "X-Auth-Token: shorttok".to_owned(),
+        "BEARER shortdigitless".to_owned(),
+        "Bearer AbCd".to_owned(),
+        "Bearer digitless_token_alpha".to_owned(),
+        "Bearer abcdefghijklmnop".to_owned(),
+        r#"{"api_key":"onlyalpha_key"}"#.to_owned(),
+        r#"{"password":"mysecretvalue"}"#.to_owned(),
+        r#"{"cookie":"sid=alphaonly"}"#.to_owned(),
+        r#"{"vault_token":"hvs.alphaonly"}"#.to_owned(),
+        r#"{"secret":"topsecret"}"#.to_owned(),
+        r#"{"token":"myvaltoken"}"#.to_owned(),
+        r#"{"session_cookie":"cook_val"}"#.to_owned(),
+        r#"{"session_proof":"proof_val"}"#.to_owned(),
+        r#"{"recovery_code":"QWER-ASDF-ZXCV"}"#.to_owned(),
+        "api_key: yaml_secret_key".to_owned(),
+        "  password: yaml_password_val".to_owned(),
+        "cookie: yaml_cookie_val".to_owned(),
+        "vault_token: yaml_vault_tok".to_owned(),
+        "session_cookie: yaml_sess_cookie".to_owned(),
+        "session_proof: yaml_sess_proof".to_owned(),
+        "recovery_code: QWER-ASDF-ZXCV".to_owned(),
+        npm_tok,
+        pem_rsa,
+        pem_trunc,
+    ];
+    let c = copilot(FakeRuntime::new([]));
+    for sample in &adversarial {
+        assert!(text_has_secret(sample), "missed secret: {sample}");
+        let err = c.draft("ana", &bug_request(sample)).unwrap_err();
+        assert_eq!(
+            err,
+            CopilotError::Invalid(InvalidReason::LooksLikeSecret),
+            "copilot accepted secret: {sample}"
+        );
+        assert!(!err.to_string().contains(sample.as_str()));
     }
     assert_eq!(c.runtime.started(), 0);
 }

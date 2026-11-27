@@ -45,8 +45,9 @@ fn is_blocking_events_poll(request: &Request) -> bool {
             .ok()
             .and_then(|p| p.wait_ms)
             .is_some_and(|ms| ms > 0);
-    let copilot_draft = request.is::<org_proto::copilot::CopilotDraft>();
-    chat_poll || tess_poll || copilot_draft
+    let copilot = request.is::<org_proto::copilot::CopilotFeatures>()
+        || request.is::<org_proto::copilot::CopilotDraft>();
+    chat_poll || tess_poll || copilot
 }
 
 fn dispatch_held_poll(
@@ -63,7 +64,9 @@ fn dispatch_held_poll(
                 .tess
                 .as_ref()
                 .and_then(|tess| tess(Some(owner), true, channel_stop, None, request))
-        } else if request.is::<org_proto::copilot::CopilotDraft>() {
+        } else if request.is::<org_proto::copilot::CopilotFeatures>()
+            || request.is::<org_proto::copilot::CopilotDraft>()
+        {
             shared
                 .ports
                 .copilot

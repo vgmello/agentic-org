@@ -1105,5 +1105,83 @@ fn task210_host_channel_agent_sessions_authorizes_persons_and_gives_accurate_ref
     }
 }
 
+#[test]
+fn copilot_features_offloads_off_host_channel_loop_without_hol_blocking() {
+    let mut shared = shared();
+    let entered = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let entered_cb = Arc::clone(&entered);
+    let release_cb = Arc::clone(&release);
+    shared.ports.copilot = Some(Box::new(move |_member, req| {
+        if !req.is::<org_proto::copilot::CopilotFeatures>() {
+            return None;
+        }
+        {
+            let mut g = entered_cb.0.lock().unwrap();
+            *g = true;
+            entered_cb.1.notify_all();
+        }
+        let mut r = release_cb.0.lock().unwrap();
+        while !*r {
+            r = release_cb.1.wait(r).unwrap();
+        }
+        Some(
+            Response::ok::<org_proto::copilot::CopilotFeatures>(
+                req.id,
+                &org_proto::copilot::CopilotFeaturesResult {
+                    features: Vec::new(),
+                },
+            )
+            .unwrap(),
+        )
+    }));
+    let ctx = context();
+    let mut feat_req = signed(&shared, "copilot.features", json!({}));
+    feat_req.id = 201;
+    let mut who_req = signed(&shared, "who", json!({}));
+    who_req.id = 202;
+
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let shared = Arc::new(shared);
+    let srv_shared = Arc::clone(&shared);
+    let srv = std::thread::spawn(move || {
+        serve(socket, &srv_shared, ctx, &Default::default());
+    });
+    let mut reader = std::io::BufReader::new(peer);
+    let hello = exchange(&mut reader, "hello", json!({"api": {"min": 2, "max": 2}}));
+    assert_eq!(hello["result"]["api_version"], 2);
+
+    frame::write_message(reader.get_mut(), &feat_req).unwrap();
+    {
+        let mut g = entered.0.lock().unwrap();
+        while !*g {
+            g = entered.1.wait(g).unwrap();
+        }
+    }
+
+    // `who` must answer immediately while `copilot.features` is still probing on its worker thread.
+    let who_started = std::time::Instant::now();
+    frame::write_message(reader.get_mut(), &who_req).unwrap();
+    let first: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(
+        first["id"], 202,
+        "who must not head-of-line block behind copilot.features: {first}"
+    );
+    assert!(who_started.elapsed() < Duration::from_millis(500));
+
+    {
+        let mut r = release.0.lock().unwrap();
+        *r = true;
+        release.1.notify_all();
+    }
+    let second: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(second["id"], 201);
+    assert!(second["result"]["features"].is_array(), "{second}");
+
+    drop(reader);
+    srv.join().unwrap();
+}
+
 #[path = "inventory.rs"]
 mod inventory;

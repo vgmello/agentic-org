@@ -197,6 +197,56 @@ fn create_fake_release_bin(store: &Path, release_id: &str) -> PathBuf {
 }
 
 #[test]
+fn release_verify_archive_never_creates_or_touches_store() {
+    let sb = ReleaseSandbox::new();
+    let forged = sb.root.join("forged-verify.tar.gz");
+    fs::write(&forged, b"not-a-valid-signed-archive").unwrap();
+
+    // 1. Nonexistent `--store` must remain completely uncreated after verifying a `.tar.gz`.
+    let nonexistent_store = sb.root.join("uncreated-verify-store");
+    let verify_fail = sb.run(&[
+        "release",
+        "verify",
+        forged.to_str().unwrap(),
+        "--store",
+        nonexistent_store.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        !verify_fail.status.success(),
+        "forged/untrusted archive must fail closed"
+    );
+    assert!(
+        !nonexistent_store.exists(),
+        "release verify on .tar.gz must NEVER create a nonexistent --store"
+    );
+
+    // 2. Read-only (`0500`) `--store` must never be written to or used for staging.
+    let ro_store = sb.root.join("readonly-verify-store");
+    fs::DirBuilder::new().mode(0o700).create(&ro_store).unwrap();
+    fs::set_permissions(&ro_store, fs::Permissions::from_mode(0o500)).unwrap();
+    let verify_ro = sb.run(&[
+        "release",
+        "verify",
+        forged.to_str().unwrap(),
+        "--store",
+        ro_store.to_str().unwrap(),
+        "--json",
+    ]);
+    fs::set_permissions(&ro_store, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        !verify_ro.status.success(),
+        "forged/untrusted archive must fail closed"
+    );
+    assert!(
+        !text(&verify_ro.stderr).contains("staging folder"),
+        "release verify must not stage inside read-only --store: {}",
+        text(&verify_ro.stderr)
+    );
+    assert_eq!(fs::read_dir(&ro_store).unwrap().count(), 0);
+}
+
+#[test]
 fn release_verify_install_update_activation_rollback_and_clean_uninstall_lifecycle() {
     let sb = ReleaseSandbox::new();
     let port = std::net::TcpListener::bind("127.0.0.1:0")

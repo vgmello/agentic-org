@@ -624,6 +624,41 @@ fn adversarial_secrets_and_private_notes_never_leak_in_logs_doctor_or_support() 
         assert_no_secret_leaks(&format!("doctor ({args:?})"), &combined, &secrets);
     }
 
+    // 2b. Direct `--org-dir .../private`, `.../private/tasks`, and `.../protected` MUST fail
+    //     closed without scanning or leaking restricted content.
+    for restricted in [
+        offline_root.join("private"),
+        offline_root.join("private/tasks"),
+        offline_root.join("protected"),
+    ] {
+        let out = sb.run(&[
+            "doctor",
+            "--org-dir",
+            restricted.to_str().unwrap(),
+            "--json",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "restricted path `{}` must fail closed: {}",
+            restricted.display(),
+            text(&out.stdout)
+        );
+        let parsed: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(parsed["ok"], false, "{parsed}");
+        assert!(parsed["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "org.integrity.syntax" && c["status"] == "fail"));
+        let combined = format!("{}\n{}", text(&out.stdout), text(&out.stderr));
+        assert_no_secret_leaks(
+            &format!("doctor restricted ({})", restricted.display()),
+            &combined,
+            &secrets,
+        );
+    }
+
     // 3. `support` stdout JSON and `--output` 0600 file.
     let stdout_sup = sb.run(&["support", "--instance", "adv", "--lines", "100"]);
     assert_eq!(

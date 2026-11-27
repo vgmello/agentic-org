@@ -1,7 +1,10 @@
 //! A last guard against secrets in a prompt. The office never adds secrets itself (the
-//! registry names exactly what goes in), but a person can paste one into a text field. This
-//! looks for the common shapes and refuses the run. It is a heuristic, not a promise: it
-//! will miss some secrets and flag a few hashes.
+//! registry names exactly what goes in), but a person can paste one into a text field.
+//!
+//! Delegates first through the Layer-0 workspace redaction choke-point (`org-redact`) and adds
+//! `org-copilot`-specific fail-closed checks (headers, case-insensitive `Bearer`/`Basic` tokens
+//! including short/digitless forms, JSON/YAML secret fields, `npm_`/`xoxe` prefixes, PEM private
+//! key markers, and 64-hex office wire secrets / SHA-256 digests).
 
 use serde_json::Value;
 
@@ -17,30 +20,8 @@ pub fn contains_secret(value: &Value) -> bool {
     }
 }
 
-/// Prefixes that start a token, and how many token characters must follow.
-const TOKEN_PREFIXES: &[(&str, usize)] = &[
-    ("ghp_", 20),
-    ("gho_", 20),
-    ("ghu_", 20),
-    ("ghs_", 20),
-    ("ghr_", 20),
-    ("github_pat_", 20),
-    ("sk-", 20),
-    ("sk_live_", 16),
-    ("sk_test_", 16),
-    ("rk_live_", 16),
-    ("glpat-", 16),
-    ("npm_", 30),
-    ("xapp-", 10),
-    ("xoxe", 10),
-    ("AKIA", 16),
-    ("ASIA", 16),
-    ("AIza", 30),
-    ("xoxb-", 10),
-    ("xoxp-", 10),
-    ("xoxa-", 10),
-    ("xoxs-", 10),
-];
+/// Copilot-specific token prefixes beyond `org-redact`'s Layer-0 set.
+const EXTRA_TOKEN_PREFIXES: &[(&str, usize)] = &[("npm_", 30), ("xoxe", 10)];
 
 /// An office's fixed-size secrets are 64 hex digits (`org-proto`); so is a SHA-256. Both are refused.
 const HEX_RUN: usize = 64;
@@ -54,22 +35,22 @@ fn token_run(text: &str) -> usize {
 }
 
 pub fn text_has_secret(text: &str) -> bool {
-    has_private_key_marker(text)
-        || has_token_prefix(text)
-        || has_bearer_token(text)
+    org_redact::redact_text(text, &[]) != text
+        || has_private_key_marker(text)
+        || has_extra_token_prefix(text)
         || has_sensitive_header(text)
-        || has_url_userinfo(text)
-        || has_secret_assignment(text)
-        || has_jwt(text)
+        || has_auth_scheme_token(text)
+        || has_yaml_or_json_secret_field(text)
         || longest_hex_run(text) >= HEX_RUN
 }
 
 fn has_private_key_marker(text: &str) -> bool {
-    text.contains("-----BEGIN") && text.contains("PRIVATE KEY")
+    let upper = text.to_ascii_uppercase();
+    upper.contains("-----BEGIN") && upper.contains("PRIVATE KEY")
 }
 
-fn has_token_prefix(text: &str) -> bool {
-    TOKEN_PREFIXES.iter().any(|(prefix, min)| {
+fn has_extra_token_prefix(text: &str) -> bool {
+    EXTRA_TOKEN_PREFIXES.iter().any(|(prefix, min)| {
         text.match_indices(prefix).any(|(at, _)| {
             let starts_word = text[..at]
                 .chars()
@@ -80,23 +61,12 @@ fn has_token_prefix(text: &str) -> bool {
     })
 }
 
-/// A pasted "Authorization: Bearer <token>" header: a long run that holds a digit (plain
-/// words after "Bearer" are not a token).
-fn has_bearer_token(text: &str) -> bool {
-    ["Bearer ", "bearer "].iter().any(|marker| {
-        text.match_indices(marker).any(|(at, _)| {
-            let run: String = text[at + marker.len()..]
-                .chars()
-                .take_while(|c| is_token_char(*c))
-                .collect();
-            run.chars().count() >= 20 && run.chars().any(|c| c.is_ascii_digit())
-        })
-    })
-}
-
-/// Pasted sensitive HTTP headers (`Cookie:`, `Set-Cookie:`, `X-Org-Session-Proof:`, `X-Vault-Token:`).
+/// Pasted sensitive HTTP headers with any non-empty value (case-insensitive).
 fn has_sensitive_header(text: &str) -> bool {
     const HEADERS: &[&str] = &[
+        "authorization:",
+        "proxy-authorization:",
+        "x-auth-token:",
         "cookie:",
         "set-cookie:",
         "x-org-session-proof:",
@@ -104,98 +74,177 @@ fn has_sensitive_header(text: &str) -> bool {
         "x-api-key:",
     ];
     let lower = text.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
     HEADERS.iter().any(|hdr| {
         lower.match_indices(hdr).any(|(at, _)| {
             let starts_boundary = at == 0
-                || !lower.as_bytes()[at - 1].is_ascii_alphanumeric()
-                    && lower.as_bytes()[at - 1] != b'-';
+                || (!bytes[at - 1].is_ascii_alphanumeric()
+                    && !matches!(bytes[at - 1], b'-' | b'_'));
             let after = lower[at + hdr.len()..].trim_start_matches([' ', '\t']);
             let val_len = after
                 .bytes()
                 .take_while(|b| !matches!(b, b'\n' | b'\r'))
                 .count();
-            starts_boundary && val_len >= 6
+            starts_boundary && val_len >= 1
         })
     })
 }
 
-/// Embedded credentials in a URL (`https://user:pass@host`).
-fn has_url_userinfo(text: &str) -> bool {
-    let mut rest = text;
-    while let Some(pos) = rest.find("://") {
-        let after = &rest[pos + 3..];
-        let authority_end = after
-            .find(['/', '?', '#', ' ', '\t', '\n', '\r', '"', '\''])
-            .unwrap_or(after.len());
-        let authority = &after[..authority_end];
-        if let Some((userinfo, host)) = authority.split_once('@') {
-            if !host.is_empty()
-                && userinfo
-                    .split_once(':')
-                    .is_some_and(|(_, pw)| !pw.is_empty())
-            {
-                return true;
-            }
-        }
-        rest = after;
-    }
-    false
+/// Case-insensitive `Bearer` / `Basic` token detection (including short/digitless tokens), while
+/// leaving ordinary lowercase English prose such as `"basic understanding"` or
+/// `"Bearer authentication flow"` readable.
+fn has_auth_scheme_token(text: &str) -> bool {
+    has_scheme_match(text, "bearer", true) || has_scheme_match(text, "basic", false)
 }
 
-/// Explicit `KEY=value` secret assignments (`API_KEY=...`, `VAULT_TOKEN=...`, `PASSWORD=...`).
-fn has_secret_assignment(text: &str) -> bool {
-    const KEYS: &[&str] = &[
-        "api_key",
-        "access_token",
-        "refresh_token",
-        "session_token",
-        "client_secret",
-        "vault_token",
-        "vault_credential",
+fn has_scheme_match(text: &str, scheme_lower: &str, is_bearer: bool) -> bool {
+    let bytes = text.as_bytes();
+    let needle = scheme_lower.as_bytes();
+    if bytes.len() <= needle.len() {
+        return false;
+    }
+    (0..bytes.len() - needle.len()).any(|i| scheme_matches_at(text, bytes, i, needle, is_bearer))
+}
+
+fn scheme_matches_at(text: &str, bytes: &[u8], i: usize, needle: &[u8], is_bearer: bool) -> bool {
+    let starts_word = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+    if !starts_word || !bytes[i..i + needle.len()].eq_ignore_ascii_case(needle) {
+        return false;
+    }
+    let after_scheme = i + needle.len();
+    let ws = text[after_scheme..]
+        .bytes()
+        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .count();
+    if ws == 0 {
+        return false;
+    }
+    let scheme_all_upper = bytes[i..after_scheme].iter().all(u8::is_ascii_uppercase);
+    let token: String = text[after_scheme + ws..]
+        .chars()
+        .take_while(|c| is_token_char(*c))
+        .collect();
+    token_looks_secret(&token, scheme_all_upper, is_bearer)
+}
+
+fn token_looks_secret(token: &str, scheme_all_upper: bool, is_bearer: bool) -> bool {
+    let len = token.len();
+    if len == 0 {
+        return false;
+    }
+    if scheme_all_upper {
+        return true;
+    }
+    let all_lower = token.bytes().all(|b| b.is_ascii_lowercase());
+    if is_bearer {
+        (len >= 4 && !all_lower) || len >= 16
+    } else {
+        len >= 6 && !all_lower
+    }
+}
+
+/// JSON/YAML key-value fields holding secrets (quoted or unquoted keys with `:`).
+fn has_yaml_or_json_secret_field(text: &str) -> bool {
+    const SECRET_FIELDS: &[&str] = &[
+        "apikey",
         "password",
         "passphrase",
-        "private_key",
-        "agent_os_session_token",
+        "cookie",
+        "setcookie",
+        "vaulttoken",
+        "vaultcredential",
+        "vaultsecret",
+        "secret",
+        "clientsecret",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "sessiontoken",
+        "sessioncookie",
+        "sessionproof",
+        "recoverycode",
+        "recoverycodes",
+        "privatekey",
     ];
-    let bytes = text.as_bytes();
-    let mut pos = 0;
-    while let Some(rel) = text[pos..].find('=') {
-        let eq = pos + rel;
-        let key_start = eq
-            - bytes[..eq]
-                .iter()
-                .rev()
-                .take_while(|b| b.is_ascii_alphanumeric() || **b == b'_')
-                .count();
-        let key = text[key_start..eq].to_ascii_lowercase();
-        let after = &text[eq + 1..];
-        if !after.starts_with('=') && KEYS.iter().any(|k| key == *k || key.ends_with(k)) {
-            let trimmed = after.trim_start_matches(['"', '\'']);
-            let val_len = trimmed
+    for line in text.lines() {
+        let bytes = line.as_bytes();
+        let mut pos = 0;
+        while let Some(rel) = line[pos..].find(':') {
+            let colon = pos + rel;
+            pos = colon + 1;
+            // Skip Rust module separators `::` and URL schemes `://`.
+            if bytes.get(colon + 1) == Some(&b':')
+                || (colon > 0 && bytes[colon - 1] == b':')
+                || line[colon..].starts_with("://")
+            {
+                continue;
+            }
+            let head = line[..colon].trim_end_matches([' ', '\t']);
+            let key_raw = extract_field_key(head);
+            let Some(key_raw) = key_raw else {
+                continue;
+            };
+            let norm: String = key_raw
                 .bytes()
-                .take_while(|b| {
-                    !b.is_ascii_whitespace() && !matches!(b, b'"' | b'\'' | b';' | b',')
-                })
-                .count();
-            if val_len >= 6 {
+                .filter(u8::is_ascii_alphanumeric)
+                .map(|b| char::from(b.to_ascii_lowercase()))
+                .collect();
+            if !SECRET_FIELDS.contains(&norm.as_str()) {
+                continue;
+            }
+            let after = line[colon + 1..].trim_start_matches([' ', '\t']);
+            if field_value_non_empty(after) {
                 return true;
             }
         }
-        pos = eq + 1;
     }
     false
 }
 
-/// A JSON web token: `eyJ` (a base64 `{"`), then two more dot-separated parts.
-fn has_jwt(text: &str) -> bool {
-    text.match_indices("eyJ").any(|(at, _)| {
-        let token: String = text[at..]
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
-            .collect();
-        let parts: Vec<&str> = token.split('.').collect();
-        parts.len() >= 3 && parts.iter().take(3).all(|p| p.len() >= 10)
-    })
+fn extract_field_key(head: &str) -> Option<&str> {
+    if let Some(inner) = head.strip_suffix('"') {
+        let open = inner.rfind('"')?;
+        let key = &inner[open + 1..];
+        return (!key.is_empty()).then_some(key);
+    }
+    if let Some(inner) = head.strip_suffix('\'') {
+        let open = inner.rfind('\'')?;
+        let key = &inner[open + 1..];
+        return (!key.is_empty()).then_some(key);
+    }
+    // Unquoted YAML key at start of line (optionally after `- ` list prefix).
+    let trimmed = head.trim_start_matches([' ', '\t']);
+    let trimmed = trimmed
+        .strip_prefix("- ")
+        .map(|s| s.trim_start_matches([' ', '\t']))
+        .unwrap_or(trimmed);
+    if !trimmed.is_empty()
+        && trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
+        Some(trimmed)
+    } else {
+        None
+    }
+}
+
+fn field_value_non_empty(after: &str) -> bool {
+    if after.is_empty() || after.starts_with(['{', '[']) {
+        return false;
+    }
+    let val = if let Some(rest) = after.strip_prefix('"') {
+        rest.split('"').next().unwrap_or(rest)
+    } else if let Some(rest) = after.strip_prefix('\'') {
+        rest.split('\'').next().unwrap_or(rest)
+    } else {
+        after
+            .split([',', '}', ']', ';'])
+            .next()
+            .unwrap_or(after)
+            .trim()
+    };
+    !val.is_empty() && !val.eq_ignore_ascii_case("null")
 }
 
 fn longest_hex_run(text: &str) -> usize {

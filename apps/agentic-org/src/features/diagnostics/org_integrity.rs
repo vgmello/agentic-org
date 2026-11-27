@@ -5,8 +5,9 @@
 //! Check evaluation and SQLite parity reporting live in `org_integrity_checks.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde_json::{Map, Value};
 
@@ -53,6 +54,32 @@ pub(super) enum TargetKind {
     Doc,
     Decision,
     AnyEntity,
+}
+
+pub(super) fn is_restricted_dir_name(name: &OsStr) -> bool {
+    name == OsStr::new("private") || name == OsStr::new("protected")
+}
+
+/// Returns `true` when `path` contains a `private` or `protected` component (excluding only the
+/// macOS OS root alias prefix `/private/var`, `/private/tmp`, or `/private/etc` on macOS).
+pub(super) fn has_restricted_component(path: &Path) -> bool {
+    let comps: Vec<Component<'_>> = path.components().collect();
+    let skip = if org_platform::fs::has_macos_private_root_aliases()
+        && comps.len() >= 3
+        && matches!(comps[0], Component::RootDir)
+        && matches!(comps[1], Component::Normal(n) if n == OsStr::new("private"))
+        && matches!(
+            comps[2],
+            Component::Normal(n)
+                if n == OsStr::new("var") || n == OsStr::new("tmp") || n == OsStr::new("etc")
+        ) {
+        3
+    } else {
+        0
+    };
+    comps[skip..]
+        .iter()
+        .any(|c| matches!(c, Component::Normal(n) if is_restricted_dir_name(n)))
 }
 
 pub(super) fn walk_state_tree(root: &Path, dir: &Path, index: &mut StateIndex) {
@@ -154,10 +181,7 @@ fn visit_state_entry(
     } else if meta.is_dir() {
         // Never descend into private notes or protected companion databases when `--org-dir`
         // points at a parent durable root.
-        let is_restricted = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|name| matches!(name, "private" | "protected"));
+        let is_restricted = path.file_name().is_some_and(is_restricted_dir_name);
         if !is_restricted {
             walk_state_tree_bounded(root, path, depth + 1, max_depth, max_entries, index);
         }

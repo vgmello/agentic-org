@@ -130,6 +130,7 @@ const NEVER: &[&str] = &[
 ];
 const NEVER_PREFIXES: &[&str] = &[
     "auth.",
+    "copilot.",
     "cost.subscription_usage.credential_",
     "office.invitation.",
     "provider.",

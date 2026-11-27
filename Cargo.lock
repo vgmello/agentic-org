@@ -1368,6 +1368,7 @@ dependencies = [
 name = "org-copilot"
 version = "0.0.0"
 dependencies = [
+ "org-redact",
  "serde",
  "serde_json",
 ]
