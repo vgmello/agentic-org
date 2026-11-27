@@ -13,12 +13,15 @@
 mod apply;
 mod budget;
 mod export;
+mod moves;
 mod staging;
 mod tiers;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(test)]
+pub(crate) use self::apply::sync_initial_snapshot_in_batches;
 pub(crate) use self::apply::sync_initial_snapshot_paged;
 pub(crate) use self::budget::{ActiveSnapshotTransfer, HqSnapshotTransferBudget};
 pub(crate) use self::export::{cleanup_stale_hq_snapshot_exports, send_hq_snapshot};
