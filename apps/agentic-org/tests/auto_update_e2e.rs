@@ -1976,3 +1976,584 @@ fn p1_3_cli_update_and_rollback_fail_closed_on_service_inspection_failure() {
         );
     }
 }
+
+#[test]
+fn p1_1_failed_auto_rollback_on_store_install_keeps_pending_and_retries_cleanly() {
+    use org_host::release::{check_pointer_with_policy, PointerCheckState, PointerDecision};
+
+    struct BlockRollbackStoreHealthProbe {
+        mgr: std::sync::Arc<FakePlatformServiceManager>,
+        blocker_path: PathBuf,
+        injected: AtomicBool,
+    }
+
+    impl HealthProbe for BlockRollbackStoreHealthProbe {
+        fn check_healthy(
+            &self,
+            _target: &HealthTarget,
+            _timeout: Duration,
+        ) -> Result<String, String> {
+            if self.mgr.program().to_string_lossy().contains("v0.2.0") {
+                if !self.injected.swap(true, Ordering::AcqRel) {
+                    // Causes `ReleaseStore::verify_root` in `rb_services.install` to fail closed!
+                    fs::write(&self.blocker_path, b"block-rb").unwrap();
+                }
+                return Err("v0.2.0 host unhealthy".into());
+            }
+            Ok("healthy".into())
+        }
+    }
+
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let (v1_pin, v1_bin) = fx.seed_initial_v1(false);
+    let (v2_bundle, v2_sha, v2_size) = fx.write_signed_bundle("v0.2.0", 2);
+    let pull_v2 = fx.write_signed_pointer(
+        "v0.2.0",
+        2,
+        &format!("file://{}", v2_bundle.display()),
+        &v2_sha,
+        v2_size,
+    );
+    let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
+    let mgr = std::sync::Arc::new(FakePlatformServiceManager::new(
+        ManagerFlavor::LinuxSystemd,
+        &fx.service_id,
+        "prod",
+        v1_bin.clone(),
+        true,
+    ));
+    let drain = SequenceDrainProbe::new(0);
+    let blocker_path = fx.store.join("rollback-blocker");
+    let health = BlockRollbackStoreHealthProbe {
+        mgr: std::sync::Arc::clone(&mgr),
+        blocker_path: blocker_path.clone(),
+        injected: AtomicBool::new(false),
+    };
+
+    // 1. Forward v1 -> v2 commits v2, fails health, then `rb_services.install` FAILS!
+    let failed_rb = run_auto_update_with_policy(
+        &fx.update_config(pull_v2.clone(), Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        failed_rb.status,
+        AutoUpdateStatus::RollbackFailed,
+        "{failed_rb:?}"
+    );
+    assert_eq!(failed_rb.quarantined_release_id.as_deref(), Some("v0.2.0"));
+
+    // 2. `pending_health_check` MUST survive with known-good `previous_pin` (`v1`)!
+    let state = UpdateStateStore::read_readonly(&fx.state_dir).unwrap();
+    let pending = state
+        .pending_health_check
+        .as_ref()
+        .expect("failed rb_services.install must preserve pending_health_check");
+    assert_eq!(pending.previous_pin, Some(v1_pin.clone()));
+    assert_eq!(pending.target_pin.release_id, "v0.2.0");
+    assert!(state.quarantined_entry("v0.2.0").is_some());
+
+    // 3. Pointer check MUST NOT return UpToDate, and dry-run MUST NOT return UpToDate!
+    let (active_pin, highest_seq) =
+        org_host_setup::auto_update::read_store_head_readonly(&fx.store).unwrap();
+    let check = check_pointer_with_policy(
+        &fetcher,
+        &pull_v2,
+        &fx.policy,
+        &fx.keys,
+        &PointerCheckState {
+            current_pin: active_pin.as_ref(),
+            highest_sequence: highest_seq,
+            update_state: &state,
+            allow_quarantined: false,
+        },
+    )
+    .unwrap();
+    assert_ne!(check.decision, PointerDecision::UpToDate);
+    let mut dry_cfg = fx.update_config(pull_v2, Duration::from_secs(2), false);
+    dry_cfg.dry_run = true;
+    let dry = run_auto_update_with_policy(
+        &dry_cfg,
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(dry.status, AutoUpdateStatus::DryRun, "{dry:?}");
+    assert!(dry.note.contains("unresolved pending health check"));
+
+    // 4. Clear store blocker and advance pointer to v3 BEFORE next run: next `release update`
+    //    MUST reconcile pending rollback back to v1 cleanly (never overwriting previous_pin with v2)!
+    fs::remove_file(&blocker_path).unwrap();
+    let (v3_bundle, v3_sha, v3_size) = fx.write_signed_bundle("v0.3.0", 3);
+    let pull_v3 = fx.write_signed_pointer(
+        "v0.3.0",
+        3,
+        &format!("file://{}", v3_bundle.display()),
+        &v3_sha,
+        v3_size,
+    );
+    let ok_health = ScriptedHealthProbe::always_ok();
+    let retried = run_auto_update_with_policy(
+        &fx.update_config(pull_v3.clone(), Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &ok_health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(retried.status, AutoUpdateStatus::RolledBack, "{retried:?}");
+    assert_eq!(retried.active_pin, Some(v1_pin.clone()));
+    assert_eq!(mgr.program(), v1_bin);
+    assert!(mgr.is_running());
+
+    let recovered_state = UpdateStateStore::read_readonly(&fx.state_dir).unwrap();
+    assert!(recovered_state.pending_health_check.is_none());
+    assert_eq!(recovered_state.confirmed, Some(v1_pin.clone()));
+
+    // 5. Next update to v3 starts from confirmed v1 (so `previous_pin` is v1, never broken v2).
+    let v3_upd = run_auto_update_with_policy(
+        &fx.update_config(pull_v3, Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &ok_health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(v3_upd.status, AutoUpdateStatus::Updated, "{v3_upd:?}");
+    assert_eq!(v3_upd.previous_pin, Some(v1_pin));
+    assert_eq!(v3_upd.active_pin.as_ref().unwrap().release_id, "v0.3.0");
+}
+
+#[test]
+fn p1_1_failed_auto_rollback_on_post_rollback_unhealthy_keeps_pending_and_retries_cleanly() {
+    use org_host::release::{check_pointer_with_policy, PointerCheckState, PointerDecision};
+
+    struct FailAllHealthProbe;
+    impl HealthProbe for FailAllHealthProbe {
+        fn check_healthy(
+            &self,
+            _target: &HealthTarget,
+            _timeout: Duration,
+        ) -> Result<String, String> {
+            Err("simulated health failure".into())
+        }
+    }
+
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let (v1_pin, v1_bin) = fx.seed_initial_v1(false);
+    let (v2_bundle, v2_sha, v2_size) = fx.write_signed_bundle("v0.2.0", 2);
+    let pull_v2 = fx.write_signed_pointer(
+        "v0.2.0",
+        2,
+        &format!("file://{}", v2_bundle.display()),
+        &v2_sha,
+        v2_size,
+    );
+    let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
+    let mgr = std::sync::Arc::new(FakePlatformServiceManager::new(
+        ManagerFlavor::LinuxSystemd,
+        &fx.service_id,
+        "prod",
+        v1_bin.clone(),
+        true,
+    ));
+    let drain = SequenceDrainProbe::new(0);
+
+    // 1. Forward v1 -> v2 fails health -> `rb_services.install` restores v1 pin, THEN post-rollback
+    //    `rb_healthy == false`!
+    let failed_rb = run_auto_update_with_policy(
+        &fx.update_config(pull_v2.clone(), Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &FailAllHealthProbe,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        failed_rb.status,
+        AutoUpdateStatus::RollbackFailed,
+        "{failed_rb:?}"
+    );
+    assert_eq!(failed_rb.active_pin, Some(v1_pin.clone()));
+    assert_eq!(failed_rb.quarantined_release_id.as_deref(), Some("v0.2.0"));
+
+    // 2. `pending_health_check` MUST survive with known-good `previous_pin` (`v1`)!
+    let state = UpdateStateStore::read_readonly(&fx.state_dir).unwrap();
+    let pending = state
+        .pending_health_check
+        .as_ref()
+        .expect("unhealthy post-rollback must preserve pending_health_check");
+    assert_eq!(pending.previous_pin, Some(v1_pin.clone()));
+    assert_eq!(pending.target_pin.release_id, "v0.2.0");
+    assert!(state.quarantined_entry("v0.2.0").is_some());
+
+    // 3. Pointer check on v2 returns Quarantined (never UpToDate) and dry-run reports pending recovery!
+    let (active_pin, highest_seq) =
+        org_host_setup::auto_update::read_store_head_readonly(&fx.store).unwrap();
+    assert_eq!(active_pin, Some(v1_pin.clone()));
+    let check = check_pointer_with_policy(
+        &fetcher,
+        &pull_v2,
+        &fx.policy,
+        &fx.keys,
+        &PointerCheckState {
+            current_pin: active_pin.as_ref(),
+            highest_sequence: highest_seq,
+            update_state: &state,
+            allow_quarantined: false,
+        },
+    )
+    .unwrap();
+    assert_ne!(check.decision, PointerDecision::UpToDate);
+    let mut dry_cfg = fx.update_config(pull_v2, Duration::from_secs(2), false);
+    dry_cfg.dry_run = true;
+    let dry = run_auto_update_with_policy(
+        &dry_cfg,
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &FailAllHealthProbe,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(dry.status, AutoUpdateStatus::DryRun, "{dry:?}");
+    assert!(dry.note.contains("unresolved pending health check"));
+
+    // 4. Stop the service to simulate crash after failed rollback, advance pointer to v3, and let
+    //    health recover: next `release update` MUST reconcile & complete rollback to v1 cleanly!
+    mgr.stop(&fx.service_id).unwrap();
+    let (v3_bundle, v3_sha, v3_size) = fx.write_signed_bundle("v0.3.0", 3);
+    let pull_v3 = fx.write_signed_pointer(
+        "v0.3.0",
+        3,
+        &format!("file://{}", v3_bundle.display()),
+        &v3_sha,
+        v3_size,
+    );
+    let ok_health = ScriptedHealthProbe::always_ok();
+    let retried = run_auto_update_with_policy(
+        &fx.update_config(pull_v3.clone(), Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &ok_health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(retried.status, AutoUpdateStatus::RolledBack, "{retried:?}");
+    assert_eq!(retried.active_pin, Some(v1_pin.clone()));
+    assert_eq!(mgr.program(), v1_bin);
+    assert!(mgr.is_running());
+
+    let recovered_state = UpdateStateStore::read_readonly(&fx.state_dir).unwrap();
+    assert!(recovered_state.pending_health_check.is_none());
+    assert_eq!(recovered_state.confirmed, Some(v1_pin.clone()));
+
+    // 5. Subsequent update to v3 upgrades cleanly from confirmed v1.
+    let v3_upd = run_auto_update_with_policy(
+        &fx.update_config(pull_v3, Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &ok_health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(v3_upd.status, AutoUpdateStatus::Updated, "{v3_upd:?}");
+    assert_eq!(v3_upd.previous_pin, Some(v1_pin));
+}
+
+#[test]
+fn p1_2_automatic_and_manual_rollback_stop_activating_crash_loop_holding_store_lock() {
+    struct ActivatingStoreLockManager {
+        store_dir: PathBuf,
+        policy: TrustedPolicy,
+        keys: TrustedKeys,
+        state: Mutex<ActivatingLockState>,
+    }
+
+    struct ActivatingLockState {
+        unit: Unit,
+        activating: bool,
+        running: bool,
+        crash_loop_on: Option<String>,
+        held_store: Option<ReleaseStore>,
+        events: Vec<String>,
+    }
+
+    impl ActivatingStoreLockManager {
+        fn new(fx: &E2eHarness, program: PathBuf, running: bool) -> Self {
+            Self {
+                store_dir: fx.store.clone(),
+                policy: fx.policy.clone(),
+                keys: fx.keys.clone(),
+                state: Mutex::new(ActivatingLockState {
+                    unit: Unit {
+                        instance_id: fx.service_id.clone(),
+                        program,
+                        args: vec![
+                            OsString::from("serve"),
+                            OsString::from("--name"),
+                            OsString::from("prod"),
+                        ],
+                        env: vec![(OsString::from("HOME"), OsString::from("/home/agents"))],
+                    },
+                    activating: false,
+                    running,
+                    crash_loop_on: None,
+                    held_store: None,
+                    events: Vec::new(),
+                }),
+            }
+        }
+
+        fn enter_activating_crash_loop(&self) {
+            let mut st = self.state.lock().unwrap();
+            st.running = false;
+            st.activating = true;
+            if st.held_store.is_none() {
+                st.held_store = Some(
+                    ReleaseStore::open_with_policy(
+                        &self.store_dir,
+                        self.policy.clone(),
+                        self.keys.clone(),
+                    )
+                    .expect("crash-looping service acquires real store.lock"),
+                );
+            }
+        }
+
+        fn program(&self) -> PathBuf {
+            self.state.lock().unwrap().unit.program.clone()
+        }
+
+        fn is_running(&self) -> bool {
+            self.state.lock().unwrap().running
+        }
+    }
+
+    impl ServiceManager for ActivatingStoreLockManager {
+        fn register(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            st.unit = unit.clone();
+            st.events.push("register".into());
+            Ok(Registration::Loaded)
+        }
+
+        fn start(&self, id: &str) -> Result<(), ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            assert_eq!(st.unit.instance_id, id);
+            let should_loop = st
+                .crash_loop_on
+                .as_deref()
+                .is_some_and(|needle| st.unit.program.to_string_lossy().contains(needle));
+            if should_loop {
+                // Simulates systemd `ActiveState=activating` crash-loop holding real `store.lock`!
+                st.running = false;
+                st.activating = true;
+                if st.held_store.is_none() {
+                    st.held_store = Some(
+                        ReleaseStore::open_with_policy(
+                            &self.store_dir,
+                            self.policy.clone(),
+                            self.keys.clone(),
+                        )
+                        .expect("crash-looping v2 acquires real store.lock"),
+                    );
+                }
+                st.events.push("start:activating-lock".into());
+            } else {
+                st.activating = false;
+                st.running = true;
+                st.events.push("start:ok".into());
+            }
+            Ok(())
+        }
+
+        fn stop(&self, id: &str) -> Result<(), ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            assert_eq!(st.unit.instance_id, id);
+            st.activating = false;
+            st.running = false;
+            // Stopping the crash-loop releases the real `store.lock`!
+            st.held_store = None;
+            st.events.push("stop".into());
+            Ok(())
+        }
+
+        fn status(&self, id: &str) -> Result<ServiceStatus, ServiceError> {
+            let st = self.state.lock().unwrap();
+            if st.unit.instance_id != id {
+                return Ok(ServiceStatus::NotRegistered);
+            }
+            if st.running {
+                Ok(ServiceStatus::Running { pid: 8888 })
+            } else if st.activating {
+                // Mirrors `systemd.rs`: `ActiveState=activating` inspects as `Unloaded` (`was_running == false`)!
+                Ok(ServiceStatus::Unloaded)
+            } else {
+                Ok(ServiceStatus::Stopped)
+            }
+        }
+
+        fn unregister(&self, _id: &str) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
+        fn definition(&self, id: &str) -> Result<Option<Unit>, ServiceError> {
+            let st = self.state.lock().unwrap();
+            Ok((st.unit.instance_id == id).then(|| st.unit.clone()))
+        }
+
+        fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            if st.activating || st.running {
+                return Err(ServiceError::Conflict(
+                    "unit is still activating or running".into(),
+                ));
+            }
+            st.unit = unit.clone();
+            st.events
+                .push(format!("redefine:{}", unit.program.display()));
+            Ok(Registration::Loaded)
+        }
+    }
+
+    struct FailOnV2ActivatingProbe(std::sync::Arc<ActivatingStoreLockManager>);
+    impl HealthProbe for FailOnV2ActivatingProbe {
+        fn check_healthy(
+            &self,
+            _target: &HealthTarget,
+            _timeout: Duration,
+        ) -> Result<String, String> {
+            if self.0.program().to_string_lossy().contains("v0.2.0") {
+                Err("v0.2.0 crash-looping".into())
+            } else {
+                Ok("healthy".into())
+            }
+        }
+    }
+
+    // 1. Automatic rollback when v2 enters an activating crash-loop (`was_running == false`)
+    //    holding real `store.lock` until `stop` is called!
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let (v1_pin, v1_bin) = fx.seed_initial_v1(false);
+    let (v2_bundle, v2_sha, v2_size) = fx.write_signed_bundle("v0.2.0", 2);
+    let pull_v2 = fx.write_signed_pointer(
+        "v0.2.0",
+        2,
+        &format!("file://{}", v2_bundle.display()),
+        &v2_sha,
+        v2_size,
+    );
+    let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
+    let mgr = std::sync::Arc::new(ActivatingStoreLockManager::new(&fx, v1_bin.clone(), true));
+    mgr.state.lock().unwrap().crash_loop_on = Some("v0.2.0".into());
+    let drain = SequenceDrainProbe::new(0);
+    let health = FailOnV2ActivatingProbe(std::sync::Arc::clone(&mgr));
+
+    let auto_rb = run_auto_update_with_policy(
+        &fx.update_config(pull_v2, Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(auto_rb.status, AutoUpdateStatus::RolledBack, "{auto_rb:?}");
+    assert_eq!(auto_rb.active_pin, Some(v1_pin.clone()));
+    assert_eq!(mgr.program(), v1_bin);
+    assert!(mgr.is_running());
+
+    // 2. Manual rollback when v3 is in an activating crash-loop (`was_running == false`)
+    //    holding real `store.lock` until `stop` is called!
+    let (_v3_pin, v3_bin) = pin_release_into_store(&fx, "v0.3.0", 3);
+    let manual_mgr = ActivatingStoreLockManager::new(&fx, v3_bin, false);
+    manual_mgr.enter_activating_crash_loop();
+    assert_eq!(
+        manual_mgr.status(&fx.service_id).unwrap(),
+        ServiceStatus::Unloaded
+    );
+
+    let ok_health = ScriptedHealthProbe::always_ok();
+    let manual_rb = run_manual_rollback_with_policy(
+        &RollbackConfig {
+            store_dir: fx.store.clone(),
+            state_dir: fx.state_dir.clone(),
+            setup_base: Some(fx.base.clone()),
+            target_release_id: Some("v0.1.0".into()),
+            drain: DrainConfig {
+                timeout: Duration::from_secs(2),
+                poll_interval: Duration::from_millis(10),
+                force: false,
+            },
+            health_timeout: Duration::from_secs(2),
+            restart: true,
+            dry_run: false,
+            quarantine_current: false,
+        },
+        &RollbackPorts {
+            manager: &manual_mgr,
+            drain: &drain,
+            health: &ok_health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        manual_rb.status,
+        RollbackStatus::RolledBack,
+        "{manual_rb:?}"
+    );
+    assert_eq!(manual_rb.active_pin, Some(v1_pin));
+    assert_eq!(manual_mgr.program(), v1_bin);
+}

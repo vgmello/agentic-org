@@ -92,3 +92,42 @@ fn refuses_symlink_state_dir_symlink_file_and_corrupt_json() {
     .unwrap();
     assert!(matches!(store.load(), Err(Error::InvalidRelease)));
 }
+
+#[test]
+fn quarantine_keeping_pending_preserves_checkpoint_and_confirmed_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = dir.path().canonicalize().unwrap().join("updater");
+    let store = UpdateStateStore::open(&state_dir).unwrap();
+
+    let v1 = sample_pin("v0.1.0", 1);
+    let v2 = sample_pin("v0.2.0", 2);
+    store.confirm_healthy(&v1).unwrap();
+    store
+        .record_pending_with_services(
+            Some(v1.clone()),
+            v2.clone(),
+            Some("https://example.com/pointer.v1.json".into()),
+            vec!["prod".into()],
+        )
+        .unwrap();
+
+    let after = store
+        .quarantine_keeping_pending(
+            &v2,
+            "rollback failed with Authorization: Bearer superSecret999",
+        )
+        .unwrap();
+    let pending = after
+        .pending_health_check
+        .as_ref()
+        .expect("failed rollback must keep pending_health_check intact");
+    assert_eq!(pending.previous_pin, Some(v1.clone()));
+    assert_eq!(pending.target_pin, v2);
+    assert_eq!(after.confirmed, Some(v1));
+    let q = after.quarantined_entry("v0.2.0").unwrap();
+    assert!(!q.reason.contains("superSecret999"), "{}", q.reason);
+    assert!(q.reason.contains("[REDACTED]"), "{}", q.reason);
+
+    let reloaded = UpdateStateStore::read_readonly(&state_dir).unwrap();
+    assert_eq!(reloaded, after);
+}

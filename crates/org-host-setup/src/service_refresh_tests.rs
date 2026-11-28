@@ -592,3 +592,144 @@ fn rollback_to_program_stops_activating_crash_loop_before_redefine() {
         st.events
     );
 }
+
+/// P1-2: An activating/crash-looping unit inspects as `was_running == false` (`Unloaded`) and
+/// holds `store.lock` until `stop` is called. `stop_for_rollback` must stop it BEFORE `install`
+/// acquires `store.lock`, and subsequent `rollback_to_program` must be idempotent (no second stop).
+#[test]
+fn p1_2_stop_for_rollback_stops_activating_lock_holder_before_install_and_is_idempotent() {
+    use std::sync::Mutex;
+
+    struct ActivatingLockHolderManager {
+        state: Mutex<LockHolderState>,
+    }
+
+    struct LockHolderState {
+        unit: Unit,
+        activating: bool,
+        running: bool,
+        holds_store_lock: bool,
+        events: Vec<String>,
+    }
+
+    impl ServiceManager for ActivatingLockHolderManager {
+        fn register(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            st.unit = unit.clone();
+            st.events.push("register".into());
+            Ok(Registration::Loaded)
+        }
+
+        fn start(&self, id: &str) -> Result<(), ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            assert_eq!(st.unit.instance_id, id);
+            st.activating = false;
+            st.running = true;
+            st.events.push("start".into());
+            Ok(())
+        }
+
+        fn stop(&self, id: &str) -> Result<(), ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            assert_eq!(st.unit.instance_id, id);
+            st.activating = false;
+            st.running = false;
+            st.holds_store_lock = false;
+            st.events.push("stop".into());
+            Ok(())
+        }
+
+        fn status(&self, id: &str) -> Result<ServiceStatus, ServiceError> {
+            let st = self.state.lock().unwrap();
+            if st.unit.instance_id != id {
+                return Ok(ServiceStatus::NotRegistered);
+            }
+            if st.running {
+                Ok(ServiceStatus::Running { pid: 77 })
+            } else if st.activating {
+                Ok(ServiceStatus::Unloaded)
+            } else {
+                Ok(ServiceStatus::Stopped)
+            }
+        }
+
+        fn unregister(&self, _id: &str) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
+        fn definition(&self, id: &str) -> Result<Option<Unit>, ServiceError> {
+            let st = self.state.lock().unwrap();
+            Ok((st.unit.instance_id == id).then(|| st.unit.clone()))
+        }
+
+        fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            if st.activating || st.running {
+                return Err(ServiceError::Conflict("unit is still activating".into()));
+            }
+            st.unit = unit.clone();
+            st.events
+                .push(format!("redefine:{}", unit.program.display()));
+            Ok(Registration::Loaded)
+        }
+    }
+
+    let account = Account::new();
+    account.set_up("default", DEFAULT_ID, Service::Registered, 7420);
+    let mgr = ActivatingLockHolderManager {
+        state: Mutex::new(LockHolderState {
+            unit: Account::unit("default", DEFAULT_ID, &account.program("r2")),
+            activating: true,
+            running: false,
+            holds_store_lock: true,
+            events: Vec::new(),
+        }),
+    };
+
+    let mut refresh = ServiceRefresh::inspect_at(&mgr, &account.base, &account.store);
+    assert!(!refresh.managed_targets()[0].was_running);
+
+    let should_start = vec!["default".to_owned()];
+    refresh.stop_for_rollback(&mgr, &should_start);
+
+    let attempts = Cell::new(0);
+    let restored = refresh
+        .install(&mgr, || {
+            attempts.set(attempts.get() + 1);
+            let mut st = mgr.state.lock().unwrap();
+            if st.holds_store_lock {
+                return Err(InstallAttempt::Busy("store.lock held by crash-loop".into()));
+            }
+            st.events.push("install:ok".into());
+            Ok("r1")
+        })
+        .expect("stop_for_rollback must release store.lock before install");
+    assert_eq!(restored, "r1");
+    assert_eq!(attempts.get(), 1);
+
+    let reports = refresh.rollback_to_program(&mgr, &account.program("r1"), &should_start, true);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].outcome, RefreshOutcome::Refreshed, "{reports:?}");
+    assert!(reports[0].running);
+
+    let st = mgr.state.lock().unwrap();
+    let stop_count = st.events.iter().filter(|e| e.as_str() == "stop").count();
+    assert_eq!(
+        stop_count, 1,
+        "rollback_to_program must be idempotent when already stopped: {:?}",
+        st.events
+    );
+    let stop_pos = st.events.iter().position(|e| e == "stop").unwrap();
+    let install_pos = st.events.iter().position(|e| e == "install:ok").unwrap();
+    let redefine_pos = st
+        .events
+        .iter()
+        .position(|e| e.starts_with("redefine:"))
+        .unwrap();
+    let start_pos = st.events.iter().position(|e| e == "start").unwrap();
+    assert!(
+        stop_pos < install_pos && install_pos < redefine_pos && redefine_pos < start_pos,
+        "{:?}",
+        st.events
+    );
+}

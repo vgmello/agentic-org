@@ -274,14 +274,20 @@ fn evaluate_pointer_decision(
             };
         }
         if ptr.sequence() == active.sequence {
-            return if ptr.release_id() == active.release_id {
-                PointerDecision::UpToDate
-            } else {
-                PointerDecision::DowngradeRejected {
+            if ptr.release_id() != active.release_id {
+                return PointerDecision::DowngradeRejected {
                     current_sequence: active.sequence,
                     pointer_sequence: ptr.sequence(),
+                };
+            }
+            if !state.allow_quarantined && state.update_state.confirmed.as_ref() != Some(active) {
+                if let Some(q) = state.update_state.quarantined_entry(ptr.release_id()) {
+                    return PointerDecision::Quarantined {
+                        reason: q.reason.clone(),
+                    };
                 }
-            };
+            }
+            return PointerDecision::UpToDate;
         }
     }
     if !state.allow_quarantined {

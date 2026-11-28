@@ -521,6 +521,12 @@ fn is_disallowed_public_ipv6(ip: Ipv6Addr) -> bool {
         (segs[0] & 0xffc0) == 0xfe80,
         (segs[0] & 0xffc0) == 0xfec0,
         segs[0] == 0x2001 && segs[1] == 0x0db8,
+        // RFC 6052 well-known NAT64 prefix (`64:ff9b::/96`).
+        segs[..6] == [0x0064, 0xff9b, 0, 0, 0, 0],
+        // RFC 8215 local-use IPv4/IPv6 translation prefix (`64:ff9b:1::/48`).
+        segs[..3] == [0x0064, 0xff9b, 0x0001],
+        // RFC 2765 IPv4-translated prefix (`::ffff:0:0:0/96`).
+        segs[..6] == [0, 0, 0, 0, 0xffff, 0],
     ];
     checks.into_iter().any(|flag| flag)
 }

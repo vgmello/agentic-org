@@ -306,6 +306,17 @@ fn https_only_refuses_loopback_private_link_local_ula_metadata_and_obfuscated_ip
         "https://0x7f000001/release-pointer.v1.json",
         "https://0177.0.0.1/release-pointer.v1.json",
         "https://127.1/release-pointer.v1.json",
+        // RFC 6052 well-known NAT64 prefix (`64:ff9b::/96`)
+        "https://[64:ff9b::127.0.0.1]/release-pointer.v1.json",
+        "https://[64:ff9b::169.254.169.254]/latest/meta-data/",
+        "https://[64:ff9b::1.1.1.1]/release-pointer.v1.json",
+        // RFC 8215 local-use NAT64 prefix (`64:ff9b:1::/48`)
+        "https://[64:ff9b:1::127.0.0.1]/release-pointer.v1.json",
+        "https://[64:ff9b:1:abcd::1]/release-pointer.v1.json",
+        // RFC 2765 IPv4-translated prefix (`::ffff:0:0:0/96`)
+        "https://[::ffff:0:127.0.0.1]/release-pointer.v1.json",
+        "https://[::ffff:0:169.254.169.254]/latest/meta-data/",
+        "https://[::ffff:0:1.1.1.1]/release-pointer.v1.json",
     ] {
         assert_eq!(
             validate_pointer_url(bad_url, UrlPolicy::HttpsOnly),

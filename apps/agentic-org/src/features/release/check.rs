@@ -100,16 +100,17 @@ fn classify_check_outcome(
     pending: Option<&PendingHealthCheck>,
 ) -> (&'static str, Style, Option<String>, bool) {
     match decision {
-        PointerDecision::UpToDate if pending.is_some() => {
-            ("pending_recovery", Style::Warn, None, false)
+        PointerDecision::DowngradeRejected { .. } => {
+            ("downgrade_rejected", Style::Error, None, true)
         }
+        PointerDecision::Quarantined { reason } if pending.is_some() => {
+            ("pending_recovery", Style::Warn, Some(reason.clone()), false)
+        }
+        _ if pending.is_some() => ("pending_recovery", Style::Warn, None, false),
         PointerDecision::UpToDate => ("up_to_date", Style::Active, None, false),
         PointerDecision::UpdateAvailable => ("update_available", Style::Ok, None, false),
         PointerDecision::Quarantined { reason } => {
             ("quarantined", Style::Warn, Some(reason.clone()), false)
-        }
-        PointerDecision::DowngradeRejected { .. } => {
-            ("downgrade_rejected", Style::Error, None, true)
         }
     }
 }
@@ -181,10 +182,39 @@ mod tests {
     #[test]
     fn unresolved_pending_health_check_prevents_up_to_date_and_serializes_in_check_view() {
         let pending = sample_pending();
-        let (status, _, _, failed) =
+        let (status, _, reason, failed) =
             classify_check_outcome(&PointerDecision::UpToDate, Some(&pending));
         assert_eq!(status, "pending_recovery");
+        assert!(reason.is_none());
         assert!(!failed);
+
+        // Failed rollback leaves pending_health_check AND quarantined release -> still pending_recovery.
+        let (q_status, _, q_reason, q_failed) = classify_check_outcome(
+            &PointerDecision::Quarantined {
+                reason: "v2 crashed".into(),
+            },
+            Some(&pending),
+        );
+        assert_eq!(q_status, "pending_recovery");
+        assert_eq!(q_reason.as_deref(), Some("v2 crashed"));
+        assert!(!q_failed);
+
+        // Pointer advancing while pending_health_check exists also reports pending_recovery.
+        let (adv_status, _, _, adv_failed) =
+            classify_check_outcome(&PointerDecision::UpdateAvailable, Some(&pending));
+        assert_eq!(adv_status, "pending_recovery");
+        assert!(!adv_failed);
+
+        // Security downgrade/replay rejection is never masked by pending_recovery.
+        let (dg_status, _, _, dg_failed) = classify_check_outcome(
+            &PointerDecision::DowngradeRejected {
+                current_sequence: 2,
+                pointer_sequence: 1,
+            },
+            Some(&pending),
+        );
+        assert_eq!(dg_status, "downgrade_rejected");
+        assert!(dg_failed);
 
         let (clean_status, _, _, _) = classify_check_outcome(&PointerDecision::UpToDate, None);
         assert_eq!(clean_status, "up_to_date");

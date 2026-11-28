@@ -66,10 +66,30 @@ pub(super) fn reconcile_pending_health_check(
         .or_else(|| update_state.confirmed.clone())
         .filter(|pin| pin != &pending.target_pin);
 
+    let target_quarantined = !config.allow_quarantined
+        && update_state
+            .quarantined_entry(&pending.target_pin.release_id)
+            .is_some();
+
     if store_pin.as_ref() == Some(&pending.target_pin) {
-        reconcile_committed_target(config, ports, mode, &state_store, &pending, rollback_pin)
+        reconcile_committed_target(
+            config,
+            ports,
+            mode,
+            &state_store,
+            &pending,
+            rollback_pin,
+            target_quarantined,
+        )
     } else {
-        reconcile_uncommitted_target(config, ports, &state_store, &pending, store_pin)
+        reconcile_uncommitted_target(
+            config,
+            ports,
+            &state_store,
+            &pending,
+            store_pin,
+            target_quarantined,
+        )
     }
 }
 
@@ -130,6 +150,7 @@ fn reconcile_committed_target(
     state_store: &UpdateStateStore,
     pending: &PendingHealthCheck,
     rollback_pin: Option<ReleasePin>,
+    target_quarantined: bool,
 ) -> Result<RecoveryOutcome, String> {
     let services = inspect_services(
         ports.manager,
@@ -138,36 +159,45 @@ fn reconcile_committed_target(
     )?;
     let managed_now = services.managed_targets();
     let inspect_failures = services.inspection_failures();
-    let (healthy, health_reports) = evaluate_target_on_disk(
-        config,
-        ports,
-        &pending.target_pin.release_id,
-        pending.expected_running_instances.as_deref(),
-        &managed_now,
-        &inspect_failures,
-    );
-    if healthy {
-        state_store
-            .confirm_healthy(&pending.target_pin)
-            .map_err(|e| format!("confirming recovered healthy release state: {e}"))?;
-        let note = format!(
-            "reconciled interrupted update to `{}` (sequence {}) and confirmed healthy",
-            pending.target_pin.release_id, pending.target_pin.sequence
+    let (health_reports, summary) = if target_quarantined {
+        let msg = format!(
+            "retrying failed automatic rollback for quarantined release `{}`",
+            pending.target_pin.release_id
         );
-        return Ok(RecoveryOutcome::RecoveredHealthy {
-            health_checks: health_reports,
-            note,
-        });
-    }
+        (Vec::new(), msg)
+    } else {
+        let (healthy, reports) = evaluate_target_on_disk(
+            config,
+            ports,
+            &pending.target_pin.release_id,
+            pending.expected_running_instances.as_deref(),
+            &managed_now,
+            &inspect_failures,
+        );
+        if healthy {
+            state_store
+                .confirm_healthy(&pending.target_pin)
+                .map_err(|e| format!("confirming recovered healthy release state: {e}"))?;
+            let note = format!(
+                "reconciled interrupted update to `{}` (sequence {}) and confirmed healthy",
+                pending.target_pin.release_id, pending.target_pin.sequence
+            );
+            return Ok(RecoveryOutcome::RecoveredHealthy {
+                health_checks: reports,
+                note,
+            });
+        }
+        let summary = format!(
+            "interrupted update recovery failed: {}",
+            summarize_health_failures(&reports)
+        );
+        (reports, summary)
+    };
 
     let managed_for_rollback = build_rollback_expectations(
         &managed_now,
         pending.expected_running_instances.as_deref(),
         config.restart,
-    );
-    let summary = format!(
-        "interrupted update recovery failed: {}",
-        summarize_health_failures(&health_reports)
     );
     let rb_receipt = execute_automatic_rollback(
         config,
@@ -189,14 +219,16 @@ fn reconcile_committed_target(
 }
 
 /// Handles a crash that occurred AFTER persisting `pending_health_check` but BEFORE committing
-/// `pending.target_pin` into `ReleaseStore`: verifies/restores the existing active pin and clears
-/// the stale checkpoint without falsely quarantining an uncommitted release.
+/// `pending.target_pin` into `ReleaseStore` (or after a rollback restored `previous_pin` in the
+/// store but post-rollback service refresh/health check failed): verifies/restores the existing
+/// active pin and clears the checkpoint once healthy.
 fn reconcile_uncommitted_target(
     config: &AutoUpdateConfig,
     ports: &AutoUpdatePorts<'_>,
     state_store: &UpdateStateStore,
     pending: &PendingHealthCheck,
     store_pin: Option<ReleasePin>,
+    target_quarantined: bool,
 ) -> Result<RecoveryOutcome, String> {
     let Some(active_pin) = store_pin else {
         state_store
@@ -223,7 +255,16 @@ fn reconcile_uncommitted_target(
     if already_healthy {
         state_store
             .confirm_healthy(&active_pin)
-            .map_err(|e| format!("confirming active pin during pre-commit crash recovery: {e}"))?;
+            .map_err(|e| format!("confirming active pin during recovery: {e}"))?;
+        if target_quarantined {
+            return Ok(RecoveryOutcome::RolledBack(recovered_rollback_receipt(
+                config,
+                pending,
+                active_pin,
+                Vec::new(),
+                reports,
+            )));
+        }
         return Ok(RecoveryOutcome::RecoveredHealthy {
             health_checks: reports,
             note: format!(
@@ -261,6 +302,15 @@ fn reconcile_uncommitted_target(
         state_store.confirm_healthy(&active_pin).map_err(|e| {
             format!("confirming restored active pin after interrupted install: {e}")
         })?;
+        if target_quarantined {
+            return Ok(RecoveryOutcome::RolledBack(recovered_rollback_receipt(
+                config,
+                pending,
+                active_pin,
+                rb_reports,
+                restored_health,
+            )));
+        }
         return Ok(RecoveryOutcome::RecoveredHealthy {
             health_checks: restored_health,
             note: format!(
@@ -283,12 +333,42 @@ fn reconcile_uncommitted_target(
         health_checks: reports,
         rollback_services: rb_reports,
         rollback_health_checks: restored_health,
-        quarantined_release_id: None,
+        quarantined_release_id: target_quarantined.then(|| pending.target_pin.release_id.clone()),
         note: format!(
-            "interrupted pre-commit update for `{}` left `{}` services unhealthy after recovery attempt",
+            "interrupted update recovery for `{}` left `{}` services unhealthy after recovery attempt",
             pending.target_pin.release_id, active_pin.release_id
         ),
     }))
+}
+
+fn recovered_rollback_receipt(
+    config: &AutoUpdateConfig,
+    pending: &PendingHealthCheck,
+    active_pin: ReleasePin,
+    rollback_services: Vec<crate::service_refresh::ServiceRefreshReport>,
+    rollback_health_checks: Vec<InstanceHealthReport>,
+) -> AutoUpdateReceipt {
+    let note = format!(
+        "completed pending rollback recovery from quarantined `{}` to `{}` (sequence {}) and verified health",
+        pending.target_pin.release_id, active_pin.release_id, active_pin.sequence
+    );
+    AutoUpdateReceipt {
+        status: AutoUpdateStatus::RolledBack,
+        store: config.store_dir.display().to_string(),
+        state_dir: config.state_dir.display().to_string(),
+        channel: "recovery".into(),
+        pointer_release_id: pending.target_pin.release_id.clone(),
+        pointer_sequence: pending.target_pin.sequence,
+        previous_pin: Some(active_pin.clone()),
+        active_pin: Some(active_pin),
+        drain: None,
+        services: Vec::new(),
+        health_checks: Vec::new(),
+        rollback_services,
+        rollback_health_checks,
+        quarantined_release_id: Some(pending.target_pin.release_id.clone()),
+        note,
+    }
 }
 
 fn evaluate_target_on_disk(

@@ -302,7 +302,12 @@ fn apply_and_verify_update(
     }) {
         Ok(pin) => pin,
         Err(err) => {
-            if let Err(clear_err) = state_store.clear_pending() {
+            if let Err(clear_err) = clear_pending_if_install_unmodified(
+                &state_store,
+                &config.store_dir,
+                swap.current_pin.as_ref(),
+                &swap.services,
+            ) {
                 return Err(format!(
                     "{err} (additionally failed to clear pending checkpoint: {clear_err})"
                 ));
@@ -388,6 +393,23 @@ fn confirmed_receipt(
         quarantined_release_id: None,
         note,
     }
+}
+
+/// Clears `pending_health_check` after a failed forward `services.install` ONLY when no managed
+/// service remains stopped AND neither the store active pin nor `intents/` has advanced beyond
+/// `previous_pin`. Otherwise preserves `pending_health_check` so crash recovery reconciles it.
+pub(super) fn clear_pending_if_install_unmodified(
+    state_store: &UpdateStateStore,
+    store_dir: &Path,
+    previous_pin: Option<&ReleasePin>,
+    services: &ServiceRefresh,
+) -> Result<bool, String> {
+    if services.has_stopped_managed() || !support::store_unchanged_from_pin(store_dir, previous_pin)
+    {
+        return Ok(false);
+    }
+    state_store.clear_pending().map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 fn install_staged_once(

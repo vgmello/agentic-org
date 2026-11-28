@@ -104,13 +104,15 @@ pub(super) fn execute_automatic_rollback(
         config.setup_base.as_deref(),
         &config.store_dir,
     )?;
+    let should_restart = running_instance_names(&ctx.managed_before);
+    rb_services.stop_for_rollback(ports.manager, &should_restart);
     let restored_pin = match rb_services.install(ports.manager, || {
         rollback_store_once(&config.store_dir, &prev_pin, mode)
     }) {
         Ok(pin) => pin,
         Err(rb_err) => {
             state_store
-                .record_rollback_and_quarantine(&ctx.failed_pin, None, &ctx.failure_summary)
+                .quarantine_keeping_pending(&ctx.failed_pin, &ctx.failure_summary)
                 .map_err(|e| {
                     format!(
                         "automatic rollback failed ({rb_err}) and persisting quarantine for `{}` failed: {e}",
@@ -126,7 +128,6 @@ pub(super) fn execute_automatic_rollback(
     };
 
     let prev_program = release_program(&config.store_dir, &restored_pin.release_id)?;
-    let should_restart = running_instance_names(&ctx.managed_before);
     let rollback_reports = rb_services.rollback_to_program(
         ports.manager,
         &prev_program,
@@ -141,18 +142,21 @@ pub(super) fn execute_automatic_rollback(
         config.health_timeout,
     );
 
-    state_store
-        .record_rollback_and_quarantine(
+    let persist_result = if rb_healthy {
+        state_store.record_rollback_and_quarantine(
             &ctx.failed_pin,
-            rb_healthy.then_some(&restored_pin),
+            Some(&restored_pin),
             &ctx.failure_summary,
         )
-        .map_err(|e| {
-            format!(
-                "persisting rollback and quarantine state for `{}`: {e}",
-                ctx.failed_pin.release_id
-            )
-        })?;
+    } else {
+        state_store.quarantine_keeping_pending(&ctx.failed_pin, &ctx.failure_summary)
+    };
+    persist_result.map_err(|e| {
+        format!(
+            "persisting rollback and quarantine state for `{}`: {e}",
+            ctx.failed_pin.release_id
+        )
+    })?;
     Ok(completed_auto_rollback_receipt(
         config,
         ctx,
@@ -305,6 +309,8 @@ fn run_manual_rollback_inner(
             config.state_dir.display()
         )
     })?;
+    let should_restart = running_instance_names(&managed_before);
+    services.stop_for_rollback(ports.manager, &should_restart);
     let target_pin = services.install(ports.manager, || {
         manual_rollback_store_once(
             &config.store_dir,
@@ -313,7 +319,6 @@ fn run_manual_rollback_inner(
         )
     })?;
     let target_program = release_program(&config.store_dir, &target_pin.release_id)?;
-    let should_restart = running_instance_names(&managed_before);
     let refresh_reports = services.rollback_to_program(
         ports.manager,
         &target_program,
@@ -380,18 +385,21 @@ fn persist_manual_rollback_state(
     quarantine_current: bool,
 ) -> Result<(), String> {
     if quarantine_current {
-        state_store
-            .record_rollback_and_quarantine(
+        let res = if healthy {
+            state_store.record_rollback_and_quarantine(
                 current,
-                healthy.then_some(target_pin),
+                Some(target_pin),
                 "operator manual rollback",
             )
-            .map_err(|e| {
-                format!(
-                    "persisting manual rollback quarantine state for `{}`: {e}",
-                    current.release_id
-                )
-            })?;
+        } else {
+            state_store.quarantine_keeping_pending(current, "operator manual rollback")
+        };
+        res.map_err(|e| {
+            format!(
+                "persisting manual rollback quarantine state for `{}`: {e}",
+                current.release_id
+            )
+        })?;
     } else if healthy {
         state_store
             .confirm_healthy(target_pin)

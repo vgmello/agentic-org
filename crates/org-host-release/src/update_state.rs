@@ -283,8 +283,30 @@ impl UpdateStateStore {
         rolled_back_to: Option<&ReleasePin>,
         reason: &str,
     ) -> Result<UpdateState, Error> {
+        self.record_quarantine_inner(failed, rolled_back_to, reason, true)
+    }
+
+    /// Records a failed release in the quarantine tombstone while keeping any persisted
+    /// `pending_health_check` checkpoint intact so subsequent runs reconcile and retry recovery.
+    pub fn quarantine_keeping_pending(
+        &self,
+        failed: &ReleasePin,
+        reason: &str,
+    ) -> Result<UpdateState, Error> {
+        self.record_quarantine_inner(failed, None, reason, false)
+    }
+
+    fn record_quarantine_inner(
+        &self,
+        failed: &ReleasePin,
+        rolled_back_to: Option<&ReleasePin>,
+        reason: &str,
+        clear_pending: bool,
+    ) -> Result<UpdateState, Error> {
         let mut state = self.load()?;
-        state.pending_health_check = None;
+        if clear_pending {
+            state.pending_health_check = None;
+        }
         if let Some(prev) = rolled_back_to {
             state.confirmed = Some(prev.clone());
         }

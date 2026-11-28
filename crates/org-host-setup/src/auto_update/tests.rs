@@ -293,3 +293,209 @@ fn evaluate_post_restart_health_fails_closed_on_missing_or_partial_service_failu
     assert!(!ok);
     assert!(reports.iter().any(|r| r.instance == "svc-b" && !r.healthy));
 }
+
+#[test]
+fn p2_1_clear_pending_only_when_services_resumed_and_store_unmodified() {
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    use super::clear_pending_if_install_unmodified;
+    use crate::service_refresh::{InstallAttempt, ServiceRefresh};
+    use crate::{loopback, release_pin};
+    use org_host::instance::setup::{Input, Journal, Service};
+    use org_host::release::{ReleasePin, UpdateStateStore};
+    use org_platform::service::{Registration, ServiceError, ServiceManager, ServiceStatus, Unit};
+
+    struct ResumeFailManager {
+        unit: Unit,
+        running: Mutex<bool>,
+        fail_start: Mutex<bool>,
+    }
+
+    impl ServiceManager for ResumeFailManager {
+        fn register(&self, _unit: &Unit) -> Result<Registration, ServiceError> {
+            Ok(Registration::Loaded)
+        }
+        fn start(&self, _id: &str) -> Result<(), ServiceError> {
+            if *self.fail_start.lock().unwrap() {
+                return Err(ServiceError::System("cannot restart".into()));
+            }
+            *self.running.lock().unwrap() = true;
+            Ok(())
+        }
+        fn stop(&self, _id: &str) -> Result<(), ServiceError> {
+            *self.running.lock().unwrap() = false;
+            Ok(())
+        }
+        fn status(&self, id: &str) -> Result<ServiceStatus, ServiceError> {
+            if self.unit.instance_id != id {
+                return Ok(ServiceStatus::NotRegistered);
+            }
+            if *self.running.lock().unwrap() {
+                Ok(ServiceStatus::Running { pid: 10 })
+            } else {
+                Ok(ServiceStatus::Stopped)
+            }
+        }
+        fn unregister(&self, _id: &str) -> Result<(), ServiceError> {
+            Ok(())
+        }
+        fn definition(&self, id: &str) -> Result<Option<Unit>, ServiceError> {
+            Ok((self.unit.instance_id == id).then(|| self.unit.clone()))
+        }
+        fn redefine(&self, _unit: &Unit) -> Result<Registration, ServiceError> {
+            Ok(Registration::Loaded)
+        }
+    }
+
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let base = root.join("base");
+    let store_dir = root.join("store");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&base).unwrap();
+    fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::create_dir_all(store_dir.join("releases/v0.1.0")).unwrap();
+    fs::create_dir_all(store_dir.join("pins")).unwrap();
+    fs::create_dir_all(store_dir.join("intents")).unwrap();
+    fs::write(
+        store_dir.join("releases/v0.1.0/agentic-org"),
+        b"#!/bin/sh\n",
+    )
+    .unwrap();
+
+    let v1_pin = ReleasePin {
+        release_id: "v0.1.0".into(),
+        manifest_sha256: "1".repeat(64),
+        sequence: 1,
+    };
+    let v2_pin = ReleasePin {
+        release_id: "v0.2.0".into(),
+        manifest_sha256: "2".repeat(64),
+        sequence: 2,
+    };
+    let write_pin = |ord: u64, pin: &ReleasePin| {
+        let rec = serde_json::json!({
+            "version": 1,
+            "ordinal": ord,
+            "previous": null,
+            "highest_sequence": pin.sequence,
+            "pin": pin,
+        });
+        fs::write(
+            store_dir.join(format!("pins/{ord:020}.json")),
+            serde_json::to_vec(&rec).unwrap(),
+        )
+        .unwrap();
+    };
+    let write_intent = |ord: u64| {
+        fs::write(store_dir.join(format!("intents/{ord:020}.json")), b"{}").unwrap();
+    };
+    write_pin(1, &v1_pin);
+    write_intent(1);
+
+    let instance_id = "01965d2e-8b1c-7c3a-9f00-0123456789ab";
+    let journal = Journal::open(&base, Some("default")).unwrap();
+    let input = Input {
+        version: 1,
+        service: Service::Registered,
+        root: base.join("instances/default"),
+        credentials: None,
+        listen: loopback(7420).unwrap(),
+        federation: None,
+    };
+    let mut rec = journal
+        .freeze(input, false, release_pin().unwrap())
+        .unwrap();
+    rec.instance_id = Some(instance_id.into());
+    rec.service_registered = true;
+    journal.write(&rec).unwrap();
+
+    let state_store = UpdateStateStore::open(&state_dir).unwrap();
+    let seed_pending = || {
+        state_store
+            .record_pending_with_services(
+                Some(v1_pin.clone()),
+                v2_pin.clone(),
+                None,
+                vec!["default".into()],
+            )
+            .unwrap();
+    };
+
+    let mgr = ResumeFailManager {
+        unit: Unit {
+            instance_id: instance_id.into(),
+            program: store_dir.join("releases/v0.1.0/agentic-org"),
+            args: vec![
+                OsString::from("serve"),
+                OsString::from("--name"),
+                OsString::from("default"),
+            ],
+            env: Vec::new(),
+        },
+        running: Mutex::new(true),
+        fail_start: Mutex::new(false),
+    };
+
+    // 1. Clean pre-commit abort: service resumed + store pin/intents unchanged -> clears pending.
+    seed_pending();
+    let mut refresh = ServiceRefresh::inspect_at(&mgr, &base, &store_dir);
+    let _ = refresh
+        .install(&mgr, || -> Result<(), InstallAttempt> {
+            if *mgr.running.lock().unwrap() {
+                Err(InstallAttempt::Busy("busy".into()))
+            } else {
+                Err(InstallAttempt::Failed("pre-commit error".into()))
+            }
+        })
+        .unwrap_err();
+    assert!(!refresh.has_stopped_managed());
+    let cleared =
+        clear_pending_if_install_unmodified(&state_store, &store_dir, Some(&v1_pin), &refresh)
+            .unwrap();
+    assert!(cleared);
+    assert!(state_store.load().unwrap().pending_health_check.is_none());
+
+    // 2. Service stopped and `resume` failed to restart it -> MUST keep pending intact!
+    seed_pending();
+    *mgr.running.lock().unwrap() = true;
+    *mgr.fail_start.lock().unwrap() = true;
+    let mut refresh = ServiceRefresh::inspect_at(&mgr, &base, &store_dir);
+    let _ = refresh
+        .install(&mgr, || -> Result<(), InstallAttempt> {
+            if *mgr.running.lock().unwrap() {
+                Err(InstallAttempt::Busy("busy".into()))
+            } else {
+                Err(InstallAttempt::Failed("boom".into()))
+            }
+        })
+        .unwrap_err();
+    assert!(refresh.has_stopped_managed());
+    let cleared =
+        clear_pending_if_install_unmodified(&state_store, &store_dir, Some(&v1_pin), &refresh)
+            .unwrap();
+    assert!(!cleared);
+    assert!(state_store.load().unwrap().pending_health_check.is_some());
+
+    // 3. No service stopped, but uncommitted intent written (`intents/2 > pins/1`) -> keeps pending!
+    *mgr.running.lock().unwrap() = true;
+    *mgr.fail_start.lock().unwrap() = false;
+    write_intent(2);
+    let refresh = ServiceRefresh::inspect_at(&mgr, &base, &store_dir);
+    let cleared =
+        clear_pending_if_install_unmodified(&state_store, &store_dir, Some(&v1_pin), &refresh)
+            .unwrap();
+    assert!(!cleared);
+    assert!(state_store.load().unwrap().pending_health_check.is_some());
+
+    // 4. Store active pin already advanced (`v2` != `v1`) -> keeps pending!
+    write_pin(2, &v2_pin);
+    let cleared =
+        clear_pending_if_install_unmodified(&state_store, &store_dir, Some(&v1_pin), &refresh)
+            .unwrap();
+    assert!(!cleared);
+    assert!(state_store.load().unwrap().pending_health_check.is_some());
+}

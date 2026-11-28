@@ -117,6 +117,55 @@ pub fn read_store_head_readonly(store_dir: &Path) -> Result<(Option<ReleasePin>,
     parse_pin_record(file)
 }
 
+/// Returns `true` only when `store_dir` is readable, its active pin still equals `expected_pin`,
+/// and no higher uncommitted intent exists in `intents/` (fails closed to `false` on any error).
+pub(super) fn store_unchanged_from_pin(
+    store_dir: &Path,
+    expected_pin: Option<&ReleasePin>,
+) -> bool {
+    let norm_store: PathBuf = store_dir.components().collect();
+    match verify_real_dir_if_present(&norm_store, "release store directory") {
+        Ok(false) => return expected_pin.is_none(),
+        Ok(true) => {}
+        Err(_) => return false,
+    }
+
+    let pins_dir = norm_store.join("pins");
+    let (pin_ordinal, actual_pin) = match verify_real_dir_if_present(&pins_dir, "pins directory") {
+        Ok(false) => (0, None),
+        Ok(true) => match find_latest_ordinal_and_name(&pins_dir) {
+            Ok(None) => (0, None),
+            Ok(Some((ord, name))) => {
+                let Ok(file) = org_platform::fs::open_regular_beneath(&pins_dir, Path::new(&name))
+                else {
+                    return false;
+                };
+                let Ok((pin, _)) = parse_pin_record(file) else {
+                    return false;
+                };
+                (ord, pin)
+            }
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+    if actual_pin.as_ref() != expected_pin {
+        return false;
+    }
+
+    let intents_dir = norm_store.join("intents");
+    let intent_ordinal = match verify_real_dir_if_present(&intents_dir, "intents directory") {
+        Ok(false) => 0,
+        Ok(true) => match find_latest_ordinal_and_name(&intents_dir) {
+            Ok(Some((ord, _))) => ord,
+            Ok(None) => 0,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+    intent_ordinal == pin_ordinal
+}
+
 fn verify_real_dir_if_present(path: &Path, label: &str) -> Result<bool, String> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() && !m.file_type().is_symlink() => Ok(true),
@@ -126,9 +175,12 @@ fn verify_real_dir_if_present(path: &Path, label: &str) -> Result<bool, String> 
 }
 
 fn find_latest_pin_filename(pins_dir: &Path) -> Result<Option<String>, String> {
+    Ok(find_latest_ordinal_and_name(pins_dir)?.map(|(_, name)| name))
+}
+
+fn find_latest_ordinal_and_name(dir: &Path) -> Result<Option<(u64, String)>, String> {
     let mut best: Option<(u64, String)> = None;
-    let entries =
-        fs::read_dir(pins_dir).map_err(|e| format!("reading release pins directory: {e}"))?;
+    let entries = fs::read_dir(dir).map_err(|e| format!("reading release pins directory: {e}"))?;
     for entry_res in entries {
         let entry = entry_res.map_err(|e| format!("iterating release pins directory: {e}"))?;
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
@@ -141,7 +193,7 @@ fn find_latest_pin_filename(pins_dir: &Path) -> Result<Option<String>, String> {
             best = Some((ord, name));
         }
     }
-    Ok(best.map(|(_, name)| name))
+    Ok(best)
 }
 
 fn parse_pin_ordinal(name: &str) -> Option<u64> {
