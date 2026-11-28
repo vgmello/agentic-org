@@ -499,7 +499,6 @@ fn list_cases() -> Vec<(Vec<&'static str>, &'static str, Value)> {
     let channel = |n: u8| json!({"id": format!("0193a5c0-0000-7000-8000-00000000010{n}"), "kind": "channel", "name": "general", "archived": false, "revision": 1, "created_at": "2026-11-26T00:00:00.000Z", "members": [], "is_member": true});
     let event = |n: u64| json!({"task_id": "0193a5c0-0000-7000-8000-000000000100", "revision": n, "actor_kind": "person", "change": {}, "payload_sha256": "00"});
     let label = |name: &str| json!({"label": name, "task_count": 1});
-    let note = |n: u8| json!({"id": format!("0193a5c0-0000-7000-8000-00000000040{n}"), "task_id": "0193a5c0-0000-7000-8000-000000000100", "author_id": "0193a5c0-0000-7000-8000-000000000001", "revision": 1, "body_markdown": "x", "created_at": "2026-11-26T00:00:00.000Z", "updated_at": "2026-11-26T00:00:00.000Z", "editable": true});
     let skill =
         |key: &str| json!({"key": key, "title": "T", "description": "D", "source": "built_in"});
     let process = |n: u8| {
@@ -529,11 +528,6 @@ fn list_cases() -> Vec<(Vec<&'static str>, &'static str, Value)> {
             vec!["task", "labels"],
             "tasks.labels",
             json!({"labels": [label("a"), label("b")]}),
-        ),
-        (
-            vec!["task", "note", "list", "--task", "T-A1"],
-            "tasks.notes.list",
-            json!({"task_id": "0193a5c0-0000-7000-8000-000000000100", "notes": [note(1), note(2)]}),
         ),
         (
             vec!["skill", "list"],
@@ -769,7 +763,10 @@ fn shorthands_read_the_same_in_help_and_schema() {
         ("context --schema", "session context --schema"),
         ("context --help", "session context --help"),
         ("who --schema", "directory list --schema"),
-        ("task note list --schema", "task-note list --schema"),
+        ("task-note list --schema", "note list --schema"),
+        ("task note list --schema", "note list --schema"),
+        ("task-note get --schema", "note inspect --schema"),
+        ("task note get --schema", "note inspect --schema"),
     ] {
         let words = |line: &str| -> Vec<String> { line.split(' ').map(str::to_owned).collect() };
         let a = crate::execute(&words(short), Binding::default());
@@ -859,4 +856,27 @@ fn agent_os_format_env_precedence_and_json_switch_before_and_after_subcommand() 
     assert_eq!(both.exit_code, 0, "{}", both.stdout);
     let env: Value = serde_json::from_str(&both.stdout).unwrap();
     assert_eq!(env["ok"], true);
+}
+
+#[test]
+fn unbound_agent_os_hint_directs_local_operators_to_agentic_org_and_external_agents_to_login() {
+    use crate::runtime::binding::Binding;
+
+    for cmd in [&["who"][..], &["task", "list"]] {
+        let args: Vec<String> = cmd.iter().map(|s| (*s).to_owned()).collect();
+        let out = crate::execute(&args, Binding::default());
+        assert_eq!(out.exit_code, 1, "{cmd:?}: {}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["ok"], false, "{cmd:?}");
+        assert_eq!(env["error"]["code"], "not_authorized", "{cmd:?}");
+        let hint = env["error"]["hint"].as_str().expect("error hint");
+        assert!(
+            hint.contains("agentic-org"),
+            "unbound hint must direct local human operators to agentic-org: {hint}"
+        );
+        assert!(
+            hint.contains("agent-os login --as @<handle>"),
+            "unbound hint must mention `agent-os login --as @<handle>`: {hint}"
+        );
+    }
 }

@@ -18,7 +18,7 @@
 #   python3 .github/scripts/check_architecture_health.py --print-baseline
 
 [crate_loc]
-org-office 74900
+org-office 73000
 
 [coupling.rusqlite]
 

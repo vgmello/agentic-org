@@ -715,10 +715,20 @@ fn co_hosted_masks_reach_claude_codex_agy_and_the_approval_bridge_and_the_worksp
         "{profile}"
     );
 
-    // Agy plans with the same deny rules and is confined by the approval bridge, which refuses
-    // a read of the other organization and allows one in the workspace.
-    org_agent_runtime_agy::AgyRuntime::new()
+    // ACP runtimes (Agy, Gemini, Kimi, Pi) plan with the same deny rules and are confined by the
+    // approval bridge, which refuses a read of the other organization and allows one in the
+    // workspace.
+    org_agent_runtime_acp::AgyRuntime::new()
         .plan_session(&spec("agy"), &ctx)
+        .unwrap();
+    org_agent_runtime_acp::GeminiRuntime::new()
+        .plan_session(&spec("gemini"), &ctx)
+        .unwrap();
+    org_agent_runtime_acp::KimiRuntime::new()
+        .plan_session(&spec("kimi"), &ctx)
+        .unwrap();
+    org_agent_runtime_acp::PiRuntime::new()
+        .plan_session(&spec("pi"), &ctx)
         .unwrap();
     let read = |path: &Path| {
         let mut request = ApprovalRequest::new(

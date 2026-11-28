@@ -82,7 +82,6 @@ impl World {
     /// The office on its store, opened in this process with the world's custody (the
     /// worker must not be running).
     fn office(&self) -> org_office::Office {
-        org_office_sqlite::install();
         let (custody, roots) = self.writer.admitted();
         org_office::Office::open(
             self.folder(OFFICE),
@@ -92,6 +91,7 @@ impl World {
             activation::INSTANCE,
             roots,
             custody,
+            org_office_sqlite::sqlite_backend(),
         )
         .unwrap()
     }

@@ -86,6 +86,22 @@ fn note_meta(meta: &Value, ctx: &mut ExecutionContext) {
     if let Some(cursor) = meta["next_cursor"].as_str() {
         ctx.note(&format!("More results: add --cursor {cursor}"));
     }
+    if let Some(omitted) = meta["coverage"]["omitted"]
+        .as_array()
+        .filter(|items| !items.is_empty())
+    {
+        let summary: Vec<String> = omitted
+            .iter()
+            .filter_map(|item| {
+                let source = item["source"].as_str()?;
+                let reason = item["reason"].as_str()?;
+                Some(format!("{source} ({reason})"))
+            })
+            .collect();
+        if !summary.is_empty() {
+            ctx.note(&format!("Omitted from search: {}", summary.join(", ")));
+        }
+    }
 }
 
 /// The columns of a list: the command's declared output fields, or the first item's keys.
@@ -105,9 +121,9 @@ fn columns(items: &[Value], command: Option<&Command>) -> Vec<String> {
 }
 
 fn primary_id(record: &Map<String, Value>, columns: &[String]) -> String {
-    ["id", "reference", "handle", "name"]
+    ["entity_id", "id", "reference", "handle", "name"]
         .iter()
-        .find_map(|key| record.get(*key))
+        .find_map(|key| record.get(*key).filter(|value| !value.is_null()))
         .or_else(|| columns.first().and_then(|first| record.get(first)))
         .map(plain)
         .unwrap_or_default()
@@ -291,5 +307,23 @@ mod tests {
             "TSV must emit zero meta notes to stderr: {:?}",
             streams.stderr.text()
         );
+    }
+
+    #[test]
+    fn quiet_search_results_print_entity_uuids_not_entity_types() {
+        let task_id = "0193a5c0-0000-7000-8000-000000000100";
+        let msg_id = "0193a5c0-0000-7000-8000-000000000200";
+        let envelope = format!(
+            r#"{{"ok":true,"data":[{{"entity_type":"task","entity_id":"{task_id}","ref":"T-A1","title":"Fix auth"}},{{"entity_type":"message","entity_id":"{msg_id}","title":"Standup"}}],"meta":{{"status":"completed"}},"error":null}}"#
+        );
+        let search_cmd = org_agent_cli::runtime_table().find("search", "query");
+        assert!(search_cmd.is_some());
+        let quiet = Modes {
+            quiet: true,
+            ..Modes::default()
+        };
+        let (mut ctx, streams) = captured(quiet, tty(Some(80)), &[]);
+        answer(&output(&envelope, 0), search_cmd, true, &mut ctx).unwrap();
+        assert_eq!(streams.stdout.text(), format!("{task_id}\n{msg_id}\n"));
     }
 }

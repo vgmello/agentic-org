@@ -38,6 +38,7 @@ pub mod runtime_registry;
 pub mod stream_hub;
 pub mod subagents;
 pub(crate) use org_subscription_usage as subscription_usage;
+pub mod telemetry;
 pub mod transcript;
 pub(crate) use org_turn_attachments as turn_attachments;
 mod turn_attachments_adapter;
@@ -52,19 +53,28 @@ pub use credentials::{
     EnrollmentOutcome, EnrollmentPrompt, EnrollmentVaultError,
 };
 pub use external::{ExternalLeaseRecord, EXTERNAL_LEASE_VERSION};
+pub use host_auth::{
+    detect_installed_runtimes, detect_installed_runtimes_from, require_installed_runtime,
+    DetectedRuntime,
+};
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{
-    LocalOsSandbox, PreparedWorktreeNotice, SandboxConfinementMode, SandboxPlan,
-    SandboxPrepareContext, SandboxRunner, SandboxVerifyContext, SessionManager,
-    SessionManagerConfig, TaskWorktreePreparer, WorktreeSandboxRefreshOutcome,
-    MID_TURN_SANDBOX_REFRESH_HINT,
+    ApprovalChangeHook, LocalOsSandbox, PendingToolApproval, PreparedWorktreeNotice,
+    SandboxConfinementMode, SandboxPlan, SandboxPrepareContext, SandboxRunner,
+    SandboxVerifyContext, SessionManager, SessionManagerConfig, TaskWorktreePreparer,
+    WorktreeSandboxRefreshOutcome, MID_TURN_SANDBOX_REFRESH_HINT,
 };
+pub use pump::is_allow_always_eligible;
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,
-    SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT, MAX_CONSECUTIVE_STALLS,
-    MAX_RESUME_ATTEMPTS,
+    SessionAffinityEntry, SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT,
+    MAX_CONSECUTIVE_STALLS, MAX_RESUME_ATTEMPTS,
 };
-pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
+pub use router::{
+    is_task_routing_label, parse_task_routing_labels, parse_task_routing_labels_or_default,
+    validate_effort_override, validate_model_override, validate_turn_override, HqPermitAcquireSpec,
+    HqPermitCoordinator, TurnModelOverride,
+};
 pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
 pub use stream_hub::{
     SessionActivity, SessionStreamEvent, SessionStreamFrame, SessionStreamHub, SessionStreamKey,
@@ -73,6 +83,10 @@ pub use stream_hub::{
 pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,
     BackgroundTaskState, BackgroundWake, SubagentDefinition,
+};
+pub use telemetry::{
+    compute_cache_hit_ratio, percentile_u64, AgentTelemetrySnapshot, TelemetryCollector,
+    MAX_RECENT_TURNS_PER_AGENT, MAX_TRACKED_AGENTS,
 };
 pub use turn_attachments::{
     TurnAttachmentResolveError, TurnAttachmentResolver, TurnDeliveryAttachment, TurnDeliveryScope,
@@ -83,11 +97,11 @@ pub use wake::{
     compose_coalesced_wake_objective, compose_mid_turn_notice_batch, sanitize_untrusted_body,
     MidTurnLimits, MidTurnRateTracker, MidTurnSelection, PendingAskAnswer, PendingWakeItem,
     PendingWakeQueueRecord, SuspendedAskEntry, SuspendedStateRecord, WakeHoldReason, WakeKind,
-    WakeOutcome, WakeQuotaRecord, DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_MID_TURN_COALESCE_AGENT,
-    DEFAULT_MID_TURN_COALESCE_PERSON, DEFAULT_MID_TURN_HOURLY_AGENT_CAP,
-    DEFAULT_MID_TURN_PER_TURN_AGENT_CAP, DEFAULT_MID_TURN_PER_TURN_HARD_CAP,
-    DEFAULT_MID_TURN_SENDER_COOLDOWN, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
-    MAX_MID_TURN_BATCH_BYTES, MAX_WAKE_ITEM_BODY_BYTES,
+    WakeOutcome, WakeQuotaRecord, WakeSessionAffinity, DEFAULT_HOURLY_WAKE_LIMIT,
+    DEFAULT_MID_TURN_COALESCE_AGENT, DEFAULT_MID_TURN_COALESCE_PERSON,
+    DEFAULT_MID_TURN_HOURLY_AGENT_CAP, DEFAULT_MID_TURN_PER_TURN_AGENT_CAP,
+    DEFAULT_MID_TURN_PER_TURN_HARD_CAP, DEFAULT_MID_TURN_SENDER_COOLDOWN, DEFAULT_SUSPEND_GRACE,
+    DEFAULT_WAKE_WINDOW, MAX_MID_TURN_BATCH_BYTES, MAX_WAKE_ITEM_BODY_BYTES,
 };
 
 #[cfg(test)]

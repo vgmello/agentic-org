@@ -312,6 +312,7 @@ fn an_archive_forked_from_the_offices_journal_at_the_same_ordinal_is_refused() {
             identity: org.custody.identity.clone(),
             authority: Arc::new(custody),
         },
+        org_office_sqlite::sqlite_backend(),
     )
     .expect("the office opens at the fork point");
     accept_a_task(&org, &office, "Branch two");

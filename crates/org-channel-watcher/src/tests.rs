@@ -312,3 +312,43 @@ fn watcher_rejects_non_channel_or_person_asks_and_answers_empty_catchup_without_
     assert_eq!(digest.derived_notice, DERIVED_SUMMARY_NOTICE);
     assert!(watcher.store().read_usage_records().is_empty());
 }
+
+#[test]
+fn availability_probe_bounds_hanging_cli_and_reaps_child() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let write_script = |name: &str, body: &str| {
+        let p = dir.path().join(name);
+        std::fs::write(&p, body).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
+        p
+    };
+
+    let ok_bin = write_script("ok.sh", "#!/bin/sh\nexit 0\n");
+    let fail_bin = write_script("fail.sh", "#!/bin/sh\nexit 1\n");
+    let hang_bin = write_script("hang.sh", "#!/bin/sh\nexec sleep 30\n");
+
+    assert!(crate::runtime::probe_binary_available(
+        &ok_bin,
+        &["--version"],
+        Duration::from_secs(1),
+    ));
+    assert!(!crate::runtime::probe_binary_available(
+        &fail_bin,
+        &["--version"],
+        Duration::from_secs(1),
+    ));
+
+    let started = std::time::Instant::now();
+    assert!(!crate::runtime::probe_binary_available(
+        &hang_bin,
+        &["--version"],
+        Duration::from_millis(120),
+    ));
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "hanging probe must return promptly, took {:?}",
+        started.elapsed()
+    );
+}

@@ -64,6 +64,8 @@ export interface MemberRow {
 	status: EmployeeStatus;
 	/** The organization's owner: a person, shown once with an Owner badge (§7.2). */
 	owner: boolean;
+	/** Built-in agent identifier ('hr' | 'chief_of_staff'), set by HQ when built-in. */
+	builtinKey?: string;
 	/** A person with an account (§7.4). Never true for an agent. */
 	canSignIn: boolean;
 	/** Omitted while unknown. People have one only while actually online. */
@@ -130,6 +132,16 @@ export interface MemberProfile extends MemberRow {
 	/** Allow hiring for the teams it leads (§7.1). */
 	allowHiring: { on: boolean; canChange: boolean; reason?: string };
 	currentTask?: WorkRef;
+	/** Open work assigned to this member derived from the same profile load (avoids duplicate queue calls). */
+	openWork?: {
+		total: number;
+		items: readonly {
+			id: string;
+			ref: string;
+			title: string;
+			status: 'todo' | 'in_progress' | 'blocked';
+		}[];
+	};
 	supervision?: Supervision;
 	execution?: ExecutionView;
 	/** The open turn, when one exists: a second Run is Busy (RUN-4). */

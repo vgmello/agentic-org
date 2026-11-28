@@ -69,6 +69,10 @@ pub(super) fn prepare_agent_mut(
                         employee_id: id,
                         instruction: b.instruction,
                         workspace: b.workspace,
+                        resume_runtime_session_id: None,
+                        fresh: false,
+                        model: b.model,
+                        effort: b.effort,
                     },
                 )
             },

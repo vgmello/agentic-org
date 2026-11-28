@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::chat::ChatSendParams;
 use serde_json::{json, Value};
 
@@ -562,10 +562,9 @@ fn live_three_runtimes_claude_codex_and_agy_cross_office_a2a_ring() {
     let ws_dir = tempfile::tempdir().unwrap();
     let ws = ws_dir.path().canonicalize().unwrap();
 
-    org_office_sqlite::install();
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = hq.info().office_id.clone();

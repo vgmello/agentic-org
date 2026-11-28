@@ -13,7 +13,8 @@ const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::Unavailable,
 ];
 
-const INBOX_KIND_TYPE: Type = Type::Enum(&["approval", "question", "decision", "problem"]);
+const INBOX_KIND_TYPE: Type =
+    Type::Enum(&["approval", "question", "decision", "problem", "review"]);
 
 const OFFICE_SUMMARY_FIELDS: &[Field] = &[
     Field::required("id", Type::String, "Office UUIDv7"),

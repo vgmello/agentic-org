@@ -44,7 +44,10 @@
 
 	const live = new HomeLiveState({
 		overview: (id, signal) => officesApi.overview(id, signal),
-		layer: layerOffices
+		layer: layerOffices,
+		onProjectHealthOverlays: (id, overlays, options) =>
+			shellData.setProjectHealthOverlays(id, overlays, options),
+		onClearVolatileProjectHealthCounts: (id) => shellData.clearVolatileProjectHealthCounts(id)
 	});
 
 	let spotlightRef = $state<{ jumpToDecision: (id: string) => boolean } | null>(null);

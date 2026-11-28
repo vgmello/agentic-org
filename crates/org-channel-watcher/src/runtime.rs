@@ -7,7 +7,7 @@
 //! true tool-less mode return `None` from `toolless_prompt()` and fail closed.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +17,10 @@ use org_office::organization_family::records::{ModelProfile, ProviderConnection}
 use org_office_sessions::RuntimeRegistry;
 
 use super::WatcherRuntimeProvider;
+
+/// Maximum wall time allowed for a CLI availability probe (`--version` / `--help`) before the
+/// child process is killed, reaped, and treated as unavailable.
+const AVAILABILITY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 type OutputParser = Box<dyn Fn(&[u8]) -> Option<(String, Option<Usage>)> + Send + Sync>;
 
@@ -99,13 +103,11 @@ struct ToollessCliRuntime {
 
 impl CopilotRuntime for ToollessCliRuntime {
     fn available(&self) -> bool {
-        Command::new(&self.binary)
-            .args(self.availability_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        probe_binary_available(
+            &self.binary,
+            self.availability_args,
+            AVAILABILITY_PROBE_TIMEOUT,
+        )
     }
 
     fn run(&self, request: &RunRequest, cancel: &CancelToken) -> Result<RunOutput, RuntimeError> {
@@ -169,4 +171,38 @@ fn wait_child_bounded(
         return Err(RuntimeError::Failed);
     }
     Ok(bytes)
+}
+
+/// Probes whether `binary` exits cleanly within `timeout`; kills and reaps the child immediately
+/// on timeout or I/O error so a hanging binary can never stall a multiplexed channel loop.
+pub(crate) fn probe_binary_available(binary: &Path, args: &[&str], timeout: Duration) -> bool {
+    let mut child = match Command::new(binary)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }

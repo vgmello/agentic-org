@@ -98,7 +98,6 @@ impl Sink {
 
 /// Backs up the durable root of `request`'s office into `request.out`.
 pub fn backup(request: &BackupRequest<'_>) -> Result<BackupReport, BackupError> {
-    org_office_sqlite::install();
     if let Some(passphrase) = request.passphrase {
         passphrase.check_strength()?;
     }
@@ -193,7 +192,10 @@ fn describe(
                     Source::Live(file) => file,
                     Source::Private(db, live) => {
                         let copy = scratch.join(db.file_name());
-                        let (snapshot, context): (fn(&Path, &Path) -> _, _) = match db {
+                        let (snapshot, context): (
+                            fn(&dyn org_office::OfficeStorageBackend, &Path, &Path) -> _,
+                            _,
+                        ) = match db {
                             PrivateDb::TaskNotes => (
                                 org_office::backup::snapshot_task_notes,
                                 "copying the private task notes database",
@@ -203,7 +205,8 @@ fn describe(
                                 "copying the private file space database",
                             ),
                         };
-                        snapshot(&live, &copy).map_err(BackupError::office(context))?;
+                        snapshot(&org_office_sqlite::SqliteStorageBackend, &live, &copy)
+                            .map_err(BackupError::office(context))?;
                         copy
                     }
                 };

@@ -51,7 +51,12 @@ fn next_uuid() -> String {
     )
 }
 
-const ENGINES: [EngineChoice; 2] = [EngineChoice::Memory, EngineChoice::Sqlite];
+fn engines() -> [EngineChoice; 2] {
+    [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ]
+}
 
 struct Fx {
     _tmp: tempfile::TempDir,
@@ -72,8 +77,7 @@ struct Fx {
 
 fn options(engine: EngineChoice) -> Options {
     Options {
-        backend: None,
-        engine,
+        engine: engine.clone(),
         clock: Arc::new(FixedClock(CREATION_AT)),
         testing: Default::default(),
         before_final_checks: None,
@@ -177,7 +181,7 @@ fn fixture(engine: EngineChoice) -> Fx {
         roots.clone(),
         custody.clone(),
         |_| record(CA_SEED),
-        options(engine),
+        options(engine.clone()),
     )
     .unwrap();
     let owner = office.owner_member_id().to_owned();
@@ -219,7 +223,7 @@ fn fixture(engine: EngineChoice) -> Fx {
         folder,
         roots,
         custody,
-        engine,
+        engine: engine.clone(),
         office,
         owner,
         person,
@@ -261,14 +265,14 @@ fn reopen(fx: Fx) -> Result<Fx, OfficeError> {
         &identity().instance_id.to_string(),
         roots.clone(),
         custody.clone(),
-        options(engine),
+        options(engine.clone()),
     )?;
     Ok(Fx {
         _tmp,
         folder,
         roots,
         custody,
-        engine,
+        engine: engine.clone(),
         office,
         owner,
         person,
@@ -354,9 +358,8 @@ fn media_params(project: &str, file: &str, bytes: &[u8]) -> DocsPutMediaParams {
 
 #[test]
 fn full_lifecycle_regenerates_the_index_and_rebuilds_identically_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let mut setup = create_params(&fx.project, "Setup", Some("guides/setup.md"));
         setup.status = Some(DocStatusWire::Current);
         setup.summary = Some("How to set up checkout.".into());
@@ -424,7 +427,7 @@ fn full_lifecycle_regenerates_the_index_and_rebuilds_identically_on_both_engines
         assert_eq!(tree.sections.len(), 2);
         assert_eq!(tree.documents.len(), 2);
 
-        assert_update_move_media_and_rebuild(fx, &setup.id, engine);
+        assert_update_move_media_and_rebuild(fx, &setup.id, engine.clone());
     }
 }
 
@@ -520,9 +523,8 @@ fn assert_update_move_media_and_rebuild(fx: Fx, setup_id: &str, engine: EngineCh
 
 #[test]
 fn a_hand_edited_index_fails_the_rebuild_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         create(&fx, &fx.owner, "Setup", Some("setup.md"));
         fx.office.sync_store().unwrap();
         let tampered = std::fs::read_to_string(index_file(&fx))
@@ -537,9 +539,8 @@ fn a_hand_edited_index_fails_the_rebuild_on_both_engines() {
 
 #[test]
 fn concurrency_idempotency_and_path_kind_section_refusals_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let first = create_params(&fx.project, "Setup", Some("guides/setup.md"));
         let created = ok(fx.office.docs_create(&fx.owner, first.clone()));
         // An exact retry is answered from the receipt; the same id with other params is reused.
@@ -645,9 +646,8 @@ fn concurrency_idempotency_and_path_kind_section_refusals_on_both_engines() {
 
 #[test]
 fn agents_outside_the_project_are_refused_on_every_docs_call_without_a_leak() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let doc = create(&fx, &fx.owner, "Secret plan", Some("plans/secret.md")).document;
         ok(fx
             .office
@@ -841,9 +841,8 @@ fn every_write(fx: &Fx, caller: &str, project: &str, doc: &str) -> Vec<(&'static
 
 #[test]
 fn media_is_sanitized_typed_bounded_and_versioned_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         let put = |params: DocsPutMediaParams| fx.office.docs_put_media(&fx.owner, params);
         let first = ok(put(media_params(
             &fx.project,
@@ -915,9 +914,8 @@ fn media_is_sanitized_typed_bounded_and_versioned_on_both_engines() {
 
 #[test]
 fn a_stray_file_under_docs_is_skipped_by_the_rebuild_and_never_projected() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = fixture(engine);
+    for engine in engines() {
+        let fx = fixture(engine.clone());
         create(&fx, &fx.owner, "Setup", Some("setup.md"));
         fx.office.sync_store().unwrap();
         let docs_dir = fx

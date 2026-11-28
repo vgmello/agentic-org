@@ -2,12 +2,13 @@
 //! call, and the live-event stream.
 
 use super::{
-    account_routes, attachment_routes, bad_input, chat_routes, cost_routes, create_outcome,
-    doc_routes, external_auth_routes, failure, git_routes, hiring_routes, instance_routes,
-    instance_routes::CallerAuth, instance_view, invalid, mutation, not_found, note_routes,
-    office_routes, open_routes, org_routes, organization_view, process_routes, provider_routes,
-    result, search_routes, session_routes, task_routes, tess_routes, unavailable, view, Call,
-    CliApprovalDecideBody, Credentials, EmptyBody, RegisterBody, Route, SessionApi, SignInBody,
+    account_routes, attachment_routes, bad_input, chat_routes, copilot_routes, cost_routes,
+    create_outcome, doc_routes, external_auth_routes, failure, git_routes, hiring_routes,
+    instance_routes, instance_routes::CallerAuth, instance_view, invalid, mutation, not_found,
+    note_routes, office_routes, open_routes, org_routes, organization_view, process_routes,
+    provider_routes, result, review_routes, search_routes, session_routes, task_routes,
+    tess_routes, unavailable, view, Call, CliApprovalDecideBody, Credentials, EmptyBody,
+    RegisterBody, Route, SessionApi, SignInBody,
 };
 use crate::body::{stream::StreamedBody, BusinessBody};
 use crate::host::Failure;
@@ -124,6 +125,7 @@ impl ApiBackend for SessionApi {
         // HEAD is GET without the body (`into_http` drops it), as `Allow` advertises.
         let get = matches!(request.method, Method::GET | Method::HEAD) && !query;
         let post = request.method == Method::POST && !query;
+        let patch = request.method == Method::PATCH && !query;
         let segments: Vec<&str> = path.segments().iter().map(String::as_str).collect();
         Ok(match segments.as_slice() {
             ["api", "v1", "version"] if get => Route::Version,
@@ -142,7 +144,10 @@ impl ApiBackend for SessionApi {
             ["api", "v1", "account", "password"] if post => Route::Account(
                 account_routes::AccountRoute::ChangePassword(self.caller_auth(request)?),
             ),
-            ["api", "v1", "account", "preferences"] if post => Route::Account(
+            ["api", "v1", "account", "preferences"] if get => Route::Account(
+                account_routes::AccountRoute::PreferencesGet(self.caller_auth(request)?),
+            ),
+            ["api", "v1", "account", "preferences"] if post || patch => Route::Account(
                 account_routes::AccountRoute::PreferencesSet(self.caller_auth(request)?),
             ),
             ["api", "v1", "instance", "admin", "handover"] if post => Route::Account(
@@ -330,12 +335,14 @@ impl ApiBackend for SessionApi {
             Route::Process(route) => return process_routes::prepare(route, bytes),
             Route::Docs(route) => return doc_routes::prepare(route, bytes),
             Route::Search(route) => return search_routes::prepare(route, bytes),
+            Route::Copilot(route) => return copilot_routes::prepare(route, bytes),
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
             Route::OfficeFederation(route) => return office_routes::prepare(route, bytes),
             Route::Attachments(route) => return attachment_routes::prepare(route, bytes),
             Route::Tess(route) => return tess_routes::prepare(route, bytes),
             Route::ExternalAuth(route) => return external_auth_routes::prepare(route, bytes),
+            Route::Reviews(route) => return review_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -471,6 +478,20 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::Copilot(call) => match call.timeout() {
+                Some(timeout) => AsyncDispatch::AsyncBounded {
+                    future: Box::pin(async move {
+                        WebReply::Json(copilot_routes::execute(&self, call).await)
+                    }),
+                    timeout,
+                },
+                None => AsyncDispatch::Async {
+                    future: Box::pin(async move {
+                        WebReply::Json(copilot_routes::execute(&self, call).await)
+                    }),
+                    streaming: false,
+                },
+            },
             Call::Cost(call) => AsyncDispatch::Async {
                 future: Box::pin(
                     async move { WebReply::Json(cost_routes::execute(&self, call).await) },
@@ -500,6 +521,12 @@ impl ApiBackend for SessionApi {
             Call::ExternalAuth(call) => AsyncDispatch::Async {
                 future: Box::pin(async move {
                     WebReply::Json(external_auth_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
+            Call::Reviews(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(review_routes::execute(&self, call).await)
                 }),
                 streaming: false,
             },
@@ -541,6 +568,7 @@ impl ApiBackend for SessionApi {
             | Call::Notes(_)
             | Call::Git(_)
             | Call::Search(_)
+            | Call::Copilot(_)
             | Call::Process(_)
             | Call::Docs(_)
             | Call::Cost(_)
@@ -549,6 +577,7 @@ impl ApiBackend for SessionApi {
             | Call::Attachments(_)
             | Call::Tess(_)
             | Call::ExternalAuth(_)
+            | Call::Reviews(_)
             | Call::OrgSnapshot(_, _)
             | Call::OrgProjects(_, _, _)
             | Call::OrgProjectInspect(_, _, _)

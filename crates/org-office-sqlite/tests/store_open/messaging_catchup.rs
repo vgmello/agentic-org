@@ -33,7 +33,7 @@ struct Fx {
 
 impl Fx {
     fn new(place: &Place, engine: EngineChoice) -> Self {
-        let (store, owner, ada) = seed_org_with_two_people(place, engine);
+        let (store, owner, ada) = seed_org_with_two_people(place, engine.clone());
         let fx = Self {
             store,
             owner,
@@ -220,9 +220,9 @@ fn ids(res: &ChatMessagesResult) -> Vec<&str> {
 
 #[test]
 fn rung1_channel_list_counts_new_messages_by_watermark_excluding_your_own() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut fx = Fx::new(&place, engine);
+        let mut fx = Fx::new(&place, engine.clone());
         let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
         let m1 = fx.post(&owner, "#ops", "one", 1);
         let m2 = fx.post(&owner, "#ops", "two", 2);
@@ -293,9 +293,9 @@ fn rung1_channel_list_counts_new_messages_by_watermark_excluding_your_own() {
 
 #[test]
 fn rung2_delta_reads_are_oldest_first_after_the_anchor_and_refuse_bad_shapes() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut fx = Fx::new(&place, engine);
+        let mut fx = Fx::new(&place, engine.clone());
         let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
         // Inserted out of time order: reads follow (created_at, local_seq, id), never insertion.
         let late = fx.post(&owner, "#ops", "late", 30);
@@ -466,9 +466,9 @@ fn dm_message(fx: &mut Fx, sec: u32) -> String {
 
 #[test]
 fn rung2_delta_pages_keep_their_total_and_never_reach_behind_the_anchor() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut fx = Fx::new(&place, engine);
+        let mut fx = Fx::new(&place, engine.clone());
         let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
         // Others' posts interleaved with Ada's own, which a since-read read never counts.
         let m0 = fx.post(&owner, "#ops", "m0", 1);
@@ -584,9 +584,9 @@ fn rung2_delta_pages_keep_their_total_and_never_reach_behind_the_anchor() {
 
 #[test]
 fn rung2_mark_read_defaults_to_latest_moves_only_forward_and_never_touches_the_inbox() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut fx = Fx::new(&place, engine);
+        let mut fx = Fx::new(&place, engine.clone());
         let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
 
         // An empty channel has nothing to mark: a clean no-op that creates no marker.
@@ -678,9 +678,9 @@ fn rung2_mark_read_defaults_to_latest_moves_only_forward_and_never_touches_the_i
 
 #[test]
 fn rung3_catchup_window_slices_oldest_first_and_counts_what_remains() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut fx = Fx::new(&place, engine);
+        let mut fx = Fx::new(&place, engine.clone());
         let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
 
         let empty = fx.catchup(&ada, "#ops", 200).unwrap();
@@ -782,9 +782,9 @@ impl ReadOp for MessageById {
 
 #[test]
 fn rung4_thread_headers_top_level_snippets_and_attachment_counts() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut fx = Fx::new(&place, engine);
+        let mut fx = Fx::new(&place, engine.clone());
         let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
         let root = fx.post(&owner, "#ops", "Root 🦀 question\n\twith tabs", 1);
         let r1 = fx.reply(&ada, "#ops", "first reply", Some(&root), false, 2);
@@ -910,9 +910,9 @@ fn rung4_thread_headers_top_level_snippets_and_attachment_counts() {
 
 #[test]
 fn ax23_since_read_headers_only_slashes_the_catchup_payload() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let mut fx = Fx::new(&place, engine);
+        let mut fx = Fx::new(&place, engine.clone());
         let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
         let long = "Status: the migration plan is on track; details follow.\n".repeat(36);
         let mut last_read = String::new();

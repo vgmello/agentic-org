@@ -72,7 +72,7 @@ src/lib/modules/workitems/features/queue/WorkBoard.svelte eslint=0 svelte=3 effe
 src/lib/modules/workitems/features/queue/WorkQueueView.svelte eslint=3 svelte=0 effect=5
 src/lib/name.ts eslint=1 svelte=0 effect=0
 src/lib/platform/auth/SessionInterruptions.svelte eslint=0 svelte=0 effect=3
-src/lib/platform/shell/ExecutiveCommandBar.svelte eslint=1 svelte=0 effect=1
+src/lib/platform/shell/ExecutiveCommandBar.svelte eslint=1 svelte=0 effect=0
 src/lib/platform/shell/MobileNavigation.svelte eslint=0 svelte=0 effect=1
 src/lib/platform/shell/NewMenu.svelte eslint=3 svelte=0 effect=0
 src/lib/utils.ts eslint=2 svelte=0 effect=0

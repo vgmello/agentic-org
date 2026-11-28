@@ -160,25 +160,21 @@ mod memory_suite {
 
 #[test]
 fn only_an_engine_that_is_built_in_is_chosen() {
-    assert_eq!(EngineChoice::named("sqlite"), Ok(EngineChoice::Sqlite));
-    assert_eq!(EngineChoice::named("memory"), Ok(EngineChoice::Memory));
+    assert!(EngineChoice::named("memory", None)
+        .expect("memory engine")
+        .is_memory());
     for name in ["postgres", "SQLite", "", "sqlite3"] {
-        let refused = EngineChoice::named(name);
+        let refused = EngineChoice::named(name, None);
         assert!(matches!(refused, Err(StoreError::Invalid(_))), "{name:?}");
     }
 }
 
 #[test]
-fn sqlite_engine_fails_closed_when_no_backend_is_installed() {
-    let place = Place::new();
-    let config = place.config(
-        EngineChoice::Sqlite,
-        Opening::Create(AnchorFacts::default()),
-    );
-    let refused = open_store(&config);
+fn sqlite_engine_fails_closed_when_no_backend_is_provided() {
+    let refused = EngineChoice::named("sqlite", None);
     assert!(
         matches!(refused, Err(StoreError::Invalid(_))),
-        "expected fail-closed StoreError::Invalid when no SQLite backend is installed"
+        "expected fail-closed StoreError::Invalid when no SQLite backend is injected"
     );
 }
 

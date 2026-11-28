@@ -70,7 +70,7 @@ struct Org {
 impl Org {
     fn new(engine: EngineChoice) -> Self {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         let here = identity();
         let cmd = creation_command();
         let owner = cmd.creator.employee_id.clone();
@@ -329,7 +329,9 @@ impl Org {
                     task: task.to_owned(),
                     expected_revision: revision,
                     status: change.status,
+                    reason: None,
                     blocked_reason: None,
+                    waiting_on_owner: None,
                     resolution: change.resolution.map(str::to_owned),
                     note: None,
                     done_anyway_reason: change.reason.map(str::to_owned),
@@ -373,7 +375,9 @@ impl Org {
             .join("office.db");
         self.store.close().expect("close the store");
         std::fs::remove_file(&db).expect("delete the projection");
-        let store = self.place.reopen(EngineChoice::Sqlite);
+        let store = self
+            .place
+            .reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
         Self { store, ..self }
     }
 }
@@ -510,15 +514,15 @@ fn sections(s: &Org, task: &str) {
 
 #[test]
 fn checklist_sections_keep_their_own_positions_and_counts_on_both_engines_and_rebuild() {
-    for engine in ENGINES {
-        let s = Org::new(engine);
+    for engine in engines() {
+        let s = Org::new(engine.clone());
         let task = s.create(false, None);
         assert_eq!(
             (task.ac_total, task.dod_total, task.work_steps_total),
             (0, 0, 0)
         );
         sections(&s, &task.key);
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             let before = s.inspect(&task.key);
             let s = s.rebuilt();
             assert_eq!(s.inspect(&task.key).checklist, before.checklist);
@@ -529,8 +533,8 @@ fn checklist_sections_keep_their_own_positions_and_counts_on_both_engines_and_re
 
 #[test]
 fn a_task_copies_its_definition_of_done_at_create_and_defaults_never_change_it_later() {
-    for engine in ENGINES {
-        let s = Org::new(engine);
+    for engine in engines() {
+        let s = Org::new(engine.clone());
         // No default anywhere: no `dod` steps.
         let bare = s.create(false, None);
         assert_eq!(bare.dod_total, 0);
@@ -631,7 +635,7 @@ fn a_task_copies_its_definition_of_done_at_create_and_defaults_never_change_it_l
         );
         assert_eq!(s.create(false, None).dod_total, 1);
 
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             let s = s.rebuilt();
             let (org, _) = s.store.read(OrganizationDefaultDodRead).unwrap();
             assert_eq!(org.unwrap().0, Some(vec!["Brand new".to_owned()]));
@@ -651,8 +655,8 @@ fn a_task_copies_its_definition_of_done_at_create_and_defaults_never_change_it_l
 
 #[test]
 fn completing_with_required_steps_unticked_needs_a_reason_that_reopening_clears() {
-    for engine in ENGINES {
-        let s = Org::new(engine);
+    for engine in engines() {
+        let s = Org::new(engine.clone());
         let task = s.create(false, Some(vec!["Tests pass"])).key;
         let ac = s.add(&task, "Login works", Some(ChecklistSection::Acceptance));
         let _optional = s.add(&task, "Refactor later", None);
@@ -725,7 +729,7 @@ fn completing_with_required_steps_unticked_needs_a_reason_that_reopening_clears(
         assert_eq!(event["done_anyway"]["reason"], "Waived by the owner");
         assert_eq!(event["done_anyway"]["steps"].as_array().unwrap().len(), 2);
 
-        let s = if engine == EngineChoice::Sqlite {
+        let s = if engine.is_sqlite() {
             let s = s.rebuilt();
             let kept = s.inspect(&task).task.details.and_then(|d| d.done_anyway);
             assert_eq!(
@@ -787,8 +791,8 @@ fn reopen_and_tick(s: &Org, task: &str) {
 
 #[test]
 fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
-    for engine in ENGINES {
-        let s = Org::new(engine);
+    for engine in engines() {
+        let s = Org::new(engine.clone());
         let task = s.create(false, None).key;
         let open = Transition {
             status: TaskStatus::InProgress,
@@ -934,7 +938,7 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
         let reused = s.summarize(&s.carol, &task, "other text", &command, revision);
         assert_eq!(code(reused), ErrorCode::OperationReused);
 
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             let before = s.inspect(&task).task;
             let s = s.rebuilt();
             assert_eq!(s.inspect(&task).task, before);
@@ -973,8 +977,8 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
 
 #[test]
 fn done_anyway_reason_rejects_control_characters_on_both_engines() {
-    for engine in ENGINES {
-        let s = Org::new(engine);
+    for engine in engines() {
+        let s = Org::new(engine.clone());
         let task = s.create(false, Some(vec!["Required"])).key;
         for bad in ["ok\0tail", "ok\x1b[31m", "line1\nline2", "line1\rline2"] {
             let change = Transition {
@@ -1072,8 +1076,8 @@ impl ReadOp for FirstAgentId {
 
 #[test]
 fn project_default_dod_guards_against_agents_archived_ancestors_and_archived_projects() {
-    for engine in ENGINES {
-        let s = Org::new(engine);
+    for engine in engines() {
+        let s = Org::new(engine.clone());
         let agent = s.store.read(FirstAgentId).unwrap().0.expect("agent in org");
         let team_b = id(301);
 

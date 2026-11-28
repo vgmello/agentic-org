@@ -6,8 +6,10 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use org_cli_shell::context::{ColorMode, Modes};
 
 use crate::args::{FormatArg, PassArgs};
-use crate::features::{admin, backup, completion, context, diagnostics, office, org, project};
-use crate::features::{provider, release, service, sign_in, status};
+use crate::features::{
+    admin, backup, completion, context, diagnostics, instance, office, org, project,
+};
+use crate::features::{provider, release, repo, service, sign_in, status};
 
 const ABOUT: &str = "Agentic Org\n\
 Use when: operating a computer's Agentic Org host, organizations, offices, or signed-in \
@@ -142,6 +144,10 @@ pub(crate) enum TopCommand {
     /// Use when: managing the OS background service created by `agentic-org setup`.
     #[command(verbatim_doc_comment)]
     Service(service::ServiceArgs),
+    /// Inspect or repair an instance's root binding (`instance rebind`)
+    /// Use when: repairing an instance whose root directory moved to a new inode after a copy or restore.
+    #[command(verbatim_doc_comment)]
+    Instance(instance::InstanceArgs),
     /// Protected organization recovery: status and release of the recovery package
     /// Use when: checking or releasing an organization's recovery package as its administrator.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
@@ -210,8 +216,8 @@ pub(crate) enum TopCommand {
     /// Use when: reviewing or changing who belongs to the organization.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Member(PassArgs),
-    /// Manage repositories, fetch origin branches and push task branches (repo register|list|attach|status|fetch|push)
-    /// Use when: registering/attaching Git repos, checking office cache status, fetching newly pushed origin branches, or pushing branches.
+    /// Manage repositories, scoped vault credentials, fetch origin branches and push task branches (repo register|list|attach|status|fetch|push|set-credential|credential-status|revoke-credential)
+    /// Use when: registering/attaching Git repos, storing per-repo office vault HTTPS tokens, checking office cache status, fetching newly pushed origin branches, or pushing branches.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Repo(PassArgs),
     /// List or prepare isolated task worktrees (worktree list|prepare)
@@ -226,10 +232,23 @@ pub(crate) enum TopCommand {
     /// Use when: adding, checking, editing, removing, or reordering task checklist steps.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Checklist(PassArgs),
-    /// Private task notes (task-note add|list|get|update|remove|publish; alias `task note`)
-    /// Use when: recording private task notes or publishing a copy as a public task comment.
-    #[command(verbatim_doc_comment, disable_help_flag = true, name = "task-note")]
-    TaskNote(PassArgs),
+    /// Private notes, plans and decisions (note add|list|inspect|update|remove|publish; aliases `task-note`, `task note`)
+    /// Use when: recording private working notes, plans or decisions, recalling them, or publishing a copy as a public task comment.
+    #[command(
+        verbatim_doc_comment,
+        disable_help_flag = true,
+        name = "note",
+        alias = "task-note"
+    )]
+    Note(PassArgs),
+    /// Universal reviews (review request|list|inspect|diff|route|finding|verdict|resubmit|close)
+    /// Use when: requesting, inspecting, diffing, routing, judging, resubmitting, or closing code, doc, task, or artifact reviews.
+    #[command(verbatim_doc_comment, disable_help_flag = true)]
+    Review(PassArgs),
+    /// Search tasks, processes, projects, directory, messages or private notes (search query)
+    /// Use when: finding tasks, processes, messages, people or your private notes by full-text query.
+    #[command(verbatim_doc_comment, disable_help_flag = true)]
+    Search(PassArgs),
     /// Agent and person sessions (session ...)
     /// Use when: inspecting or ending sessions on an office.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
@@ -271,7 +290,9 @@ impl TopCommand {
             Self::Worktree(p) => ("worktree", p),
             Self::Task(p) => ("task", p),
             Self::Checklist(p) => ("checklist", p),
-            Self::TaskNote(p) => ("task-note", p),
+            Self::Note(p) => ("note", p),
+            Self::Review(p) => ("review", p),
+            Self::Search(p) => ("search", p),
             Self::Session(p) => ("session", p),
             Self::Grant(p) => ("grant", p),
             Self::Process(p) => ("process", p),
@@ -300,7 +321,9 @@ impl TopCommand {
             Self::Worktree(p) => ("worktree", p),
             Self::Task(p) => ("task", p),
             Self::Checklist(p) => ("checklist", p),
-            Self::TaskNote(p) => ("task-note", p),
+            Self::Note(p) => ("note", p),
+            Self::Review(p) => ("review", p),
+            Self::Search(p) => ("search", p),
             Self::Session(p) => ("session", p),
             Self::Grant(p) => ("grant", p),
             Self::Process(p) => ("process", p),
@@ -318,6 +341,7 @@ impl TopCommand {
             Self::Context(args) => args.yes(),
             Self::Admin(args) => args.yes(),
             Self::Service(args) => args.yes(),
+            Self::Instance(args) => args.yes(),
             Self::Restore(args) => args.yes(),
             Self::Uninstall(args) => args.yes(),
             _ => false,
@@ -336,6 +360,11 @@ impl TopCommand {
             Self::Provider(args) => args.reads_a_secret(),
             Self::Backup(args) => args.reads_a_secret(),
             Self::Restore(args) => args.reads_a_secret(),
+            Self::Repo(pass) => repo::reads_a_secret(&pass.args),
+            Self::SignIn(args) => {
+                args.command().first().map(String::as_str) == Some("repo")
+                    && repo::reads_a_secret(&args.command()[1..])
+            }
             _ => false,
         }
     }

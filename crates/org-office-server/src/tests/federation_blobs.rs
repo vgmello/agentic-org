@@ -19,7 +19,7 @@ use org_office::attachments::blobs::ContentHash;
 use org_office::attachments::records::{self, AttachmentRecord};
 use org_office::attachments::remote::{BlobPull, PullFailure};
 use org_office::attachments::testkit::{sample_pdf, sample_png};
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::attachments::{
     AttachmentAttachParams, AttachmentInspect, AttachmentInspectParams, AttachmentReadChunk,
     AttachmentReadChunkParams, AttachmentReadChunkResult, AttachmentTargetKind,
@@ -46,10 +46,9 @@ pub(super) struct Net {
 
 impl Net {
     pub(super) fn new(satellites: u8) -> Self {
-        org_office_sqlite::install();
-        let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-            engine: EngineChoice::Sqlite,
-        }));
+        let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+            org_office_sqlite::sqlite_backend(),
+        )));
         let owner = hq.owner_member_id().to_owned();
         let server = HqFederationServer::start(
             Arc::clone(&hq),

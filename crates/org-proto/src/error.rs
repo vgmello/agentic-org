@@ -121,6 +121,12 @@ pub enum ErrorCode {
     /// proposing it through `suggestion.create`). A build that doesn't know it reads it as
     /// [`ErrorCode::Unknown`].
     PolicyViolation,
+    /// No tool-less copilot runtime or feature is configured on this office (`copilot.draft`).
+    CopilotUnavailable,
+    /// The copilot runtime failed or returned an unusable/secret-bearing answer.
+    CopilotFailed,
+    /// Another copilot draft for this user/feature is still running, or the runtime is overloaded.
+    CopilotBusy,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,

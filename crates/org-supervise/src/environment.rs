@@ -60,8 +60,8 @@ impl std::fmt::Debug for Environment {
 
 impl Environment {
     /// Build from captured login/service data only. No server environment is inherited.
-    /// Only HOME, LANG, USER, LOGNAME, SHELL, TERM, TMPDIR, RUSTUP_HOME, CARGO_HOME and
-    /// CARGO_NET_OFFLINE are accepted here.
+    /// Only HOME, LANG, USER, LOGNAME, SHELL, TERM, TMPDIR, RUSTUP_HOME, CARGO_HOME,
+    /// CARGO_TARGET_DIR and CARGO_NET_OFFLINE are accepted here.
     pub fn new(path: SearchPath, captured: &[(OsString, OsString)]) -> io::Result<Self> {
         let mut result = Self(BTreeMap::new());
         result.0.insert("PATH".into(), path.0);
@@ -78,6 +78,7 @@ impl Environment {
                         | "TMPDIR"
                         | "RUSTUP_HOME"
                         | "CARGO_HOME"
+                        | "CARGO_TARGET_DIR"
                         | "CARGO_NET_OFFLINE"
                 )
             ) {
@@ -225,6 +226,7 @@ fn is_forbidden_auth_name(raw: &OsStr, name: &str) -> bool {
                 | "TMPDIR"
                 | "RUSTUP_HOME"
                 | "CARGO_HOME"
+                | "CARGO_TARGET_DIR"
                 | "CARGO_NET_OFFLINE"
                 | "NODE_OPTIONS"
                 | "BASH_ENV"
@@ -239,4 +241,34 @@ fn is_forbidden_auth_name(raw: &OsStr, name: &str) -> bool {
 fn indexed(name: &str, prefix: &str) -> bool {
     name.strip_prefix(prefix)
         .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_target_dir_is_in_captured_allowlist_and_forbidden_as_auth_var() {
+        let dir = tempfile::tempdir().unwrap();
+        let helpers = dir.path().join("helpers");
+        std::fs::create_dir_all(&helpers).unwrap();
+        let path = SearchPath::new(&helpers, OsStr::new("/usr/bin"), &[]).unwrap();
+        let captured = vec![
+            (
+                OsString::from("CARGO_HOME"),
+                OsString::from("/tmp/agent/cargo"),
+            ),
+            (
+                OsString::from("CARGO_TARGET_DIR"),
+                OsString::from("/tmp/agent/target"),
+            ),
+            (OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")),
+        ];
+        let env = Environment::new(path, &captured).expect("CARGO_TARGET_DIR allowed");
+        assert!(env.0.contains_key(OsStr::new("CARGO_TARGET_DIR")));
+        assert!(is_forbidden_auth_name(
+            OsStr::new("CARGO_TARGET_DIR"),
+            "CARGO_TARGET_DIR"
+        ));
+    }
 }

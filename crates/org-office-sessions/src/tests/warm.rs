@@ -159,6 +159,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
         task_id: None,
         is_failover_switch: false,
         excluded_connections: &excluded,
+        turn_override: None,
     })
     .unwrap();
     assert_eq!(admitted.oauth_expires_at_ms, Some(future_exp));
@@ -235,6 +236,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
         task_id: None,
         is_failover_switch: false,
         excluded_connections: &excluded,
+        turn_override: None,
     })
     .unwrap();
     let digest_v2 = admitted_v2.route_digest_suffix.clone();
@@ -293,6 +295,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
             task_id: None,
             is_failover_switch: false,
             excluded_connections: &excluded,
+            turn_override: None,
         })
         .unwrap();
     let digest_corrupt = admitted_corrupt.route_digest_suffix.clone();
@@ -328,6 +331,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
         task_id: None,
         is_failover_switch: false,
         excluded_connections: &excluded,
+        turn_override: None,
     })
     .err()
     .expect("missing vault credential on claude subscription_cli must fail closed");
@@ -448,6 +452,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: "/tmp/home".into(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         allow_host_auth: false,
@@ -492,6 +497,9 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
                 supports_mid_turn: false,
                 sandbox_plan: crate::manager::SandboxPlan::host_native(),
                 partition: None,
+                active_model: None,
+                active_effort: None,
+                pinned_override: Default::default(),
             },
         );
     }
@@ -572,6 +580,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
             rate_limit_resets_at: None,
             stop_epoch: 0,
             partition: None,
+            turn_override: Default::default(),
         },
     );
     {
@@ -739,6 +748,7 @@ fn task126_org_topology_invalidates_warm_digest_and_expiring_oauth_triggers_stal
         Some(1),
         crate::manager::SandboxPlan::host_native(),
         false,
+        Default::default(),
     );
     let acquire = hooks.on_permit_acquire.expect("permit acquire hook");
     let err = acquire("conn-1", None).expect_err("expiring OAuth must fail warm permit acquire");

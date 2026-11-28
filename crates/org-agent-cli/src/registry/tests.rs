@@ -208,7 +208,8 @@ fn each_shorthand_becomes_its_command_and_keeps_the_rest_of_the_line() {
     for (line, expected) in [
         ("who --team Core", "directory list --team Core"),
         ("context --format yaml", "session context --format yaml"),
-        ("task note add --task T-A1", "task-note add --task T-A1"),
+        ("task-note add --task T-A1", "note add --task T-A1"),
+        ("task note add --task T-A1", "note add --task T-A1"),
         ("who --help", "directory list --help"),
         ("context --schema", "session context --schema"),
     ] {
@@ -474,8 +475,8 @@ fn the_table_has_every_row_of_every_slice_once_and_dispatch_owns_each() {
     );
     assert_eq!(
         live.rows().len(),
-        127,
-        "the agent-os catalogue has 127 commands"
+        140,
+        "the agent-os catalogue has 140 commands"
     );
     // Every row reaches its slice's dispatch, which sends the office its call: none falls
     // through to `not wired`.
@@ -564,9 +565,9 @@ fn mutation_policy_classifies_every_command_and_every_override_targets_a_live_ro
         ("ui", "present"),
         ("status", "set"),
         ("status", "clear"),
-        ("task-note", "add"),
-        ("task-note", "update"),
-        ("task-note", "remove"),
+        ("note", "add"),
+        ("note", "update"),
+        ("note", "remove"),
         ("msg", "reply"),
     ] {
         assert_eq!(

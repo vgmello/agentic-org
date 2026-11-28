@@ -43,6 +43,7 @@ fn every_frozen_kind_and_clearing_value_round_trips() {
         ("question", InboxKind::Question),
         ("decision", InboxKind::Decision),
         ("problem", InboxKind::Problem),
+        ("review", InboxKind::Review),
     ] {
         assert_eq!(
             serde_json::from_value::<InboxKind>(json!(wire)).unwrap(),
@@ -58,6 +59,7 @@ fn every_frozen_kind_and_clearing_value_round_trips() {
         ("leaves_fixed", InboxClears::LeavesFixed),
         ("assigned_or_closed", InboxClears::AssignedOrClosed),
         ("unblocked", InboxClears::Unblocked),
+        ("review_decided", InboxClears::ReviewDecided),
     ] {
         assert_eq!(
             serde_json::from_value::<InboxClears>(json!(wire)).unwrap(),
@@ -70,6 +72,7 @@ fn every_frozen_kind_and_clearing_value_round_trips() {
         ("work_item", OpenTarget::WorkItem),
         ("bug", OpenTarget::Bug),
         ("message", OpenTarget::Message),
+        ("review", OpenTarget::Review),
     ] {
         assert_eq!(
             serde_json::from_value::<OpenTarget>(json!(wire)).unwrap(),
@@ -77,6 +80,12 @@ fn every_frozen_kind_and_clearing_value_round_trips() {
         );
         assert_eq!(serde_json::to_value(target).unwrap(), json!(wire));
     }
+    let counts: InboxCounts = serde_json::from_value(json!({
+        "approvals": 1, "questions": 0, "decisions": 0, "problems": 0, "reviews": 2, "total": 3
+    }))
+    .unwrap();
+    assert_eq!(counts.reviews, 2);
+    assert_eq!(serde_json::to_value(&counts).unwrap()["reviews"], json!(2));
 }
 
 #[test]

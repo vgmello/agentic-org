@@ -140,8 +140,7 @@ fn seed_fixture(engine: EngineChoice) -> ProcessFixture {
     };
     let (new, binding) = request();
     let options = Options {
-        backend: None,
-        engine,
+        engine: engine.clone(),
         clock: Arc::new(FixedClock(CREATION_AT)),
         testing: Default::default(),
         before_final_checks: None,
@@ -271,8 +270,7 @@ fn reopen_rebuilt_sqlite(fx: ProcessFixture) -> (tempfile::TempDir, Office) {
         fx.roots,
         fx.custody,
         Options {
-            backend: None,
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             clock: Arc::new(FixedClock(CREATION_AT)),
             testing: Default::default(),
             before_final_checks: None,
@@ -396,7 +394,7 @@ fn seed_chain_docs(fx: &ProcessFixture) -> (String, String, String) {
 }
 
 fn verify_single_chain_engine(engine: EngineChoice) {
-    let fx = seed_fixture(engine);
+    let fx = seed_fixture(engine.clone());
     let (org_id, team_id, proj_id) = seed_chain_docs(&fx);
 
     // Same-scope duplicate key -> AlreadyExists.
@@ -529,7 +527,7 @@ fn verify_single_chain_engine(engine: EngineChoice) {
     assert!(view.problems.is_empty());
     assert!(view.rows.iter().any(|r| r.document.id == proj_id));
 
-    if engine == EngineChoice::Sqlite {
+    if engine.is_sqlite() {
         let owner = fx.owner.clone();
         let pid = fx.project_id.clone();
         let (_tmp, reopened) = reopen_rebuilt_sqlite(fx);
@@ -551,15 +549,13 @@ fn verify_single_chain_engine(engine: EngineChoice) {
 
 #[test]
 fn single_chain_inheritance_seals_contributing_exclusion_and_sqlite_rebuild() {
-    org_office_sqlite::install();
     verify_single_chain_engine(EngineChoice::Memory);
-    verify_single_chain_engine(EngineChoice::Sqlite);
+    verify_single_chain_engine(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
 }
 
 #[test]
 fn move_team_relocates_structure_documents_and_survives_rebuild() {
-    org_office_sqlite::install();
-    let fx = seed_fixture(EngineChoice::Sqlite);
+    let fx = seed_fixture(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let doc = write_doc(
         &fx.office,
         WriteDocArgs {
@@ -653,8 +649,7 @@ fn move_team_relocates_structure_documents_and_survives_rebuild() {
 
 #[test]
 fn projectless_task_resolves_accountable_team_and_archived_team_refuses_writes() {
-    org_office_sqlite::install();
-    let fx = seed_fixture(EngineChoice::Sqlite);
+    let fx = seed_fixture(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
 
     // Seed distinct standards on owning_team vs contributing_team.
     write_doc(
@@ -858,8 +853,7 @@ fn projectless_task_resolves_accountable_team_and_archived_team_refuses_writes()
 
 #[test]
 fn agent_write_boundaries_idempotency_concurrency_and_skills() {
-    org_office_sqlite::install();
-    let fx = seed_fixture(EngineChoice::Sqlite);
+    let fx = seed_fixture(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
 
     write_doc(
         &fx.office,
@@ -1106,8 +1100,7 @@ fn agent_write_boundaries_idempotency_concurrency_and_skills() {
 
 #[test]
 fn standing_and_task_must_follow_text_share_one_instruction_budget() {
-    org_office_sqlite::install();
-    let fx = seed_fixture(EngineChoice::Sqlite);
+    let fx = seed_fixture(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let home_body = "h".repeat(70 * 1024);
     let task_body = "t".repeat(70 * 1024);
     for (team, key, title, body) in [
@@ -1215,8 +1208,7 @@ fn standing_and_task_must_follow_text_share_one_instruction_budget() {
 
 #[test]
 fn a_live_task_whose_project_cannot_be_loaded_refuses_the_turn() {
-    org_office_sqlite::install();
-    let fx = seed_fixture(EngineChoice::Sqlite);
+    let fx = seed_fixture(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     write_doc(
         &fx.office,
         WriteDocArgs {

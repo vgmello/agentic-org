@@ -107,11 +107,12 @@ fn parse_inbox_kinds(raw: Option<Vec<String>>) -> Result<Option<Vec<InboxKind>>,
             "question" => InboxKind::Question,
             "decision" => InboxKind::Decision,
             "problem" => InboxKind::Problem,
+            "review" => InboxKind::Review,
             other => {
                 return Err(Refusal::new(
                     ErrorCode::InvalidRequest,
                     format!("unknown inbox kind `{other}`"),
-                    "Pass --kind approval, question, decision, or problem.",
+                    "Pass --kind approval, question, decision, problem, or review.",
                 ))
             }
         };

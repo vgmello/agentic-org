@@ -639,3 +639,23 @@ pub(super) fn remove_symlink_at(dir: &File, name: &OsStr) -> io::Result<bool> {
         }
     }
 }
+
+pub(super) fn resolve_safe_executable_file(path: &Path) -> Option<PathBuf> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let meta = std::fs::symlink_metadata(&canonical).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let mode = meta.permissions().mode();
+    if (mode & 0o111) == 0 || (mode & 0o6000) != 0 {
+        return None;
+    }
+    Some(canonical)
+}
+
+pub(super) fn is_safe_executable_file(path: &Path) -> bool {
+    resolve_safe_executable_file(path).is_some()
+}

@@ -8,10 +8,11 @@ use org_git::{
 };
 use org_office::organization_family::records::{Repository, RepositoryKind};
 use org_office::Office;
-use org_proto::git::{RepoRegisterParams, RepositoryKindWire};
+use org_proto::git::{RepoCredentialView, RepoRegisterParams, RepositoryKindWire};
 use org_proto::{ApiError, ErrorCode};
 
 use super::redaction::{map_git_error, map_office_error};
+use super::vault;
 
 pub(super) fn validate_register_origin(
     params: &RepoRegisterParams,
@@ -88,7 +89,12 @@ pub(super) fn resolve_remote_spec(
                 )
             })?;
             let protocol = validate_remote_url(url).map_err(map_git_error)?;
-            let credential = resolve_office_git_credential(office, url, protocol)?;
+            let credential = resolve_office_git_credential_for_repo(
+                office,
+                Some(repo.id.as_str()),
+                url,
+                protocol,
+            )?;
             Ok(RemoteSpec {
                 url: url.to_owned(),
                 protocol,
@@ -314,12 +320,106 @@ fn check_optional_cred_entry(path: &Path, label: &str) -> Result<bool, ApiError>
     }
 }
 
-/// Resolves an office-local, host-scoped Git remote credential from
-/// `<office.folder()>/git-credentials/hosts/<host>/` (`doc-35`, `doc-7` #2/#12, `TASK-168`).
-/// Credentials live strictly outside `durable/` (never backed up in plaintext) and outside
-/// `runtime/`, require exact per-host directory match (never unscoped across hosts), and verify
-/// full ancestor directory ownership against the process EUID via `org-platform::fs`.
+/// Resolves an office-local Git remote credential (`TASK-135`, `TASK-168`, `doc-35`).
+///
+/// For HTTPS remotes, prefers an encrypted per-repository vault token at
+/// `<office.folder()>/git-credentials/repos/<repository_id>/credential.v1.json` bound to the
+/// repository URL, then falls back to an owner-only per-host helper at
+/// `<office.folder()>/git-credentials/hosts/<host>/https-helper`. Never reads personal host `gh`,
+/// `~/.git-credentials`, `~/.gitconfig`, or ambient `GH_TOKEN`/`GITHUB_TOKEN`.
+pub(super) fn resolve_office_git_credential_for_repo(
+    office: &Office,
+    repo_id: Option<&str>,
+    url: &str,
+    protocol: AllowedProtocol,
+) -> Result<GitCredential, ApiError> {
+    if matches!(protocol, AllowedProtocol::File | AllowedProtocol::None) {
+        return Ok(GitCredential::None);
+    }
+    if protocol == AllowedProtocol::Https {
+        if let Some(rid) = repo_id {
+            if let Some(cred) = vault::load_repo_https_token(office, rid, url)? {
+                return Ok(cred);
+            }
+        }
+    }
+    resolve_host_scoped_git_credential(office, url, protocol)
+}
+
+/// Resolves a host-scoped Git credential (existing TASK-168 helper/SSH API kept for tests).
+#[cfg(test)]
 pub(super) fn resolve_office_git_credential(
+    office: &Office,
+    url: &str,
+    protocol: AllowedProtocol,
+) -> Result<GitCredential, ApiError> {
+    resolve_office_git_credential_for_repo(office, None, url, protocol)
+}
+
+/// Inspects non-secret credential status for `repo` on this office without returning any secret.
+pub(super) fn inspect_repo_credential_status(
+    office: &Office,
+    repo: &Repository,
+) -> Result<RepoCredentialView, ApiError> {
+    if let Some(view) = vault::vault_credential_status(office, repo)? {
+        return Ok(view);
+    }
+    let office_id = office.info().office_id.clone();
+    if repo.kind != RepositoryKind::Remote {
+        return Ok(unconfigured_credential_view(office_id, repo, None));
+    }
+    let Some(url) = repo.remote_url.as_deref() else {
+        return Ok(unconfigured_credential_view(office_id, repo, None));
+    };
+    let protocol = validate_remote_url(url).map_err(map_git_error)?;
+    let scope_url = (protocol == AllowedProtocol::Https)
+        .then(|| vault::canonical_https_repo_scope(url).ok())
+        .flatten();
+    match resolve_host_scoped_git_credential(office, url, protocol)? {
+        GitCredential::HttpsHelper { scope_url, .. } => Ok(RepoCredentialView {
+            office_id,
+            repository_id: repo.id.as_str().to_owned(),
+            repository_key: repo.key.clone(),
+            configured: true,
+            source: Some("host_helper".into()),
+            scope_url: Some(scope_url),
+            username: None,
+            updated_at: None,
+        }),
+        GitCredential::Ssh { .. } => Ok(RepoCredentialView {
+            office_id,
+            repository_id: repo.id.as_str().to_owned(),
+            repository_key: repo.key.clone(),
+            configured: true,
+            source: Some("host_ssh".into()),
+            scope_url: None,
+            username: None,
+            updated_at: None,
+        }),
+        GitCredential::None | GitCredential::HttpsToken { .. } => {
+            Ok(unconfigured_credential_view(office_id, repo, scope_url))
+        }
+    }
+}
+
+fn unconfigured_credential_view(
+    office_id: String,
+    repo: &Repository,
+    scope_url: Option<String>,
+) -> RepoCredentialView {
+    RepoCredentialView {
+        office_id,
+        repository_id: repo.id.as_str().to_owned(),
+        repository_key: repo.key.clone(),
+        configured: false,
+        source: None,
+        scope_url,
+        username: None,
+        updated_at: None,
+    }
+}
+
+fn resolve_host_scoped_git_credential(
     office: &Office,
     url: &str,
     protocol: AllowedProtocol,

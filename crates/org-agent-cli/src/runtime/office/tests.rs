@@ -17,6 +17,7 @@ fn unknown_or_malformed_selected_office_refuses_immediately() {
         session_token: Some("token".into()),
         agent_id: None,
         external_state: None,
+        ..Binding::default()
     });
     let err = office.connect_client().err().expect("refused");
     assert_eq!(err.code, ErrorCode::InvalidRequest);
@@ -31,6 +32,7 @@ fn unknown_or_malformed_selected_office_refuses_immediately() {
         session_token: Some("token".into()),
         agent_id: None,
         external_state: None,
+        ..Binding::default()
     });
     let err = missing.connect_client().err().expect("refused");
     assert_eq!(err.code, ErrorCode::NotFound);
@@ -101,6 +103,7 @@ fn bound_office_propagates_per_call_waiting_messages_without_stale_leaks() {
         session_token: Some("tok-123".into()),
         agent_id: Some("0193a5c0-0000-7000-8000-000000000003".into()),
         external_state: None,
+        ..Binding::default()
     });
     office.ensure_connected().unwrap();
     assert_eq!(office.waiting_messages, None);

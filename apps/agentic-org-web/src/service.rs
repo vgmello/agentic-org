@@ -47,6 +47,11 @@ pub enum AsyncDispatch<C> {
         /// session-ended events rather than `backend_timeout`.
         streaming: bool,
     },
+    /// Non-streaming async call with its own explicit finite upper bound (e.g. `copilot.draft`).
+    AsyncBounded {
+        future: Pin<Box<dyn Future<Output = WebReply> + Send>>,
+        timeout: Duration,
+    },
     Sync(C),
 }
 
@@ -447,6 +452,10 @@ impl<B: ApiBackend> WebService<B> {
             Ok(prepared) => prepared,
             Err(reply) => return WebReply::Json(reply),
         };
+        self.execute_prepared(prepared, bytes).await
+    }
+
+    async fn execute_prepared(&self, prepared: PreparedCall<B::Call>, bytes: usize) -> WebReply {
         let backend = Arc::clone(&self.backend);
         let call = match backend.dispatch_async(prepared.call) {
             AsyncDispatch::Async { future, streaming } => {
@@ -457,6 +466,12 @@ impl<B: ApiBackend> WebService<B> {
                         Ok(reply) => reply,
                         Err(_) => WebReply::Json(prepared.kind.unknown()),
                     }
+                };
+            }
+            AsyncDispatch::AsyncBounded { future, timeout } => {
+                return match tokio::time::timeout(timeout, future).await {
+                    Ok(reply) => reply,
+                    Err(_) => WebReply::Json(prepared.kind.unknown()),
                 };
             }
             AsyncDispatch::Sync(call) => call,
@@ -502,7 +517,9 @@ impl<B: ApiBackend> WebService<B> {
             Err(reply) => return WebReply::Json(reply),
         };
         let mut future = match Arc::clone(&self.backend).dispatch_async(prepared.call) {
-            AsyncDispatch::Async { future, .. } => future,
+            AsyncDispatch::Async { future, .. } | AsyncDispatch::AsyncBounded { future, .. } => {
+                future
+            }
             AsyncDispatch::Sync(_) => return WebReply::Json(prepared.kind.unavailable()),
         };
         let mut pump = std::pin::pin!(feeder.pump(body));

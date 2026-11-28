@@ -266,10 +266,19 @@ fn compact_keys(obj: &Map<String, Value>, kind: &str, keys: &[&str]) -> Value {
 
 fn compact_status(obj: &Map<String, Value>) -> Value {
     let mut out = Map::new();
-    for key in ["type", "from", "to", "resolution"] {
+    for key in [
+        "type",
+        "from",
+        "to",
+        "resolution",
+        "waiting_on_owner",
+        "previous_waiting_on_owner",
+        "blocked_since",
+        "previous_blocked_since",
+    ] {
         copy_bounded_scalar(obj, &mut out, key);
     }
-    for key in ["blocked_reason", "note"] {
+    for key in ["blocked_reason", "previous_blocked_reason", "note"] {
         if let Some(text) = obj.get(key).and_then(Value::as_str) {
             out.insert(key.into(), json!(truncate_utf8(text, MAX_PREVIEW_BYTES)));
         }
@@ -484,6 +493,41 @@ mod tests {
         assert_eq!(detail.events_since[0].change["final_summary_set"], true);
         let raw = serde_json::to_string(&detail).unwrap();
         assert!(!raw.contains("PRIVATE_OR_LONG_CLOSING_SUMMARY_TEXT"));
+    }
+
+    #[test]
+    fn status_changed_preserves_blocking_fields_including_previous_blocked_since() {
+        let long_reason = "Waiting on owner DNS approval — ".repeat(10);
+        let detail = ConflictDetail::from_events(
+            2,
+            3,
+            vec![event(
+                3,
+                json!({
+                    "type": "status_changed",
+                    "from": "blocked",
+                    "to": "in_progress",
+                    "blocked_reason": null,
+                    "waiting_on_owner": false,
+                    "previous_blocked_reason": long_reason,
+                    "previous_waiting_on_owner": true,
+                    "previous_blocked_since": "2026-11-26T10:00:00.000Z",
+                    "note": "Owner approved DNS",
+                }),
+            )],
+            None,
+        );
+        let change = &detail.events_since[0].change;
+        assert_eq!(change["type"], "status_changed");
+        assert_eq!(change["from"], "blocked");
+        assert_eq!(change["to"], "in_progress");
+        assert_eq!(change["waiting_on_owner"], false);
+        assert_eq!(change["previous_waiting_on_owner"], true);
+        assert_eq!(change["previous_blocked_since"], "2026-11-26T10:00:00.000Z");
+        assert_eq!(change["note"], "Owner approved DNS");
+        let prev_reason = change["previous_blocked_reason"].as_str().unwrap();
+        assert!(prev_reason.len() <= MAX_PREVIEW_BYTES);
+        assert!(prev_reason.ends_with('…'));
     }
 
     #[test]

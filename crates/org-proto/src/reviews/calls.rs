@@ -122,6 +122,9 @@ pub struct ReviewInspect;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewInspectParams {
     pub review: String,
+    /// Optional server-side `--fields` allowlist pruning unrequested sections (`TASK-92.1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -55,9 +55,11 @@ fn rebuilt_rows(durable: &Path, org: &Org) -> Vec<String> {
         pinned: None,
         is_hq: true,
     };
-    rebuild_disposable(&spec, |store| Ok(store.dump()))
-        .unwrap()
-        .1
+    rebuild_disposable(&spec, org_office_sqlite::sqlite_backend(), |store| {
+        Ok(store.dump())
+    })
+    .unwrap()
+    .1
 }
 
 fn round_trip(encrypted: bool) {

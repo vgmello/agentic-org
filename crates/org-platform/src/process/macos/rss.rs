@@ -7,6 +7,13 @@ const MAX_TREE_PIDS: usize = 4096;
 /// Upper bound on direct children buffered from a single `proc_listchildpids` call.
 const MAX_DIRECT_CHILDREN: usize = 4096;
 
+/// Returns resident set size (RSS) in bytes for the single process `pid`,
+/// or `None` if `pid` does not exist or cannot be sampled.
+pub(in crate::process) fn process_rss_bytes(pid: u32) -> Option<u64> {
+    let pid = libc::pid_t::try_from(pid).ok().filter(|&p| p > 0)?;
+    single_pid_rss_bytes(pid)
+}
+
 /// Returns total resident set size (RSS) in bytes across `root_pid` and its live descendant tree,
 /// or `None` if `root_pid` does not exist or cannot be sampled.
 pub(in crate::process) fn process_tree_rss_bytes(root_pid: u32) -> Option<u64> {

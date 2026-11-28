@@ -111,11 +111,27 @@ fn the_office_refuses_custody_or_roots_that_differ_from_its_creation() {
         &runtime,
     ));
     let (custody, roots) = moved.admitted();
-    assert!(Office::open(&world.folder, Some(key()), INSTANCE, roots, custody).is_err());
+    assert!(Office::open(
+        &world.folder,
+        Some(key()),
+        INSTANCE,
+        roots,
+        custody,
+        org_office_sqlite::sqlite_backend(),
+    )
+    .is_err());
     let mut foreign = admission.clone();
     foreign.identity.organization_id = "019a8928-1337-7123-8123-0123456789ff".into();
     let (custody, roots) = FakeWriter::new(foreign).admitted();
-    assert!(Office::open(&world.folder, Some(key()), INSTANCE, roots, custody).is_err());
+    assert!(Office::open(
+        &world.folder,
+        Some(key()),
+        INSTANCE,
+        roots,
+        custody,
+        org_office_sqlite::sqlite_backend(),
+    )
+    .is_err());
     world.open(Some(key())).unwrap();
 }
 
@@ -210,8 +226,17 @@ fn the_adapter_confirms_per_flush_not_per_operation() {
         identity: custody.identity,
         authority: Arc::clone(&gate) as Arc<dyn WriterAuthority>,
     };
-    let office =
-        Arc::new(Office::open(&world.folder, Some(key()), INSTANCE, roots, custody).unwrap());
+    let office = Arc::new(
+        Office::open(
+            &world.folder,
+            Some(key()),
+            INSTANCE,
+            roots,
+            custody,
+            org_office_sqlite::sqlite_backend(),
+        )
+        .unwrap(),
+    );
     // A durable commit answered: everything before it is flushed and confirmed, so no
     // earlier flush is still on its way to the host.
     office.submit_org(OWNER, team_create(4)).unwrap().unwrap();
@@ -320,6 +345,7 @@ fn a_closed_custody_channel_fails_closed() {
         INSTANCE,
         admitted.roots,
         admitted.custody,
+        org_office_sqlite::sqlite_backend(),
     )
     .unwrap();
     let confirmed = world.writer.head();

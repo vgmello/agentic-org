@@ -455,7 +455,7 @@ test('PROJ-2: New project opens from Home via Command bar / All projects, empty 
 	await expect(cmdkCombo).toBeFocused();
 	await cmdkCombo.fill('Go to Projects');
 	await page
-		.locator('#exec-cmdk-home-listbox')
+		.locator('#exec-cmdk-listbox')
 		.getByRole('option', { name: /^Projects\b/ })
 		.click();
 	await expect(page).toHaveURL(/\/projects$/);

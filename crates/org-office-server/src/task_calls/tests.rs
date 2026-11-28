@@ -161,7 +161,9 @@ fn task_service_dispatches_create_list_dependencies_and_transition() {
             task: res1.task.key.clone(),
             expected_revision: assigned.task.revision,
             status: TaskStatus::InProgress,
+            reason: None,
             blocked_reason: None,
+            waiting_on_owner: None,
             resolution: None,
             note: None,
             done_anyway_reason: None,
@@ -620,7 +622,9 @@ fn task_list_answers_a_status_scope_and_done_since_through_the_office_query() {
                 task: key.into(),
                 expected_revision: 1,
                 status,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: None,
                 note: None,
                 done_anyway_reason: None,
@@ -843,7 +847,9 @@ fn task_service_serves_default_definitions_of_done_the_closing_gate_and_final_su
         task: task.key.clone(),
         expected_revision: revision,
         status: TaskStatus::Done,
+        reason: None,
         blocked_reason: None,
+        waiting_on_owner: None,
         resolution: None,
         note: None,
         done_anyway_reason: reason.map(str::to_owned),
@@ -1005,4 +1011,1006 @@ fn tasks_inspect_server_side_fields_pruning_omits_unrequested_wire_keys() {
         };
         assert_eq!(err.code, ErrorCode::InvalidRequest, "{bad:?}");
     }
+}
+
+#[test]
+fn task_list_query_uses_fts5_stemming_comments_and_preserves_structured_filters() {
+    use org_office::EngineChoice;
+    use org_proto::tasks::TasksCommentParams;
+
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let office = Arc::new(Office::for_test(TestOffice {
+            engine: engine.clone(),
+        }));
+        let owner = office.owner_member_id().to_owned();
+        let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+        let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+        let svc = TaskService::new(Arc::clone(&office), live, None);
+
+        let make_task = |n: u64, title: &str, body: &str, labels: Vec<&str>, rank: u64| {
+            let req = Request::new::<TasksCreate>(
+                n,
+                &TasksCreateParams {
+                    command_id: uuid(800 + n),
+                    task_id: uuid(900 + n),
+                    team_id: Some(root_team.clone()),
+                    project_id: None,
+                    assigned_team_id: None,
+                    assignee_id: None,
+                    task_type: Some("task".into()),
+                    work_type: None,
+                    title: title.into(),
+                    body_markdown: body.into(),
+                    priority: None,
+                    effort: None,
+                    severity: None,
+                    rank_order: Some(rank),
+                    labels: labels.into_iter().map(str::to_owned).collect(),
+                    reference_files: vec![],
+                    modified_files: vec![],
+                    depends_on: vec![],
+                    attachment_ids: vec![],
+                    details: None,
+                    dod: None,
+                },
+            )
+            .unwrap();
+            match svc.dispatch(Some(&owner), &req).unwrap().outcome {
+                Outcome::Result(v) => {
+                    serde_json::from_value::<TasksMutationResult>(v)
+                        .unwrap()
+                        .task
+                }
+                Outcome::Error(e) => panic!("create task failed ({engine:?}): {e:?}"),
+            }
+        };
+
+        let t1 = make_task(
+            1,
+            "Stabilize socket retries",
+            "Handle transient connection drops cleanly.",
+            vec!["backend", "reliability"],
+            10,
+        );
+        let t2 = make_task(
+            2,
+            "Audit UI spacing",
+            "Button alignment polish.",
+            vec!["frontend"],
+            5,
+        );
+        let _t3 = make_task(
+            3,
+            "Backoff policy note",
+            "Different topic in body.",
+            vec!["backend"],
+            1,
+        );
+
+        // Add a public comment mentioning "retrying" on T-A3 so search matches via comment!
+        let comment_req = Request::new::<TasksComment>(
+            20,
+            &TasksCommentParams {
+                command_id: uuid(850),
+                task: "T-A3".into(),
+                comment_id: uuid(851),
+                body_markdown: "Investigate retrying exponential backoff on sockets.".into(),
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &comment_req).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+
+        // On SQLite FTS5, Porter stemming matches `"retry"` against `"retries"` and `"retrying"`.
+        // On Memory, prefix matching matches `"retr"` against both.
+        let query_word = match engine {
+            EngineChoice::Sqlite(_) => "retry",
+            EngineChoice::Memory => "retr",
+        };
+        let fts_req = Request::new::<TasksList>(
+            21,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                sort: TaskSortMode::Order,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let res: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &fts_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(res.total, 2, "{engine:?}");
+        let keys: Vec<&str> = res.tasks.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys, vec!["T-A3", "T-A1"], "{engine:?}");
+
+        // Combined with structured filters (`labels`, `offset`, `limit`) and `--count` (`limit: Some(0)`).
+        let filtered_req = Request::new::<TasksList>(
+            22,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                labels: vec!["reliability".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let filtered: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &filtered_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("filtered fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(filtered.total, 1, "{engine:?}");
+        assert_eq!(filtered.tasks[0].id, t1.id, "{engine:?}");
+
+        let count_req = Request::new::<TasksList>(
+            23,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                limit: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let counted: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &count_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("count fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(counted.total, 2, "{engine:?}");
+        assert!(counted.tasks.is_empty(), "{engine:?}");
+
+        // Pagination (`offset: 1, limit: 1`) preserves total=2 and returns second item.
+        let paged_req = Request::new::<TasksList>(
+            24,
+            &TasksListParams {
+                query: Some(query_word.into()),
+                sort: TaskSortMode::Order,
+                offset: Some(1),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let paged: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &paged_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("paged fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(paged.total, 2, "{engine:?}");
+        assert_eq!(paged.tasks.len(), 1, "{engine:?}");
+        assert_eq!(paged.tasks[0].key, "T-A1", "{engine:?}");
+
+        // Non-matching query still validates contradictory structured filters (not swallowed).
+        let bad_req = Request::new::<TasksList>(
+            25,
+            &TasksListParams {
+                query: Some("nonexistenttermxyz".into()),
+                status: Some(TaskStatus::Todo),
+                exclude_status: vec![TaskStatus::Todo],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &bad_req).unwrap().outcome,
+            Outcome::Error(e) if e.code == ErrorCode::InvalidRequest
+        ));
+
+        // Zero hits with valid filters returns empty list and total=0.
+        let empty_req = Request::new::<TasksList>(
+            26,
+            &TasksListParams {
+                query: Some("nonexistenttermxyz".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let empty: org_proto::tasks::TasksListResult =
+            match svc.dispatch(Some(&owner), &empty_req).unwrap().outcome {
+                Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+                Outcome::Error(e) => panic!("empty fts list failed ({engine:?}): {e:?}"),
+            };
+        assert_eq!(empty.total, 0, "{engine:?}");
+        assert!(empty.tasks.is_empty(), "{engine:?}");
+        let _ = t2;
+    }
+}
+
+#[test]
+fn task_routing_labels_validate_fail_closed_on_create_and_update() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+
+    // Invalid effort/model routing labels fail closed with InvalidRequest on create.
+    for bad_labels in [
+        vec!["effort:turbo".to_owned()],
+        vec!["effort:--max".to_owned()],
+        vec!["effort:high\n--evil".to_owned()],
+        vec!["model:--dangerously-skip-permissions".to_owned()],
+        vec!["model:".to_owned()],
+        vec!["model:claude sonnet".to_owned()],
+    ] {
+        let req = Request::new::<TasksCreate>(
+            50,
+            &TasksCreateParams {
+                command_id: uuid(200),
+                task_id: uuid(201),
+                team_id: Some(root_team.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Bad routing label".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: bad_labels.clone(),
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap();
+        let Outcome::Error(err) = svc.dispatch(Some(&owner), &req).unwrap().outcome else {
+            panic!("expected InvalidRequest for bad labels {bad_labels:?}");
+        };
+        assert_eq!(err.code, ErrorCode::InvalidRequest, "{bad_labels:?}");
+    }
+
+    // Valid effort/model routing labels succeed on create and fail closed on invalid update.
+    let create_req = Request::new::<TasksCreate>(
+        51,
+        &TasksCreateParams {
+            command_id: uuid(202),
+            task_id: uuid(203),
+            team_id: Some(root_team),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: Some("task".into()),
+            work_type: None,
+            title: "Valid routing label".into(),
+            body_markdown: String::new(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec![
+                "backend".into(),
+                "effort:low".into(),
+                "model:claude-haiku-4-5".into(),
+            ],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            attachment_ids: vec![],
+            details: None,
+            dod: None,
+        },
+    )
+    .unwrap();
+    let created: TasksMutationResult =
+        match svc.dispatch(Some(&owner), &create_req).unwrap().outcome {
+            Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+            Outcome::Error(e) => panic!("valid routing labels must succeed: {e:?}"),
+        };
+    assert!(created.task.labels.contains(&"effort:low".to_owned()));
+    assert!(created
+        .task
+        .labels
+        .contains(&"model:claude-haiku-4-5".to_owned()));
+
+    let bad_update_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(204),
+            "task": created.task.key,
+            "expected_revision": created.task.revision,
+            "labels": ["effort:ultra"],
+        }))
+        .unwrap();
+    let bad_update = Request::new::<TasksUpdate>(52, &bad_update_params).unwrap();
+    let Outcome::Error(err) = svc.dispatch(Some(&owner), &bad_update).unwrap().outcome else {
+        panic!("expected InvalidRequest for invalid effort label on update");
+    };
+    assert_eq!(err.code, ErrorCode::InvalidRequest);
+
+    let bad_add_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(205),
+            "task": created.task.key,
+            "expected_revision": created.task.revision,
+            "add_labels": ["model:--flag-inject"],
+        }))
+        .unwrap();
+    let bad_add = Request::new::<TasksUpdate>(53, &bad_add_params).unwrap();
+    let Outcome::Error(err) = svc.dispatch(Some(&owner), &bad_add).unwrap().outcome else {
+        panic!("expected InvalidRequest for invalid model in add_labels on update");
+    };
+    assert_eq!(err.code, ErrorCode::InvalidRequest);
+
+    // P2-1: duplicate/conflicting routing labels fail closed on create and merged update.
+    for dup_labels in [
+        vec!["effort:low".to_owned(), "effort:high".to_owned()],
+        vec!["effort:low".to_owned(), "effort:low".to_owned()],
+        vec![
+            "model:claude-haiku-4-5".to_owned(),
+            "model:claude-sonnet-4-6".to_owned(),
+        ],
+        vec!["EFFORT:high".to_owned()],
+    ] {
+        let dup_create = Request::new::<TasksCreate>(
+            54,
+            &TasksCreateParams {
+                command_id: uuid(206),
+                task_id: uuid(207),
+                team_id: Some(created.task.team_id.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Duplicate routing labels".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: dup_labels.clone(),
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap();
+        let Outcome::Error(err) = svc.dispatch(Some(&owner), &dup_create).unwrap().outcome else {
+            panic!("expected InvalidRequest for duplicate routing labels {dup_labels:?}");
+        };
+        assert_eq!(err.code, ErrorCode::InvalidRequest, "{dup_labels:?}");
+    }
+
+    // Adding a second conflicting `effort:*` onto a task that already has `effort:low` fails closed.
+    let conflict_add_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(208),
+            "task": created.task.key,
+            "expected_revision": created.task.revision,
+            "add_labels": ["effort:high"],
+        }))
+        .unwrap();
+    let conflict_add = Request::new::<TasksUpdate>(55, &conflict_add_params).unwrap();
+    let Outcome::Error(err) = svc.dispatch(Some(&owner), &conflict_add).unwrap().outcome else {
+        panic!("expected InvalidRequest for merged conflicting effort:* labels");
+    };
+    assert_eq!(err.code, ErrorCode::InvalidRequest);
+
+    // Atomic swap (remove old effort + add new effort) succeeds for a person.
+    let swap_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(209),
+            "task": created.task.key,
+            "expected_revision": created.task.revision,
+            "remove_labels": ["effort:low"],
+            "add_labels": ["effort:high"],
+        }))
+        .unwrap();
+    let swap_req = Request::new::<TasksUpdate>(56, &swap_params).unwrap();
+    let swapped: TasksMutationResult = match svc.dispatch(Some(&owner), &swap_req).unwrap().outcome
+    {
+        Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        Outcome::Error(e) => panic!("atomic swap of effort:* must succeed: {e:?}"),
+    };
+    assert!(swapped.task.labels.contains(&"effort:high".to_owned()));
+    assert!(!swapped.task.labels.contains(&"effort:low".to_owned()));
+}
+
+#[test]
+fn task_routing_labels_require_active_person_with_verified_grant() {
+    use org_proto::hiring::{
+        HireProposalWire, HrHire, HrHireParams, ProviderConnectionCreate,
+        ProviderConnectionCreateParams,
+    };
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    // Hire an active managed agent.
+    let conn_id = uuid(300);
+    let prof_id = uuid(301);
+    let conn_req = Request::new::<ProviderConnectionCreate>(
+        1,
+        &ProviderConnectionCreateParams {
+            command_id: uuid(302),
+            connection_id: conn_id,
+            default_profile_id: prof_id.clone(),
+            key: "claude-authz".into(),
+            name: "Claude Authz".into(),
+            provider_type: "anthropic".into(),
+            auth_mode: "api_key".into(),
+            subscription_identity: None,
+            runtime_driver: "claude-code".into(),
+            endpoint_url: None,
+            max_concurrent_turns: 2,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        office
+            .dispatch_hiring_rpc(Some(&owner), &conn_req)
+            .unwrap()
+            .outcome,
+        Outcome::Result(_)
+    ));
+    let agent_id = uuid(303);
+    let hire_req = Request::new::<HrHire>(
+        2,
+        &HrHireParams {
+            command_id: uuid(304),
+            request_id: uuid(305),
+            employee_id: agent_id.clone(),
+            home_team_id: root_team.clone(),
+            role_id: None,
+            proposal: HireProposalWire {
+                name: "Coder Bot".into(),
+                handle: "coder-bot".into(),
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner.clone()),
+                model_profile_id: Some(prof_id),
+                model_id: Some("claude-sonnet-4-6".into()),
+                permission_preset: Some("workspace_edits".into()),
+                ..HireProposalWire::default()
+            },
+            reason: "Test routing label authz".into(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        office
+            .dispatch_hiring_rpc(Some(&owner), &hire_req)
+            .unwrap()
+            .outcome,
+        Outcome::Result(_)
+    ));
+
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+
+    // 1. Managed agent attempting tasks.create with model:*, effort:*, or uppercase bypass MUST fail with NotAuthorized.
+    for (idx, bad) in [
+        vec!["effort:max".to_owned()],
+        vec!["model:claude-opus-4-6".to_owned()],
+        vec!["MODEL:claude-opus-4-6".to_owned()],
+        vec![" Effort:high ".to_owned()],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let req = Request::new::<TasksCreate>(
+            10 + idx as u64,
+            &TasksCreateParams {
+                command_id: uuid(310 + idx as u64),
+                task_id: uuid(320 + idx as u64),
+                team_id: Some(root_team.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Escalated task".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: bad.clone(),
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap();
+        let Outcome::Error(err) = svc
+            .dispatch_with_grant(Some(&agent_id), false, &req)
+            .unwrap()
+            .outcome
+        else {
+            panic!("agent create with routing labels {bad:?} must fail with NotAuthorized");
+        };
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{bad:?}: {err:?}");
+        assert!(err.message.contains("Only a person"), "{err:?}");
+    }
+
+    // Even a person ID without a verified grant (`via_grant = false`) is refused.
+    let no_grant_req = Request::new::<TasksCreate>(
+        19,
+        &TasksCreateParams {
+            command_id: uuid(329),
+            task_id: uuid(330),
+            team_id: Some(root_team.clone()),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: Some("task".into()),
+            work_type: None,
+            title: "No grant routing label".into(),
+            body_markdown: String::new(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec!["effort:high".into()],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            attachment_ids: vec![],
+            details: None,
+            dod: None,
+        },
+    )
+    .unwrap();
+    let Outcome::Error(err) = svc
+        .dispatch_with_grant(Some(&owner), false, &no_grant_req)
+        .unwrap()
+        .outcome
+    else {
+        panic!("non-grant caller must be refused routing labels");
+    };
+    assert_eq!(err.code, ErrorCode::NotAuthorized);
+
+    // 2. Owner creates a task with routing labels.
+    let create_req = Request::new::<TasksCreate>(
+        20,
+        &TasksCreateParams {
+            command_id: uuid(331),
+            task_id: uuid(332),
+            team_id: Some(root_team),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: Some("task".into()),
+            work_type: None,
+            title: "Human routed task".into(),
+            body_markdown: String::new(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec![
+                "backend".into(),
+                "effort:low".into(),
+                "model:claude-haiku-4-5".into(),
+            ],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            attachment_ids: vec![],
+            details: None,
+            dod: None,
+        },
+    )
+    .unwrap();
+    let created: TasksMutationResult = match svc
+        .dispatch_with_grant(Some(&owner), true, &create_req)
+        .unwrap()
+        .outcome
+    {
+        Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        Outcome::Error(e) => panic!("owner create failed: {e:?}"),
+    };
+
+    // 3. Agent MAY add non-routing labels and preserve unchanged routing labels on full replace.
+    let ok_add: org_proto::tasks::TasksUpdateParams = serde_json::from_value(serde_json::json!({
+        "command_id": uuid(333),
+        "task": created.task.key,
+        "expected_revision": created.task.revision,
+        "add_labels": ["urgent"],
+    }))
+    .unwrap();
+    let ok_add_req = Request::new::<TasksUpdate>(21, &ok_add).unwrap();
+    let updated: TasksMutationResult = match svc
+        .dispatch_with_grant(Some(&agent_id), false, &ok_add_req)
+        .unwrap()
+        .outcome
+    {
+        Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        Outcome::Error(e) => panic!("agent non-routing add_labels must succeed: {e:?}"),
+    };
+    assert!(updated.task.labels.contains(&"urgent".to_owned()));
+    assert!(updated.task.labels.contains(&"effort:low".to_owned()));
+
+    let ok_replace: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(334),
+            "task": updated.task.key,
+            "expected_revision": updated.task.revision,
+            "labels": ["backend", "triage", "effort:low", "model:claude-haiku-4-5"],
+        }))
+        .unwrap();
+    let ok_replace_req = Request::new::<TasksUpdate>(22, &ok_replace).unwrap();
+    let updated2: TasksMutationResult = match svc
+        .dispatch_with_grant(Some(&agent_id), false, &ok_replace_req)
+        .unwrap()
+        .outcome
+    {
+        Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        Outcome::Error(e) => {
+            panic!("agent replace preserving exact routing labels must succeed: {e:?}")
+        }
+    };
+    assert!(updated2.task.labels.contains(&"triage".to_owned()));
+
+    // 4. Agent attempting to add, remove, alter, or strip routing labels MUST fail with NotAuthorized.
+    for (idx, patch) in [
+        serde_json::json!({ "add_labels": ["effort:max"] }),
+        serde_json::json!({ "add_labels": ["MODEL:claude-opus-4-6"] }),
+        serde_json::json!({ "remove_labels": ["effort:low"] }),
+        serde_json::json!({ "labels": ["backend", "triage"] }),
+        serde_json::json!({ "labels": ["backend", "effort:max", "model:claude-haiku-4-5"] }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut obj = patch.as_object().unwrap().clone();
+        obj.insert(
+            "command_id".into(),
+            serde_json::json!(uuid(340 + idx as u64)),
+        );
+        obj.insert("task".into(), serde_json::json!(updated2.task.key));
+        obj.insert(
+            "expected_revision".into(),
+            serde_json::json!(updated2.task.revision),
+        );
+        let params: org_proto::tasks::TasksUpdateParams =
+            serde_json::from_value(serde_json::Value::Object(obj)).unwrap();
+        let req = Request::new::<TasksUpdate>(30 + idx as u64, &params).unwrap();
+        let Outcome::Error(err) = svc
+            .dispatch_with_grant(Some(&agent_id), false, &req)
+            .unwrap()
+            .outcome
+        else {
+            panic!("agent routing-label mutation {patch} must fail with NotAuthorized");
+        };
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{patch}: {err:?}");
+        assert!(err.message.contains("Only a person"), "{err:?}");
+    }
+
+    // Verify task was never mutated by the refused agent updates.
+    let insp = office.task_inspect(&updated2.task.key).unwrap().unwrap();
+    assert_eq!(insp.task.revision, updated2.task.revision);
+    assert!(insp.task.labels.contains(&"effort:low".to_owned()));
+    assert!(insp
+        .task
+        .labels
+        .contains(&"model:claude-haiku-4-5".to_owned()));
+}
+
+#[test]
+fn legacy_task_with_malformed_routing_label_still_wakes_assignee_with_default_override() {
+    use org_proto::hiring::{
+        HireProposalWire, HrHire, HrHireParams, ProviderConnectionCreate,
+        ProviderConnectionCreateParams,
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let conn_id = uuid(400);
+    let prof_id = uuid(401);
+    let conn_req = Request::new::<ProviderConnectionCreate>(
+        1,
+        &ProviderConnectionCreateParams {
+            command_id: uuid(402),
+            connection_id: conn_id,
+            default_profile_id: prof_id.clone(),
+            key: "claude-legacy".into(),
+            name: "Claude Legacy".into(),
+            provider_type: "anthropic".into(),
+            auth_mode: "api_key".into(),
+            subscription_identity: None,
+            runtime_driver: "claude-code".into(),
+            endpoint_url: None,
+            max_concurrent_turns: 2,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        office
+            .dispatch_hiring_rpc(Some(&owner), &conn_req)
+            .unwrap()
+            .outcome,
+        Outcome::Result(_)
+    ));
+    let agent_id = uuid(403);
+    let hire_req = Request::new::<HrHire>(
+        2,
+        &HrHireParams {
+            command_id: uuid(404),
+            request_id: uuid(405),
+            employee_id: agent_id.clone(),
+            home_team_id: root_team.clone(),
+            role_id: None,
+            proposal: HireProposalWire {
+                name: "Legacy Bot".into(),
+                handle: "legacy-bot".into(),
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner.clone()),
+                model_profile_id: Some(prof_id),
+                model_id: Some("claude-sonnet-4-6".into()),
+                permission_preset: Some("workspace_edits".into()),
+                ..HireProposalWire::default()
+            },
+            reason: "Legacy task wake test".into(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        office
+            .dispatch_hiring_rpc(Some(&owner), &hire_req)
+            .unwrap()
+            .outcome,
+        Outcome::Result(_)
+    ));
+
+    // Seed a legacy task directly in `Office` bypassing TaskService validation.
+    let legacy = office
+        .task_create(
+            &owner,
+            TasksCreateParams {
+                command_id: uuid(406),
+                task_id: uuid(407),
+                team_id: Some(root_team),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Legacy malformed label task".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: vec!["effort:legacy-tier".into()],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    let sessions = Arc::new(org_office_sessions::SessionManager::new(
+        Arc::clone(&office),
+        org_office_sessions::SessionManagerConfig::with_runtimes(
+            tmp.path().join("office.sock"),
+            org_office_sessions::RuntimeRegistry::empty(),
+        ),
+    ));
+    // Hold wakes in durable queue so we can inspect the enqueued PendingWakeItem directly.
+    sessions.set_budget_hold(Some("queue_only_for_test".into()));
+
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, Some(Arc::clone(&sessions)));
+
+    let assign_req = Request::new::<TasksAssign>(
+        3,
+        &TasksAssignParams {
+            command_id: uuid(408),
+            task: legacy.task.key.clone(),
+            expected_revision: legacy.task.revision,
+            assigned_team_id: PatchField::Unchanged,
+            assignee_id: PatchField::Set(Some(agent_id.clone())),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        svc.dispatch(Some(&owner), &assign_req).unwrap().outcome,
+        Outcome::Result(_)
+    ));
+
+    let wakes = sessions
+        .store()
+        .read_pending_wakes(&agent_id)
+        .unwrap()
+        .expect("legacy task assignment wake must NOT be silently dropped");
+    assert_eq!(wakes.items.len(), 1);
+    assert_eq!(wakes.items[0].source_id, legacy.task.key);
+    assert_eq!(wakes.items[0].model_override, None);
+    assert_eq!(wakes.items[0].effort_override, None);
+}
+
+#[test]
+fn routing_label_update_fails_closed_on_future_revision_or_missing_task() {
+    use org_proto::hiring::{
+        HireProposalWire, HrHire, HrHireParams, ProviderConnectionCreate,
+        ProviderConnectionCreateParams,
+    };
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let conn_id = uuid(500);
+    let prof_id = uuid(501);
+    let conn_req = Request::new::<ProviderConnectionCreate>(
+        1,
+        &ProviderConnectionCreateParams {
+            command_id: uuid(502),
+            connection_id: conn_id,
+            default_profile_id: prof_id.clone(),
+            key: "claude-toctou".into(),
+            name: "Claude TOCTOU".into(),
+            provider_type: "anthropic".into(),
+            auth_mode: "api_key".into(),
+            subscription_identity: None,
+            runtime_driver: "claude-code".into(),
+            endpoint_url: None,
+            max_concurrent_turns: 2,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        office
+            .dispatch_hiring_rpc(Some(&owner), &conn_req)
+            .unwrap()
+            .outcome,
+        Outcome::Result(_)
+    ));
+
+    let agent_id = uuid(503);
+    let hire_req = Request::new::<HrHire>(
+        2,
+        &HrHireParams {
+            command_id: uuid(504),
+            request_id: uuid(505),
+            employee_id: agent_id.clone(),
+            home_team_id: root_team.clone(),
+            role_id: None,
+            proposal: HireProposalWire {
+                name: "TOCTOU Bot".into(),
+                handle: "toctou-agent".into(),
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner.clone()),
+                model_profile_id: Some(prof_id),
+                model_id: Some("claude-sonnet-4-6".into()),
+                permission_preset: Some("workspace_edits".into()),
+                ..HireProposalWire::default()
+            },
+            reason: "Test routing label TOCTOU guard".into(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        office
+            .dispatch_hiring_rpc(Some(&owner), &hire_req)
+            .unwrap()
+            .outcome,
+        Outcome::Result(_)
+    ));
+
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+
+    let create_req = Request::new::<TasksCreate>(
+        3,
+        &TasksCreateParams {
+            command_id: uuid(506),
+            task_id: uuid(507),
+            team_id: Some(root_team),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: Some("task".into()),
+            work_type: None,
+            title: "TOCTOU target".into(),
+            body_markdown: String::new(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec![],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            attachment_ids: vec![],
+            details: None,
+            dod: None,
+        },
+    )
+    .unwrap();
+    let created: TasksMutationResult = match svc
+        .dispatch_with_grant(Some(&owner), true, &create_req)
+        .unwrap()
+        .outcome
+    {
+        Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        Outcome::Error(e) => panic!("seed task create failed: {e:?}"),
+    };
+
+    // An agent supplying a future `expected_revision = R + 1` with `labels: Some(...)` MUST fail
+    // closed with Conflict so it cannot race a concurrent human adding routing labels at R + 1.
+    let future_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(508),
+            "task": created.task.key,
+            "expected_revision": created.task.revision + 1,
+            "labels": ["backend"],
+        }))
+        .unwrap();
+    let future_rev_req = Request::new::<TasksUpdate>(4, &future_params).unwrap();
+    let Outcome::Error(err) = svc
+        .dispatch_with_grant(Some(&agent_id), false, &future_rev_req)
+        .unwrap()
+        .outcome
+    else {
+        panic!("expected Conflict for future expected_revision with labels replacement");
+    };
+    assert_eq!(err.code, ErrorCode::Conflict);
+
+    // An agent supplying `labels: Some(...)` against a nonexistent task key MUST fail closed with
+    // NotFound before reaching `task_update`.
+    let missing_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(509),
+            "task": "T-A99999",
+            "expected_revision": 1,
+            "labels": ["backend"],
+        }))
+        .unwrap();
+    let missing_req = Request::new::<TasksUpdate>(5, &missing_params).unwrap();
+    let Outcome::Error(err) = svc
+        .dispatch_with_grant(Some(&agent_id), false, &missing_req)
+        .unwrap()
+        .outcome
+    else {
+        panic!("expected NotFound for nonexistent task with labels replacement");
+    };
+    assert_eq!(err.code, ErrorCode::NotFound);
+
+    // A person supplying a future `expected_revision = R + 1` with routing `add_labels` MUST also
+    // fail closed with Conflict so concurrent add_labels cannot bypass duplicate-routing checks.
+    let person_future_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(510),
+            "task": created.task.key,
+            "expected_revision": created.task.revision + 1,
+            "add_labels": ["effort:high"],
+        }))
+        .unwrap();
+    let person_future = Request::new::<TasksUpdate>(6, &person_future_params).unwrap();
+    let Outcome::Error(err) = svc
+        .dispatch_with_grant(Some(&owner), true, &person_future)
+        .unwrap()
+        .outcome
+    else {
+        panic!("expected Conflict for person future expected_revision with routing add_labels");
+    };
+    assert_eq!(err.code, ErrorCode::Conflict);
 }

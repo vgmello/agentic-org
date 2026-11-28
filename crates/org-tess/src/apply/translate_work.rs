@@ -256,6 +256,87 @@ fn prep_task_update(
     })
 }
 
+fn parse_waiting_on(input: &Map<String, Value>) -> Result<Option<bool>, ApiError> {
+    let waiting_on_enum = opt_string(input, "waiting_on");
+    let waiting_on_bool = input.get("waiting_on_owner").and_then(Value::as_bool);
+    reject_pair(
+        waiting_on_enum.is_some() && waiting_on_bool.is_some(),
+        "waiting_on",
+        "waiting_on_owner",
+    )?;
+    match waiting_on_enum.as_deref() {
+        Some("owner") => Ok(Some(true)),
+        Some("none") => Ok(Some(false)),
+        Some(other) => Err(invalid(format!("invalid waiting_on `{other}`"))),
+        None => Ok(waiting_on_bool),
+    }
+}
+
+struct TransitionText {
+    reason: Option<String>,
+    blocked_reason: Option<String>,
+    note: Option<String>,
+}
+
+fn resolve_transition_fields(
+    status: TaskStatus,
+    input: &Map<String, Value>,
+    waiting_on_owner: Option<bool>,
+) -> Result<TransitionText, ApiError> {
+    let reason = opt_string(input, "reason");
+    let blocked_reason = opt_string(input, "blocked_reason");
+    let note = opt_string(input, "note");
+    if status == TaskStatus::Blocked {
+        reject_pair(
+            reason.is_some() && blocked_reason.is_some(),
+            "reason",
+            "blocked_reason",
+        )?;
+        let (effective_blocked, extra_note) = match (blocked_reason, reason, note) {
+            (Some(b), None, n) => (Some(b), n),
+            (None, Some(r), n) => (Some(r), n),
+            // Align `--note` alias on `blocked` transitions with CLI and office.
+            (None, None, Some(n)) => (Some(n), None),
+            (None, None, None) => (None, None),
+            (Some(_), Some(_), _) => unreachable!("rejected above"),
+        };
+        if effective_blocked
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
+        {
+            return Err(invalid(
+                "transitioning to `blocked` requires a non-empty `blocked_reason`",
+            ));
+        }
+        return Ok(TransitionText {
+            reason: None,
+            blocked_reason: effective_blocked,
+            note: extra_note,
+        });
+    }
+    if blocked_reason.is_some() {
+        return Err(invalid(format!(
+            "`blocked_reason` applies only when transitioning to `blocked`, not `{}`",
+            status.as_str()
+        )));
+    }
+    if waiting_on_owner.is_some() {
+        return Err(invalid(
+            "`waiting_on_owner` applies only when transitioning to `blocked`",
+        ));
+    }
+    reject_pair(reason.is_some() && note.is_some(), "reason", "note")?;
+    if reason.as_deref().is_some_and(|s| s.trim().is_empty()) {
+        return Err(invalid("`reason` cannot be empty"));
+    }
+    Ok(TransitionText {
+        reason,
+        blocked_reason: None,
+        note,
+    })
+}
+
 fn prep_task_transition(
     next_id: &mut impl FnMut() -> String,
     input: &Map<String, Value>,
@@ -264,14 +345,18 @@ fn prep_task_transition(
     let status_str = require_str(input, "status")?;
     let status = TaskStatus::parse(status_str)
         .ok_or_else(|| invalid(format!("invalid status `{status_str}`")))?;
+    let waiting_on_owner = parse_waiting_on(input)?;
+    let text = resolve_transition_fields(status, input, waiting_on_owner)?;
     let params = TasksTransitionParams {
         command_id: next_id(),
         task: require_str(input, "task")?.to_owned(),
         expected_revision: require_rev(expected_revision)?,
         status,
-        blocked_reason: opt_string(input, "blocked_reason"),
+        reason: text.reason,
+        blocked_reason: text.blocked_reason,
+        waiting_on_owner,
         resolution: opt_string(input, "resolution"),
-        note: opt_string(input, "note"),
+        note: text.note,
         done_anyway_reason: None,
         final_summary: None,
     };

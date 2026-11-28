@@ -45,7 +45,9 @@ fn is_blocking_events_poll(request: &Request) -> bool {
             .ok()
             .and_then(|p| p.wait_ms)
             .is_some_and(|ms| ms > 0);
-    chat_poll || tess_poll
+    let copilot = request.is::<org_proto::copilot::CopilotFeatures>()
+        || request.is::<org_proto::copilot::CopilotDraft>();
+    chat_poll || tess_poll || copilot
 }
 
 fn dispatch_held_poll(
@@ -62,6 +64,14 @@ fn dispatch_held_poll(
                 .tess
                 .as_ref()
                 .and_then(|tess| tess(Some(owner), true, channel_stop, None, request))
+        } else if request.is::<org_proto::copilot::CopilotFeatures>()
+            || request.is::<org_proto::copilot::CopilotDraft>()
+        {
+            shared
+                .ports
+                .copilot
+                .as_ref()
+                .and_then(|copilot| copilot(Some(owner), request))
         } else {
             shared
                 .ports
@@ -103,18 +113,19 @@ fn spawn_held_events_poll<'scope, 'env>(
         shared,
         revocations: &context._revocations,
     };
-    let owner = match authority::authorize(&request, &context._channel_id, &office.office, &checks)
-    {
-        Ok(owner) => owner,
-        Err(code) => {
-            return send(
-                out,
-                request.id,
-                &refuse(request.id, code),
-                Timing::default(),
-            )
-        }
-    };
+    let owner =
+        match authority::authorize_request(&request, &context._channel_id, &office.office, &checks)
+        {
+            Ok(owner) => owner,
+            Err(refusal) => {
+                return send(
+                    out,
+                    request.id,
+                    &refuse_auth(request.id, refusal),
+                    Timing::default(),
+                )
+            }
+        };
     if !matches!(allowed(&request), HostPolicy::Serve) {
         return send(
             out,
@@ -149,9 +160,13 @@ fn spawn_held_events_poll<'scope, 'env>(
                 shared,
                 revocations: &context._revocations,
             };
-            let still_authorized =
-                authority::authorize(&request, &context._channel_id, &office_info, &post_checks)
-                    .is_ok();
+            let still_authorized = authority::authorize_request(
+                &request,
+                &context._channel_id,
+                &office_info,
+                &post_checks,
+            )
+            .is_ok();
             let final_resp = if still_authorized {
                 answer
             } else {
@@ -250,10 +265,11 @@ fn dispatch(
     let Some(office) = shared.hello.office.as_ref() else {
         return refuse(request.id, ErrorCode::NotAuthorized);
     };
-    let owner = match authority::authorize(request, &context._channel_id, &office.office, checks) {
-        Ok(owner) => owner,
-        Err(code) => return refuse(request.id, code),
-    };
+    let owner =
+        match authority::authorize_request(request, &context._channel_id, &office.office, checks) {
+            Ok(owner) => owner,
+            Err(refusal) => return refuse_auth(request.id, refusal),
+        };
     match allowed(request) {
         HostPolicy::Serve => {}
         HostPolicy::Unserved => {
@@ -315,6 +331,31 @@ fn allowed(request: &Request) -> HostPolicy {
 
 fn refuse(id: u64, code: ErrorCode) -> Response {
     Response::error(id, ApiError::new(code, "request refused on host channel"))
+}
+
+fn refuse_auth(id: u64, refusal: authority::AuthRefusal) -> Response {
+    match refusal {
+        authority::AuthRefusal::Opaque(code) => refuse(id, code),
+        authority::AuthRefusal::Detailed(error) => Response::error(id, error),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn serve_host_channel_for_test(
+    stream: UnixStream,
+    shared: &Shared,
+    channel_id: &str,
+    stopping: &std::sync::atomic::AtomicBool,
+) {
+    let mut hello = HelloResult::host("test", "This Mac");
+    hello.api_version = 2;
+    let ctx = HostChannel {
+        _channel_id: channel_id.to_owned(),
+        _kind: org_office_launch::ChannelKind::Local,
+        hello,
+        _revocations: Arc::default(),
+    };
+    serve(stream, shared, ctx, stopping);
 }
 
 #[cfg(test)]

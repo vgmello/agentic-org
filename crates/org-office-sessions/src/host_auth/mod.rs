@@ -9,9 +9,15 @@ use org_agent_runtime::{AgentRuntime, SpecPath};
 use org_office::organization_family::records::ProviderAuthMode;
 use zeroize::Zeroizing;
 
+mod detect;
 #[cfg(test)]
 mod tests;
 mod token;
+
+pub use detect::{
+    detect_installed_runtimes, detect_installed_runtimes_from, require_installed_runtime,
+    DetectedRuntime,
+};
 
 use crate::credentials::{
     format_rfc3339_ms, CredentialVault, EnrollmentVaultError, UnwrappedCredential,

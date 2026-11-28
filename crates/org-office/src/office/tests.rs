@@ -211,7 +211,7 @@ fn creation_lays_out_the_expected_durable_folders_on_memory() {
 fn creation_writes_exactly_the_golden_files_and_the_ca_records() {
     for engine in ENGINES {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let material = ca_material(&identity().organization_id, testkit::CA_SEED);
 
         let mut expected = creation_files();
@@ -331,12 +331,12 @@ fn a_foreign_file_where_creation_writes_stops_it_and_is_named() {
 fn an_answered_team_survives_a_kill_and_only_a_close_is_a_clean_stop() {
     for engine in ENGINES {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let answered = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
         let answered = answered.unwrap().unwrap();
         site.killed(office);
 
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         assert!(!office.stopped_cleanly(), "{engine:?}");
         let teams = office.org_snapshot().unwrap().teams;
         assert!(teams.iter().any(|team| team.id == TEAM_A), "{engine:?}");
@@ -345,7 +345,7 @@ fn an_answered_team_survives_a_kill_and_only_a_close_is_a_clean_stop() {
         assert_eq!(again.unwrap(), Ok(answered), "{engine:?}");
         office.close().unwrap();
 
-        let office = site.open(engine).unwrap();
+        let office = site.open(engine.clone()).unwrap();
         assert!(office.stopped_cleanly(), "{engine:?}");
         office.close().unwrap();
     }
@@ -369,7 +369,7 @@ fn a_creation_retried_after_a_crash_point_keeps_its_ca_and_its_one_entry() {
             let context = format!("{engine:?} {point:?}");
             let site = Site::new();
             // Armed once the store is open, so it fires inside the creation itself.
-            let failed = site.provision_with(engine, |prior| {
+            let failed = site.provision_with(engine.clone(), |prior| {
                 site.faults.arm(point, 1);
                 prior.map_or_else(|| testkit::record(testkit::CA_SEED), Ok)
             });
@@ -385,7 +385,7 @@ fn a_creation_retried_after_a_crash_point_keeps_its_ca_and_its_one_entry() {
 
             let prior = Cell::new(None);
             let office = site
-                .provision_with(engine, |found| {
+                .provision_with(engine.clone(), |found| {
                     prior.set(Some(found.is_some()));
                     // Another seed: used only if no CA was committed.
                     found.map_or_else(|| testkit::record(9), Ok)
@@ -416,11 +416,14 @@ fn a_creation_that_dies_around_the_journal_anchor_completes_on_retry() {
             let site = Site::new();
             // The first exclusive link of a new office is its journal's anchor.
             site.faults.crash(DiskOp::Link, Target::File, 1, after);
-            assert!(site.provision(engine).is_err(), "{engine:?} {after}");
+            assert!(
+                site.provision(engine.clone()).is_err(),
+                "{engine:?} {after}"
+            );
             site.faults.revive();
             let anchor = org_store::journal_dir(&site.roots.durable, &identity());
             assert_eq!(anchor.join("anchor.json").exists(), after, "{engine:?}");
-            let office = site.provision(engine).unwrap();
+            let office = site.provision(engine.clone()).unwrap();
             assert_eq!(office.org_snapshot().unwrap().position.seq, 1);
             office.close().unwrap();
         }
@@ -544,7 +547,7 @@ fn the_intent_binds_the_request_the_roots_and_the_identity() {
 fn fatal_reports_a_flush_error() {
     for engine in ENGINES {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         assert_eq!(office.fatal(), None);
         site.faults
             .arm(CrashPoint::FlushError(FlushSite::Segment), 1);
@@ -564,7 +567,7 @@ fn fatal_reports_a_flush_error() {
 fn the_projection_holds_no_form_of_the_ca_key() {
     for engine in ENGINES {
         let site = Site::new();
-        let office = site.provision(engine).unwrap();
+        let office = site.provision(engine.clone()).unwrap();
         let wrapped = ca_material(&identity().organization_id, testkit::CA_SEED).wrapped_ca_key;
         let hex: String = wrapped.iter().map(|b| format!("{b:02x}")).collect();
         let holds = |bytes: &[u8]| {

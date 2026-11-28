@@ -63,7 +63,11 @@ pub use provider_pools::{
     validate_endpoint_url, CreateModelProfile, UpdateModelProfile, UpdateProviderConnection,
 };
 pub use roles::{CreateRole, UpdateRole};
-pub use team_limit::SetTeamMaxMembers;
+pub(crate) use team_limit::can_view_limit_request;
+pub use team_limit::{
+    DecideTeamLimitRequest, RequestTeamLimitIncrease, SetTeamMaxMembers, TeamLimitChanged,
+    TEAM_LIMIT_DECIDE_DENIED, TEAM_LIMIT_REQUEST_DENIED,
+};
 pub use update_person::{Edit, UpdatePerson};
 pub use update_team::UpdateTeam;
 
@@ -97,7 +101,7 @@ mod tests {
 
     #[test]
     fn every_operation_declares_its_class_and_a_kind_of_its_own() {
-        for op in Op::ALL {
+        for &op in Op::ALL {
             // Structure changes answer only once durable (ADR-0014).
             assert_eq!(op.ack(), Ack::Durable, "{op:?}");
             assert!(op.kind().starts_with("organization."), "{op:?}");

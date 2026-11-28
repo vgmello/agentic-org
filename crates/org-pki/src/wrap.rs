@@ -10,6 +10,7 @@
 //! each of the last three prefixed with its length as one byte.
 use ring::{
     aead::{self, Aad, LessSafeKey, Nonce, UnboundKey},
+    digest::{digest, SHA256},
     hkdf,
     rand::{SecureRandom, SystemRandom},
 };
@@ -17,9 +18,11 @@ use zeroize::Zeroizing;
 
 const DOMAIN: &[u8] = b"agentic-org/office-private-key/v1";
 const PROVIDER_CREDENTIAL_DOMAIN: &[u8] = b"agentic-org/provider-credential/v1";
+const GIT_CREDENTIAL_DOMAIN: &[u8] = b"agentic-org/git-credential/v1";
 const HKDF_SALT: &[u8] = b"agentic-org/hkdf-salt/v1";
 const HKDF_INFO_OFFICE_PRIVATE_KEY: &[u8] = b"agentic-org/wrap-key/office-private-key/v1";
 const HKDF_INFO_PROVIDER_CREDENTIAL: &[u8] = b"agentic-org/wrap-key/provider-credential/v1";
+const HKDF_INFO_GIT_CREDENTIAL: &[u8] = b"agentic-org/wrap-key/git-credential/v1";
 const VERSION: u8 = 1;
 const NONCE: usize = 12;
 const TAG: usize = 16;
@@ -33,6 +36,8 @@ pub enum KeyClass {
     OfficePrivateKey,
     /// Separate wrapping key for provider OAuth tokens and vendor sign-in credentials.
     ProviderCredential,
+    /// Separate wrapping key for per-repository scoped Git HTTPS tokens (`TASK-135`, `doc-35`).
+    GitCredential,
 }
 
 impl KeyClass {
@@ -40,6 +45,7 @@ impl KeyClass {
         match self {
             Self::OfficePrivateKey => HKDF_INFO_OFFICE_PRIVATE_KEY,
             Self::ProviderCredential => HKDF_INFO_PROVIDER_CREDENTIAL,
+            Self::GitCredential => HKDF_INFO_GIT_CREDENTIAL,
         }
     }
 }
@@ -74,6 +80,15 @@ pub struct ProviderCredentialBinding<'a> {
     pub organization_id: &'a str,
     pub office_id: &'a str,
     pub connection_id: &'a str,
+}
+
+/// Binding for a wrapped per-repository Git credential (`TASK-135`, `doc-35`, ADR-0016).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GitCredentialBinding<'a> {
+    pub organization_id: &'a str,
+    pub office_id: &'a str,
+    pub repository_id: &'a str,
+    pub scope_url: &'a str,
 }
 
 /// The role of the wrapped private key (ADR-0016 decision 3, `doc-67`).
@@ -170,6 +185,30 @@ pub fn unwrap_provider_credential(
     unwrap_with_aad(provider_key, &aad, record)
 }
 
+/// Encrypts a per-repository scoped Git credential under a dedicated `KeyClass::GitCredential`
+/// wrapping key and the `agentic-org/git-credential/v1` AAD domain (`TASK-135`, `doc-35`).
+pub fn wrap_git_credential(
+    git_key: &[u8; 32],
+    binding: &GitCredentialBinding<'_>,
+    secret: &[u8],
+) -> Result<Vec<u8>, WrapError> {
+    if secret.is_empty() || secret.len() > MAX_KEY_BYTES {
+        return Err(WrapError::Invalid);
+    }
+    let aad = git_credential_aad(binding)?;
+    wrap_with_aad(git_key, &aad, secret)
+}
+
+/// Opens a per-repository Git credential record made by [`wrap_git_credential`].
+pub fn unwrap_git_credential(
+    git_key: &[u8; 32],
+    binding: &GitCredentialBinding<'_>,
+    record: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, WrapError> {
+    let aad = git_credential_aad(binding)?;
+    unwrap_with_aad(git_key, &aad, record)
+}
+
 fn wrap_with_aad(key: &[u8; 32], aad: &[u8], secret: &[u8]) -> Result<Vec<u8>, WrapError> {
     let mut nonce = [0; NONCE];
     SystemRandom::new()
@@ -243,6 +282,23 @@ fn provider_credential_aad(binding: &ProviderCredentialBinding<'_>) -> Result<Ve
             binding.organization_id.as_bytes(),
             binding.office_id.as_bytes(),
             binding.connection_id.as_bytes(),
+        ],
+    )
+}
+
+fn git_credential_aad(binding: &GitCredentialBinding<'_>) -> Result<Vec<u8>, WrapError> {
+    if binding.scope_url.is_empty() {
+        return Err(WrapError::Invalid);
+    }
+    let scope_digest = digest(&SHA256, binding.scope_url.as_bytes());
+    encode_aad(
+        GIT_CREDENTIAL_DOMAIN,
+        &[
+            b"git-credential",
+            binding.organization_id.as_bytes(),
+            binding.office_id.as_bytes(),
+            binding.repository_id.as_bytes(),
+            scope_digest.as_ref(),
         ],
     )
 }

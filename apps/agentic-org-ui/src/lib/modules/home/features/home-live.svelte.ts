@@ -13,13 +13,24 @@ import type { MemberRow } from '$lib/modules/members/types';
 import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
 import { projectsApi } from '$lib/modules/projects/api';
 import type { ProjectRow } from '$lib/modules/projects/types';
+import { buildHomeProjectHealthOverlays } from '$lib/modules/home/model/projects';
 import { officeApi } from '$lib/modules/offices/office-api';
 import { loadShellWorkItems } from '$lib/modules/workitems/shell-summary';
+import type {
+	ProjectHealthOverlay,
+	ProjectHealthOverlayUpdateOptions
+} from '$lib/platform/workspace/project-health';
 import { toAppError } from '$lib/proto';
 
 export interface HomeOfficesAdapter<TOverview = unknown> {
 	overview(organizationId: string, signal?: AbortSignal): Promise<TOverview>;
 	layer(base: OfficeInfo[], overview: TOverview | undefined): OfficeInfo[];
+	onProjectHealthOverlays?: (
+		organizationId: string,
+		overlays: Readonly<Record<string, ProjectHealthOverlay>>,
+		options?: ProjectHealthOverlayUpdateOptions
+	) => void;
+	onClearVolatileProjectHealthCounts?: (organizationId: string) => void;
 }
 
 export interface HomeInitialSeed {
@@ -56,6 +67,7 @@ export class HomeLiveState<TOverview = unknown> {
 	#loadSeq = 0;
 	#destroyed = false;
 	#activeAbort: AbortController | undefined;
+	#activeOrgId: string | undefined;
 
 	constructor(officesAdapter: HomeOfficesAdapter<TOverview>) {
 		this.#officesAdapter = officesAdapter;
@@ -115,6 +127,7 @@ export class HomeLiveState<TOverview = unknown> {
 		isCancelled: () => boolean = () => false
 	): Promise<void> {
 		if (this.#destroyed) return Promise.resolve();
+		this.#activeOrgId = targetOrgId;
 		this.#activeAbort?.abort();
 		const controller = new AbortController();
 		this.#activeAbort = controller;
@@ -225,6 +238,55 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 	}
 
+	#publishProjectHealthOverlays(
+		targetOrgId: string,
+		options: ProjectHealthOverlayUpdateOptions
+	): void {
+		if (!this.#officesAdapter.onProjectHealthOverlays) return;
+		const overlays = buildHomeProjectHealthOverlays(this.projectRows, this.homeProjects);
+		this.#officesAdapter.onProjectHealthOverlays(targetOrgId, overlays, options);
+	}
+
+	#loadProjectHealthSlices(targetOrgId: string, signal: AbortSignal, isStale: () => boolean): void {
+		const projectsPromise = projectsApi.list(targetOrgId, signal).then(
+			(res) => {
+				if (isStale()) return false;
+				this.loadedOrganizationId = targetOrgId;
+				this.projectRows = res.projects;
+				return true;
+			},
+			() => {
+				if (isStale()) return false;
+				this.loadedOrganizationId = targetOrgId;
+				this.projectRows = undefined;
+				return false;
+			}
+		);
+
+		const homeProjectsPromise = homeApi.projects(targetOrgId, signal).then(
+			(rows) => {
+				if (isStale()) return false;
+				this.loadedOrganizationId = targetOrgId;
+				this.homeProjects = rows;
+				return Array.isArray(rows);
+			},
+			() => {
+				if (isStale()) return false;
+				this.loadedOrganizationId = targetOrgId;
+				this.homeProjects = undefined;
+				return false;
+			}
+		);
+
+		void Promise.all([projectsPromise, homeProjectsPromise]).then(([rowsOk, homeOk]) => {
+			if (isStale()) return;
+			this.#publishProjectHealthOverlays(targetOrgId, {
+				preserveTeamIds: !rowsOk,
+				preserveDueDate: !homeOk
+			});
+		});
+	}
+
 	#loadSecondarySlices(targetOrgId: string, signal: AbortSignal, isStale: () => boolean): void {
 		const settle = <T>(promise: Promise<T>, onValue: (value: T) => void, onError: () => void) => {
 			void promise.then(
@@ -284,25 +346,7 @@ export class HomeLiveState<TOverview = unknown> {
 			}
 		);
 
-		settle(
-			projectsApi.list(targetOrgId, signal),
-			(res) => {
-				this.projectRows = res.projects;
-			},
-			() => {
-				this.projectRows = undefined;
-			}
-		);
-
-		settle(
-			homeApi.projects(targetOrgId, signal),
-			(rows) => {
-				this.homeProjects = rows;
-			},
-			() => {
-				this.homeProjects = undefined;
-			}
-		);
+		this.#loadProjectHealthSlices(targetOrgId, signal, isStale);
 
 		settle(
 			activityApi.feed(targetOrgId, { kind: 'all' }, 12, signal),
@@ -316,8 +360,11 @@ export class HomeLiveState<TOverview = unknown> {
 	}
 
 	destroy(): void {
+		const orgId = this.#activeOrgId;
+		this.#activeOrgId = undefined;
 		this.#destroyed = true;
 		this.#activeAbort?.abort();
 		this.#activeAbort = undefined;
+		if (orgId) this.#officesAdapter.onClearVolatileProjectHealthCounts?.(orgId);
 	}
 }

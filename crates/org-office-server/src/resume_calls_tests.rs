@@ -215,7 +215,9 @@ fn run_full_resume_suite(engine: EngineChoice) {
                 task: t_prog.id.clone(),
                 expected_revision: t_prog.revision,
                 status: TaskStatus::InProgress,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: None,
                 note: None,
                 final_summary: None,
@@ -232,7 +234,9 @@ fn run_full_resume_suite(engine: EngineChoice) {
                 task: t_blk.id.clone(),
                 expected_revision: t_blk.revision,
                 status: TaskStatus::Blocked,
+                reason: None,
                 blocked_reason: Some("awaiting spec".into()),
+                waiting_on_owner: None,
                 resolution: None,
                 note: None,
                 final_summary: None,
@@ -249,7 +253,9 @@ fn run_full_resume_suite(engine: EngineChoice) {
                 task: t_done.id.clone(),
                 expected_revision: t_done.revision,
                 status: TaskStatus::Done,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: Some("fixed".into()),
                 note: None,
                 final_summary: None,
@@ -664,9 +670,8 @@ fn run_full_resume_suite(engine: EngineChoice) {
 
 #[test]
 fn agent_resume_works_end_to_end_on_memory_and_sqlite_with_adr0031_isolation() {
-    org_office_sqlite::install();
     run_full_resume_suite(EngineChoice::Memory);
-    run_full_resume_suite(EngineChoice::Sqlite);
+    run_full_resume_suite(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
 }
 
 #[test]
@@ -813,7 +818,7 @@ struct AskSuiteCtx {
 }
 
 fn setup_ask_suite(engine: EngineChoice) -> AskSuiteCtx {
-    let (office, clock_ms) = office_with_stepping_clock(engine);
+    let (office, clock_ms) = office_with_stepping_clock(engine.clone());
     let owner = office.owner_member_id().to_owned();
     let owner_handle = office
         .org_snapshot()
@@ -1001,9 +1006,10 @@ fn run_open_asks_prefilter_and_approval_suite(engine: EngineChoice) {
 #[test]
 fn open_asks_prefilter_prevents_window_starvation_and_gates_channel_approvals_on_memory_and_sqlite()
 {
-    org_office_sqlite::install();
     run_open_asks_prefilter_and_approval_suite(EngineChoice::Memory);
-    run_open_asks_prefilter_and_approval_suite(EngineChoice::Sqlite);
+    run_open_asks_prefilter_and_approval_suite(EngineChoice::Sqlite(
+        org_office_sqlite::sqlite_backend(),
+    ));
 }
 
 #[test]

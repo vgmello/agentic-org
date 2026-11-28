@@ -9,7 +9,7 @@ use org_proto::attachments::{
 use org_proto::tasks::{
     TaskCommentWire, TaskDependenciesResult, TaskDependencyEdge, TaskInspectResult,
     TaskInspectSelection, TaskLabelSummary, TaskRefSummary, TasksCommentsResult,
-    TasksHistoryResult, TasksLabelsParams, TasksLabelsResult,
+    TasksHistoryParams, TasksHistoryResult, TasksLabelsParams, TasksLabelsResult,
 };
 use org_store::{Id, Refusal};
 
@@ -265,12 +265,54 @@ pub fn list_history<R: TasksRead>(
     view: &R,
     reference: &str,
 ) -> Result<TasksHistoryResult, Refusal> {
-    let task = require_task(view, reference)?;
+    list_history_filtered(view, &TasksHistoryParams::new(reference))
+}
+
+/// Lists immutable task history events with optional `event_type` and `blocks_only` filters (`TASK-84`).
+pub fn list_history_filtered<R: TasksRead>(
+    view: &R,
+    params: &TasksHistoryParams,
+) -> Result<TasksHistoryResult, Refusal> {
+    let event_type = match params.event_type.as_deref() {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(super::refuse(
+                    org_proto::ErrorCode::InvalidRequest,
+                    "`event_type` cannot be empty",
+                ));
+            }
+            Some(trimmed)
+        }
+        None => None,
+    };
+    if params.blocks_only && event_type.is_some_and(|kind| kind != "status_changed") {
+        return Err(super::refuse(
+            org_proto::ErrorCode::InvalidRequest,
+            "`blocks_only` matches only `status_changed` events",
+        ));
+    }
+    let task = require_task(view, &params.task)?;
     let events = view
         .task_events(&task.id)
         .map_err(storage_refusal)?
         .iter()
         .map(event_to_wire)
+        .filter(|ev| {
+            let kind = ev.change.get("type").and_then(|v| v.as_str());
+            if let Some(expected) = event_type {
+                if kind != Some(expected) {
+                    return false;
+                }
+            }
+            if params.blocks_only {
+                let from = ev.change.get("from").and_then(|v| v.as_str());
+                let to = ev.change.get("to").and_then(|v| v.as_str());
+                return kind == Some("status_changed")
+                    && (from == Some("blocked") || to == Some("blocked"));
+            }
+            true
+        })
         .collect();
     Ok(TasksHistoryResult {
         task_id: task.id.as_str().to_owned(),

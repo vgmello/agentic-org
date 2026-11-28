@@ -48,6 +48,7 @@ org-host-setup = { path = "../../crates/org-host-setup" }
 org-platform = { path = "../../crates/org-platform" }
 org-proto = { path = "../../crates/org-proto" }
 org-redact = { path = "../../crates/org-redact" }
+zeroize = "=1.9.1"
 # The test-support `fake-office-server` binary's descriptor plumbing only.
 libc = { workspace = true, optional = true }
 

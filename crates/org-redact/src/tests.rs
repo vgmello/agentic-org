@@ -490,3 +490,34 @@ fn auth_scheme_stops_at_json_escapes_without_leaking_next_line_or_breaking_json(
         serde_json::from_str::<serde_json::Value>(&redacted).expect(&redacted);
     }
 }
+
+#[test]
+fn session_proof_cookies_vault_credentials_and_passphrases_are_redacted() {
+    let vault_tok = ["hvs.", "vault-tok-445566"].join("");
+    let raw = [
+        "X-Org-Session-Proof: proof-secret-99887766".to_owned(),
+        "Set-Cookie: __Host-org-default=cookie-secret-112233; HttpOnly; Path=/".to_owned(),
+        format!("X-Vault-Token: {vault_tok}"),
+        ["VAULT_CREDENTIAL=", "vault-cred-778899"].join(""),
+        "BACKUP_PASSPHRASE='my-passphrase-0042'".to_owned(),
+        r#"{"session_cookie":"sc-secret-123","recovery_code":"ABCD-EFGH-IJKL-MNOP","vault_secret":"vs-999"}"#.to_owned(),
+    ]
+    .join("\n");
+    let redacted = redact_text(&raw, &[]);
+    assert_clean(
+        &redacted,
+        &[
+            "proof-secret-99887766",
+            "cookie-secret-112233",
+            vault_tok.as_str(),
+            "vault-cred-778899",
+            "my-passphrase-0042",
+            "sc-secret-123",
+            "ABCD-EFGH-IJKL-MNOP",
+            "vs-999",
+        ],
+    );
+    assert!(is_sensitive_key("X-Org-Session-Proof"));
+    assert!(is_sensitive_key("vault_credential"));
+    assert!(is_sensitive_key("backup_passphrase"));
+}

@@ -31,6 +31,7 @@ pub(super) fn stub_live_handle(
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: format!("/tmp/home-{emp_id}"),
+        workspace_spec: "/tmp".into(),
         permission_preset: "workspace_edits".into(),
         sandbox_enabled: true,
         allow_host_auth: false,
@@ -70,6 +71,9 @@ pub(super) fn stub_live_handle(
         supports_mid_turn: false,
         sandbox_plan: crate::manager::SandboxPlan::host_native(),
         partition: None,
+        active_model: None,
+        active_effort: None,
+        pinned_override: Default::default(),
     };
     (handle, rx)
 }
@@ -88,6 +92,9 @@ fn person_wake(id: &str, sender: &str, summary: &str) -> PendingWakeItem {
         summary: summary.into(),
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
+        session_affinity: None,
+        model_override: None,
+        effort_override: None,
     }
 }
 
@@ -141,7 +148,7 @@ fn task170_wake_for_b_completes_while_a_is_blocked_in_hq_permit_rpc_and_a_keeps_
     let locks = Arc::clone(&mgr.employee_locks);
     let registry = Arc::clone(&mgr.registry);
     let acquirer: crate::lifecycle::WarmPermitAcquirer =
-        Arc::new(move |_office, _hq, conn, emp, _task, _digest| {
+        Arc::new(move |_office, _hq, conn, emp, _task, _digest, _override| {
             assert_eq!(conn, "c-a");
             let registry_free = registry.try_lock().is_ok();
             entered_tx

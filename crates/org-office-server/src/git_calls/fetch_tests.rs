@@ -9,7 +9,7 @@ use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
 use org_agent_cli::{hint_for, OfficeTransport, Refusal, TransportOffice};
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::git::{
     CacheStateWire, RepoAttachParams, RepoFetchParams, RepoRegisterParams, RepoStatusParams,
     RepositoryKindWire, WorktreePrepareParams,
@@ -96,10 +96,9 @@ struct Fixture {
 }
 
 fn fixture(cooldown: Duration) -> Fixture {
-    org_office_sqlite::install();
-    let office = Arc::new(Office::for_test(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let office = Arc::new(Office::for_test(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = office.owner_member_id().to_owned();
     let live = Arc::new(LiveEvents::for_owner(Box::new(|| {}), owner.clone()));
     let mut svc = GitService::new(Arc::clone(&office), live);

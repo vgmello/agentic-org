@@ -13,9 +13,11 @@ use super::doctor_host::{
     check_credentials_dir, check_instance_layout, check_permissions, check_registry_consistency,
     check_release_pin, check_sockets,
 };
+use super::doctor_runtimes::check_cli_runtimes;
 pub(crate) use super::doctor_types::{CheckStatus, DoctorCheck};
 use super::org_integrity_checks::check_org_state;
 use super::paths::{discover_offices, resolve_instance, DiscoveredOffice};
+use super::redact::{redact_json, redact_text};
 use super::DoctorArgs;
 use crate::error::CliError;
 use crate::selection;
@@ -61,7 +63,7 @@ pub(crate) fn collect_doctor(
     include_instance_checks: bool,
 ) -> Result<DoctorReport, CliError> {
     let mut checks = Vec::new();
-    let instance_label = instance_name.unwrap_or("default").to_owned();
+    let instance_label = redact_text(instance_name.unwrap_or("default")).text;
 
     if include_instance_checks {
         let paths = resolve_instance(instance_name)?;
@@ -73,6 +75,7 @@ pub(crate) fn collect_doctor(
         check_credentials_dir(&paths, &mut checks);
         let offices = discover_offices(&paths, office_filter);
         check_discovered_offices(&offices, &mut checks);
+        maybe_append_live_metrics_summary(instance_name, office_filter, &mut checks);
     }
 
     if let Some(dir) = org_dir {
@@ -82,6 +85,7 @@ pub(crate) fn collect_doctor(
     if let Some(check) = check_linux_apparmor_userns() {
         checks.push(check);
     }
+    check_cli_runtimes(&mut checks);
 
     let summary = DoctorSummary {
         pass: checks
@@ -119,15 +123,43 @@ fn check_discovered_offices(offices: &[DiscoveredOffice], checks: &mut Vec<Docto
     }
 }
 
+/// Appends a concise live efficiency telemetry summary when the host socket is active and an
+/// office answers non-interactively; gracefully omitted when offline or auth-gated (`TASK-136`).
+fn maybe_append_live_metrics_summary(
+    instance_name: Option<&str>,
+    office_filter: Option<&str>,
+    checks: &mut Vec<DoctorCheck>,
+) {
+    let host_live = checks
+        .iter()
+        .any(|c| c.id == "runtime.host_socket" && c.status == CheckStatus::Pass);
+    if !host_live {
+        return;
+    }
+    if let Some(metrics) =
+        org_host_setup::try_office_metrics_noninteractive(instance_name, office_filter)
+    {
+        checks.push(DoctorCheck::pass(
+            "office.metrics",
+            "telemetry",
+            crate::view::format_office_summary_line(&metrics),
+            None,
+        ));
+    }
+}
+
 fn render_doctor(report: &DoctorReport, ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    let raw_json =
+        serde_json::to_value(report).map_err(|e| CliError::failed("cli::encode", e.to_string()))?;
+    let (json, _) = redact_json(&raw_json);
     if ctx.modes().json {
-        return Ok(ctx.write_json(report)?);
+        return Ok(ctx.write_json(&json)?);
     }
     if ctx.modes().quiet {
         let mut out = String::new();
         for check in &report.checks {
             if check.status == CheckStatus::Fail {
-                out.push_str(&sanitize(&check.id));
+                out.push_str(&sanitize(&redact_text(&check.id).text));
                 out.push('\n');
             }
         }
@@ -146,11 +178,13 @@ fn render_doctor(report: &DoctorReport, ctx: &mut ExecutionContext) -> Result<()
                 detail.push_str(" — fix: ");
                 detail.push_str(hint);
             }
+            let detail = redact_text(&detail).text;
+            let id = redact_text(&check.id).text;
             Row {
-                id: check.id.clone(),
+                id: id.clone(),
                 cells: vec![
                     Cell::status(check.status.as_str(), check.status.style()),
-                    Cell::id(&check.id),
+                    Cell::id(&id),
                     Cell::plain(detail),
                 ],
             }
@@ -160,12 +194,66 @@ fn render_doctor(report: &DoctorReport, ctx: &mut ExecutionContext) -> Result<()
         headers: vec!["STATUS".into(), "CHECK".into(), "DETAILS".into()],
         rows,
     };
-    let json =
-        serde_json::to_value(report).map_err(|e| CliError::failed("cli::encode", e.to_string()))?;
     let view = ListView {
         empty: "No diagnostic checks ran.",
         total: None,
     };
     ctx.render_table(&table, &json, &view)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_metrics_summary_is_omitted_when_host_socket_is_offline() {
+        let mut checks = vec![DoctorCheck::warn(
+            "runtime.host_socket",
+            "runtime",
+            "host socket is not listening",
+            None,
+            None,
+        )];
+        maybe_append_live_metrics_summary(Some("nonexistent-instance-for-test"), None, &mut checks);
+        assert_eq!(checks.len(), 1);
+        assert!(checks.iter().all(|c| c.id != "office.metrics"));
+        assert!(checks.iter().all(|c| c.status != CheckStatus::Fail));
+    }
+
+    #[test]
+    fn live_metrics_summary_formats_cleanly_for_doctor_row() {
+        let metrics = org_proto::telemetry::OfficeMetricsResult {
+            office_id: "off-1".into(),
+            org_id: "org-1".into(),
+            collected_at: "2026-11-27T00:00:00.000Z".into(),
+            aggregate: org_proto::telemetry::OfficeAggregateMetrics {
+                active_sessions: 1,
+                idle_sessions: 2,
+                recent_turn_count: 4,
+                total_turn_count: 10,
+                p50_wall_latency_ms: Some(1200),
+                p95_wall_latency_ms: Some(3400),
+                avg_wall_latency_ms: Some(1500),
+                input_tokens: 2000,
+                output_tokens: 500,
+                cached_read_tokens: 6000,
+                thought_tokens: 300,
+                cache_hit_ratio: Some(0.75),
+                current_rss_bytes: 128 * 1024 * 1024,
+                peak_rss_bytes: 256 * 1024 * 1024,
+                rss_budget_bytes: Some(1024 * 1024 * 1024),
+                hibernated_total: 0,
+                rss_evicted_total: 0,
+                sandbox_denial_count: 1,
+            },
+            agents: Vec::new(),
+        };
+        let line = crate::view::format_office_summary_line(&metrics);
+        assert!(line.contains("1 active"));
+        assert!(line.contains("2 idle"));
+        assert!(line.contains("75.0%"));
+        assert!(line.contains("128.0 MiB"), "{line}");
+        assert!(line.contains("1 sandbox denials"), "{line}");
+    }
 }

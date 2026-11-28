@@ -24,7 +24,7 @@ import type {
 export interface MembersApi {
 	/** Everyone in the organization, people and agents, former members included. */
 	directory(organizationId: string, signal?: AbortSignal): Promise<MemberRow[]>;
-	profile(organizationId: string, memberId: string): Promise<MemberProfile>;
+	profile(organizationId: string, memberId: string, signal?: AbortSignal): Promise<MemberProfile>;
 	work(organizationId: string, memberId: string): Promise<WorkRow[]>;
 	conversations(organizationId: string, memberId: string): Promise<ConversationRow[]>;
 	activity(organizationId: string, memberId: string): Promise<ActivityEntry[]>;
@@ -87,8 +87,8 @@ const gatewayMembersApi = createHttpMembersApi({
 export const membersApi: MembersApi = Object.freeze<MembersApi>({
 	directory: (orgId, signal) =>
 		signedInSession() ? gatewayMembersApi.directory(orgId, signal) : unavailableCall(),
-	profile: (orgId, memberId) =>
-		signedInSession() ? gatewayMembersApi.profile(orgId, memberId) : unavailableCall(),
+	profile: (orgId, memberId, signal) =>
+		signedInSession() ? gatewayMembersApi.profile(orgId, memberId, signal) : unavailableCall(),
 	work: (orgId, memberId) =>
 		signedInSession() ? gatewayMembersApi.work(orgId, memberId) : unavailableCall(),
 	conversations: (orgId, memberId) =>

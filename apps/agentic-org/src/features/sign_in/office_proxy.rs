@@ -213,7 +213,7 @@ pub(super) fn sign_in_and_execute(
 ) -> Result<(), CliError> {
     if matches!(
         resource_and_verb(&forwarded),
-        Some(("agent", "bind" | "renew"))
+        Some(("agent", "bind" | "renew" | "sessions"))
     ) {
         let verb = forwarded.get(1).map_or("bind", String::as_str);
         return Err(CliError::usage(format!(
@@ -487,7 +487,7 @@ mod tests {
             let answered = ask(forwarded, &ctx, &mut office);
             assert_eq!(answered.output.exit_code, 2, "{}", answered.output.stdout);
             assert!(
-                answered.output.stdout.contains("`task-note` needs a verb"),
+                answered.output.stdout.contains("`note` needs a verb"),
                 "{}",
                 answered.output.stdout
             );

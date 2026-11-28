@@ -7,17 +7,17 @@ use org_proto::budgets::{
 use org_proto::costs::CompletenessStatus;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use org_office::budgets::{
+use org_budgets::BudgetError;
+use org_budgets::{
     BudgetAggregate, BudgetEventRecord, BudgetHoldRecord, BudgetNoticeRecord, BudgetPeriodRecord,
     BudgetPolicyVersion, BudgetRecord, PendingStopIntent,
 };
-use org_office::OfficeError;
 
 fn load_pending_stop(
     conn: &Connection,
     org_id: &str,
     budget_id: &str,
-) -> Result<Option<PendingStopIntent>, OfficeError> {
+) -> Result<Option<PendingStopIntent>, BudgetError> {
     let raw: Option<String> = conn
         .query_row(
             "SELECT intent_json FROM budget_stop_intents WHERE organization_id=?1 AND budget_id=?2",
@@ -25,11 +25,11 @@ fn load_pending_stop(
             |r| r.get(0),
         )
         .optional()
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     match raw {
         Some(json) => serde_json::from_str(&json)
             .map(Some)
-            .map_err(OfficeError::storage),
+            .map_err(BudgetError::storage),
         None => Ok(None),
     }
 }
@@ -38,7 +38,7 @@ pub(super) fn load_aggregate_from_db(
     conn: &Connection,
     org_id: &str,
     budget_id: &str,
-) -> Result<Option<BudgetAggregate>, OfficeError> {
+) -> Result<Option<BudgetAggregate>, BudgetError> {
     let budget: Option<BudgetRecord> = conn
         .query_row(
             "SELECT organization_id, id, current_revision, scope_kind, task_id, agent_id, \
@@ -63,7 +63,7 @@ pub(super) fn load_aggregate_from_db(
             },
         )
         .optional()
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     let Some(budget) = budget else {
         return Ok(None);
     };
@@ -88,14 +88,14 @@ fn load_versions(
     conn: &Connection,
     org_id: &str,
     budget_id: &str,
-) -> Result<Vec<BudgetPolicyVersion>, OfficeError> {
+) -> Result<Vec<BudgetPolicyVersion>, BudgetError> {
     let mut stmt = conn
         .prepare(
             "SELECT organization_id, budget_id, revision, state, unit, limit_amount, time_zone, \
              time_zone_source, time_zone_subject_ref, changed_by_id, changed_at, reason \
              FROM budget_policy_versions WHERE organization_id=?1 AND budget_id=?2 ORDER BY revision ASC",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     let rows = stmt
         .query_map(params![org_id, budget_id], |r| {
             Ok(BudgetPolicyVersion {
@@ -113,15 +113,15 @@ fn load_versions(
                 reason: r.get(11)?,
             })
         })
-        .map_err(OfficeError::storage)?;
-    rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
+        .map_err(BudgetError::storage)?;
+    rows.collect::<Result<_, _>>().map_err(BudgetError::storage)
 }
 
 fn load_periods(
     conn: &Connection,
     org_id: &str,
     budget_id: &str,
-) -> Result<Vec<BudgetPeriodRecord>, OfficeError> {
+) -> Result<Vec<BudgetPeriodRecord>, BudgetError> {
     let mut stmt = conn
         .prepare(
             "SELECT organization_id, budget_id, id, policy_revision, period_key, starts_at, ends_at, \
@@ -130,7 +130,7 @@ fn load_periods(
              evaluated_at, ledger_checkpoint_ref \
              FROM budget_periods WHERE organization_id=?1 AND budget_id=?2 ORDER BY period_key ASC",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     let rows = stmt
         .query_map(params![org_id, budget_id], |r| {
             Ok(BudgetPeriodRecord {
@@ -154,22 +154,22 @@ fn load_periods(
                 ledger_checkpoint_ref: r.get(17)?,
             })
         })
-        .map_err(OfficeError::storage)?;
-    rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
+        .map_err(BudgetError::storage)?;
+    rows.collect::<Result<_, _>>().map_err(BudgetError::storage)
 }
 
 fn load_events(
     conn: &Connection,
     org_id: &str,
     budget_id: &str,
-) -> Result<Vec<BudgetEventRecord>, OfficeError> {
+) -> Result<Vec<BudgetEventRecord>, BudgetError> {
     let mut stmt = conn
         .prepare(
             "SELECT organization_id, id, budget_id, period_id, operation_id, kind, policy_revision, \
              actor_kind, actor_id, occurred_at, payload_json \
              FROM budget_events WHERE organization_id=?1 AND budget_id=?2 ORDER BY occurred_at ASC, id ASC",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     let rows = stmt
         .query_map(params![org_id, budget_id], |r| {
             Ok(BudgetEventRecord {
@@ -186,22 +186,22 @@ fn load_events(
                 payload_json: r.get(10)?,
             })
         })
-        .map_err(OfficeError::storage)?;
-    rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
+        .map_err(BudgetError::storage)?;
+    rows.collect::<Result<_, _>>().map_err(BudgetError::storage)
 }
 
 fn load_notices(
     conn: &Connection,
     org_id: &str,
     budget_id: &str,
-) -> Result<Vec<BudgetNoticeRecord>, OfficeError> {
+) -> Result<Vec<BudgetNoticeRecord>, BudgetError> {
     let mut stmt = conn
         .prepare(
             "SELECT organization_id, id, budget_id, period_id, policy_revision, stage, threshold, \
              recipient_kind, recipient_id, kind, delivery_state, created_at, resolved_at \
              FROM budget_notices WHERE organization_id=?1 AND budget_id=?2 ORDER BY created_at ASC, id ASC",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     let rows = stmt
         .query_map(params![org_id, budget_id], |r| {
             Ok(BudgetNoticeRecord {
@@ -220,22 +220,22 @@ fn load_notices(
                 resolved_at: r.get(12)?,
             })
         })
-        .map_err(OfficeError::storage)?;
-    rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
+        .map_err(BudgetError::storage)?;
+    rows.collect::<Result<_, _>>().map_err(BudgetError::storage)
 }
 
 fn load_holds(
     conn: &Connection,
     org_id: &str,
     budget_id: &str,
-) -> Result<Vec<BudgetHoldRecord>, OfficeError> {
+) -> Result<Vec<BudgetHoldRecord>, BudgetError> {
     let mut stmt = conn
         .prepare(
             "SELECT organization_id, budget_id, period_id, policy_revision, stage, state, \
              created_at, updated_at, release_reason \
              FROM budget_holds WHERE organization_id=?1 AND budget_id=?2 ORDER BY created_at ASC",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(BudgetError::storage)?;
     let rows = stmt
         .query_map(params![org_id, budget_id], |r| {
             Ok(BudgetHoldRecord {
@@ -250,8 +250,8 @@ fn load_holds(
                 release_reason: r.get(8)?,
             })
         })
-        .map_err(OfficeError::storage)?;
-    rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
+        .map_err(BudgetError::storage)?;
+    rows.collect::<Result<_, _>>().map_err(BudgetError::storage)
 }
 
 fn parse_scope(s: &str) -> BudgetScopeKind {

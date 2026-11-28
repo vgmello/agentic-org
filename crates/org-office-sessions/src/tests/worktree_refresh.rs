@@ -486,6 +486,10 @@ fi
             employee_id: self_emp.clone(),
             instruction: Some("Start work".into()),
             workspace: None,
+            fresh: false,
+            resume_runtime_session_id: None,
+            model: None,
+            effort: None,
         },
     )
     .expect("Turn 1 started");
@@ -1153,6 +1157,9 @@ fn task160_sandbox_refresh_wake_respects_task_budget_hold_pause_offboard_and_shu
         summary: "Sandbox grants refreshed.".into(),
         attachment_ids: Vec::new(),
         enqueued_at_ms: crate::credentials::now_ms(),
+        session_affinity: None,
+        model_override: None,
+        effort_override: None,
     };
     // 1. Task-scoped lifetime budget exhaustion holds SandboxRefresh on BudgetHold.
     assert_eq!(

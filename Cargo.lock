@@ -50,6 +50,7 @@ dependencies = [
  "syn 2.0.119",
  "tempfile",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -59,7 +60,7 @@ dependencies = [
  "hmac",
  "libc",
  "org-agent-runtime",
- "org-agent-runtime-agy",
+ "org-agent-runtime-acp",
  "org-agent-runtime-claude",
  "org-agent-runtime-codex",
  "org-client",
@@ -1200,6 +1201,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "org-accounting"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "org-store",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-agent-cli"
 version = "0.0.0"
 dependencies = [
@@ -1229,11 +1240,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "org-agent-runtime-agy"
+name = "org-agent-runtime-acp"
 version = "0.0.0"
 dependencies = [
  "org-agent-runtime",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1276,6 +1288,16 @@ dependencies = [
  "tempfile",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "org-budgets"
+version = "0.0.0"
+dependencies = [
+ "org-accounting",
+ "org-proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1347,6 +1369,7 @@ dependencies = [
 name = "org-copilot"
 version = "0.0.0"
 dependencies = [
+ "org-redact",
  "serde",
  "serde_json",
 ]
@@ -1396,7 +1419,9 @@ dependencies = [
 name = "org-git"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -1415,6 +1440,7 @@ dependencies = [
  "org-platform",
  "org-platform-host",
  "org-proto",
+ "org-redact",
  "org-socket",
  "proc-macro2",
  "ring",
@@ -1544,6 +1570,8 @@ version = "0.0.0"
 dependencies = [
  "base64",
  "image",
+ "org-accounting",
+ "org-budgets",
  "org-docs",
  "org-media",
  "org-office-launch",
@@ -1621,7 +1649,7 @@ dependencies = [
  "libc",
  "org-agent-cli",
  "org-agent-runtime",
- "org-agent-runtime-agy",
+ "org-agent-runtime-acp",
  "org-agent-runtime-claude",
  "org-agent-runtime-codex",
  "org-command",
@@ -1651,6 +1679,8 @@ version = "0.0.0"
 dependencies = [
  "base64",
  "image",
+ "org-accounting",
+ "org-budgets",
  "org-media",
  "org-office",
  "org-office-sqlite",

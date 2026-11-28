@@ -60,10 +60,9 @@ impl LiveOfficeFixture {
     fn start() -> Self {
         let dir = tempfile::Builder::new().prefix("b6").tempdir().unwrap();
         let socket = dir.path().join("office.sock");
-        org_office_sqlite::install();
-        let office = Arc::new(Office::for_test(TestOffice {
-            engine: org_office::EngineChoice::Sqlite,
-        }));
+        let office = Arc::new(Office::for_test(TestOffice::sqlite(
+            org_office_sqlite::sqlite_backend(),
+        )));
         let info = office.info().clone();
         let owner_id = office.owner_member_id().to_owned();
         let snap = office.org_snapshot().unwrap();
@@ -81,8 +80,12 @@ impl LiveOfficeFixture {
             Box::new(move || live_wake.notify()),
             owner_id.clone(),
         ));
-        let hq = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
         let sessions = start_session_manager(Arc::clone(&office), &socket);
+        let hq = crate::office_runtime::hq_inbox_with_sessions(
+            Arc::clone(&office),
+            Some(Arc::clone(&sessions)),
+        )
+        .unwrap();
         let channel_watcher = Arc::new(crate::watcher::ChannelWatcher::production(
             Arc::clone(&office),
             Some(Arc::clone(&sessions)),
@@ -168,6 +171,7 @@ impl LiveOfficeFixture {
             session_token: Some(token),
             agent_id: Some(employee_id.to_owned()),
             external_state: None,
+            ..Binding::default()
         }
     }
 }

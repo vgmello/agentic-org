@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::doctor_types::DoctorCheck;
-use super::org_integrity::{walk_state_tree, StateIndex, TargetKind};
+use super::org_integrity::{has_restricted_component, walk_state_tree, StateIndex, TargetKind};
 use super::paths::{normalize_lstat_path, validate_plain_path};
 use super::sqlite_read::read_projected_tasks;
 
@@ -35,6 +35,14 @@ pub(crate) fn check_org_state(
     }
     let state_root = resolve_state_root(org_dir);
     let norm_root = normalize_lstat_path(&state_root);
+    if has_restricted_component(org_dir) || has_restricted_component(&norm_root) {
+        return syntax_fail(
+            scope_label,
+            "refusing to scan restricted `private` or `protected` organization directory",
+            "Point --org-dir at the organization's `durable/state` directory, never `private/` or `protected/`.",
+            org_dir,
+        );
+    }
     match fs::symlink_metadata(&norm_root) {
         Ok(m) if m.is_dir() => {}
         Ok(_) => {
@@ -56,6 +64,17 @@ pub(crate) fn check_org_state(
                 &norm_root,
             );
         }
+    }
+    if norm_root
+        .canonicalize()
+        .is_ok_and(|canon| has_restricted_component(&canon))
+    {
+        return syntax_fail(
+            scope_label,
+            "refusing to scan restricted `private` or `protected` organization directory",
+            "Point --org-dir at the organization's `durable/state` directory, never `private/` or `protected/`.",
+            org_dir,
+        );
     }
 
     let mut index = StateIndex::default();

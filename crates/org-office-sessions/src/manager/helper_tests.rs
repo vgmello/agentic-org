@@ -16,7 +16,9 @@ use crate::preset::{apply_worktree_sandbox_rules, build_session_policy};
 use super::environment::{
     agent_git_identity, combine_agent_instructions, office_env_names, write_owner_only_binding_file,
 };
-use super::rust_toolchain::{append_rust_toolchain_env, link_host_rust_caches};
+use super::rust_toolchain::{
+    append_rust_toolchain_env, link_host_rust_caches, RustToolchainEnvInput,
+};
 use super::sandbox_rules::{
     append_runtime_credential_denies, append_runtime_credential_denies_for_home,
     collect_agy_read_only_dirs,
@@ -241,6 +243,11 @@ fn prune_nonexistent_bwrap_denies_drops_absent_paths_and_preserves_policy_enforc
     ));
 }
 
+fn set_owner_only(p: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
 #[test]
 fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials() {
     let dir = tempfile::tempdir().unwrap();
@@ -248,25 +255,24 @@ fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials(
     let cargo_dir = root.join("host-cargo");
     let rustup_dir = root.join("host-rustup");
     let helper_dir = root.join("helpers");
-    let home_dir = root.join("home");
+    let agent_base = root.join("agent-1");
+    let home_dir = agent_base.join("home");
     let ws_dir = root.join("ws");
     for d in [
         &cargo_dir,
-        &cargo_dir.join("registry"),
-        &cargo_dir.join("git"),
+        &cargo_dir.join("registry/index"),
+        &cargo_dir.join("registry/cache"),
+        &cargo_dir.join("git/db"),
         &rustup_dir,
         &helper_dir,
+        &agent_base,
         &home_dir,
         &ws_dir,
     ] {
         std::fs::create_dir_all(d).unwrap();
     }
-    // Production creates agent homes owner-only (`ensure_owner_only_dir`).
-    let owner_only = |p: &Path| {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).unwrap();
-    };
-    owner_only(&home_dir);
+    set_owner_only(&agent_base);
+    set_owner_only(&home_dir);
     std::fs::write(cargo_dir.join("credentials"), b"secret-1").unwrap();
     std::fs::write(cargo_dir.join("credentials.toml"), b"secret-2").unwrap();
     std::fs::write(cargo_dir.join("config.toml"), b"host-config").unwrap();
@@ -280,12 +286,15 @@ fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials(
     let mut sandboxed = Vec::new();
     append_rust_toolchain_env(
         &mut sandboxed,
-        Some(&home_dir),
-        Some(rustup_dir.as_os_str().to_os_string()),
-        Some(cargo_dir.as_os_str().to_os_string()),
-        None,
-        &[home_dir.clone(), ws_dir.clone()],
-        true,
+        RustToolchainEnvInput {
+            agent_home: Some(&home_dir),
+            agent_base: Some(&agent_base),
+            rustup_explicit: Some(rustup_dir.as_os_str().to_os_string()),
+            cargo_explicit: Some(cargo_dir.as_os_str().to_os_string()),
+            host_home: None,
+            forbidden: &[home_dir.clone(), ws_dir.clone()],
+            sandbox_enabled: true,
+        },
     );
     assert!(sandboxed
         .iter()
@@ -293,29 +302,74 @@ fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials(
     assert!(sandboxed
         .iter()
         .any(|(k, v)| k == "CARGO_HOME" && v == home_dir.join(".cargo").as_os_str()));
-    assert!(Environment::new(search, &sandboxed).is_ok());
-
-    // Safe Cargo cache dirs are symlinked; credentials, config, and redundant `.rustup` are
-    // NEVER linked into agent home (`TASK-159`, `TASK-163`: `RUSTUP_HOME` is preserved in env).
-    assert_eq!(
-        std::fs::read_link(home_dir.join(".cargo").join("registry")).unwrap(),
-        cargo_dir.join("registry")
-    );
-    assert_eq!(
-        std::fs::read_link(home_dir.join(".cargo").join("git")).unwrap(),
-        cargo_dir.join("git")
-    );
-    assert!(!home_dir.join(".rustup").exists());
+    assert!(sandboxed.iter().any(|(k, v)| {
+        k == "CARGO_TARGET_DIR" && v == agent_base.join("cache/cargo-target").as_os_str()
+    }));
     assert!(sandboxed
         .iter()
         .any(|(k, v)| k == "RUSTUP_HOME" && v == rustup_dir.as_os_str()));
-    assert!(!home_dir.join(".cargo").join("credentials").exists());
-    assert!(!home_dir.join(".cargo").join("credentials.toml").exists());
-    assert!(!home_dir.join(".cargo").join("config.toml").exists());
+    assert!(Environment::new(search, &sandboxed).is_ok());
 
-    // Legacy `<agent_home>/.rustup` symlink is automatically cleaned up (`TASK-163`).
+    // Split read-only/writable Cargo layout (`TASK-135`): `registry/{index,cache}` and `git/db`
+    // point read-only to host caches while `registry/src`, `git/checkouts`, and `cache/cargo-target`
+    // are real owner-only per-agent writable dirs. Credentials, config, and `.rustup` are NEVER linked.
+    assert!(home_dir
+        .join(".cargo/registry")
+        .symlink_metadata()
+        .unwrap()
+        .is_dir());
+    assert_eq!(
+        std::fs::read_link(home_dir.join(".cargo/registry/index")).unwrap(),
+        cargo_dir.join("registry/index")
+    );
+    assert_eq!(
+        std::fs::read_link(home_dir.join(".cargo/registry/cache")).unwrap(),
+        cargo_dir.join("registry/cache")
+    );
+    assert!(home_dir
+        .join(".cargo/registry/src")
+        .symlink_metadata()
+        .unwrap()
+        .is_dir());
+    assert!(home_dir
+        .join(".cargo/git")
+        .symlink_metadata()
+        .unwrap()
+        .is_dir());
+    assert_eq!(
+        std::fs::read_link(home_dir.join(".cargo/git/db")).unwrap(),
+        cargo_dir.join("git/db")
+    );
+    assert!(home_dir
+        .join(".cargo/git/checkouts")
+        .symlink_metadata()
+        .unwrap()
+        .is_dir());
+    assert_eq!(
+        std::fs::metadata(agent_base.join("cache/cargo-target"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    for absent in [
+        ".rustup",
+        ".cargo/credentials",
+        ".cargo/credentials.toml",
+        ".cargo/config.toml",
+    ] {
+        assert!(!home_dir.join(absent).exists(), "{absent} must never exist");
+    }
+
+    // Legacy `<agent_home>/.rustup` and `<agent_home>/.cargo/registry` symlinks migrate cleanly.
     org_platform::fs::create_symlink(&rustup_dir, &home_dir.join(".rustup")).unwrap();
-    assert!(home_dir.join(".rustup").symlink_metadata().is_ok());
+    std::fs::remove_dir_all(home_dir.join(".cargo/registry")).unwrap();
+    org_platform::fs::create_symlink(
+        &cargo_dir.join("registry"),
+        &home_dir.join(".cargo/registry"),
+    )
+    .unwrap();
     assert!(link_host_rust_caches(
         &home_dir,
         Some(&rustup_dir),
@@ -324,91 +378,120 @@ fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials(
     )
     .is_some());
     assert!(home_dir.join(".rustup").symlink_metadata().is_err());
+    assert!(home_dir
+        .join(".cargo/registry")
+        .symlink_metadata()
+        .unwrap()
+        .is_dir());
 
-    // B1: symlinked `<agent_home>/.cargo` must be refused without planting symlinks outside home
-    // or exporting raw host CARGO_HOME.
+    let mut unsandboxed = Vec::new();
+    append_rust_toolchain_env(
+        &mut unsandboxed,
+        RustToolchainEnvInput {
+            agent_home: None,
+            agent_base: None,
+            rustup_explicit: None,
+            cargo_explicit: Some(cargo_dir.as_os_str().to_os_string()),
+            host_home: None,
+            forbidden: &[home_dir, ws_dir],
+            sandbox_enabled: false,
+        },
+    );
+    assert!(!unsandboxed.iter().any(|(k, _)| k == "CARGO_NET_OFFLINE"));
+}
+
+#[test]
+fn rust_cache_tamper_widened_mode_and_symlink_hardening_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let cargo_dir = root.join("host-cargo");
+    let rustup_dir = root.join("host-rustup");
+    let ws_dir = root.join("ws");
+    let home_dir = root.join("ok-home");
+    for d in [
+        &cargo_dir.join("registry/index"),
+        &cargo_dir.join("git/db"),
+        &rustup_dir,
+        &ws_dir,
+        &home_dir,
+    ] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    set_owner_only(&home_dir);
+
+    // B1: symlinked `<agent_home>/.cargo` must be refused without planting symlinks outside home.
     let escape_target = root.join("external-target");
-    std::fs::create_dir_all(&escape_target).unwrap();
     let tampered_home = root.join("tampered-home");
+    std::fs::create_dir_all(&escape_target).unwrap();
     std::fs::create_dir_all(&tampered_home).unwrap();
-    owner_only(&tampered_home);
+    set_owner_only(&tampered_home);
     org_platform::fs::create_symlink(&escape_target, &tampered_home.join(".cargo")).unwrap();
     let mut tampered_env = Vec::new();
     append_rust_toolchain_env(
         &mut tampered_env,
-        Some(&tampered_home),
-        Some(rustup_dir.as_os_str().to_os_string()),
-        Some(cargo_dir.as_os_str().to_os_string()),
-        None,
-        &[tampered_home.clone(), ws_dir.clone()],
-        true,
+        RustToolchainEnvInput {
+            agent_home: Some(&tampered_home),
+            agent_base: None,
+            rustup_explicit: Some(rustup_dir.as_os_str().to_os_string()),
+            cargo_explicit: Some(cargo_dir.as_os_str().to_os_string()),
+            host_home: None,
+            forbidden: &[tampered_home.clone(), ws_dir.clone()],
+            sandbox_enabled: true,
+        },
     );
-    assert!(
-        !escape_target.join("registry").exists(),
-        "office must never plant symlinks through a symlinked .cargo dir"
-    );
-    assert!(
-        !tampered_env.iter().any(|(k, _)| k == "CARGO_HOME"),
-        "tampered .cargo must not fall back to raw host CARGO_HOME: {tampered_env:?}"
-    );
+    assert!(!escape_target.join("registry").exists());
+    assert!(!tampered_env.iter().any(|(k, _)| k == "CARGO_HOME"));
     assert!(tampered_env
         .iter()
         .any(|(k, v)| k == "CARGO_NET_OFFLINE" && v == "true"));
 
-    // B1: regular file at `<agent_home>/.cargo/registry` must NOT be treated as a valid cache.
+    // B1: regular file at `<agent_home>/.cargo/registry` and `git` fails closed.
     let file_home = root.join("file-home");
     std::fs::create_dir_all(file_home.join(".cargo")).unwrap();
-    owner_only(&file_home);
-    owner_only(&file_home.join(".cargo"));
+    set_owner_only(&file_home);
+    set_owner_only(&file_home.join(".cargo"));
     std::fs::write(file_home.join(".cargo").join("registry"), b"not-a-dir").unwrap();
     std::fs::write(file_home.join(".cargo").join("git"), b"not-a-dir").unwrap();
-    assert!(
-        link_host_rust_caches(
-            &file_home,
-            None,
-            Some(&cargo_dir),
-            &[file_home.clone(), ws_dir.clone()],
-        )
-        .is_none(),
-        "regular file at registry/git must not count as linked cache"
-    );
+    assert!(link_host_rust_caches(
+        &file_home,
+        None,
+        Some(&cargo_dir),
+        &[file_home.clone(), ws_dir.clone()],
+    )
+    .is_none());
 
-    // A `.cargo` the office account owns but a tool widened (cargo creates it 0755) is
-    // tightened back to 0700 through its descriptor and linked, not refused.
+    // Widened `.cargo` (0755) is tightened back to 0700 through its descriptor and linked.
     let wide_cargo_home = root.join("wide-cargo-home");
     std::fs::create_dir_all(wide_cargo_home.join(".cargo")).unwrap();
-    owner_only(&wide_cargo_home);
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(
-            wide_cargo_home.join(".cargo"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
-        assert!(link_host_rust_caches(
-            &wide_cargo_home,
-            None,
-            Some(&cargo_dir),
-            &[wide_cargo_home.clone(), ws_dir.clone()],
-        )
-        .is_some());
-        let mode = std::fs::metadata(wide_cargo_home.join(".cargo"))
+    set_owner_only(&wide_cargo_home);
+    std::fs::set_permissions(
+        wide_cargo_home.join(".cargo"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    assert!(link_host_rust_caches(
+        &wide_cargo_home,
+        None,
+        Some(&cargo_dir),
+        &[wide_cargo_home.clone(), ws_dir.clone()],
+    )
+    .is_some());
+    assert_eq!(
+        std::fs::metadata(wide_cargo_home.join(".cargo"))
             .unwrap()
             .permissions()
-            .mode();
-        assert_eq!(mode & 0o7777, 0o700, "{mode:o}");
-    }
+            .mode()
+            & 0o7777,
+        0o700
+    );
 
-    // Dedicated-user / tamper hardening: a home that is not an owner-only directory of the
-    // office's own account (here: widened to 0755), or a home path that is itself a symlink,
-    // is refused before anything is created or linked inside it.
+    // Widened or symlinked agent home itself is refused before anything is created inside it.
     for (label, refused_home) in [
         ("widened-mode", root.join("wide-home")),
         ("symlinked-home", root.join("link-home")),
     ] {
         if label == "widened-mode" {
             std::fs::create_dir_all(&refused_home).unwrap();
-            use std::os::unix::fs::PermissionsExt as _;
             std::fs::set_permissions(&refused_home, std::fs::Permissions::from_mode(0o755))
                 .unwrap();
         } else {
@@ -417,12 +500,15 @@ fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials(
         let mut refused_env = Vec::new();
         append_rust_toolchain_env(
             &mut refused_env,
-            Some(&refused_home),
-            None,
-            Some(cargo_dir.as_os_str().to_os_string()),
-            None,
-            &[refused_home.clone(), ws_dir.clone()],
-            true,
+            RustToolchainEnvInput {
+                agent_home: Some(&refused_home),
+                agent_base: None,
+                rustup_explicit: None,
+                cargo_explicit: Some(cargo_dir.as_os_str().to_os_string()),
+                host_home: None,
+                forbidden: &[refused_home.clone(), ws_dir.clone()],
+                sandbox_enabled: true,
+            },
         );
         assert!(
             !refused_env.iter().any(|(k, _)| k == "CARGO_HOME"),
@@ -430,18 +516,6 @@ fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials(
         );
     }
     assert!(!root.join("wide-home").join(".cargo").exists());
-
-    let mut unsandboxed = Vec::new();
-    append_rust_toolchain_env(
-        &mut unsandboxed,
-        None,
-        None,
-        Some(cargo_dir.as_os_str().to_os_string()),
-        None,
-        &[home_dir, ws_dir],
-        false,
-    );
-    assert!(!unsandboxed.iter().any(|(k, _)| k == "CARGO_NET_OFFLINE"));
 }
 
 #[test]
@@ -455,13 +529,24 @@ fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_
     let mut agy_denies = Vec::new();
     append_runtime_credential_denies(
         &crate::runtime_registry::RuntimeRegistry::production(),
+        None,
         &mut agy_denies,
     );
     if std::env::var_os("HOME").is_some() {
-        for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
+        for rel in org_agent_runtime_acp::AGY_CONFIG_CREDENTIAL_FILES {
             assert!(
                 agy_denies.iter().any(|p| p.as_str().ends_with(rel)),
                 "missing agy credential deny for `{rel}`: {agy_denies:?}"
+            );
+        }
+        for rel in org_agent_runtime_acp::GEMINI_HOST_CREDENTIAL_FILES
+            .iter()
+            .chain(org_agent_runtime_acp::KIMI_HOST_CREDENTIAL_FILES)
+            .chain(org_agent_runtime_acp::PI_HOST_CREDENTIAL_FILES)
+        {
+            assert!(
+                agy_denies.iter().any(|p| p.as_str().ends_with(rel)),
+                "missing ACP runtime credential deny for `{rel}`: {agy_denies:?}"
             );
         }
     }
@@ -582,7 +667,7 @@ fn agy_read_only_dirs_mounts_release_store_and_toolchain_subdirs_never_cargo_roo
         resume: None,
         config_dir: None,
     };
-    let (plan, _) = org_agent_runtime_agy::AgyRuntime::new()
+    let (plan, _) = org_agent_runtime_acp::AgyRuntime::new()
         .plan_session(&spec, &ctx)
         .unwrap();
     for expected in [
@@ -925,6 +1010,7 @@ fn an_operator_session_starts_with_no_rust_toolchain() {
     let binding = tmp.path().join("binding");
     let captured = mgr.captured_env(&super::environment::SessionEnvInput {
         home: home.path(),
+        agent_base: None,
         workspace: home.path(),
         tmpdir: tmp.path(),
         employee_id: "tess",
@@ -991,7 +1077,7 @@ impl CredentialDenyFixture {
             .collect();
         let runtimes = crate::runtime_registry::RuntimeRegistry::production();
         let mut cred_denies = Vec::new();
-        append_runtime_credential_denies_for_home(&runtimes, &fake_home, &mut cred_denies);
+        append_runtime_credential_denies_for_home(&runtimes, &fake_home, None, &mut cred_denies);
         for expected in &expected_strs {
             assert!(
                 cred_denies.iter().any(|p| p.as_str() == expected),
@@ -1185,7 +1271,7 @@ fn agy_sandbox_and_policy_block_cross_runtime_host_credentials() {
         Some(CredentialDenyFixture::sp(&fx.fake_home.join(".gemini"))),
     ] {
         let agy_ctx = fx.launch_ctx("/usr/local/bin/agy", None, agy_cfg);
-        assert!(org_agent_runtime_agy::AgyRuntime::new()
+        assert!(org_agent_runtime_acp::AgyRuntime::new()
             .plan_session(&agy_spec, &agy_ctx)
             .is_ok());
     }
@@ -1223,6 +1309,15 @@ fn session_manager_build_employee_preset_propagates_host_credential_denies() {
         ".gemini/antigravity-cli/antigravity-oauth-token",
         ".gemini/oauth_creds.json",
         ".gemini/google_accounts.json",
+        ".gemini/mcp-oauth-tokens.json",
+        ".gemini/settings.json",
+        ".gemini/.env",
+        ".gemini/**",
+        ".config/gemini/**",
+        ".kimi/**",
+        ".config/kimi/**",
+        ".pi/**",
+        ".config/pi/**",
     ] {
         let expected = real_home.join(rel).display().to_string();
         assert!(
@@ -1234,6 +1329,137 @@ fn session_manager_build_employee_preset_propagates_host_credential_denies() {
             "SessionManager sandbox deny_read missing `{expected}`"
         );
     }
+}
+
+#[test]
+fn host_credential_directory_denies_cover_gemini_kimi_pi_and_gate_dot_gemini_on_agy_host_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake_home = dir.path().canonicalize().unwrap().join("host-home");
+    std::fs::create_dir_all(fake_home.join(".kimi")).unwrap();
+    std::fs::create_dir_all(fake_home.join(".gemini")).unwrap();
+    let runtimes = crate::runtime_registry::RuntimeRegistry::production();
+
+    // 1. When host Agy auth is NOT active (`active_host_config_subdir = None`):
+    //    `~/.gemini/**` AND all other vendor config dirs + specific secret files are denied.
+    let mut denies_no_host_auth = Vec::new();
+    append_runtime_credential_denies_for_home(
+        &runtimes,
+        &fake_home,
+        None,
+        &mut denies_no_host_auth,
+    );
+    fn as_strs(v: &[PathPattern]) -> Vec<&str> {
+        v.iter().map(PathPattern::as_str).collect()
+    }
+    let strs_none = as_strs(&denies_no_host_auth);
+    for rel in [
+        ".gemini/**",
+        ".gemini/antigravity-cli/antigravity-oauth-token",
+        ".gemini/oauth_creds.json",
+        ".gemini/google_accounts.json",
+        ".gemini/mcp-oauth-tokens.json",
+        ".gemini/settings.json",
+        ".gemini/.env",
+        ".config/gemini/**",
+        ".kimi/**",
+        ".config/kimi/**",
+        ".pi/**",
+        ".config/pi/**",
+        ".codex/**",
+        ".codex/auth.json",
+        ".claude/.credentials.json",
+    ] {
+        let expected = fake_home.join(rel).display().to_string();
+        assert!(
+            strs_none.contains(&expected.as_str()),
+            "missing deny `{expected}` when host auth inactive: {strs_none:?}"
+        );
+    }
+
+    // 2. When host Agy auth IS active (`active_host_config_subdir = Some(".gemini")`):
+    //    broad `~/.gemini/**` is omitted so Agy reads its own runtime config, while every secret
+    //    file inside `~/.gemini` AND every other vendor directory remain denied.
+    let mut denies_agy_host_auth = Vec::new();
+    append_runtime_credential_denies_for_home(
+        &runtimes,
+        &fake_home,
+        Some(".gemini"),
+        &mut denies_agy_host_auth,
+    );
+    let strs_agy = as_strs(&denies_agy_host_auth);
+    let dot_gemini_glob = fake_home.join(".gemini/**").display().to_string();
+    assert!(
+        !strs_agy.contains(&dot_gemini_glob.as_str()),
+        "host Agy auth must not blanket-deny `{dot_gemini_glob}`: {strs_agy:?}"
+    );
+    for rel in [
+        ".gemini/antigravity-cli/antigravity-oauth-token",
+        ".gemini/oauth_creds.json",
+        ".gemini/google_accounts.json",
+        ".gemini/mcp-oauth-tokens.json",
+        ".gemini/settings.json",
+        ".gemini/.env",
+        ".config/gemini/**",
+        ".kimi/**",
+        ".config/kimi/**",
+        ".pi/**",
+        ".config/pi/**",
+        ".codex/**",
+        ".codex/auth.json",
+    ] {
+        let expected = fake_home.join(rel).display().to_string();
+        assert!(
+            strs_agy.contains(&expected.as_str()),
+            "missing deny `{expected}` when host Agy auth active: {strs_agy:?}"
+        );
+    }
+
+    // 3. Linux bwrap pruning cleanly normalizes existing dirs (`.kimi/**` -> `.kimi`, `.gemini/**`
+    //    -> `.gemini`) and prunes absent dirs (`.pi/**`, `.config/gemini/**`) without stubs.
+    let ws = dir.path().canonicalize().unwrap().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let ws_spec = CredentialDenyFixture::sp(&ws);
+    let preset_cfg = build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &denies_no_host_auth,
+        1,
+    )
+    .unwrap();
+    let mut spec = SessionSpec {
+        runtime: RuntimeId::try_from("claude").unwrap(),
+        kind: SessionKind::Home {},
+        agent: AgentIdentity {
+            name: AgentName::try_from("eng").unwrap(),
+            description: "Engineer".to_owned(),
+            prompt: "Engineer".to_owned(),
+        },
+        model: None,
+        effort: None,
+        workspace: ws_spec,
+        read_only_dirs: Vec::new(),
+        instructions: String::new(),
+        repository_instructions: String::new(),
+        permission_mode: preset_cfg.permission_mode,
+        policy: preset_cfg.policy,
+        sandbox: preset_cfg.sandbox,
+        mcp_servers: Default::default(),
+        tools: preset_cfg.allowed_tools,
+        operator_shell_prefixes: Vec::new(),
+    };
+    apply_linux_claude_bwrap_pruning(&mut spec);
+    let bwrap_read: Vec<&str> = spec
+        .sandbox
+        .deny_read
+        .iter()
+        .map(PathPattern::as_str)
+        .collect();
+    assert!(bwrap_read.contains(&fake_home.join(".kimi").to_str().unwrap()));
+    assert!(bwrap_read.contains(&fake_home.join(".gemini").to_str().unwrap()));
+    assert!(!bwrap_read.iter().any(|p| p.contains(".pi")));
+    assert!(!bwrap_read.iter().any(|p| p.contains(".config/gemini")));
 }
 
 #[test]
@@ -1267,6 +1493,7 @@ fn managed_session_environment_exports_agent_os_format_json() {
     let env = mgr
         .build_environment(super::environment::SessionEnvInput {
             home: &home_dir,
+            agent_base: None,
             workspace: &ws_dir,
             tmpdir: &tmp_dir,
             employee_id: "0193a5c0-0000-7000-8000-000000000010",
@@ -1284,5 +1511,41 @@ fn managed_session_environment_exports_agent_os_format_json() {
     assert!(
         debug_names.contains("AGENT_OS_FORMAT"),
         "managed runtime env must export AGENT_OS_FORMAT: {debug_names}"
+    );
+}
+
+#[test]
+fn task135_split_cargo_registry_never_symlinks_host_src_even_if_cache_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let host_cargo = root.join("host-cargo");
+    let agent_home = root.join("agent-home");
+    std::fs::create_dir_all(host_cargo.join("registry/index")).unwrap();
+    std::fs::create_dir_all(host_cargo.join("registry/src")).unwrap();
+    org_platform::fs::create_owner_only_dir_all(&agent_home).unwrap();
+
+    // Case 1: host `registry/cache` is absent while host `registry/src` exists.
+    let cargo_home =
+        super::rust_toolchain::link_host_rust_caches(&agent_home, None, Some(&host_cargo), &[])
+            .expect("split cargo home");
+    let src_path = cargo_home.join("registry/src");
+    let meta = std::fs::symlink_metadata(&src_path).expect("registry/src exists");
+    assert!(
+        meta.file_type().is_dir() && !meta.file_type().is_symlink(),
+        "agent registry/src must be a real writable directory, never a symlink to host src"
+    );
+
+    // Case 2: host `registry/cache` exists, but agent plants a regular file at
+    // `<agent_home>/.cargo/registry/cache` to make cache linking return false.
+    std::fs::create_dir_all(host_cargo.join("registry/cache")).unwrap();
+    let planted = cargo_home.join("registry/cache");
+    let _ = std::fs::remove_file(&planted);
+    std::fs::write(&planted, b"planted-by-agent").unwrap();
+    let _ = super::rust_toolchain::link_host_rust_caches(&agent_home, None, Some(&host_cargo), &[])
+        .expect("re-prepare split cargo home");
+    let meta2 = std::fs::symlink_metadata(&src_path).expect("registry/src still exists");
+    assert!(
+        meta2.file_type().is_dir() && !meta2.file_type().is_symlink(),
+        "planted registry/cache file must never trigger fallback symlinking of host registry/src"
     );
 }

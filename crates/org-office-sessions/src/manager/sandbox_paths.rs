@@ -13,7 +13,9 @@ use crate::runtime_registry::RuntimeRegistry;
 
 use super::environment::ensure_owner_only_dir;
 use super::office_masks::OfficeMasks;
-use super::rust_toolchain::canonicalize_with_tail;
+use super::rust_toolchain::{
+    canonicalize_with_tail, prepare_agent_cargo_target, prepare_isolated_cargo_home,
+};
 use super::sandbox_rules::{
     append_bare_cache_sandbox_rules, append_cargo_credential_denies,
     append_privileged_socket_patterns, append_runtime_credential_denies,
@@ -103,9 +105,18 @@ impl SessionManager {
         self.denied_office_globs_for(None)
     }
 
+    #[cfg(test)]
     pub(crate) fn denied_office_globs_for(
         &self,
         self_employee_id: Option<&str>,
+    ) -> Vec<PathPattern> {
+        self.denied_office_globs_for_runtime(self_employee_id, None)
+    }
+
+    pub(crate) fn denied_office_globs_for_runtime(
+        &self,
+        self_employee_id: Option<&str>,
+        active_host_config_subdir: Option<&str>,
     ) -> Vec<PathPattern> {
         let mut out = Vec::new();
         push_glob_pattern(&mut out, self.office.folder());
@@ -124,7 +135,11 @@ impl SessionManager {
         );
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         append_cargo_credential_denies(&mut out);
-        append_runtime_credential_denies(&self.config.runtimes, &mut out);
+        append_runtime_credential_denies(
+            &self.config.runtimes,
+            active_host_config_subdir,
+            &mut out,
+        );
         // Other agents' external (BYOA) keys and fast tokens (`TASK-137`).
         for root in &self.config.agent_os_state_roots {
             push_glob_pattern(&mut out, root);
@@ -511,7 +526,48 @@ pub(super) fn collect_sibling_agent_ids_in_office(
 }
 
 impl SessionManager {
-    pub(super) fn build_employee_preset_cfg(
+    /// Returns the agent's own writable Cargo directories (`home/.cargo` and `cache/cargo-target`)
+    /// so task-worktree sessions (where `workspace != home`) can write Cargo locks, unpacked crate
+    /// sources, and build artifacts without touching host `~/.cargo` or any sibling agent (`TASK-135`).
+    pub(crate) fn agent_cargo_sandbox_roots(
+        &self,
+        employee_id: &str,
+        create_dirs: bool,
+    ) -> Vec<SpecPath> {
+        let base = self.agent_base_dir(employee_id);
+        let home = base.join("home");
+        let dirs = if create_dirs {
+            let mut out = Vec::new();
+            if let Some(cargo_home) = prepare_isolated_cargo_home(&home) {
+                out.push(cargo_home);
+            }
+            if let Some(target_dir) = prepare_agent_cargo_target(&base) {
+                out.push(target_dir);
+            }
+            out
+        } else {
+            let mut out = Vec::new();
+            let cache_dir = base.join("cache");
+            for (parent, candidate) in [
+                (&home, home.join(".cargo")),
+                (&cache_dir, cache_dir.join("cargo-target")),
+            ] {
+                let parent_symlink =
+                    std::fs::symlink_metadata(parent).is_ok_and(|m| m.file_type().is_symlink());
+                let leaf_symlink =
+                    std::fs::symlink_metadata(&candidate).is_ok_and(|m| m.file_type().is_symlink());
+                if !parent_symlink && !leaf_symlink {
+                    out.push(canonicalize_with_tail(&candidate));
+                }
+            }
+            out
+        };
+        dirs.into_iter()
+            .filter_map(|p| SpecPath::try_from(p.to_string_lossy().as_ref()).ok())
+            .collect()
+    }
+
+    pub(crate) fn build_employee_preset_cfg(
         &self,
         employee_id: &str,
         preset: PermissionPreset,
@@ -519,9 +575,29 @@ impl SessionManager {
         workspace: &SpecPath,
         create_root: bool,
     ) -> Result<PresetConfig, ApiError> {
+        self.build_employee_preset_cfg_for_runtime(
+            employee_id,
+            preset,
+            sandbox_enabled,
+            workspace,
+            create_root,
+            None,
+        )
+    }
+
+    pub(super) fn build_employee_preset_cfg_for_runtime(
+        &self,
+        employee_id: &str,
+        preset: PermissionPreset,
+        sandbox_enabled: bool,
+        workspace: &SpecPath,
+        create_root: bool,
+        active_host_config_subdir: Option<&str>,
+    ) -> Result<PresetConfig, ApiError> {
         let socket_str = self.config.office_socket.display().to_string();
         let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs_for(Some(employee_id));
+        let denied_globs =
+            self.denied_office_globs_for_runtime(Some(employee_id), active_host_config_subdir);
         let mut cfg = build_session_policy(
             preset,
             sandbox_enabled,
@@ -533,6 +609,10 @@ impl SessionManager {
         .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid permission preset"))?;
         let (wt_writable, wt_write_denies) = self.worktree_sandbox_grants(employee_id, create_root);
         apply_worktree_sandbox_rules(&mut cfg, &wt_writable, &wt_write_denies);
+        if !preset.is_read_only_fs() {
+            let cargo_writable = self.agent_cargo_sandbox_roots(employee_id, create_root);
+            apply_worktree_sandbox_rules(&mut cfg, &cargo_writable, &[]);
+        }
         Ok(cfg)
     }
 }

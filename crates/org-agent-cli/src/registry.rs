@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::features::{
     auth, budget, files, git, hiring, messaging, office, organization, processes, projects,
-    providers, session, tess, work,
+    providers, reviews, search, session, tess, work,
 };
 use crate::runtime::domain::Domain;
 use crate::runtime::help::{self, Guidance};
@@ -28,7 +28,9 @@ const DOMAINS: &[Domain] = &[
     session::DOMAIN,
     messaging::DOMAIN,
     work::DOMAIN,
+    reviews::DOMAIN,
     files::DOMAIN,
+    search::DOMAIN,
     git::DOMAIN,
     processes::DOMAIN,
     budget::DOMAIN,
@@ -64,7 +66,9 @@ pub(crate) fn normalize_args(args: &[String]) -> Cow<'_, [String]> {
 /// plus `file render --format pdf` mapped onto `--to pdf` without colliding with `--format json|yaml|compact`.
 pub(crate) fn rewrite_positional(args: &[String]) -> Option<Vec<String>> {
     let table = runtime_table();
-    hiring::rewrite_positional(table, args).or_else(|| files::rewrite_render_args(table, args))
+    hiring::rewrite_positional(table, args)
+        .or_else(|| files::rewrite_render_args(table, args))
+        .or_else(|| work::rewrite_note_args(table, args))
 }
 
 /// `org-command`'s plain-text help of `args`, enriched with every slice's `Use when:` guidance.

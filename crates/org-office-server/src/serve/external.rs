@@ -111,6 +111,7 @@ const EXTERNAL_CALLS: &[&str] = &[
     "org.snapshot",
     "project.list",
     "project.inspect",
+    "search.query",
     "skill.list",
     "skill.read",
     "process.show",
@@ -121,6 +122,8 @@ const EXTERNAL_CALLS: &[&str] = &[
 
 /// Call families an externally bound connection may make: messages, chat, tasks and their
 /// files (`attachment.*`, each file decided by the office's policy; never a private one).
+/// External connections are never grant-backed (`via_grant == false`), so task routing label
+/// mutations (`model:*` / `effort:*`) remain refused inside `task_calls` (`TASK-136`).
 const EXTERNAL_FAMILIES: &[&str] = &["msg.", "chat.", "dm.", "tasks.", "attachment."];
 
 /// Whether an externally bound connection may call `method`: the organization's collaboration

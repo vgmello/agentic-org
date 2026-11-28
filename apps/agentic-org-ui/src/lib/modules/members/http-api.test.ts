@@ -267,4 +267,75 @@ describe('createHttpMembersApi', () => {
 			code: 'unavailable'
 		});
 	});
+
+	it('forwards AbortSignal through profile reads, returns openWork from single queue call, and rethrows on abort', async () => {
+		const controller = new AbortController();
+		const view = vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false });
+		const read = vi.fn(async (_path: string, signal?: AbortSignal) => {
+			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			return { status: 200, body: { result: { entries: [], organizations: [], offices: [] } } };
+		});
+		const queue = vi.fn(async (_orgId: string, _scope: unknown, signal?: AbortSignal) => {
+			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			return {
+				rows: [
+					{
+						id: 't1',
+						ref: 'ORG-1',
+						revision: 1,
+						type: 'task' as const,
+						title: 'Ship profile abort wiring',
+						status: 'in_progress' as const,
+						priority: 'normal' as const,
+						severity: null,
+						effort: null,
+						project: null,
+						team: { id: TEAM_A, name: 'Engineering' },
+						assignedTeam: null,
+						assignee: { id: SAM, name: 'Sam Ortiz', kind: 'person' as const },
+						reporter: { id: OWNER, name: 'Alex Owner', kind: 'person' as const },
+						createdAt: '2026-11-27T09:00:00Z',
+						updatedAt: '2026-11-27T10:00:00Z',
+						statusAt: '2026-11-27T10:00:00Z',
+						checklist: { done: 0, total: 0, requiredLeft: 0 },
+						blockedReason: null,
+						reopenCount: 0,
+						needsMe: null,
+						budget: null
+					}
+				],
+				viewer: { employee: null, teamIds: [], owner: true },
+				needsMeSources: []
+			};
+		});
+
+		const api = createHttpMembersApi({
+			http: { read, submit: vi.fn() },
+			orgApi: { view, command: vi.fn() },
+			workItemsApi: { queue },
+			session: () => ({ accountAdmin: true })
+		});
+
+		const profile = await api.profile(ORG, SAM, controller.signal);
+		expect(view).toHaveBeenCalledWith(ORG, controller.signal);
+		expect(queue).toHaveBeenCalledTimes(1);
+		expect(queue).toHaveBeenCalledWith(ORG, { kind: 'organization' }, controller.signal);
+		expect(read).toHaveBeenCalledWith(
+			`/api/v1/organizations/${encodeURIComponent(ORG)}/access`,
+			controller.signal
+		);
+		expect(read).toHaveBeenCalledWith('/api/v1/organizations', controller.signal);
+		expect(read).toHaveBeenCalledWith(
+			`/api/v1/organizations/${encodeURIComponent(ORG)}/offices`,
+			controller.signal
+		);
+		expect(profile.openWork).toEqual({
+			total: 1,
+			items: [{ id: 't1', ref: 'ORG-1', title: 'Ship profile abort wiring', status: 'in_progress' }]
+		});
+
+		const aborted = new AbortController();
+		aborted.abort();
+		await expect(api.profile(ORG, SAM, aborted.signal)).rejects.toThrow();
+	});
 });

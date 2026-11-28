@@ -305,14 +305,29 @@ pub(super) fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
 fn is_plain_relative_path(rel: &str) -> bool {
     let path = Path::new(rel);
     !rel.is_empty()
+        && !rel.contains(['*', '?', '[', ']'])
         && path
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
-fn push_relative_credential_denies(base: &Path, rel_paths: &[&str], out: &mut Vec<PathPattern>) {
+fn push_dir_glob_pattern(out: &mut Vec<PathPattern>, dir: &Path) {
+    push_raw_pattern(out, &format!("{}/**", dir.display()));
+    push_glob_pattern(out, dir);
+}
+
+fn push_relative_credential_denies(
+    base: &Path,
+    rel_paths: &[&str],
+    skip_dir_glob: Option<&str>,
+    out: &mut Vec<PathPattern>,
+) {
     for &rel in rel_paths {
-        if is_plain_relative_path(rel) {
+        if let Some(dir_rel) = rel.strip_suffix("/**") {
+            if is_plain_relative_path(dir_rel) && skip_dir_glob != Some(dir_rel) {
+                push_dir_glob_pattern(out, &base.join(dir_rel));
+            }
+        } else if is_plain_relative_path(rel) {
             push_exact_pattern(out, &base.join(rel));
         }
     }
@@ -320,18 +335,20 @@ fn push_relative_credential_denies(base: &Path, rel_paths: &[&str], out: &mut Ve
 
 pub(super) fn append_runtime_credential_denies(
     runtimes: &crate::runtime_registry::RuntimeRegistry,
+    active_host_config_subdir: Option<&str>,
     out: &mut Vec<PathPattern>,
 ) {
     let Some(home) = std::env::var_os("HOME") else {
         return;
     };
     let home = PathBuf::from(home);
-    append_runtime_credential_denies_for_home(runtimes, &home, out);
+    append_runtime_credential_denies_for_home(runtimes, &home, active_host_config_subdir, out);
 }
 
 pub(super) fn append_runtime_credential_denies_for_home(
     runtimes: &crate::runtime_registry::RuntimeRegistry,
     home: &Path,
+    active_host_config_subdir: Option<&str>,
     out: &mut Vec<PathPattern>,
 ) {
     if !home.is_absolute() {
@@ -346,10 +363,19 @@ pub(super) fn append_runtime_credential_denies_for_home(
             push_relative_credential_denies(
                 &home.join(subdir),
                 profile.config_credential_files,
+                None,
                 out,
             );
+            if active_host_config_subdir != Some(subdir) {
+                push_dir_glob_pattern(out, &home.join(subdir));
+            }
         }
-        push_relative_credential_denies(home, profile.host_credential_files, out);
+        push_relative_credential_denies(
+            home,
+            profile.host_credential_files,
+            active_host_config_subdir,
+            out,
+        );
     }
 }
 

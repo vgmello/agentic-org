@@ -7,13 +7,12 @@ use org_proto::{ApiError, ErrorCode};
 use super::super::Office;
 use super::access::require_owner_for;
 use crate::accounting::{
-    aggregate_totals_by_model, build_snapshot_view, validate_stored_snapshot,
-    StoredSubscriptionUsageSnapshot, SubscriptionCredentialPresence,
+    aggregate_totals_by_model, build_snapshot_view, paginate_snapshots, paginate_totals,
+    validate_stored_snapshot, StoredSubscriptionUsageSnapshot, SubscriptionConnectionMeta,
+    SubscriptionCredentialPresence,
 };
 use crate::error::OfficeError;
 use crate::organization::records::ProviderAuthMode;
-
-const MAX_LIST_RESPONSE_BYTES: usize = 512 * 1024;
 
 pub(super) fn op_save_subscription_usage(
     office: &Office,
@@ -84,7 +83,19 @@ pub(super) fn op_subscription_usage_list(
         }
         let stored = stored_map.get(conn.id.as_str());
         let cred = cred_lookup(conn.id.as_str());
-        let view = build_snapshot_view(conn, &office.info.office_id, stored, &cred, now_ms);
+        let view = build_snapshot_view(
+            SubscriptionConnectionMeta {
+                id: conn.id.as_str(),
+                key: &conn.key,
+                name: &conn.name,
+                provider_type: &conn.provider_type,
+                subscription_identity: conn.subscription_identity.as_deref(),
+            },
+            &office.info.office_id,
+            stored,
+            &cred,
+            now_ms,
+        );
         if let Some(ref at) = view.collected_at {
             if collected_as_of
                 .as_deref()
@@ -115,72 +126,4 @@ pub(super) fn op_subscription_usage_list(
         excluded_snapshot_count: rollup.excluded_snapshot_count,
         is_api_equivalent_estimate: false,
     }))
-}
-
-const MAX_TOTALS_RESPONSE_BYTES: usize = 256 * 1024;
-
-fn paginate_totals(
-    all: Vec<org_proto::costs::SubscriptionModelUsageView>,
-    cursor: Option<&str>,
-) -> (
-    Vec<org_proto::costs::SubscriptionModelUsageView>,
-    Option<String>,
-    usize,
-) {
-    let mut used = 0usize;
-    let mut page = Vec::new();
-    let mut has_more = false;
-    for row in all {
-        if let Some(cur) = cursor {
-            if row.model.as_str() <= cur {
-                continue;
-            }
-        }
-        let item_bytes = serde_json::to_vec(&row).map_or(0, |v| v.len()) + 16;
-        if !page.is_empty() && used.saturating_add(item_bytes) > MAX_TOTALS_RESPONSE_BYTES {
-            has_more = true;
-            break;
-        }
-        used = used.saturating_add(item_bytes);
-        page.push(row);
-    }
-    let next = has_more
-        .then(|| page.last().map(|r| r.model.clone()))
-        .flatten();
-    (page, next, used)
-}
-
-fn paginate_snapshots(
-    all: Vec<org_proto::costs::SubscriptionUsageSnapshotView>,
-    cursor: Option<&str>,
-    limit: Option<u32>,
-    totals_bytes: usize,
-) -> (
-    Vec<org_proto::costs::SubscriptionUsageSnapshotView>,
-    Option<String>,
-) {
-    let cap = limit.map_or(100, |n| (n as usize).clamp(1, 100));
-    let mut used_bytes = totals_bytes.saturating_add(4096);
-    let mut page = Vec::new();
-    let mut has_more = false;
-    for snap in all {
-        if let Some(cur) = cursor {
-            if snap.connection_id.as_str() <= cur {
-                continue;
-            }
-        }
-        let item_bytes = serde_json::to_vec(&snap).map_or(0, |v| v.len()) + 16;
-        if page.len() >= cap
-            || (!page.is_empty() && used_bytes.saturating_add(item_bytes) > MAX_LIST_RESPONSE_BYTES)
-        {
-            has_more = true;
-            break;
-        }
-        used_bytes = used_bytes.saturating_add(item_bytes);
-        page.push(snap);
-    }
-    let next_cursor = has_more
-        .then(|| page.last().map(|s| s.connection_id.clone()))
-        .flatten();
-    (page, next_cursor)
 }

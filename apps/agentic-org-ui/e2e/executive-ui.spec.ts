@@ -1,8 +1,24 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { enterMockedOrganization } from './mock-organization';
 import { visit } from './ready';
 
 const captureDir = process.env.CAPTURE_EXEC_SHOTS_DIR;
+
+async function switchThemeViaPalette(page: Page, label: string, themeId: string) {
+	await page.keyboard.press('ControlOrMeta+k');
+	const dialog = page.locator('.exec-cmdk-dialog');
+	await expect(dialog).toBeVisible();
+	const input = dialog.getByRole('combobox');
+	await input.fill(`Theme: ${label}`);
+	const option = dialog
+		.getByRole('option')
+		.filter({ has: page.locator('span', { hasText: new RegExp(`^Theme: ${label}$`) }) })
+		.first();
+	await expect(option).toBeVisible();
+	await option.click();
+	await expect(dialog).toBeHidden();
+	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', themeId);
+}
 
 test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, Inbox, Activity, and Ask', async ({
 	page
@@ -53,63 +69,43 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	);
 	await page.setViewportSize({ width: 1440, height: 900 });
 
-	// Inline Home search combobox: Cmd/Ctrl+K focuses input, live filters, Escape preserves query & blocks hidden Enter, Tab closes
-	const homeCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Tess' });
-	await expect(homeCombo).toBeVisible();
+	// Desktop Home no longer renders an inline search topbar; Search lives in the sidebar & ⌘K palette
+	await expect(page.locator('header.exec-home-topbar')).toHaveCount(0);
+	await expect(page.locator('#exec-cmdk-home-listbox')).toHaveCount(0);
+	await expect(page.getByRole('group', { name: 'Theme' })).toHaveCount(0);
+	await expect(page.getByTestId('sidebar-search-trigger')).toBeVisible();
+
+	// Tess contact sits above the footer top divider (Prototype Release c773480f1)
+	const tessAboveFooter = await page.evaluate(() => {
+		const tess = document.querySelector('[aria-label^="Tess — Chief of staff"]');
+		const foot = document.querySelector('.exec-sidebar-foot');
+		if (!tess || !foot) return false;
+		return Boolean(tess.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING);
+	});
+	expect(tessAboveFooter).toBe(true);
+
+	// Cmd/Ctrl+K opens the Command Palette modal, live filters, and switches themes cleanly
 	await page.keyboard.press('ControlOrMeta+k');
-	await expect(homeCombo).toBeFocused();
-	await homeCombo.fill('Theme: Classic');
-	const inlineListbox = page.locator('#exec-cmdk-home-listbox');
-	await expect(inlineListbox).toBeVisible();
-	await expect(homeCombo).toHaveAttribute('aria-controls', 'exec-cmdk-home-listbox');
-	await expect(inlineListbox.getByRole('option', { name: /^Theme: Classic/ })).toBeVisible();
+	const cmdkDialog = page.locator('.exec-cmdk-dialog');
+	await expect(cmdkDialog).toBeVisible();
+	const cmdkInput = cmdkDialog.getByRole('combobox');
+	await expect(cmdkInput).toBeFocused();
+	await cmdkInput.fill('Theme: Classic');
+	await expect(cmdkDialog.getByRole('option', { name: /^Theme: Classic/ })).toBeVisible();
 	await expect(
-		inlineListbox.getByRole('option', { name: /Ask Tess about 'Theme: Classic'/ })
+		cmdkDialog.getByRole('option', { name: /Ask Tess about 'Theme: Classic'/ })
 	).toBeVisible();
-
-	// First Escape closes popup without clearing query; pressing Enter while closed does NOT execute hidden option
-	await homeCombo.press('Escape');
-	await expect(inlineListbox).toBeHidden();
-	await expect(homeCombo).not.toHaveAttribute('aria-controls');
-	await expect(homeCombo).toHaveValue('Theme: Classic');
-	await homeCombo.press('Enter');
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
-
-	// Re-open with ArrowDown selects index 0 (not index 1), and Tab closes cleanly
-	await homeCombo.press('ArrowDown');
-	await expect(inlineListbox).toBeVisible();
-	await expect(homeCombo).toHaveAttribute('aria-activedescendant', 'exec-cmdk-home-opt-0');
-	await homeCombo.press('Tab');
-	await expect(inlineListbox).toBeHidden();
-
-	// Escape -> ArrowDown -> Enter selects index 0 (Theme: Classic), not index 1
-	await homeCombo.focus();
-	await expect(inlineListbox).toBeVisible();
-	await homeCombo.press('Escape');
-	await expect(inlineListbox).toBeHidden();
-	await homeCombo.press('ArrowDown');
-	await expect(inlineListbox).toBeVisible();
-	await expect(homeCombo).toHaveAttribute('aria-activedescendant', 'exec-cmdk-home-opt-0');
-	await homeCombo.press('Enter');
+	await cmdkInput.press('Enter');
+	await expect(cmdkDialog).toBeHidden();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
 	await expect(page).toHaveURL(/\/home$/);
-	await expect(inlineListbox).toBeHidden();
 
-	// Escape from empty Home search exits focus so single-key `S` sidebar shortcut works immediately
-	await homeCombo.focus();
-	await expect(homeCombo).toBeFocused();
-	await homeCombo.press('Escape');
-	await expect(inlineListbox).toBeHidden();
-	await expect(homeCombo).not.toBeFocused();
+	// Single-key `S` sidebar shortcut works immediately after palette closes
 	await page.keyboard.press('s');
 	await expect(page.getByTestId('nav-key-hint')).toContainText('Sidebar');
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('nav-key-hint')).toBeHidden();
-	await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Ocean', exact: true })
-		.click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
+	await switchThemeViaPalette(page, 'Ocean', 'ocean');
 
 	// Capture Ocean Home canvas backgroundImage (3-orb radial gradients) before visiting interior pages
 	const oceanHomeCanvasBg = await page.locator('.exec-canvas').evaluate((el) => {
@@ -117,7 +113,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	});
 	expect(oceanHomeCanvasBg).toContain('radial-gradient');
 
-	// Verify Projects is last under Workspace and Teams is reachable in Organization
+	// Verify Workspace defaults include Insights (5 pinned) & Organization pins Teams + Settings with Processes under More
 	const navLinks = await page
 		.getByRole('navigation', { name: 'Main' })
 		.getByRole('link')
@@ -127,22 +123,43 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	const chatIdx = cleanLinks.indexOf('Chat');
 	const actIdx = cleanLinks.indexOf('Activity');
 	const projIdx = cleanLinks.indexOf('Projects');
+	const insIdx = cleanLinks.indexOf('Insights');
 	expect(workIdx).toBeGreaterThan(-1);
 	expect(chatIdx).toBeGreaterThan(workIdx);
 	expect(actIdx).toBeGreaterThan(chatIdx);
 	expect(projIdx).toBeGreaterThan(actIdx);
+	expect(insIdx).toBeGreaterThan(projIdx);
 	expect(cleanLinks).toContain('Teams');
+	expect(cleanLinks).toContain('Settings');
+	expect(cleanLinks).not.toContain('Processes');
+
+	// Honest Favorite projects empty state when nothing is starred
+	await expect(page.getByTestId('favorite-projects-section')).toContainText(
+		'No favorite projects yet.'
+	);
+
+	// Organization "More" reveals Processes and lets the user pin/unpin it across reloads with focus preservation
+	await page.getByTestId('organization-more-toggle').click();
+	const orgMoreList = page.getByTestId('organization-more-list');
+	const pinnedOrgItems = page.locator('ul[data-org-zone="pinned"] > li[data-org-zone="pinned"]');
+	await expect(orgMoreList.getByRole('link', { name: 'Processes' })).toBeVisible();
+	await page.getByRole('button', { name: 'Pin Processes to Organization' }).click({ force: true });
+	const pinnedProcesses = pinnedOrgItems.getByRole('link', { name: 'Processes' });
+	await expect(pinnedProcesses).toBeVisible();
+	await expect(pinnedProcesses).toBeFocused();
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(pinnedProcesses).toBeVisible();
+	await page.getByRole('button', { name: 'Move Processes to More' }).click({ force: true });
+	await expect(pinnedProcesses).toHaveCount(0);
+	await expect(page.getByTestId('organization-more-toggle')).toBeFocused();
 
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-ocean.png` });
 	}
 
-	// Switch across all 6 themes via sidebar theme switcher
-	await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Graphite', exact: true })
-		.click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
+	// Switch across themes via Command Palette (Settings > Appearance covers all 7 themes below)
+	await switchThemeViaPalette(page, 'Graphite', 'graphite');
 	await expect(page.locator('.cozy-room')).toBeHidden();
 	await expect(page.locator('.exec-cta').first()).toHaveCSS(
 		'background-color',
@@ -153,49 +170,29 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		await page.screenshot({ path: `${captureDir}/prod-home-graphite.png` });
 	}
 
-	await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Cozy', exact: true })
-		.click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'cozy');
+	await switchThemeViaPalette(page, 'Cozy Glass', 'cozy');
 	await expect(page.locator('.cozy-room')).toBeVisible();
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-cozy.png` });
 	}
 
-	await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Report', exact: true })
-		.click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'report');
+	await switchThemeViaPalette(page, 'Report', 'report');
 	await expect(page.locator('.cozy-room')).toBeHidden();
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-report.png` });
 	}
 
-	await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Night', exact: true })
-		.click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'report-dark');
+	await switchThemeViaPalette(page, 'Report Night', 'report-dark');
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-report-dark.png` });
 	}
 
-	await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Classic', exact: true })
-		.click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
+	await switchThemeViaPalette(page, 'Classic', 'classic');
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-classic.png` });
 	}
 
-	await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Ocean', exact: true })
-		.click();
-	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
+	await switchThemeViaPalette(page, 'Ocean', 'ocean');
 
 	// Sidebar Tess contact opens persistent right-hand Tess Chief of Staff Side Panel
 	await page.getByRole('button', { name: /Tess — Chief of staff/ }).click();
@@ -254,8 +251,10 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	const graphiteRadio = page.getByTestId('theme-option-graphite');
 	const cozyRadio = page.getByTestId('theme-option-cozy');
 	await expect(graphiteRadio).toBeVisible();
+	await expect(page.getByTestId('theme-option-graphite-light')).toBeVisible();
 	await expect(cozyRadio).toBeVisible();
 	await expect(page.getByTestId('theme-option-report')).toBeVisible();
+	await expect(page.getByTestId('theme-option-report-dark')).toBeVisible();
 
 	// WAI-ARIA radio group roving tabindex + ArrowRight / ArrowLeft keyboard switching
 	await expect(oceanRadio).toHaveAttribute('tabindex', '0');
@@ -383,13 +382,11 @@ test('Home natural stage sizing: no scroll hint bar, natural scrolling, and mobi
 	await expect(page.getByRole('heading', { name: 'Needs your attention' })).toBeVisible();
 	await expect(page.getByTestId('home-scroll-hint')).toHaveCount(0);
 
-	// Verify 640-720px fine-pointer targets meet 44px minimum (sidebar theme pill)
+	// Verify 640-720px fine-pointer targets meet 44px minimum (sidebar icon controls)
 	await page.setViewportSize({ width: 680, height: 700 });
-	const pillBox = await page
-		.getByRole('group', { name: 'Theme' })
-		.getByRole('button', { name: 'Graphite' })
-		.boundingBox();
-	expect(pillBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+	const pinBox = await page.getByRole('button', { name: 'Auto-hide sidebar' }).boundingBox();
+	expect(pinBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+	expect(pinBox?.width ?? 0).toBeGreaterThanOrEqual(44);
 	await page.setViewportSize({ width: 1440, height: 700 });
 
 	// Interactive queue dots: hover + keyboard Tab focus show tooltip, Escape dismisses, click steps directly
@@ -489,17 +486,38 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	).toBeVisible();
 	await expect(page.locator('.hor-item').first()).toBeVisible();
 
-	// Home inline search finds real POC work items and navigates to a real working project route (never NotBuilt)
-	const pocCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Tess' });
-	await pocCombo.click();
+	// Sidebar Favorite projects renders starred projects with semantic health icon linking to Overview
+	await page.evaluate(() => {
+		window.localStorage.setItem(
+			'agentic-org.ui.favoriteProjects',
+			JSON.stringify(['office-federation'])
+		);
+	});
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	const favSection = page.getByTestId('favorite-projects-section');
+	const favLink = favSection.getByRole('link', {
+		name: /^Office federation\s*,\s*(?:On track|At risk|Off track|Offline)$/
+	});
+	await expect(favLink).toBeVisible();
+	await expect(favLink).toHaveAttribute('href', /\/projects\/office-federation$/);
+	await expect(favLink.locator('[data-health-tone]')).toHaveAttribute(
+		'data-health-tone',
+		/ok|warn|bad/
+	);
+	await favSection
+		.getByRole('button', { name: 'Remove Office federation from favorites' })
+		.click({ force: true });
+	await expect(favSection).toContainText('No favorite projects yet.');
+
+	// Sidebar Search opens Command Palette, finds real POC work items, and navigates to a working project route
+	await page.getByTestId('sidebar-search-trigger').click();
+	const pocDialog = page.locator('.exec-cmdk-dialog');
+	await expect(pocDialog).toBeVisible();
+	const pocCombo = pocDialog.getByRole('combobox');
 	await pocCombo.fill('Custody lock');
-	const custodyOption = page
-		.locator('#exec-cmdk-home-listbox')
-		.getByRole('option', { name: /^Custody lock fix/ });
+	const custodyOption = pocDialog.getByRole('option', { name: /^Custody lock fix/ });
 	await expect(custodyOption).toBeVisible();
-	await pocCombo.press('Escape');
-	await pocCombo.press('ArrowDown');
-	await expect(pocCombo).toHaveAttribute('aria-activedescendant', 'exec-cmdk-home-opt-0');
 	await pocCombo.press('Enter');
 	await expect(page).toHaveURL(/\/projects\/office-federation\/work$/);
 	await expect(page.getByText('This area is not built yet')).toHaveCount(0);
@@ -779,13 +797,9 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	// Dark Command Dialog contrast in Classic & Report Night (ffe0e0ce) with computed WCAG checks
 	for (const [themeLabel, themeId] of [
 		['Classic', 'classic'],
-		['Night', 'report-dark']
+		['Report Night', 'report-dark']
 	] as const) {
-		await page
-			.getByRole('group', { name: 'Theme' })
-			.getByRole('button', { name: themeLabel, exact: true })
-			.click();
-		await expect(page.locator('html')).toHaveAttribute('data-ui-theme', themeId);
+		await switchThemeViaPalette(page, themeLabel, themeId);
 		await page.keyboard.press('ControlOrMeta+k');
 		const dialog = page.locator('.exec-cmdk-dialog');
 		await expect(dialog).toBeVisible();

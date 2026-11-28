@@ -58,7 +58,7 @@ struct AxSeed {
 
 fn seed(engine: EngineChoice) -> AxSeed {
     let place = Place::new();
-    let store = place.create(engine);
+    let store = place.create(engine.clone());
     let here = identity();
     let cmd = creation_command();
     let owner = cmd.creator.employee_id.clone();
@@ -178,8 +178,8 @@ fn base_update(task: &str, expected_revision: u64) -> TasksUpdateParams {
 
 #[test]
 fn task_90_server_fields_pruning_and_append_body_parity() {
-    for engine in ENGINES {
-        let s = seed(engine);
+    for engine in engines() {
+        let s = seed(engine.clone());
         let dep = create_task(&s, "Dependency", "dep body");
         let task = create_task(&s, "Main task", "SECRET_LARGE_BODY_MARKER");
         s.store
@@ -403,8 +403,8 @@ fn seed_three_ac_steps(
 
 #[test]
 fn task_90_surgical_checklist_batch_add_and_validation() {
-    for engine in ENGINES {
-        let s = seed(engine);
+    for engine in engines() {
+        let s = seed(engine.clone());
         let task = create_task(&s, "Checklist target", "Body");
         let (added, [id1, id2, id3]) = seed_three_ac_steps(&s, &task.key);
         assert_eq!(added.checklist.len(), 3, "{engine:?}");
@@ -458,8 +458,8 @@ fn task_90_surgical_checklist_batch_add_and_validation() {
 
 #[test]
 fn task_90_surgical_checklist_ordinals_and_stale_conflicts() {
-    for engine in ENGINES {
-        let s = seed(engine);
+    for engine in engines() {
+        let s = seed(engine.clone());
         let task = create_task(&s, "Checklist target", "Body");
         let (added, [id1, id2, id3]) = seed_three_ac_steps(&s, &task.key);
 
@@ -644,7 +644,9 @@ fn assert_unauthorized_stale_ops_hide_conflict(
                 task: task_key.to_owned(),
                 expected_revision: base_rev,
                 status: TaskStatus::InProgress,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 resolution: None,
                 note: None,
                 done_anyway_reason: None,
@@ -678,8 +680,8 @@ fn assert_unauthorized_stale_ops_hide_conflict(
 
 #[test]
 fn task_90_conflict_detail_rebuild_parity_and_adr0031_ordering() {
-    for engine in ENGINES {
-        let s = seed(engine);
+    for engine in engines() {
+        let s = seed(engine.clone());
         let task = create_task(&s, "Initial", "SENSITIVE_BODY_CONTENT_NEVER_INLINED");
         let base_rev = task.revision;
 
@@ -762,20 +764,25 @@ fn task_90_conflict_detail_rebuild_parity_and_adr0031_ordering() {
             (s.owner.as_str().to_owned(), sat_auth),
         ] {
             assert_unauthorized_stale_ops_hide_conflict(
-                &s, engine, &task.key, base_rev, actor, auth,
+                &s,
+                engine.clone(),
+                &task.key,
+                base_rev,
+                actor,
+                auth,
             );
         }
 
         let (place, owner, task_key) = (s.place, s.owner, task.key.clone());
         s.store.close().expect("close");
-        if engine == EngineChoice::Sqlite {
+        if engine.is_sqlite() {
             let db_path = place
                 .runtime()
                 .join(s.here.office_id.as_str())
                 .join("office.db");
             let _ = std::fs::remove_file(&db_path);
         }
-        let reopened = place.reopen(engine);
+        let reopened = place.reopen(engine.clone());
         let mut stale_after = base_update(&task_key, base_rev);
         stale_after.title = Some("Stale after rebuild".into());
         let conflict_after = reopened
@@ -798,8 +805,8 @@ fn task_90_conflict_detail_rebuild_parity_and_adr0031_ordering() {
 
 #[test]
 fn task_90_conflict_detail_caps_events_total_bytes_and_hides_comments() {
-    for engine in ENGINES {
-        let s = seed(engine);
+    for engine in engines() {
+        let s = seed(engine.clone());
         let task = create_task(&s, "Initial", "SENSITIVE_BODY_CONTENT_NEVER_INLINED");
         let base_rev = task.revision;
         s.store

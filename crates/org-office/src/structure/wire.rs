@@ -399,65 +399,30 @@ pub fn parse_check_command(
 
 fn with_placeholder_command_id(command: &OrgCommand) -> OrgCommand {
     let id = DRY_RUN_PLACEHOLDER_ID.to_owned();
-    match command.clone() {
-        OrgCommand::TeamCreate(mut p) => {
-            p.command_id = id;
-            OrgCommand::TeamCreate(p)
-        }
-        OrgCommand::TeamRename(mut p) => {
-            p.command_id = id;
-            OrgCommand::TeamRename(p)
-        }
-        OrgCommand::TeamMove(mut p) => {
-            p.command_id = id;
-            OrgCommand::TeamMove(p)
-        }
-        OrgCommand::TeamSetLead(mut p) => {
-            p.command_id = id;
-            OrgCommand::TeamSetLead(p)
-        }
-        OrgCommand::TeamDelete(mut p) => {
-            p.command_id = id;
-            OrgCommand::TeamDelete(p)
-        }
-        OrgCommand::TeamSetTitle(mut p) => {
-            p.command_id = id;
-            OrgCommand::TeamSetTitle(p)
-        }
-        OrgCommand::MemberAddPerson(mut p) => {
-            p.command_id = id;
-            OrgCommand::MemberAddPerson(p)
-        }
-        OrgCommand::MemberUpdatePerson(mut p) => {
-            p.command_id = id;
-            OrgCommand::MemberUpdatePerson(p)
-        }
-        OrgCommand::MemberMove(mut p) => {
-            p.command_id = id;
-            OrgCommand::MemberMove(p)
-        }
-        OrgCommand::MemberRemove(mut p) => {
-            p.command_id = id;
-            OrgCommand::MemberRemove(p)
-        }
-        OrgCommand::MemberSetReportsTo(mut p) => {
-            p.command_id = id;
-            OrgCommand::MemberSetReportsTo(p)
-        }
-        OrgCommand::ProjectCreate(mut p) => {
-            p.command_id = id;
-            OrgCommand::ProjectCreate(p)
-        }
-        OrgCommand::ProjectAddTeam(mut p) => {
-            p.command_id = id;
-            OrgCommand::ProjectAddTeam(p)
-        }
-        OrgCommand::ProjectRemoveTeam(mut p) => {
-            p.command_id = id;
-            OrgCommand::ProjectRemoveTeam(p)
-        }
-        other => other,
+    macro_rules! set_id {
+        ($($var:ident),+ $(,)?) => {
+            match command.clone() {
+                $(OrgCommand::$var(mut p) => { p.command_id = id; OrgCommand::$var(p) })+
+                other => other,
+            }
+        };
     }
+    set_id!(
+        TeamCreate,
+        TeamRename,
+        TeamMove,
+        TeamSetLead,
+        TeamDelete,
+        TeamSetTitle,
+        MemberAddPerson,
+        MemberUpdatePerson,
+        MemberMove,
+        MemberRemove,
+        MemberSetReportsTo,
+        ProjectCreate,
+        ProjectAddTeam,
+        ProjectRemoveTeam,
+    )
 }
 
 fn project_create_request(
@@ -626,6 +591,24 @@ pub fn rejection_code(code: RejectCode) -> ErrorCode {
     }
 }
 
+/// The protocol's error of a rule's refusal, preserving any actionable hint.
+pub fn rejection_error(rejected: OrgRejection) -> ApiError {
+    let err = ApiError::new(rejection_code(rejected.code), rejected.message);
+    match rejected.hint {
+        Some(hint) => err.with_hint(hint),
+        None => err,
+    }
+}
+
+fn invalid_store_error(reason: String) -> ApiError {
+    let code = if reason == NOT_AUTHORIZED {
+        ErrorCode::NotAuthorized
+    } else {
+        ErrorCode::InvalidRequest
+    };
+    ApiError::new(code, reason)
+}
+
 fn decode_answer(
     label: &str,
     answer: Result<Reply, StoreError>,
@@ -637,14 +620,7 @@ fn decode_answer(
             let message = "command_id was used before with other params";
             return Ok(Err(refused(ErrorCode::OperationReused, message)));
         }
-        Err(StoreError::Invalid(reason)) => {
-            let code = if reason == NOT_AUTHORIZED {
-                ErrorCode::NotAuthorized
-            } else {
-                ErrorCode::InvalidRequest
-            };
-            return Ok(Err(ApiError::new(code, reason)));
-        }
+        Err(StoreError::Invalid(reason)) => return Ok(Err(invalid_store_error(reason))),
         Err(error) => return Err(error),
     };
     let unreadable = || StoreError::Internal(format!("an unreadable {label} reply"));
@@ -659,10 +635,7 @@ fn decode_answer(
         Outcome::Rejected => {
             let rejected: OrgRejection =
                 serde_json::from_slice(&reply.bytes).map_err(|_| unreadable())?;
-            Ok(Err(ApiError::new(
-                rejection_code(rejected.code),
-                rejected.message,
-            )))
+            Ok(Err(rejection_error(rejected)))
         }
     }
 }
@@ -674,14 +647,7 @@ pub fn checked_answer(
 ) -> Result<Result<CommandAccepted, ApiError>, StoreError> {
     let reply = match answer {
         Ok(reply) => reply,
-        Err(StoreError::Invalid(reason)) => {
-            let code = if reason == NOT_AUTHORIZED {
-                ErrorCode::NotAuthorized
-            } else {
-                ErrorCode::InvalidRequest
-            };
-            return Ok(Err(ApiError::new(code, reason)));
-        }
+        Err(StoreError::Invalid(reason)) => return Ok(Err(invalid_store_error(reason))),
         Err(error) => return Err(error),
     };
     let unreadable = || StoreError::Internal(format!("an unreadable {label} dry-run reply"));
@@ -693,10 +659,7 @@ pub fn checked_answer(
         Outcome::Rejected => {
             let rejected: OrgRejection =
                 serde_json::from_slice(&reply.bytes).map_err(|_| unreadable())?;
-            Ok(Err(ApiError::new(
-                rejection_code(rejected.code),
-                rejected.message,
-            )))
+            Ok(Err(rejection_error(rejected)))
         }
     }
 }
@@ -726,7 +689,7 @@ pub fn operation_outcome_from_receipt(receipt: &Receipt) -> Result<OperationOutc
             let rejected: OrgRejection =
                 serde_json::from_slice(&receipt.reply).map_err(|_| unreadable())?;
             Ok(OperationOutcome::Rejected {
-                refusal: ApiError::new(rejection_code(rejected.code), rejected.message),
+                refusal: rejection_error(rejected),
             })
         }
     }

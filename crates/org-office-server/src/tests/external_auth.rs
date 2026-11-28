@@ -10,7 +10,7 @@ use org_agent_cli::external_auth::client::{self, Target};
 use org_agent_cli::external_auth::store::{TokenFile, WorkspaceBinding, WorkspaceState};
 use org_agent_cli::Binding;
 use org_client::Client;
-use org_office::{EngineChoice, Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::external_auth::{
     AuthExchange, AuthLoginPoll, AuthLoginPollParams, AuthLoginRequest, AuthLoginRequestParams,
     AuthLoginRequestResult, AuthWhoami, ChallengePurpose, ExternalLoginState, ExternalSessionView,
@@ -37,10 +37,9 @@ struct World {
 }
 
 fn world() -> World {
-    org_office_sqlite::install();
-    let office = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let office = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = office.owner_member_id().to_owned();
     let team_id = office.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = office.info().office_id.clone();
@@ -169,6 +168,7 @@ fn token_binding(w: &World, member: &str, token: &str) -> Binding {
         session_token: Some(token.to_owned()),
         agent_id: Some(member.to_owned()),
         external_state: None,
+        ..Binding::default()
     }
 }
 
@@ -369,6 +369,7 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
         session_token: Some(token.clone()),
         agent_id: Some(w.ada.clone()),
         external_state: Some(state.dir().to_path_buf()),
+        ..Binding::default()
     };
     let (code, who) = agent_os(&w, workspace.clone(), &["who"]);
     assert_eq!(code, 0, "refresh after token loss: {who}");
@@ -753,6 +754,7 @@ fn binding_from_workspace_state(state: &WorkspaceState) -> Binding {
         session_token: None,
         agent_id: Some(saved.member_id),
         external_state: Some(state.dir().to_path_buf()),
+        ..Binding::default()
     }
 }
 
@@ -1512,6 +1514,10 @@ fn one_step_bind_succeeds_for_non_owner_operators_warm_idle_sessions_and_full_pe
                 employee_id: w.ada.clone(),
                 instruction: Some("warm up".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -1781,4 +1787,600 @@ fn external_renew_and_pending_enforce_human_only_auth_masking_and_familiarity() 
     );
     assert_eq!(rotated.last_approved_by.as_deref(), Some(w.owner.as_str()));
     assert!(rotated.last_approved_at.is_some());
+}
+
+/// TASK-210 AC #4 (+ AC #2 host-channel check): signed-in operator calls
+/// `member.external_sessions` (`--member <id>` and `@handle`), `member.external_pending`, and
+/// `member.session_list` over the real host channel with HMAC-signed grants.
+/// Proves authorized owner & authorized manager/hirer succeed, while unauthorized live persons
+/// and non-person grants receive accurate authorization errors + hints (never opaque
+/// `request refused on host channel`).
+#[test]
+fn task210_host_channel_agent_sessions_end_to_end_authorized_and_accurate_refusal() {
+    use std::io::BufReader;
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let w = world();
+    let team_id = w.office.org_snapshot().unwrap().teams[0].id.clone();
+
+    // Add two live people: Carol (granted may_hire -> authorized operator) and Dave (no hiring/lead
+    // authority -> unauthorized live person).
+    let carol = w.office.next_uuid_v7();
+    let dave = w.office.next_uuid_v7();
+    for (id, name, handle) in [(&carol, "Carol", "carol"), (&dave, "Dave", "dave")] {
+        w.office
+            .submit_org(
+                &w.owner,
+                org_office::rules::OrgCommand::MemberAddPerson(
+                    org_proto::org::MemberAddPersonParams {
+                        command_id: w.office.next_uuid_v7(),
+                        member_id: id.clone(),
+                        name: name.into(),
+                        handle: Some(handle.into()),
+                        home_team_id: Some(team_id.clone()),
+                        contact: None,
+                    },
+                ),
+            )
+            .unwrap()
+            .unwrap();
+    }
+    let revoke_dave_hire = Request::new::<org_proto::hiring::MemberSetMayHire>(
+        1,
+        &org_proto::hiring::MemberSetMayHireParams {
+            command_id: w.office.next_uuid_v7(),
+            member_id: dave.clone(),
+            expected_version: 1,
+            may_hire: false,
+        },
+    )
+    .unwrap();
+    ok_value(
+        w.node
+            .shared
+            .answer_for_test(&revoke_dave_hire, &w.owner, true),
+    );
+
+    // Create one pending external login for Ada so `--pending` returns live data.
+    let (_pkcs8, pending_req) = login(&w, "@ada");
+
+    let (server_stream, client_stream) = UnixStream::pair().unwrap();
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let srv_shared = Arc::clone(&w.node.shared);
+    let srv_stop = Arc::clone(&stop);
+    let srv = std::thread::spawn(move || {
+        crate::serve::serve_host_channel_for_test(
+            server_stream,
+            &srv_shared,
+            "host-ch-210",
+            &srv_stop,
+        );
+    });
+    let mut reader = BufReader::new(client_stream);
+
+    // Negotiate host channel v2 hello.
+    org_proto::frame::write_message(
+        reader.get_mut(),
+        &json!({"id": 1, "method": "hello", "params": {"api": {"min": 2, "max": 2}}}),
+    )
+    .unwrap();
+    let hello: Value = org_proto::frame::read_message(&mut reader)
+        .unwrap()
+        .unwrap();
+    assert_eq!(hello["result"]["api_version"], 2);
+
+    let office = &w.node.shared.hello.office.as_ref().unwrap().office;
+    let mut next_id = 2u64;
+    let mut call_as = |member: &str, method: &str, params: Value| -> Value {
+        let mut grant = json!({
+            "account": "acct-1",
+            "member": member,
+            "org_id": office.organization_id,
+            "office_id": office.id,
+            "channel_id": "host-ch-210",
+            "session_id": "sess-210",
+            "exp": u64::MAX,
+            "mac": "00".repeat(32)
+        });
+        crate::test_support::sign_grant(&mut grant);
+        let id = next_id;
+        next_id += 1;
+        let req = Request {
+            id,
+            method: method.into(),
+            params,
+            principal: Some(json!({"grant": grant})),
+        };
+        org_proto::frame::write_message(reader.get_mut(), &req).unwrap();
+        org_proto::frame::read_message(&mut reader)
+            .unwrap()
+            .unwrap()
+    };
+
+    // 1. Authorized owner succeeds on external_sessions (by UUIDv7 AND @handle), external_pending,
+    //    and member.session_list (by UUIDv7 AND @handle).
+    for emp_ref in [w.ada.as_str(), "@ada"] {
+        let res = call_as(
+            &w.owner,
+            MemberExternalSessions::METHOD,
+            json!({"employee_id": emp_ref}),
+        );
+        assert_eq!(res["result"]["employee_id"], w.ada, "{emp_ref}: {res}");
+
+        let list = call_as(
+            &w.owner,
+            org_proto::sessions::MemberSessionList::METHOD,
+            json!({"employee_id": emp_ref}),
+        );
+        assert_eq!(list["result"]["employee_id"], w.ada, "{emp_ref}: {list}");
+    }
+    let pend = call_as(&w.owner, MemberExternalPending::METHOD, json!({}));
+    assert_eq!(
+        pend["result"]["pending"][0]["request_id"],
+        pending_req.request_id
+    );
+
+    // 2. Authorized non-owner operator (Carol with may_hire) succeeds over the host channel.
+    let carol_sessions = call_as(
+        &carol,
+        MemberExternalSessions::METHOD,
+        json!({"employee_id": w.ada}),
+    );
+    assert_eq!(
+        carol_sessions["result"]["employee_id"], w.ada,
+        "{carol_sessions}"
+    );
+    let carol_pend = call_as(
+        &carol,
+        MemberExternalPending::METHOD,
+        json!({"employee_id": w.ada}),
+    );
+    assert_eq!(
+        carol_pend["result"]["pending"][0]["request_id"],
+        pending_req.request_id
+    );
+
+    // 3. Unauthorized live person (Dave) receives an accurate authorization error + hint on
+    //    `member.external_sessions` and filtered `member.external_pending`, NEVER opaque
+    //    `request refused on host channel`.
+    for (method, params) in [
+        (
+            MemberExternalSessions::METHOD,
+            json!({"employee_id": w.ada}),
+        ),
+        (MemberExternalPending::METHOD, json!({"employee_id": w.ada})),
+    ] {
+        let denied = call_as(&dave, method, params);
+        assert_eq!(
+            denied["error"]["code"], "not_authorized",
+            "{method}: {denied}"
+        );
+        assert_ne!(
+            denied["error"]["message"], "request refused on host channel",
+            "{method}: {denied}"
+        );
+        assert!(
+            denied["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("owner") && m.contains("team lead")),
+            "{method}: {denied}"
+        );
+        assert!(
+            denied["error"]["hint"]
+                .as_str()
+                .is_some_and(|h| !h.is_empty()),
+            "{method} must include hint: {denied}"
+        );
+    }
+
+    // 4. Non-person grant (agent Ada on a host channel) also receives an accurate person-required
+    //    authorization error + hint on agent session reads rather than opaque channel refusal.
+    let agent_denied = call_as(
+        &w.ada,
+        MemberExternalSessions::METHOD,
+        json!({"employee_id": w.ada}),
+    );
+    assert_eq!(
+        agent_denied["error"]["code"], "not_authorized",
+        "{agent_denied}"
+    );
+    assert_ne!(
+        agent_denied["error"]["message"], "request refused on host channel",
+        "{agent_denied}"
+    );
+    assert!(
+        agent_denied["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("active organization person")),
+        "{agent_denied}"
+    );
+
+    stop.store(true, Ordering::SeqCst);
+    drop(reader);
+    srv.join().unwrap();
+}
+
+/// Seeds private notes (owner, Ada, Ben), a private owner<->Ben DM, and a public channel message
+/// for the BYOA `search.query` isolation regression test. Returns `(ada_note_id, ben_note_id, dm_id)`.
+fn seed_byoa_search_fixtures(
+    w: &World,
+    ada_token: &str,
+    ben_token: &str,
+) -> (String, String, String) {
+    use org_proto::chat::{ChatChannelCreate, ChatChannelCreateParams, ChatSend, ChatSendParams};
+    use org_proto::msg::Meta;
+    use org_proto::private_notes::{PrivateNoteAddParams, PrivateNoteKind, TasksNotesAdd};
+
+    let (code, ada_note) = agent_os(
+        w,
+        token_binding(w, &w.ada, ada_token),
+        &[
+            "note",
+            "add",
+            "--standalone",
+            "--kind",
+            "decision",
+            "--text",
+            "CANARY_PRIV_BOTH CANARY_ADA_ONLY",
+        ],
+    );
+    assert_eq!(code, 0, "ada note add: {ada_note}");
+    let ada_note_id = ada_note["data"]["id"].as_str().unwrap().to_owned();
+
+    let (code, ben_note) = agent_os(
+        w,
+        token_binding(w, &w.ben, ben_token),
+        &[
+            "note",
+            "add",
+            "--standalone",
+            "--text",
+            "CANARY_PRIV_BOTH CANARY_BEN_ONLY",
+        ],
+    );
+    assert_eq!(code, 0, "ben note add: {ben_note}");
+    let ben_note_id = ben_note["data"]["id"].as_str().unwrap().to_owned();
+
+    ok_value(grant_call::<TasksNotesAdd>(
+        w,
+        &PrivateNoteAddParams {
+            command_id: w.office.next_uuid_v7(),
+            note_id: w.office.next_uuid_v7(),
+            task: None,
+            project_id: None,
+            kind: PrivateNoteKind::Note,
+            title: Some("Owner private draft".into()),
+            why: None,
+            alternatives: None,
+            tags: vec![],
+            body_markdown: "CANARY_PRIV_BOTH CANARY_OWNER_ONLY".into(),
+            checkpoint: false,
+        },
+    ));
+
+    let send = |to: String, body: &str| {
+        ok_value(grant_call::<ChatSend>(
+            w,
+            &ChatSendParams {
+                id: w.office.next_uuid_v7(),
+                to,
+                kind: "msg".into(),
+                priority: None,
+                subject: None,
+                body: body.into(),
+                meta: Meta::new(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+                attachment_ids: vec![],
+            },
+        ))
+    };
+    let dm = send(w.ben.clone(), "CANARY_PRIVATE_DM_OWNER_BEN");
+    let dm_id = dm["conversation_id"].as_str().unwrap().to_owned();
+    ok_value(grant_call::<ChatChannelCreate>(
+        w,
+        &ChatChannelCreateParams {
+            id: Some(w.office.next_uuid_v7()),
+            name: "byoa-public-search".into(),
+            members: vec![],
+        },
+    ));
+    send("#byoa-public-search".into(), "CANARY_PUBLIC_CHANNEL_MSG");
+    (ada_note_id, ben_note_id, dm_id)
+}
+
+/// TASK-91 / ADR-0031: BYOA external-agent `search.query` enforces strict private-note author
+/// isolation (an external agent sees only its own notes/decisions, never another agent's or the
+/// owner's) and private-conversation isolation (never leaks a private DM the agent is not in).
+#[test]
+fn byoa_external_search_query_enforces_private_note_and_private_channel_isolation() {
+    let w = world();
+    let (_, _, ada_token) = signed_in(&w, "@ada");
+    let (_, _, ben_token) = signed_in(&w, "@ben");
+    let (ada_note_id, ben_note_id, dm_id) = seed_byoa_search_fixtures(&w, &ada_token, &ben_token);
+    let ada = || token_binding(&w, &w.ada, &ada_token);
+    let ben = || token_binding(&w, &w.ben, &ben_token);
+
+    // 1. ADR-0031 private-note author isolation over BYOA external sessions.
+    let (code, res) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "private_note",
+            "--types",
+            "private_decision",
+        ],
+    );
+    assert_eq!(code, 0, "{res}");
+    let hits = res["data"].as_array().unwrap();
+    assert_eq!(hits.len(), 1, "ada must see only her own note: {res}");
+    assert_eq!(hits[0]["entity_id"], ada_note_id);
+    assert_eq!(hits[0]["author_id"], w.ada);
+
+    for args in [
+        vec![
+            "search",
+            "query",
+            "--q",
+            "CANARY_BEN_ONLY",
+            "--types",
+            "private_note",
+        ],
+        vec![
+            "search",
+            "query",
+            "--q",
+            "CANARY_OWNER_ONLY",
+            "--types",
+            "private_note",
+        ],
+        vec![
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "private_note",
+            "--author-id",
+            w.ben.as_str(),
+        ],
+    ] {
+        let (code, res) = agent_os(&w, ada(), &args);
+        assert_eq!(code, 0, "{args:?}: {res}");
+        assert!(
+            res["data"].as_array().unwrap().is_empty(),
+            "{args:?}: {res}"
+        );
+    }
+
+    let (code, ben_res) = agent_os(
+        &w,
+        ben(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "private_note",
+            "--types",
+            "private_decision",
+        ],
+    );
+    assert_eq!(code, 0, "{ben_res}");
+    assert_eq!(ben_res["data"].as_array().unwrap().len(), 1, "{ben_res}");
+    assert_eq!(ben_res["data"][0]["entity_id"], ben_note_id);
+
+    // Mixing shared and private types is refused over BYOA as well.
+    let (code, mixed) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIV_BOTH",
+            "--types",
+            "task",
+            "--types",
+            "private_note",
+        ],
+    );
+    assert_ne!(code, 0, "{mixed}");
+    assert_eq!(mixed["error"]["code"], "invalid_request", "{mixed}");
+
+    // 2. Private-conversation isolation vs public channel visibility over BYOA.
+    let (code, dm_hidden) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIVATE_DM_OWNER_BEN",
+            "--types",
+            "message",
+        ],
+    );
+    assert_eq!(code, 0, "{dm_hidden}");
+    assert!(
+        dm_hidden["data"].as_array().unwrap().is_empty(),
+        "ada must not see owner<->ben private DM: {dm_hidden}"
+    );
+    let (code, dm_probe) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIVATE_DM_OWNER_BEN",
+            "--types",
+            "message",
+            "--channel",
+            &dm_id,
+        ],
+    );
+    assert_ne!(code, 0, "{dm_probe}");
+    assert_eq!(dm_probe["error"]["code"], "not_found", "{dm_probe}");
+
+    let (code, pub_hit) = agent_os(
+        &w,
+        ada(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PUBLIC_CHANNEL_MSG",
+            "--types",
+            "message",
+        ],
+    );
+    assert_eq!(code, 0, "{pub_hit}");
+    assert_eq!(pub_hit["data"].as_array().unwrap().len(), 1, "{pub_hit}");
+
+    let (code, ben_dm) = agent_os(
+        &w,
+        ben(),
+        &[
+            "search",
+            "query",
+            "--q",
+            "CANARY_PRIVATE_DM_OWNER_BEN",
+            "--types",
+            "message",
+        ],
+    );
+    assert_eq!(code, 0, "{ben_dm}");
+    assert_eq!(ben_dm["data"].as_array().unwrap().len(), 1, "{ben_dm}");
+}
+
+#[test]
+fn external_byoa_agent_cannot_set_or_modify_task_routing_labels() {
+    use org_proto::tasks::{
+        TasksCreate, TasksCreateParams, TasksMutationResult, TasksUpdate, TasksUpdateParams,
+    };
+
+    let w = world();
+    let root_team = w.office.org_snapshot().unwrap().teams[0].id.clone();
+    let (_pkcs8, _session_id, token) = signed_in(&w, "@ada");
+    let conn = bound_client(&w, &w.ada, &token);
+
+    // 1. External BYOA agent attempting `tasks.create` with `effort:*` or `model:*` fails closed with NotAuthorized.
+    for bad in [
+        vec!["effort:max".to_owned()],
+        vec!["model:claude-opus-4-6".to_owned()],
+    ] {
+        let err = client::call::<TasksCreate>(
+            &conn,
+            &TasksCreateParams {
+                command_id: w.office.next_uuid_v7(),
+                task_id: w.office.next_uuid_v7(),
+                team_id: Some(root_team.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "BYOA escalated task".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: bad.clone(),
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{bad:?}: {err:?}");
+        assert!(err.message.contains("Only a person"), "{err:?}");
+    }
+
+    // 2. External BYOA agent MAY create a normal task with non-routing labels.
+    let created = client::call::<TasksCreate>(
+        &conn,
+        &TasksCreateParams {
+            command_id: w.office.next_uuid_v7(),
+            task_id: w.office.next_uuid_v7(),
+            team_id: Some(root_team),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: Some("task".into()),
+            work_type: None,
+            title: "BYOA normal task".into(),
+            body_markdown: String::new(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec!["backend".into()],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            attachment_ids: vec![],
+            details: None,
+            dod: None,
+        },
+    )
+    .expect("external BYOA agent can create normal tasks");
+
+    // 3. Owner via verified grant attaches `effort:low`.
+    let owner_patch: TasksUpdateParams = serde_json::from_value(json!({
+        "command_id": w.office.next_uuid_v7(),
+        "task": created.task.key,
+        "expected_revision": created.task.revision,
+        "add_labels": ["effort:low"],
+    }))
+    .unwrap();
+    let owner_updated: TasksMutationResult =
+        serde_json::from_value(ok_value(grant_call::<TasksUpdate>(&w, &owner_patch))).unwrap();
+    assert!(owner_updated.task.labels.contains(&"effort:low".to_owned()));
+
+    // 4. External BYOA agent cannot add, change, or strip routing labels via `tasks.update`.
+    for patch in [
+        json!({ "add_labels": ["model:claude-opus-4-6"] }),
+        json!({ "remove_labels": ["effort:low"] }),
+        json!({ "labels": ["backend"] }),
+    ] {
+        let mut obj = patch.as_object().unwrap().clone();
+        obj.insert("command_id".into(), json!(w.office.next_uuid_v7()));
+        obj.insert("task".into(), json!(owner_updated.task.key));
+        obj.insert(
+            "expected_revision".into(),
+            json!(owner_updated.task.revision),
+        );
+        let params: TasksUpdateParams = serde_json::from_value(Value::Object(obj)).unwrap();
+        let err = client::call::<TasksUpdate>(&conn, &params).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{patch}: {err:?}");
+    }
+
+    // 5. External BYOA agent CAN still add ordinary non-routing labels while preserving `effort:low`.
+    let ok_patch: TasksUpdateParams = serde_json::from_value(json!({
+        "command_id": w.office.next_uuid_v7(),
+        "task": owner_updated.task.key,
+        "expected_revision": owner_updated.task.revision,
+        "add_labels": ["frontend"],
+    }))
+    .unwrap();
+    let byoa_updated = client::call::<TasksUpdate>(&conn, &ok_patch)
+        .expect("BYOA agent may add non-routing labels");
+    assert!(byoa_updated.task.labels.contains(&"frontend".to_owned()));
+    assert!(byoa_updated.task.labels.contains(&"effort:low".to_owned()));
 }

@@ -26,10 +26,20 @@ fn set_selector(slot: &mut Option<String>, flag: &str, value: &str) -> Result<()
     Ok(())
 }
 
-/// `<resource> <verb>` of the forwarded words (`task note <verb>` is `task-note <verb>`).
+fn norm_note_verb(v: &str) -> &str {
+    if v == "get" {
+        "inspect"
+    } else {
+        v
+    }
+}
+
+/// `<resource> <verb>` of the forwarded words (`task note <verb>` and `task-note <verb>` are
+/// `note <verb>`, and legacy verb `get` maps to `inspect`).
 pub(super) fn resource_and_verb(forwarded: &[String]) -> Option<(&str, &str)> {
     match forwarded {
-        [a, b, v, ..] if a == "task" && b == "note" => Some(("task-note", v.as_str())),
+        [a, b, v, ..] if a == "task" && b == "note" => Some(("note", norm_note_verb(v))),
+        [a, v, ..] if a == "task-note" || a == "note" => Some(("note", norm_note_verb(v))),
         [a, ..] if a == "who" => Some(("directory", "list")),
         [r, v, ..] => Some((r.as_str(), v.as_str())),
         _ => None,

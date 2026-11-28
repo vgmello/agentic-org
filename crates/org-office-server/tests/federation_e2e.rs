@@ -53,10 +53,9 @@ fn sat_custody(org_id: &str, sat_office_id: &str) -> Custody {
 
 #[test]
 fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_and_d25_reenroll() {
-    org_office_sqlite::install();
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: org_office::EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let org_id = hq.info().org_id.clone();
 
@@ -140,6 +139,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
             Key::from_bytes([0x33; 32]),
             sat_roots.clone(),
             sat_custody(&org_id, &sat_office_id),
+            org_office_sqlite::sqlite_backend(),
         )
         .unwrap(),
     );
@@ -408,6 +408,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
         &hq.durable_root().join("state"),
         "https://example.com/acme-org.git",
         "main",
+        &org_office_sqlite::SqliteStorageBackend,
     )
     .unwrap();
     let rep_hq_id = "0195b000-0000-7000-8000-000000000099";
@@ -479,6 +480,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
             &rep_binding,
             rep_roots,
             rep_custody,
+            org_office_sqlite::sqlite_backend(),
             move || Ok((imported, None)),
             move |prior| {
                 if let Some(p) = prior {
@@ -656,10 +658,7 @@ fn create_hq_task(hq: &Office, owner: &str, team_id: &str, title: &str) -> Strin
 /// her during `import_hq` itself (not only at the next open), with the same derived ID, once.
 #[test]
 fn an_organization_imported_without_its_chief_of_staff_gets_her_at_import() {
-    org_office_sqlite::install();
-    let hq = Office::for_test_with_real_ca(TestOffice {
-        engine: org_office::EngineChoice::Sqlite,
-    });
+    let hq = Office::for_test_with_real_ca(TestOffice::sqlite(org_office_sqlite::sqlite_backend()));
     let owner = hq.owner_member_id().to_owned();
     let org_id = hq.info().org_id.clone();
     let tess = hq.chief_of_staff().unwrap().expect("Tess");
@@ -672,6 +671,7 @@ fn an_organization_imported_without_its_chief_of_staff_gets_her_at_import() {
         &hq.durable_root().join("state"),
         "https://example.com/acme-org.git",
         "main",
+        &org_office_sqlite::SqliteStorageBackend,
     )
     .unwrap();
     assert!(!imported
@@ -746,6 +746,7 @@ fn an_organization_imported_without_its_chief_of_staff_gets_her_at_import() {
         &binding,
         rep_roots,
         rep_custody,
+        org_office_sqlite::sqlite_backend(),
         move || Ok((imported, None)),
         move |prior| {
             if let Some(p) = prior {

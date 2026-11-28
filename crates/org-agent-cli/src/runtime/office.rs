@@ -125,7 +125,7 @@ impl BoundOffice {
             return Err(Refusal::new(
                 ErrorCode::NotAuthorized,
                 "agent-os requires a run binding from its office.",
-                "Run agent-os inside an office-started agent session with AGENT_OS_SESSION_TOKEN and AGENT_OS_SOCKET (or AGENT_OS_OFFICE) set.",
+                "Local human operators should use `agentic-org <command>` (or `agentic-org sign-in`). For an external agent workspace, sign in with `agent-os login --as @<handle>`. Managed agent sessions run inside an office-started session with AGENT_OS_SESSION_TOKEN and AGENT_OS_SOCKET (or AGENT_OS_OFFICE) set.",
             ));
         }
         let client = if let Some(socket) = &self.binding.socket {
@@ -217,6 +217,14 @@ impl OfficeTransport for BoundOffice {
             .external_state
             .is_some()
             .then_some(org_proto::external_auth::SessionMode::External)
+    }
+
+    fn active_task(&self) -> Option<String> {
+        self.binding.active_task.clone()
+    }
+
+    fn active_project(&self) -> Option<String> {
+        self.binding.active_project.clone()
     }
 
     fn take_waiting_messages(&mut self) -> Option<u32> {

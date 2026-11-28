@@ -167,8 +167,7 @@ html[data-ui-theme='cozy']
 		[data-slot='dialog-content'],
 		[data-slot='sheet-content'],
 		[data-slot='popover-content'],
-		.exec-cmdk-dialog,
-		.exec-cmdk-home-results
+		.exec-cmdk-dialog
 	) {
 	background: rgb(38 31 25 / 0.88);
 	-webkit-backdrop-filter: blur(28px) saturate(145%);
@@ -184,8 +183,7 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high']
 		[data-slot='dialog-content'],
 		[data-slot='sheet-content'],
 		[data-slot='popover-content'],
-		.exec-cmdk-dialog,
-		.exec-cmdk-home-results
+		.exec-cmdk-dialog
 	) {
 	background: #1a1512;
 	-webkit-backdrop-filter: none;

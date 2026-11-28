@@ -61,4 +61,61 @@ fn list_params_without_the_lifecycle_filters_keep_their_old_wire_shape() {
     assert_eq!(echoed["done_since"], new["done_since"]);
 
     assert!(serde_json::from_value::<TasksListParams>(json!({"status_scope": "recent"})).is_err());
+
+    // `TASK-84`: `ready` and `dependency_blocked` default false and omit when false.
+    let blocking_params = TasksListParams {
+        ready: true,
+        ..TasksListParams::default()
+    };
+    let wire = serde_json::to_value(&blocking_params).unwrap();
+    assert_eq!(wire["ready"], json!(true));
+    assert!(wire.get("dependency_blocked").is_none());
+
+    let dep_params: TasksListParams =
+        serde_json::from_value(json!({"dependency_blocked": true})).unwrap();
+    assert!(dep_params.dependency_blocked);
+    assert!(!dep_params.ready);
+}
+
+#[test]
+fn blocking_dependency_and_history_params_round_trip() {
+    use super::{BlockingDependencyWire, TasksHistoryParams, TasksTransitionParams};
+
+    let dep = BlockingDependencyWire {
+        id: "0193a5c0-0000-7000-8000-000000000101".into(),
+        key: "T-A1".into(),
+        title: "Upstream".into(),
+        status: TaskStatus::Cancelled,
+        cancelled: true,
+    };
+    let wire = serde_json::to_value(&dep).unwrap();
+    assert_eq!(
+        serde_json::from_value::<BlockingDependencyWire>(wire).unwrap(),
+        dep
+    );
+
+    let hist = TasksHistoryParams {
+        task: "T-A2".into(),
+        event_type: Some("status_changed".into()),
+        blocks_only: true,
+    };
+    let hist_wire = serde_json::to_value(&hist).unwrap();
+    assert_eq!(
+        serde_json::from_value::<TasksHistoryParams>(hist_wire).unwrap(),
+        hist
+    );
+    let legacy_hist: TasksHistoryParams = serde_json::from_value(json!({"task": "T-A2"})).unwrap();
+    assert_eq!(legacy_hist, TasksHistoryParams::new("T-A2"));
+
+    let tr: TasksTransitionParams = serde_json::from_value(json!({
+        "command_id": "0193a5c0-0000-7000-8000-000000000001",
+        "task": "T-A2",
+        "expected_revision": 2,
+        "status": "blocked",
+        "reason": "Waiting on DNS",
+        "waiting_on_owner": true
+    }))
+    .unwrap();
+    assert_eq!(tr.reason.as_deref(), Some("Waiting on DNS"));
+    assert_eq!(tr.waiting_on_owner, Some(true));
 }

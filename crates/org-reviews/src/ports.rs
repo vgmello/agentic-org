@@ -1,6 +1,7 @@
 //! Engine-independent read/write ports for universal reviews (`ENG-1`) and the consumer-owned
 //! context port keeping `crate::reviews` decoupled from sibling domains (`Ce = 0`).
 
+use org_proto::attachments::AttachmentTargetKind;
 use org_proto::reviews::{ReviewStatus, ReviewTargetKind};
 use org_store::{Engine, EngineError, Id};
 
@@ -96,6 +97,7 @@ pub struct ReviewProjectInfo {
     pub id: Id,
     pub owner_team_id: Id,
     pub contributing_team_ids: Vec<Id>,
+    pub repository_ids: Vec<Id>,
     pub archived: bool,
 }
 
@@ -105,6 +107,14 @@ pub struct ReviewTaskInfo {
     pub project_id: Option<Id>,
 }
 
+/// Shared-attachment target metadata visible to the reviews domain validator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewAttachmentInfo {
+    pub target_kind: AttachmentTargetKind,
+    /// For `Project`: project ID. For `Task` and `TaskComment`: owning task ID.
+    pub target_id: Option<Id>,
+}
+
 /// Consumer-owned read port for sibling-domain facts, implemented at `store::open`.
 pub trait ReviewContextRead {
     fn organization_id(&self) -> Result<Option<Id>, EngineError>;
@@ -112,6 +122,7 @@ pub trait ReviewContextRead {
     fn employee_info(&self, id: &Id) -> Result<Option<ReviewActorInfo>, EngineError>;
     fn all_employees(&self) -> Result<Vec<ReviewActorInfo>, EngineError>;
     fn team_exists_active(&self, team_id: &Id) -> Result<bool, EngineError>;
+    fn team_lead(&self, team_id: &Id) -> Result<Option<Id>, EngineError>;
     fn team_chain(&self, team_id: &Id) -> Result<Option<Vec<Id>>, EngineError>;
     fn resolve_project_info(
         &self,
@@ -120,4 +131,6 @@ pub trait ReviewContextRead {
     fn project_info(&self, id: &Id) -> Result<Option<ReviewProjectInfo>, EngineError>;
     fn resolve_task_info(&self, reference: &str) -> Result<Option<ReviewTaskInfo>, EngineError>;
     fn repository_exists(&self, repo_id: &Id) -> Result<bool, EngineError>;
+    fn repository_project_ids(&self, repo_id: &Id) -> Result<Vec<Id>, EngineError>;
+    fn attachment_info(&self, id: &Id) -> Result<Option<ReviewAttachmentInfo>, EngineError>;
 }

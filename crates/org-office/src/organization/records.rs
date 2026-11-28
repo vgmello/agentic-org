@@ -31,6 +31,7 @@ pub use teams::{
 };
 
 mod hiring;
+mod team_limit;
 pub(crate) mod yaml;
 
 use org_store::{DurablePath, Id, Timestamp};
@@ -43,6 +44,10 @@ pub use hiring::{
     model_profile_path, provider_connection_path, watching_model_path, AgentExecutionConfig,
     HireProposal, HireRequest, HireState, ModelProfile, PermissionPreset, ProviderAuthMode,
     ProviderConnection, ReasoningEffort, WatchingModelSetting,
+};
+pub use team_limit::{
+    decode_team_limit_request, encode_team_limit_request, team_limit_request_path,
+    TeamLimitRequest, TeamLimitRequestState,
 };
 pub use yaml::{canonical_json, RecordError};
 use yaml::{Fields, Reader};

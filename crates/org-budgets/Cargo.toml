@@ -1,0 +1,16 @@
+[package]
+name = "org-budgets"
+description = "L3 budgets & execution holds domain: policies, calendar periods, 80/100 notices, one-time 20% extensions, and deterministic budget evaluation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-accounting = { path = "../org-accounting" }
+org-proto = { path = "../org-proto" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

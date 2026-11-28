@@ -31,6 +31,10 @@ pub const SESSION_TOKEN_ENV: &str = "AGENT_OS_SESSION_TOKEN";
 pub const BINDING_FILE_ENV: &str = "AGENT_OS_BINDING_FILE";
 /// Environment variable naming the bound agent's employee ID (`doc-28` §2.8).
 pub const AGENT_ID_ENV: &str = "AGENT_OS_AGENT_ID";
+/// Optional environment variable naming the active run's task key or UUIDv7 (`TASK-111`).
+pub const TASK_ENV: &str = "AGENT_OS_TASK";
+/// Optional environment variable naming the active run's project key, slug or UUIDv7 (`TASK-111`).
+pub const PROJECT_ENV: &str = "AGENT_OS_PROJECT";
 
 const MAX_BINDING_FILE_BYTES: u64 = 4096;
 
@@ -42,6 +46,10 @@ pub struct Binding {
     pub runtime_dir: Option<PathBuf>,
     pub session_token: Option<String>,
     pub agent_id: Option<String>,
+    /// Active task key or UUIDv7 from the run environment (`AGENT_OS_TASK`), if any.
+    pub active_task: Option<String>,
+    /// Active project key, slug or UUIDv7 from the run environment (`AGENT_OS_PROJECT`), if any.
+    pub active_project: Option<String>,
     /// The state folder of a signed-in external workspace (`TASK-137`): its token is refreshed
     /// by challenge-response when stale or refused.
     pub external_state: Option<PathBuf>,
@@ -58,6 +66,8 @@ impl fmt::Debug for Binding {
                 &self.session_token.as_ref().map(|_| "<redacted>"),
             )
             .field("agent_id", &self.agent_id)
+            .field("active_task", &self.active_task)
+            .field("active_project", &self.active_project)
             .field("external_state", &self.external_state)
             .finish()
     }
@@ -87,6 +97,8 @@ impl Binding {
             runtime_dir,
             session_token,
             agent_id: non_empty(AGENT_ID_ENV),
+            active_task: non_empty(TASK_ENV),
+            active_project: non_empty(PROJECT_ENV),
             external_state: None,
         }
     }

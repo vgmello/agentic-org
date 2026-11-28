@@ -31,7 +31,7 @@ zeroize = "=1.9.1"
 # The live `agent-os` command table and concrete runtime adapters the unit tests exercise;
 # production injects them from the `agentic-org-office` composition root (`TASK-216`).
 org-agent-cli = { path = "../org-agent-cli" }
-org-agent-runtime-agy = { path = "../org-agent-runtime-agy" }
+org-agent-runtime-acp = { path = "../org-agent-runtime-acp" }
 org-agent-runtime-claude = { path = "../org-agent-runtime-claude" }
 org-agent-runtime-codex = { path = "../org-agent-runtime-codex" }
 org-command = { path = "../org-command" }

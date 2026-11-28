@@ -2219,7 +2219,8 @@ fn cost_budget_get_query_routes_and_account_preferences_method_not_allowed() {
     }));
     let pair = sign_in(&gateway).pair();
 
-    // `GET /api/v1/account/preferences` returns 400 InvalidRequest (known POST-only route, not 404).
+    // `GET /api/v1/account/preferences` returns 200 with persisted account preferences;
+    // a query string on `/api/v1/account/preferences` returns 400 InvalidRequest.
     let prefs_get = send(
         &gateway,
         Method::GET,
@@ -2228,7 +2229,16 @@ fn cost_budget_get_query_routes_and_account_preferences_method_not_allowed() {
         Some(&pair),
         &[],
     );
-    assert_eq!(prefs_get.status, StatusCode::BAD_REQUEST);
+    assert_eq!(prefs_get.status, StatusCode::OK);
+    let prefs_bad_query = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/account/preferences?extra=1",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(prefs_bad_query.status, StatusCode::BAD_REQUEST);
 
     // `GET /api/v1/organizations/{org}/costs/prices?...` and `/budgets?...` parse query params
     // instead of returning 404 (unknown param returns 400; valid query dispatches to HQ office).
@@ -2494,13 +2504,73 @@ fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
     // Valid requests go to the organization's HQ office (503 here: the fixture has no office).
     for target in [
         format!("{decisions}?tag=arch&project_id=0193a5c0-0000-7000-8000-000000000050&task_id=T-A1&limit=20&fields=title,tags"),
+        format!("/api/v1/organizations/{ORG}/notes?kind=decision&tag=arch&fields=title,why"),
+        format!("/api/v1/organizations/{ORG}/notes/0193a5c0-0000-7000-8000-000000000060"),
         format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?kind=decision&tag=arch&fields=title"),
         format!("/api/v1/organizations/{ORG}/tasks/notes/0193a5c0-0000-7000-8000-000000000060"),
     ] {
         let reply = send(&gateway, Method::GET, &target, "", Some(&pair), &[]);
         assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{target}");
     }
+    // Cookie without proof header is always rejected (ADR-0031).
+    let cookie_only = send(
+        &gateway,
+        Method::GET,
+        &decisions,
+        "",
+        None,
+        &[("cookie", &pair.cookie)],
+    );
+    assert_eq!(cookie_only.status, StatusCode::UNAUTHORIZED);
     assert!(calls.methods().contains(&"organization.list".to_owned()));
+}
+
+#[test]
+fn private_notes_and_decisions_have_no_sign_in_less_mode() {
+    let (gateway, calls) = gateway_with_auth_enabled(
+        organization_script(|method, _| {
+            (method == "organization.list").then(|| {
+                vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+            })
+        }),
+        org_host_control::listen::ListenMode::HttpLoopback,
+        false,
+    );
+    let member = "0193a5c0-0000-7000-8000-000000000040";
+    for (method, target, body) in [
+        (
+            Method::GET,
+            format!("/api/v1/organizations/{ORG}/members/{member}/decisions"),
+            "",
+        ),
+        (
+            Method::GET,
+            format!("/api/v1/organizations/{ORG}/notes"),
+            "",
+        ),
+        (
+            Method::GET,
+            format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes"),
+            "",
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/organizations/{ORG}/notes/add"),
+            "{}",
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/organizations/{ORG}/tasks/notes/add"),
+            "{}",
+        ),
+    ] {
+        let reply = send(&gateway, method.clone(), &target, body, None, &[]);
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{method} {target}");
+    }
+    assert!(
+        !calls.methods().contains(&"organization.list".to_owned()),
+        "unauthenticated private note requests must never reach HQ"
+    );
 }
 
 #[test]

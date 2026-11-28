@@ -11,9 +11,9 @@ use org_proto::tasks::{
     TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
     TasksChecklistMoveParams, TasksChecklistRemoveParams, TasksChecklistResult, TasksCommentParams,
     TasksCommentResult, TasksCommentsResult, TasksCreateParams, TasksFinalSummaryParams,
-    TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
-    TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams, TasksUpdateParams,
-    TasksWatchParams,
+    TasksHistoryParams, TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams,
+    TasksListResult, TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams,
+    TasksUpdateParams, TasksWatchParams,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::{
@@ -77,6 +77,22 @@ fn with_reply<T: Serialize>(mut change: Change, payload: &T) -> Change {
     change
 }
 
+fn commit_reply(
+    change: Change,
+    id: &Id,
+    newly_assigned_agent: Option<Id>,
+    mutated_step_ids: Vec<String>,
+) -> Change {
+    with_reply(
+        change,
+        &TaskCommitReply {
+            task_id: id.as_str().to_owned(),
+            newly_assigned_agent: newly_assigned_agent.map(|a| a.as_str().to_owned()),
+            mutated_step_ids,
+        },
+    )
+}
+
 fn submit_task<E: OfficeEngine>(
     store: &Store<E>,
     op: Option<Operation>,
@@ -103,40 +119,34 @@ fn finish_view<E: OfficeEngine>(
     reply: Reply,
     replayed: bool,
 ) -> Result<Result<TaskWriteOutcome, ApiError>, StoreError> {
-    match reply.outcome {
-        Outcome::Rejected => Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes)))),
-        Outcome::Completed => {
-            let committed: TaskCommitReply = serde_json::from_slice(&reply.bytes)
-                .map_err(|_| StoreError::invalid("corrupt task commit reply"))?;
-            let task_id = Id::parse(&committed.task_id)
-                .map_err(|_| StoreError::invalid("invalid committed task id"))?;
-            let agent = if replayed {
-                None
-            } else {
-                committed
-                    .newly_assigned_agent
-                    .as_deref()
-                    .and_then(|s| Id::parse(s).ok())
-            };
-            let (out, _) = store.read(|snap| {
-                let Some(t) = snap.task(&task_id)? else {
-                    return Ok(Err(ApiError::new(
-                        ErrorCode::StorageError,
-                        "committed task missing from projection",
-                    )));
-                };
-                match build_task_view(snap, &t) {
-                    Ok(view) => Ok(Ok(TaskWriteOutcome {
-                        task: view,
-                        newly_assigned_agent: agent,
-                        replayed,
-                    })),
-                    Err(r) => Ok(Err(decode_refusal(&r))),
-                }
-            })?;
-            Ok(out)
-        }
+    if reply.outcome == Outcome::Rejected {
+        return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
     }
+    let committed: TaskCommitReply = serde_json::from_slice(&reply.bytes)
+        .map_err(|_| StoreError::invalid("corrupt task commit reply"))?;
+    let task_id = Id::parse(&committed.task_id)
+        .map_err(|_| StoreError::invalid("invalid committed task id"))?;
+    let agent = (!replayed)
+        .then_some(committed.newly_assigned_agent.as_deref())
+        .flatten()
+        .and_then(|s| Id::parse(s).ok());
+    let (out, _) = store.read(|snap| {
+        let Some(t) = snap.task(&task_id)? else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::StorageError,
+                "committed task missing from projection",
+            )));
+        };
+        match build_task_view(snap, &t) {
+            Ok(task) => Ok(Ok(TaskWriteOutcome {
+                task,
+                newly_assigned_agent: agent,
+                replayed,
+            })),
+            Err(r) => Ok(Err(decode_refusal(&r))),
+        }
+    })?;
+    Ok(out)
 }
 
 fn finish_checklist<E: OfficeEngine>(
@@ -144,50 +154,58 @@ fn finish_checklist<E: OfficeEngine>(
     reply: Reply,
     replayed: bool,
 ) -> Result<Result<(TasksChecklistResult, bool), ApiError>, StoreError> {
-    match reply.outcome {
-        Outcome::Rejected => Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes)))),
-        Outcome::Completed => {
-            let committed: TaskCommitReply = serde_json::from_slice(&reply.bytes)
-                .map_err(|_| StoreError::invalid("corrupt checklist commit reply"))?;
-            let task_id = Id::parse(&committed.task_id)
-                .map_err(|_| StoreError::invalid("invalid committed task id"))?;
-            let (out, _) = store.read(|snap| {
-                let Some(t) = snap.task(&task_id)? else {
-                    return Ok(Err(ApiError::new(
-                        ErrorCode::StorageError,
-                        "committed task missing from projection",
-                    )));
-                };
-                let task = match build_task_view(snap, &t) {
-                    Ok(v) => v,
-                    Err(r) => return Ok(Err(decode_refusal(&r))),
-                };
-                let checklist = snap
-                    .checklist_steps(&task_id)?
-                    .iter()
-                    .map(step_to_wire)
-                    .collect();
-                Ok(Ok((
-                    TasksChecklistResult {
-                        task,
-                        checklist,
-                        mutated_step_ids: committed.mutated_step_ids,
-                    },
-                    replayed,
-                )))
-            })?;
-            Ok(out)
-        }
+    if reply.outcome == Outcome::Rejected {
+        return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
     }
+    let committed: TaskCommitReply = serde_json::from_slice(&reply.bytes)
+        .map_err(|_| StoreError::invalid("corrupt checklist commit reply"))?;
+    let task_id = Id::parse(&committed.task_id)
+        .map_err(|_| StoreError::invalid("invalid committed task id"))?;
+    let (out, _) = store.read(|snap| {
+        let Some(t) = snap.task(&task_id)? else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::StorageError,
+                "committed task missing from projection",
+            )));
+        };
+        let task = match build_task_view(snap, &t) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(decode_refusal(&r))),
+        };
+        let checklist = snap
+            .checklist_steps(&task_id)?
+            .iter()
+            .map(step_to_wire)
+            .collect();
+        Ok(Ok((
+            TasksChecklistResult {
+                task,
+                checklist,
+                mutated_step_ids: committed.mutated_step_ids,
+            },
+            replayed,
+        )))
+    })?;
+    Ok(out)
+}
+
+fn finish_attachment(
+    reply: Reply,
+    label: &str,
+) -> Result<Result<AttachmentView, ApiError>, StoreError> {
+    if reply.outcome == Outcome::Rejected {
+        return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
+    }
+    serde_json::from_slice::<AttachmentView>(&reply.bytes)
+        .map(Ok)
+        .map_err(|e| StoreError::Invalid(format!("corrupt {label} reply: {e}")))
 }
 
 pub struct TaskCreateOp {
     pub actor: String,
     pub here: OfficeIdentity,
     pub params: TasksCreateParams,
-    /// [`super::OfficeStore::task_numbering`]: the store's task numbering (`ADR-0019`).
     pub numbering: Arc<TaskNumbering>,
-    /// Validated, blob-promoted files to bind on create (`TASK-98.4`).
     pub prepared_files: PreparedTaskFiles,
 }
 
@@ -201,7 +219,6 @@ impl StoreOp for TaskCreateOp {
             &self.params,
         );
         let numbering = Arc::clone(&self.numbering);
-        // The counter the last decision left, and whether it was answered `durable`.
         let issued: Arc<Mutex<Option<(OfficeTaskCounterRecord, bool)>>> = Arc::default();
         let decided = Arc::clone(&issued);
         let cmd = CreateTask {
@@ -214,23 +231,18 @@ impl StoreOp for TaskCreateOp {
             let created = cmd.decide(uow, &self.here)?;
             let durable = created.change.ack == Ack::Durable;
             *decided.lock().unwrap_or_else(|p| p.into_inner()) = Some((created.counter, durable));
-            Ok(with_reply(
+            Ok(commit_reply(
                 created.change,
-                &TaskCommitReply {
-                    task_id: created.task_id.as_str().to_owned(),
-                    newly_assigned_agent: created.assigned_agent.map(|a| a.as_str().to_owned()),
-                    mutated_step_ids: Vec::new(),
-                },
+                &created.task_id,
+                created.assigned_agent,
+                Vec::new(),
             ))
         })? {
             Ok(pair) => pair,
             Err(api_err) => return Ok(Err(api_err)),
         };
-        // A `durable` create that ran here and completed is flushed with its counter, so the
-        // creates inside that reservation may be answered `committed` (`ADR-0019`).
         if !replayed && reply.outcome == Outcome::Completed {
-            let issued = issued.lock().unwrap_or_else(|p| p.into_inner()).take();
-            if let Some((counter, true)) = issued {
+            if let Some((counter, true)) = issued.lock().unwrap_or_else(|p| p.into_inner()).take() {
                 numbering.flushed(&counter);
             }
         }
@@ -241,9 +253,7 @@ impl StoreOp for TaskCreateOp {
 pub struct TaskUpdateOp {
     pub actor: String,
     pub params: TasksUpdateParams,
-    /// Validated, blob-promoted files for `params.add_attachments` (`TASK-98.4`).
     pub prepared_files: PreparedTaskFiles,
-    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
     pub authority: TaskWriteAuthority,
 }
 
@@ -264,53 +274,7 @@ impl StoreOp for TaskUpdateOp {
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let (change, id) = cmd.decide(uow)?;
-            Ok(with_reply(
-                change,
-                &TaskCommitReply {
-                    task_id: id.as_str().to_owned(),
-                    newly_assigned_agent: None,
-                    mutated_step_ids: Vec::new(),
-                },
-            ))
-        })? {
-            Ok(pair) => pair,
-            Err(api_err) => return Ok(Err(api_err)),
-        };
-        finish_view(store, reply, replayed)
-    }
-}
-
-pub struct TaskTransitionOp {
-    pub actor: String,
-    pub params: TasksTransitionParams,
-    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
-    pub authority: TaskWriteAuthority,
-}
-
-impl StoreOp for TaskTransitionOp {
-    type Out = Result<Result<TaskWriteOutcome, ApiError>, StoreError>;
-    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
-        let op = task_op(
-            "tasks.transition",
-            &self.params.command_id,
-            &self.actor,
-            &self.params,
-        );
-        let cmd = TransitionTask {
-            actor_member_id: self.actor,
-            params: self.params,
-            authority: self.authority,
-        };
-        let (reply, replayed) = match submit_task(store, op, move |uow| {
-            let (change, id) = cmd.decide(uow)?;
-            Ok(with_reply(
-                change,
-                &TaskCommitReply {
-                    task_id: id.as_str().to_owned(),
-                    newly_assigned_agent: None,
-                    mutated_step_ids: Vec::new(),
-                },
-            ))
+            Ok(commit_reply(change, &id, None, Vec::new()))
         })? {
             Ok(pair) => pair,
             Err(api_err) => return Ok(Err(api_err)),
@@ -322,7 +286,6 @@ impl StoreOp for TaskTransitionOp {
 pub struct TaskAssignOp {
     pub actor: String,
     pub params: TasksAssignParams,
-    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
     pub authority: TaskWriteAuthority,
 }
 
@@ -342,14 +305,7 @@ impl StoreOp for TaskAssignOp {
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
             let (change, id, agent) = cmd.decide(uow)?;
-            Ok(with_reply(
-                change,
-                &TaskCommitReply {
-                    task_id: id.as_str().to_owned(),
-                    newly_assigned_agent: agent.map(|a| a.as_str().to_owned()),
-                    mutated_step_ids: Vec::new(),
-                },
-            ))
+            Ok(commit_reply(change, &id, agent, Vec::new()))
         })? {
             Ok(pair) => pair,
             Err(api_err) => return Ok(Err(api_err)),
@@ -361,9 +317,7 @@ impl StoreOp for TaskAssignOp {
 pub struct TaskCommentOp {
     pub actor: String,
     pub params: TasksCommentParams,
-    /// Validated, blob-promoted files bound to this comment (`TASK-98.4`).
     pub prepared_files: PreparedTaskFiles,
-    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
     pub authority: TaskWriteAuthority,
 }
 
@@ -398,44 +352,59 @@ impl StoreOp for TaskCommentOp {
             Ok(pair) => pair,
             Err(api_err) => return Ok(Err(api_err)),
         };
-        match reply.outcome {
-            Outcome::Rejected => Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes)))),
-            Outcome::Completed => {
-                let committed: CommentCommitReply = serde_json::from_slice(&reply.bytes)
-                    .map_err(|_| StoreError::invalid("corrupt comment commit reply"))?;
-                let task_id = Id::parse(&committed.task_id)
-                    .map_err(|_| StoreError::invalid("invalid committed task id"))?;
-                let (out, _) = store.read(|snap| {
-                    let Some(t) = snap.task(&task_id)? else {
-                        return Ok(Err(ApiError::new(
-                            ErrorCode::StorageError,
-                            "committed task missing from projection",
-                        )));
-                    };
-                    match build_task_view(snap, &t) {
-                        Ok(task) => Ok(Ok((
-                            TasksCommentResult {
-                                task,
-                                comment: comment_to_wire(&committed.comment, committed.attachments),
-                            },
-                            replayed,
-                        ))),
-                        Err(r) => Ok(Err(decode_refusal(&r))),
-                    }
-                })?;
-                Ok(out)
-            }
+        if reply.outcome == Outcome::Rejected {
+            return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
         }
+        let committed: CommentCommitReply = serde_json::from_slice(&reply.bytes)
+            .map_err(|_| StoreError::invalid("corrupt comment commit reply"))?;
+        let task_id = Id::parse(&committed.task_id)
+            .map_err(|_| StoreError::invalid("invalid committed task id"))?;
+        let (out, _) = store.read(|snap| {
+            let Some(t) = snap.task(&task_id)? else {
+                return Ok(Err(ApiError::new(
+                    ErrorCode::StorageError,
+                    "committed task missing from projection",
+                )));
+            };
+            match build_task_view(snap, &t) {
+                Ok(task) => Ok(Ok((
+                    TasksCommentResult {
+                        task,
+                        comment: comment_to_wire(&committed.comment, committed.attachments),
+                    },
+                    replayed,
+                ))),
+                Err(r) => Ok(Err(decode_refusal(&r))),
+            }
+        })?;
+        Ok(out)
     }
 }
 
-/// Binds one attachment to a task via `attachment.attach` (`TASK-98.4`).
+fn run_attachment_op<E: OfficeEngine>(
+    store: &Store<E>,
+    op: Operation,
+    label: &str,
+    decide: impl FnMut(&mut org_store::UnitOfWork<'_, E>) -> Result<(Change, AttachmentView), Refusal>
+        + Send
+        + 'static,
+) -> Result<Result<AttachmentView, ApiError>, StoreError> {
+    let mut decide = decide;
+    let (reply, _) = match submit_task(store, Some(op), move |uow| {
+        let (change, view) = decide(uow)?;
+        Ok(with_reply(change, &view))
+    })? {
+        Ok(pair) => pair,
+        Err(api_err) => return Ok(Err(api_err)),
+    };
+    finish_attachment(reply, label)
+}
+
 pub struct TaskAttachOp {
     pub operation: Operation,
     pub actor: String,
     pub command_id: String,
     pub record: AttachmentRecord,
-    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
     pub authority: TaskWriteAuthority,
 }
 
@@ -448,30 +417,18 @@ impl StoreOp for TaskAttachOp {
             record: self.record,
             authority: self.authority,
         };
-        let (reply, _) = match submit_task(store, Some(self.operation), move |uow| {
-            let (change, view) = cmd.decide(uow)?;
-            Ok(with_reply(change, &view))
-        })? {
-            Ok(pair) => pair,
-            Err(api_err) => return Ok(Err(api_err)),
-        };
-        if reply.outcome == Outcome::Rejected {
-            return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
-        }
-        serde_json::from_slice::<AttachmentView>(&reply.bytes)
-            .map(Ok)
-            .map_err(|e| StoreError::Invalid(format!("corrupt task attach reply: {e}")))
+        run_attachment_op(store, self.operation, "task attach", move |uow| {
+            cmd.decide(uow)
+        })
     }
 }
 
-/// Updates metadata on a task-bound attachment via `attachment.update_meta` (`TASK-98.4`).
 pub struct TaskUpdateAttachmentMetaOp {
     pub operation: Operation,
     pub actor: String,
     pub command_id: String,
     pub attachment_id: Id,
     pub patch: MetaPatch,
-    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
     pub authority: TaskWriteAuthority,
 }
 
@@ -485,19 +442,9 @@ impl StoreOp for TaskUpdateAttachmentMetaOp {
             patch: self.patch,
             authority: self.authority,
         };
-        let (reply, _) = match submit_task(store, Some(self.operation), move |uow| {
-            let (change, view) = cmd.decide(uow)?;
-            Ok(with_reply(change, &view))
-        })? {
-            Ok(pair) => pair,
-            Err(api_err) => return Ok(Err(api_err)),
-        };
-        if reply.outcome == Outcome::Rejected {
-            return Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes))));
-        }
-        serde_json::from_slice::<AttachmentView>(&reply.bytes)
-            .map(Ok)
-            .map_err(|e| StoreError::Invalid(format!("corrupt task attach meta reply: {e}")))
+        run_attachment_op(store, self.operation, "task attach meta", move |uow| {
+            cmd.decide(uow)
+        })
     }
 }
 
@@ -508,7 +455,6 @@ macro_rules! simple_task_write_op {
             pub params: $params_ty,
             pub authority: TaskWriteAuthority,
         }
-
         impl StoreOp for $op_name {
             type Out = Result<Result<TaskWriteOutcome, ApiError>, StoreError>;
             fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
@@ -520,14 +466,7 @@ macro_rules! simple_task_write_op {
                 };
                 let (reply, replayed) = match submit_task(store, op, move |uow| {
                     let (change, id) = cmd.decide(uow)?;
-                    Ok(with_reply(
-                        change,
-                        &TaskCommitReply {
-                            task_id: id.as_str().to_owned(),
-                            newly_assigned_agent: None,
-                            mutated_step_ids: Vec::new(),
-                        },
-                    ))
+                    Ok(commit_reply(change, &id, None, Vec::new()))
                 })? {
                     Ok(pair) => pair,
                     Err(api_err) => return Ok(Err(api_err)),
@@ -538,6 +477,12 @@ macro_rules! simple_task_write_op {
     };
 }
 
+simple_task_write_op!(
+    TaskTransitionOp,
+    "tasks.transition",
+    TasksTransitionParams,
+    TransitionTask
+);
 simple_task_write_op!(TaskWatchOp, "tasks.watch", TasksWatchParams, WatchTask);
 simple_task_write_op!(
     TaskFinalSummaryOp,
@@ -571,7 +516,6 @@ macro_rules! checklist_write_op {
             pub params: $params_ty,
             pub authority: TaskWriteAuthority,
         }
-
         impl StoreOp for $op_name {
             type Out = Result<Result<(TasksChecklistResult, bool), ApiError>, StoreError>;
             fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
@@ -582,15 +526,8 @@ macro_rules! checklist_write_op {
                     authority: self.authority,
                 };
                 let (reply, replayed) = match submit_task(store, op, move |uow| {
-                    let (change, id, mutated_step_ids) = cmd.decide(uow)?;
-                    Ok(with_reply(
-                        change,
-                        &TaskCommitReply {
-                            task_id: id.as_str().to_owned(),
-                            newly_assigned_agent: None,
-                            mutated_step_ids,
-                        },
-                    ))
+                    let (change, id, steps) = cmd.decide(uow)?;
+                    Ok(commit_reply(change, &id, None, steps))
                 })? {
                     Ok(pair) => pair,
                     Err(api_err) => return Ok(Err(api_err)),
@@ -632,74 +569,22 @@ checklist_write_op!(
     ChecklistMove
 );
 
-// --- ReadOps ---
-
-pub struct TaskListRead {
-    pub params: TasksListParams,
+macro_rules! task_read_op {
+    ($name:ident { $($f:ident : $t:ty),+ $(,)? } => $out:ty : |$this:ident, $snap:ident| $body:expr) => {
+        pub struct $name { $(pub $f: $t),+ }
+        impl ReadOp for $name {
+            type Out = Result<$out, ApiError>;
+            fn read<S: TasksRead>(self, $snap: &S) -> Result<Self::Out, StoreError> {
+                let $this = self;
+                Ok(($body).map_err(|r| decode_refusal(&r)))
+            }
+        }
+    };
 }
 
-impl ReadOp for TaskListRead {
-    type Out = Result<TasksListResult, ApiError>;
-    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        Ok(features::list_tasks(snapshot, &self.params).map_err(|r| decode_refusal(&r)))
-    }
-}
-
-pub struct TaskInspectRead {
-    pub task: String,
-    pub fields: Option<Vec<String>>,
-}
-
-impl ReadOp for TaskInspectRead {
-    type Out = Result<TaskInspectResult, ApiError>;
-    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        Ok(
-            features::inspect_task_with_fields(snapshot, &self.task, self.fields.as_deref())
-                .map_err(|r| decode_refusal(&r)),
-        )
-    }
-}
-
-pub struct TaskDependenciesRead {
-    pub task: String,
-}
-
-impl ReadOp for TaskDependenciesRead {
-    type Out = Result<TaskDependenciesResult, ApiError>;
-    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        Ok(features::task_dependencies(snapshot, &self.task).map_err(|r| decode_refusal(&r)))
-    }
-}
-
-pub struct TaskCommentsRead {
-    pub task: String,
-}
-
-impl ReadOp for TaskCommentsRead {
-    type Out = Result<TasksCommentsResult, ApiError>;
-    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        Ok(features::list_comments(snapshot, &self.task).map_err(|r| decode_refusal(&r)))
-    }
-}
-
-pub struct TaskHistoryRead {
-    pub task: String,
-}
-
-impl ReadOp for TaskHistoryRead {
-    type Out = Result<TasksHistoryResult, ApiError>;
-    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        Ok(features::list_history(snapshot, &self.task).map_err(|r| decode_refusal(&r)))
-    }
-}
-
-pub struct TaskLabelsRead {
-    pub params: TasksLabelsParams,
-}
-
-impl ReadOp for TaskLabelsRead {
-    type Out = Result<TasksLabelsResult, ApiError>;
-    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        Ok(features::list_labels(snapshot, &self.params).map_err(|r| decode_refusal(&r)))
-    }
-}
+task_read_op!(TaskListRead { params: TasksListParams } => TasksListResult : |this, s| features::list_tasks(s, &this.params));
+task_read_op!(TaskInspectRead { task: String, fields: Option<Vec<String>> } => TaskInspectResult : |this, s| features::inspect_task_with_fields(s, &this.task, this.fields.as_deref()));
+task_read_op!(TaskDependenciesRead { task: String } => TaskDependenciesResult : |this, s| features::task_dependencies(s, &this.task));
+task_read_op!(TaskCommentsRead { task: String } => TasksCommentsResult : |this, s| features::list_comments(s, &this.task));
+task_read_op!(TaskHistoryRead { params: TasksHistoryParams } => TasksHistoryResult : |this, s| features::list_history_filtered(s, &this.params));
+task_read_op!(TaskLabelsRead { params: TasksLabelsParams } => TasksLabelsResult : |this, s| features::list_labels(s, &this.params));

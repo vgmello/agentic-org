@@ -890,9 +890,11 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         tasks: None,
         attachments: None,
         git: None,
+        reviews: None,
         processes: None,
         docs: None,
         search: None,
+        copilot: None,
         costs: None,
         providers: None,
         federation: None,
@@ -963,7 +965,7 @@ fn operation_get_returns_stored_outcomes_for_each_legacy_binding() {
 fn default_dod_setters_refuse_non_grant_office_socket_callers() {
     let dir = tempfile::tempdir().unwrap();
     let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-    ports.tasks = Some(Box::new(|_caller, request| {
+    ports.tasks = Some(Box::new(|_caller, _via_grant, request| {
         Some(Response {
             id: request.id,
             outcome: org_proto::Outcome::Result(serde_json::json!({"ok": true})),
@@ -1422,9 +1424,11 @@ fn serving(
             tasks: None,
             attachments: None,
             git: None,
+            reviews: None,
             processes: None,
             docs: None,
             search: None,
+            copilot: None,
             costs: None,
             providers: None,
             federation: None,
@@ -1907,9 +1911,11 @@ fn following_with(
                 tasks: None,
                 attachments: None,
                 git: None,
+                reviews: None,
                 processes: None,
                 docs: None,
                 search: None,
+                copilot: None,
                 costs: None,
                 providers: None,
                 federation: None,
@@ -2416,9 +2422,11 @@ fn asking(
             tasks: None,
             attachments: None,
             git: None,
+            reviews: None,
             processes: None,
             docs: None,
             search: None,
+            copilot: None,
             costs: None,
             providers: None,
             federation: None,

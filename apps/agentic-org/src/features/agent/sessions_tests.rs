@@ -269,3 +269,61 @@ fn sessions_yaml_emits_a_single_document_and_accepts_post_subcommand_format() {
     .unwrap_err();
     assert_eq!(err.exit_code(), 2);
 }
+
+#[test]
+fn sessions_member_uuid_succeeds_and_unauthorized_caller_preserves_accurate_error_and_hint() {
+    let ada_id = "0193a5c0-0000-7000-8000-000000000051";
+    let mut transport = FakeTransport {
+        calls: Vec::new(),
+        refuse: None,
+    };
+    let args =
+        SessionsArgs::try_parse_from(["agentic-org agent sessions", "--member", ada_id, "--json"])
+            .unwrap();
+    let (mut ctx, out) = captured(
+        Modes {
+            json: true,
+            ..Modes::default()
+        },
+        Terminal::piped(),
+        &[],
+    );
+    execute_with_transport(&args, &mut transport, &mut ctx).unwrap();
+    assert_eq!(transport.calls[0].0, "member.external_sessions");
+    assert_eq!(transport.calls[0].1, json!({"employee_id": ada_id}));
+    let parsed: Value = serde_json::from_str(&out.stdout.text()).unwrap();
+    assert_eq!(parsed["employee_id"], ada_id);
+    assert_eq!(
+        parsed["active"]["session_id"],
+        "ext-0193a5c0-0000-7000-8000-000000000070"
+    );
+
+    // Accurate authorization refusal + actionable hint flow through (never opaque host refusal).
+    let mut denied_transport = FakeTransport {
+        calls: Vec::new(),
+        refuse: Some(Refusal::new(
+            ErrorCode::NotAuthorized,
+            "only the owner, a person who may hire, or the agent's manager or team lead may manage its external sessions",
+            "Ask the organization owner, a person with hiring access, or the agent's manager or team lead to inspect or manage this agent's external sessions.",
+        )),
+    };
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    let err = execute_with_transport(&args, &mut denied_transport, &mut ctx).unwrap_err();
+    assert_eq!(err.exit_code(), 1);
+    assert_eq!(err.code(), "office::not_authorized");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("owner") && rendered.contains("team lead"),
+        "expected accurate authorization error, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains("request refused on host channel"),
+        "must not collapse into opaque host channel refusal: {rendered}"
+    );
+    assert!(
+        err.help()
+            .is_some_and(|h| h.contains("organization owner") && h.contains("team lead")),
+        "expected actionable hint, got: {:?}",
+        err.help()
+    );
+}

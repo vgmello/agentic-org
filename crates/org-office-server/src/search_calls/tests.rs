@@ -32,8 +32,10 @@ fn answer(response: &Response) -> SearchQueryResult {
 
 #[test]
 fn search_query_answers_a_bound_member_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
         let office = Office::for_test(TestOffice { engine });
         let owner = office.owner_member_id().to_owned();
         let params = SearchQueryParams {

@@ -52,6 +52,7 @@ use crate::subagents::{
     BackgroundRegistry,
 };
 
+mod acp_isolation;
 mod approval;
 mod approval_bridge;
 mod bwrap;
@@ -73,10 +74,12 @@ mod real_process;
 mod recovery;
 mod recovery_clear;
 mod redaction;
+mod review_affinity;
 mod sandbox;
 mod sandbox_runner;
 mod subagents_binding;
 mod subscription_usage;
+mod telemetry;
 mod wake;
 mod warm;
 mod worktree_refresh;
@@ -259,6 +262,10 @@ impl AgentRuntime for ScriptedRuntime {
 
     fn binary_name(&self) -> &'static str {
         "scripted-agent"
+    }
+
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -689,6 +696,7 @@ fn spawn_stub_bwrap_handle(
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: "/tmp/home-a".into(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         allow_host_auth: false,
@@ -729,6 +737,9 @@ fn spawn_stub_bwrap_handle(
             supports_mid_turn: false,
             sandbox_plan: crate::manager::SandboxPlan::linux_bwrap(masked),
             partition: None,
+            active_model: None,
+            active_effort: None,
+            pinned_override: Default::default(),
         },
         stopped,
     )

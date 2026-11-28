@@ -104,6 +104,7 @@ fn each_answer_of_the_store_has_its_protocol_answer() {
     let rejection = |code: RejectCode| OrgRejection {
         code,
         message: "the parent team is archived".into(),
+        hint: None,
     };
     for (code, expected) in [
         (RejectCode::NotFound, ErrorCode::NotFound),

@@ -119,7 +119,7 @@ impl ServiceRefresh {
     }
 
     /// [`Self::inspect`] with the setup records under `base`.
-    pub(crate) fn inspect_at(manager: &dyn ServiceManager, base: &Path, store: &Path) -> Self {
+    pub fn inspect_at(manager: &dyn ServiceManager, base: &Path, store: &Path) -> Self {
         let releases = std::fs::canonicalize(store.join("releases")).ok();
         let mut names: Vec<String> = std::fs::read_dir(base.join("setup"))
             .into_iter()

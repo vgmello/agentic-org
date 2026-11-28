@@ -192,8 +192,10 @@ fn read(office: &Arc<Office>, member: &str, id: &str) -> Result<Vec<u8>, ApiErro
 
 #[test]
 fn all_nine_attachment_rpcs_work_end_to_end_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
         let office = Arc::new(Office::for_test(TestOffice { engine }));
         let owner = office.owner_member_id().to_owned();
         let agent = hire_agent(&office, &owner);
@@ -453,8 +455,10 @@ fn attachment_render_hosts_markdown_and_html_to_task_and_org_and_returns_valid_p
         ArtifactStatus, AttachmentRender, AttachmentRenderParams, RenderFormat, RenderSourceKind,
     };
 
-    org_office_sqlite::install();
-    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
         let office = Arc::new(Office::for_test(TestOffice { engine }));
         let owner = office.owner_member_id().to_owned();
         let agent = hire_agent(&office, &owner);

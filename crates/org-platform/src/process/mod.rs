@@ -122,6 +122,15 @@ pub fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
     native::parent_pid(pid)
 }
 
+/// Resident memory (RSS) in bytes for the single process `pid`, or `None` when `pid` is
+/// invalid, no longer exists, or the target has no adapter (fail closed).
+pub fn process_rss_bytes(pid: u32) -> Option<u64> {
+    if pid == 0 {
+        return None;
+    }
+    native::process_rss_bytes(pid)
+}
+
 /// Total resident memory (RSS) in bytes for `root_pid` and its live descendant processes, or
 /// `None` when `root_pid` is invalid, no longer exists, or the target has no adapter (fail closed).
 pub fn process_tree_rss_bytes(root_pid: u32) -> Option<u64> {

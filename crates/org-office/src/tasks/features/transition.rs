@@ -14,7 +14,10 @@ use org_store::{Change, Engine, Id, Refusal, UnitOfWork};
 use serde_json::{json, Value};
 
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records::{ChecklistStepRecord, DoneAnywayRecord, FinalSummaryRecord};
+use crate::tasks::records::{
+    validate_blocked_reason, validate_transition_note, ChecklistStepRecord, DoneAnywayRecord,
+    FinalSummaryRecord,
+};
 use crate::time::format_rfc3339_ms;
 
 use super::conflict::stale_revision_refusal;
@@ -87,80 +90,33 @@ impl TransitionTask {
             ));
         }
         let to = self.params.status;
-        if to == TaskStatus::Blocked
-            && self
-                .params
-                .blocked_reason
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(str::is_empty)
-        {
+        let (next_blocked_reason, transition_note) = self.resolve_reason_and_note(to)?;
+        if to != TaskStatus::Blocked && self.params.waiting_on_owner.is_some() {
             return Err(refuse(
                 ErrorCode::InvalidRequest,
-                "transitioning to `blocked` requires a non-empty `blocked_reason`",
+                "`waiting_on_owner` applies only when transitioning to `blocked`",
             ));
         }
         let summary = self.final_summary()?;
         let reason = self.done_anyway_reason()?;
         let from_status = task.status;
+        let prev_block = PriorBlockState {
+            reason: task.blocked_reason.clone(),
+            waiting_on_owner: task.waiting_on_owner,
+            since: task.blocked_since.clone(),
+        };
+        let at = format_rfc3339_ms(uow.now().0);
         task.status = to;
-        task.blocked_reason = if to == TaskStatus::Blocked {
-            self.params
-                .blocked_reason
-                .as_deref()
-                .map(|s| s.trim().to_owned())
-        } else {
-            None
-        };
-        let resolution = |default: &str| {
-            let given = self.params.resolution.as_deref();
-            Some(
-                given
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or(default)
-                    .to_owned(),
-            )
-        };
-        task.resolution = match to {
-            TaskStatus::Done => resolution("completed"),
-            TaskStatus::Cancelled => resolution("cancelled"),
-            _ => None,
-        };
+        self.apply_blocking_state(&mut task, from_status, next_blocked_reason, &at);
+        task.resolution = self.resolve_resolution(to);
         if from_status.is_closed() && !to.is_closed() {
             let det = task.details.get_or_insert_with(Default::default);
             det.reopen_count =
                 validate_i64_u64(det.reopen_count.saturating_add(1), "reopen_count")?;
             task.final_summary = None;
         }
-        let done_anyway = match (to, task.resolution.as_deref()) {
-            (TaskStatus::Done, Some(res)) if gated(res) => {
-                let steps = uow
-                    .view()
-                    .checklist_steps(&task.id)
-                    .map_err(storage_refusal)?;
-                let unticked: Vec<&ChecklistStepRecord> =
-                    steps.iter().filter(|s| s.required && !s.done).collect();
-                match (unticked.is_empty(), reason) {
-                    (true, _) => None,
-                    (false, None) => return Err(incomplete(&unticked)),
-                    (false, Some(reason)) => Some(DoneAnywayRecord {
-                        reason,
-                        steps: unticked.iter().map(|s| s.id.clone()).collect(),
-                    }),
-                }
-            }
-            _ => None,
-        };
-        // Set on a completion that skipped required steps; cleared by every other transition.
-        if let Some(done) = &done_anyway {
-            task.details
-                .get_or_insert_with(Default::default)
-                .done_anyway = Some(done.clone());
-        } else if let Some(det) = task.details.as_mut() {
-            det.done_anyway = None;
-        }
-
-        let at = format_rfc3339_ms(uow.now().0);
+        let done_anyway = self.evaluate_done_anyway(uow.view(), &task, reason)?;
+        apply_done_anyway(&mut task, done_anyway.as_ref());
         if let Some(text) = &summary {
             task.final_summary = Some(FinalSummaryRecord {
                 text: text.clone(),
@@ -169,28 +125,182 @@ impl TransitionTask {
             });
         }
         task.meta.touch(&actor.id, &at);
-        let done_anyway_event = done_anyway.as_ref().map_or(Value::Null, |d| {
-            let steps: Vec<&str> = d.steps.iter().map(Id::as_str).collect();
-            json!({ "reason": d.reason, "steps": steps })
-        });
+        let event = build_status_changed_event(
+            from_status,
+            &task,
+            prev_block,
+            transition_note.as_deref(),
+            done_anyway.as_ref(),
+            summary.as_deref(),
+        );
         let change = rewrite_task(
             uow.view(),
             &task,
             &actor.id,
             &at,
             &self.params.command_id,
-            json!({
-                "type": "status_changed",
-                "from": from_status.as_str(),
-                "to": task.status.as_str(),
-                "blocked_reason": task.blocked_reason,
-                "resolution": task.resolution,
-                "note": self.params.note,
-                "done_anyway": done_anyway_event,
-                "final_summary": summary,
-            }),
+            event,
         )?;
         Ok((change, task.id))
+    }
+
+    fn apply_blocking_state(
+        &self,
+        task: &mut crate::tasks::records::TaskRecord,
+        from_status: TaskStatus,
+        next_blocked_reason: Option<String>,
+        at: &str,
+    ) {
+        if task.status != TaskStatus::Blocked {
+            // Atomically clear explicit block fields when leaving `blocked` (`TASK-84`).
+            task.blocked_reason = None;
+            task.blocked_since = None;
+            task.waiting_on_owner = false;
+            return;
+        }
+        task.blocked_reason = next_blocked_reason;
+        if from_status == TaskStatus::Blocked {
+            // In-place `blocked -> blocked`: preserve continuous `blocked_since` span.
+            if task.blocked_since.is_none() {
+                task.blocked_since = Some(
+                    task.meta
+                        .updated_at
+                        .clone()
+                        .unwrap_or_else(|| at.to_owned()),
+                );
+            }
+            if let Some(flag) = self.params.waiting_on_owner {
+                task.waiting_on_owner = flag;
+            }
+        } else {
+            task.blocked_since = Some(at.to_owned());
+            task.waiting_on_owner = self.params.waiting_on_owner.unwrap_or(false);
+        }
+    }
+
+    fn resolve_resolution(&self, to: TaskStatus) -> Option<String> {
+        let default = match to {
+            TaskStatus::Done => "completed",
+            TaskStatus::Cancelled => "cancelled",
+            _ => return None,
+        };
+        let given = self
+            .params
+            .resolution
+            .as_deref()
+            .filter(|s| !s.trim().is_empty());
+        Some(given.unwrap_or(default).to_owned())
+    }
+
+    fn evaluate_done_anyway<R: TasksRead>(
+        &self,
+        view: &R,
+        task: &crate::tasks::records::TaskRecord,
+        reason: Option<String>,
+    ) -> Result<Option<DoneAnywayRecord>, Refusal> {
+        let (TaskStatus::Done, Some(res)) = (task.status, task.resolution.as_deref()) else {
+            return Ok(None);
+        };
+        if !gated(res) {
+            return Ok(None);
+        }
+        let steps = view.checklist_steps(&task.id).map_err(storage_refusal)?;
+        let unticked: Vec<&ChecklistStepRecord> =
+            steps.iter().filter(|s| s.required && !s.done).collect();
+        match (unticked.is_empty(), reason) {
+            (true, _) => Ok(None),
+            (false, None) => Err(incomplete(&unticked)),
+            (false, Some(reason)) => Ok(Some(DoneAnywayRecord {
+                reason,
+                steps: unticked.iter().map(|s| s.id.clone()).collect(),
+            })),
+        }
+    }
+
+    /// Resolves `blocked_reason`, `reason`, and `note` under `TASK-84` rules:
+    /// - On `blocked`: requires a valid `1..=1000`-char reason (via `blocked_reason`, `reason`,
+    ///   or `note` alone — never both `reason` and `blocked_reason`) and accepts an optional
+    ///   supplementary `note` when `blocked_reason` or `reason` is given.
+    /// - On any non-blocked status: refuses `blocked_reason` with an actionable hint instead of
+    ///   silently dropping it, refuses passing both `reason` and `note`, fails closed on
+    ///   whitespace-only `reason`, and accepts an optional transition note via `reason` or `note`.
+    fn resolve_reason_and_note(
+        &self,
+        to: TaskStatus,
+    ) -> Result<(Option<String>, Option<String>), Refusal> {
+        if to == TaskStatus::Blocked {
+            self.resolve_blocked_reason_and_note()
+        } else {
+            self.resolve_non_blocked_note(to)
+        }
+    }
+
+    fn resolve_blocked_reason_and_note(&self) -> Result<(Option<String>, Option<String>), Refusal> {
+        let map_api = |e: org_proto::ApiError| refuse(e.code, e.message);
+        if self.params.reason.is_some() && self.params.blocked_reason.is_some() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                "cannot pass both `reason` and `blocked_reason`",
+            ));
+        }
+        let (raw_blocked, extra_note) = match (
+            self.params.blocked_reason.as_deref(),
+            self.params.reason.as_deref(),
+            self.params.note.as_deref(),
+        ) {
+            (Some(b), None, n) => (b, n),
+            (None, Some(r), n) => (r, n),
+            // `note` alone is accepted as an alias for `blocked_reason` on `blocked` transitions
+            // so CLI, Tess, and direct RPC stay aligned.
+            (None, None, Some(n)) => (n, None),
+            (None, None, None) => {
+                return Err(refuse(
+                    ErrorCode::InvalidRequest,
+                    "transitioning to `blocked` requires a non-empty `blocked_reason`",
+                ));
+            }
+            (Some(_), Some(_), _) => unreachable!("rejected above"),
+        };
+        let blocked_reason = validate_blocked_reason(raw_blocked).map_err(map_api)?;
+        let note = extra_note
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| validate_transition_note(s).map_err(map_api))
+            .transpose()?;
+        Ok((Some(blocked_reason), note))
+    }
+
+    fn resolve_non_blocked_note(
+        &self,
+        to: TaskStatus,
+    ) -> Result<(Option<String>, Option<String>), Refusal> {
+        let map_api = |e: org_proto::ApiError| refuse(e.code, e.message);
+        if self.params.blocked_reason.is_some() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "`blocked_reason` applies only when transitioning to `blocked`, not `{}`; use `reason` or `note` for other status changes",
+                    to.as_str()
+                ),
+            ));
+        }
+        if self.params.reason.is_some() && self.params.note.is_some() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                "cannot pass both `reason` and `note`",
+            ));
+        }
+        let note = match (self.params.reason.as_deref(), self.params.note.as_deref()) {
+            (Some(raw), None) => Some(validate_transition_note(raw).map_err(map_api)?),
+            (None, Some(raw)) => {
+                if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(validate_transition_note(raw).map_err(map_api)?)
+                }
+            }
+            _ => None,
+        };
+        Ok((None, note))
     }
 
     /// The closing summary given, trimmed: only a transition to `done` or `cancelled` sets one.
@@ -241,4 +351,64 @@ impl TransitionTask {
         }
         Ok(Some(reason.to_owned()))
     }
+}
+
+struct PriorBlockState {
+    reason: Option<String>,
+    waiting_on_owner: bool,
+    since: Option<String>,
+}
+
+fn apply_done_anyway(
+    task: &mut crate::tasks::records::TaskRecord,
+    done_anyway: Option<&DoneAnywayRecord>,
+) {
+    // Set on a completion that skipped required steps; cleared by every other transition.
+    if let Some(done) = done_anyway {
+        task.details
+            .get_or_insert_with(Default::default)
+            .done_anyway = Some(done.clone());
+    } else if let Some(det) = task.details.as_mut() {
+        det.done_anyway = None;
+    }
+}
+
+fn build_status_changed_event(
+    from_status: TaskStatus,
+    task: &crate::tasks::records::TaskRecord,
+    prev: PriorBlockState,
+    transition_note: Option<&str>,
+    done_anyway: Option<&DoneAnywayRecord>,
+    summary: Option<&str>,
+) -> Value {
+    let done_anyway_event = done_anyway.map_or(Value::Null, |d| {
+        let steps: Vec<&str> = d.steps.iter().map(Id::as_str).collect();
+        json!({ "reason": d.reason, "steps": steps })
+    });
+    let mut event = serde_json::Map::new();
+    event.insert("type".into(), json!("status_changed"));
+    event.insert("from".into(), json!(from_status.as_str()));
+    event.insert("to".into(), json!(task.status.as_str()));
+    event.insert("blocked_reason".into(), json!(task.blocked_reason));
+    event.insert("waiting_on_owner".into(), json!(task.waiting_on_owner));
+    if let Some(ref since) = task.blocked_since {
+        event.insert("blocked_since".into(), json!(since));
+    }
+    if from_status == TaskStatus::Blocked {
+        event.insert("previous_blocked_reason".into(), json!(prev.reason));
+        event.insert(
+            "previous_waiting_on_owner".into(),
+            json!(prev.waiting_on_owner),
+        );
+        if task.status != TaskStatus::Blocked {
+            if let Some(prev_since) = prev.since {
+                event.insert("previous_blocked_since".into(), json!(prev_since));
+            }
+        }
+    }
+    event.insert("resolution".into(), json!(task.resolution));
+    event.insert("note".into(), json!(transition_note));
+    event.insert("done_anyway".into(), done_anyway_event);
+    event.insert("final_summary".into(), json!(summary));
+    Value::Object(event)
 }

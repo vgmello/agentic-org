@@ -5,8 +5,8 @@ use org_proto::{ApiError, ErrorCode, Request, Response};
 use super::auth::Binding;
 use super::org::{notify_agent_stop_on_lifecycle, project_read, revoke_bound_member};
 use super::rpc::{
-    attachments_rpc, costs_rpc, docs_rpc, federation_rpc, git_rpc, processes_rpc, providers_rpc,
-    resume_rpc, search_rpc, tasks_rpc, tess_rpc,
+    attachments_rpc, copilot_rpc, costs_rpc, docs_rpc, federation_rpc, git_rpc, processes_rpc,
+    providers_rpc, resume_rpc, reviews_rpc, search_rpc, tasks_rpc, tess_rpc,
 };
 use super::shared::Shared;
 
@@ -45,10 +45,14 @@ fn is_agent_lifecycle_method(request: &Request) -> bool {
 
 fn is_hiring_policy_method(request: &Request) -> bool {
     use org_proto::hiring::{
-        MemberSetMayHire, ModelProfileList, ProviderConnectionCreate, TeamSetMaxMembers,
+        MemberSetMayHire, ModelProfileList, ProviderConnectionCreate, TeamLimitRequestCreate,
+        TeamLimitRequestDecide, TeamLimitRequestList, TeamSetMaxMembers,
     };
     request.is::<MemberSetMayHire>()
         || request.is::<TeamSetMaxMembers>()
+        || request.is::<TeamLimitRequestCreate>()
+        || request.is::<TeamLimitRequestDecide>()
+        || request.is::<TeamLimitRequestList>()
         || request.is::<ProviderConnectionCreate>()
         || request.is::<ModelProfileList>()
 }
@@ -94,7 +98,9 @@ fn is_provider_enrollment_method(request: &Request) -> bool {
 }
 
 fn is_session_method(request: &Request) -> bool {
-    is_session_control_method(request) || is_provider_enrollment_method(request)
+    is_session_control_method(request)
+        || is_provider_enrollment_method(request)
+        || request.is::<org_proto::telemetry::OfficeMetrics>()
 }
 
 pub(super) fn project_or_hiring(
@@ -110,9 +116,11 @@ pub(super) fn project_or_hiring(
         .or_else(|| tasks_rpc(request, shared, binding))
         .or_else(|| attachments_rpc(request, shared, binding, delegation))
         .or_else(|| git_rpc(request, shared, binding))
+        .or_else(|| reviews_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
         .or_else(|| docs_rpc(request, shared, binding))
         .or_else(|| search_rpc(request, shared, binding))
+        .or_else(|| copilot_rpc(request, shared, binding))
         .or_else(|| costs_rpc(request, shared, binding, delegation))
         .or_else(|| providers_rpc(request, shared, binding, delegation))
         .or_else(|| federation_rpc(request, shared, binding))
@@ -135,14 +143,25 @@ fn sessions_rpc(
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    if request.is::<org_proto::telemetry::OfficeMetrics>() && !binding.via_grant() {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "office metrics require a verified owner grant",
+            ),
+        ));
+    }
     let actor =
         super::delegation::delegated_owner_read_actor(request, delegation).unwrap_or(member);
+    let resolved = resolve_session_target_handle(request, shared);
+    let effective = resolved.as_ref().unwrap_or(request);
     if let Some(sessions) = &shared.ports.sessions {
-        if let Some(response) = sessions(Some(actor), request) {
+        if let Some(response) = sessions(Some(actor), effective) {
             if matches!(response.outcome, org_proto::Outcome::Result(_))
-                && request.is::<org_proto::sessions::MemberSessionStop>()
+                && effective.is::<org_proto::sessions::MemberSessionStop>()
             {
-                if let Ok(params) = request.params::<org_proto::sessions::MemberSessionStop>() {
+                if let Ok(params) = effective.params::<org_proto::sessions::MemberSessionStop>() {
                     revoke_bound_member(shared, &params.employee_id);
                 }
             }
@@ -156,6 +175,29 @@ fn sessions_rpc(
             format!("this office does not know `{}`", request.method),
         ),
     ))
+}
+
+/// Resolves an `@handle` or handle `employee_id` on session read RPCs (`member.session_list`,
+/// `member.session_inspect`, `member.session_grants`) to its canonical employee UUIDv7.
+fn resolve_session_target_handle(request: &Request, shared: &Shared) -> Option<Request> {
+    if !matches!(
+        request.method.as_str(),
+        "member.session_list" | "member.session_inspect" | "member.session_grants"
+    ) {
+        return None;
+    }
+    let raw = request.params.get("employee_id")?.as_str()?;
+    let trimmed = org_office::directory::trim_address(raw);
+    let reference = trimmed.strip_prefix('@').unwrap_or(trimmed);
+    if org_proto::is_uuid_v7(reference) {
+        return None;
+    }
+    let (member, _) = shared.ports.directory.resolve_member(reference).ok()??;
+    let mut rewritten = request.clone();
+    if let Some(obj) = rewritten.params.as_object_mut() {
+        obj.insert("employee_id".into(), serde_json::Value::String(member.id));
+    }
+    Some(rewritten)
 }
 
 fn hiring_rpc(

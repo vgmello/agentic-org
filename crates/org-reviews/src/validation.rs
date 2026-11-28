@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use org_proto::attachments::AttachmentTargetKind;
 use org_proto::reviews::{
     ReviewFindingDraft, ReviewRoutingSpec, ReviewSessionMode, RoutingMode,
     REVIEW_CLOSE_REASON_MAX_CHARS, REVIEW_FINDING_BODY_MAX_CHARS, REVIEW_MAX_ATTACHMENTS,
@@ -12,7 +13,7 @@ use org_store::{Id, Refusal};
 
 use crate::error::{api_refusal, parse_uuid_v7_refusal, storage_api_refusal};
 
-use super::ports::{ReviewActorInfo, ReviewContextRead, ReviewProjectInfo};
+use super::ports::{ReviewActorInfo, ReviewAttachmentInfo, ReviewContextRead, ReviewProjectInfo};
 use super::records::{ResolvedCodePin, ReviewRecord, ReviewReviewerRecord};
 
 pub const REVIEW_NOT_FOUND: &str = "review not found";
@@ -196,12 +197,12 @@ pub fn validate_oid(raw: &str, field: &str) -> Result<String, Refusal> {
 pub fn validate_ref_token(raw: &str, no_space: bool, label: &str) -> Result<String, Refusal> {
     let s = raw.trim();
     let bad_branch = no_space
-        && (s.starts_with('-')
-            || s.contains("@{")
+        && (s.contains("@{")
             || s.chars()
                 .any(|c| matches!(c, '\\' | '~' | '^' | ':' | '?' | '*' | '[')));
     if s.is_empty()
         || s.len() > REVIEW_PATH_MAX_LEN
+        || s.starts_with('-')
         || s.contains("..")
         || bad_branch
         || s.chars()
@@ -238,17 +239,101 @@ pub fn validate_string_list(
         .collect()
 }
 
-pub fn validate_attachment_ids(items: &[String]) -> Result<Vec<String>, Refusal> {
-    validate_string_list(
-        items,
-        REVIEW_MAX_ATTACHMENTS,
-        REVIEW_PATH_MAX_LEN,
-        "attachment_ids",
-        true,
-    )
+fn check_attachment_project_scope<C: ReviewContextRead>(
+    ctx: &C,
+    caller: &ReviewActorInfo,
+    review_project_id: Option<&Id>,
+    att_project_id: &Id,
+) -> Result<(), Refusal> {
+    let Some(proj) = ctx.project_info(att_project_id).map_err(storage_refusal)? else {
+        return Err(not_found("attachment not found"));
+    };
+    if !may_see_project(ctx, caller, &proj)? {
+        return Err(not_found("attachment not found"));
+    }
+    if review_project_id != Some(att_project_id) {
+        return Err(unauth(
+            "attachment belongs to a different project scope than this review",
+        ));
+    }
+    Ok(())
 }
 
-pub fn validate_finding_draft(draft: &ReviewFindingDraft) -> Result<(Id, Vec<String>), Refusal> {
+fn check_attachment_scope<C: ReviewContextRead>(
+    ctx: &C,
+    caller: &ReviewActorInfo,
+    review_project_id: Option<&Id>,
+    info: &ReviewAttachmentInfo,
+) -> Result<(), Refusal> {
+    match info.target_kind {
+        AttachmentTargetKind::Organization => {
+            if info.target_id.is_some() {
+                return Err(not_found("attachment not found"));
+            }
+            Ok(())
+        }
+        AttachmentTargetKind::Project => {
+            let Some(att_pid) = info.target_id.as_ref() else {
+                return Err(not_found("attachment not found"));
+            };
+            check_attachment_project_scope(ctx, caller, review_project_id, att_pid)
+        }
+        AttachmentTargetKind::Task | AttachmentTargetKind::TaskComment => {
+            let Some(tid) = info.target_id.as_ref() else {
+                return Err(not_found("attachment not found"));
+            };
+            let Some(task) = ctx
+                .resolve_task_info(tid.as_str())
+                .map_err(storage_refusal)?
+            else {
+                return Err(not_found("attachment not found"));
+            };
+            if let Some(att_pid) = task.project_id.as_ref() {
+                check_attachment_project_scope(ctx, caller, review_project_id, att_pid)?;
+            }
+            Ok(())
+        }
+        _ => Err(unauth(
+            "only shared organization, project, or task attachments may be linked to reviews",
+        )),
+    }
+}
+
+pub fn validate_attachment_ids<C: ReviewContextRead>(
+    ctx: &C,
+    caller: &ReviewActorInfo,
+    review_project_id: Option<&Id>,
+    items: &[String],
+) -> Result<Vec<String>, Refusal> {
+    if items.len() > REVIEW_MAX_ATTACHMENTS {
+        return Err(too_large(format!(
+            "attachment_ids exceeds {REVIEW_MAX_ATTACHMENTS}"
+        )));
+    }
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::with_capacity(items.len());
+    for raw in items {
+        let s = raw.trim();
+        let id = validate_uuid(s, "attachment_ids")?;
+        if !seen.insert(id.clone()) {
+            return Err(bad_req("invalid attachment_ids entry"));
+        }
+        let info = ctx
+            .attachment_info(&id)
+            .map_err(storage_refusal)?
+            .ok_or_else(|| not_found("attachment not found"))?;
+        check_attachment_scope(ctx, caller, review_project_id, &info)?;
+        out.push(id.as_str().to_owned());
+    }
+    Ok(out)
+}
+
+pub fn validate_finding_draft<C: ReviewContextRead>(
+    ctx: &C,
+    caller: &ReviewActorInfo,
+    review_project_id: Option<&Id>,
+    draft: &ReviewFindingDraft,
+) -> Result<(Id, Vec<String>), Refusal> {
     let id = validate_uuid(&draft.finding_id, "finding_id")?;
     if draft.body_markdown.trim().is_empty() {
         return Err(bad_req("finding body cannot be empty"));
@@ -259,7 +344,10 @@ pub fn validate_finding_draft(draft: &ReviewFindingDraft) -> Result<(Id, Vec<Str
         "body_markdown",
     )?;
     draft.anchor.check().map_err(bad_req)?;
-    Ok((id, validate_attachment_ids(&draft.attachment_ids)?))
+    Ok((
+        id,
+        validate_attachment_ids(ctx, caller, review_project_id, &draft.attachment_ids)?,
+    ))
 }
 
 pub fn validate_reply_body(body: &str, has_status: bool) -> Result<String, Refusal> {
@@ -311,10 +399,15 @@ fn pick_seed<T>(mut items: Vec<T>, seed: u64) -> Option<T> {
     (!items.is_empty()).then(|| items.swap_remove((seed.saturating_sub(1) as usize) % items.len()))
 }
 
+fn is_excluded_independent(id: &Id, excluded: &[&Id], ind: bool) -> bool {
+    ind && excluded.iter().any(|ex| **ex == *id)
+}
+
 fn load_reviewer<C: ReviewContextRead>(
     ctx: &C,
     raw: &str,
-    author: &Id,
+    proj: Option<&ReviewProjectInfo>,
+    excluded: &[&Id],
     ind: bool,
     agent: bool,
 ) -> Result<Id, Refusal> {
@@ -326,8 +419,13 @@ fn load_reviewer<C: ReviewContextRead>(
     if !emp.active || (agent && emp.is_person) {
         return Err(bad_req("reviewer is not an eligible active employee"));
     }
-    if ind && emp.id == *author {
-        return Err(bad_req("independent review forbids author as reviewer"));
+    if is_excluded_independent(&emp.id, excluded, ind) {
+        return Err(bad_req(
+            "independent review forbids author or round submitter as reviewer",
+        ));
+    }
+    if !proj.map_or(Ok(true), |p| may_see_project(ctx, &emp, p))? {
+        return Err(unauth("reviewer does not have access to this project"));
     }
     Ok(emp.id)
 }
@@ -335,7 +433,7 @@ fn load_reviewer<C: ReviewContextRead>(
 fn pick_default_agent<C: ReviewContextRead>(
     ctx: &C,
     proj: Option<&ReviewProjectInfo>,
-    author: &Id,
+    excluded: &[&Id],
     ind: bool,
     seed: u64,
 ) -> Result<Option<Id>, Refusal> {
@@ -343,7 +441,12 @@ fn pick_default_agent<C: ReviewContextRead>(
         .all_employees()
         .map_err(storage_refusal)?
         .into_iter()
-        .filter(|e| e.active && !e.is_person && !e.is_builtin && (!ind || e.id != *author))
+        .filter(|e| {
+            e.active
+                && !e.is_person
+                && !e.is_builtin
+                && !is_excluded_independent(&e.id, excluded, ind)
+        })
         .collect();
     eligible.sort_by(|a, b| a.id.cmp(&b.id));
     if let Some(p) = proj {
@@ -365,12 +468,12 @@ pub fn resolve_routing<C: ReviewContextRead>(
     ctx: &C,
     spec: Option<&ReviewRoutingSpec>,
     proj: Option<&ReviewProjectInfo>,
-    author: &Id,
+    excluded: &[&Id],
     ind: bool,
     seed: u64,
 ) -> Result<ResolvedRouting, Refusal> {
     let Some(spec) = spec else {
-        let ids = pick_default_agent(ctx, proj, author, ind, seed)?
+        let ids = pick_default_agent(ctx, proj, excluded, ind, seed)?
             .into_iter()
             .collect();
         return Ok(ResolvedRouting {
@@ -385,7 +488,7 @@ pub fn resolve_routing<C: ReviewContextRead>(
         RoutingMode::Explicit => spec
             .reviewer_ids
             .iter()
-            .map(|r| load_reviewer(ctx, r, author, ind, false))
+            .map(|r| load_reviewer(ctx, r, proj, excluded, ind, false))
             .collect::<Result<Vec<_>, _>>()?,
         RoutingMode::Pool => {
             let tid = validate_uuid(
@@ -397,22 +500,24 @@ pub fn resolve_routing<C: ReviewContextRead>(
             if !ctx.team_exists_active(&tid).map_err(storage_refusal)? {
                 return Err(not_found("active team not found"));
             }
-            let mut cands: Vec<Id> = ctx
-                .all_employees()
-                .map_err(storage_refusal)?
-                .into_iter()
-                .filter(|e| {
-                    e.active && !e.is_builtin && e.home_team_id == tid && (!ind || e.id != *author)
-                })
-                .map(|e| e.id)
-                .collect();
+            let mut cands = Vec::new();
+            for e in ctx.all_employees().map_err(storage_refusal)? {
+                if e.active
+                    && !e.is_builtin
+                    && e.home_team_id == tid
+                    && !is_excluded_independent(&e.id, excluded, ind)
+                    && proj.map_or(Ok(true), |p| may_see_project(ctx, &e, p))?
+                {
+                    cands.push(e.id);
+                }
+            }
             cands.sort();
             team_id = Some(tid);
             vec![pick_seed(cands, seed).ok_or_else(|| bad_req("no eligible reviewer in pool"))?]
         }
         RoutingMode::SingleAgent => vec![match spec.reviewer_ids.first() {
-            Some(raw) => load_reviewer(ctx, raw, author, ind, true)?,
-            None => pick_default_agent(ctx, proj, author, ind, seed)?
+            Some(raw) => load_reviewer(ctx, raw, proj, excluded, ind, true)?,
+            None => pick_default_agent(ctx, proj, excluded, ind, seed)?
                 .ok_or_else(|| bad_req("no eligible reviewer agent"))?,
         }],
     };

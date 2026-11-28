@@ -305,3 +305,38 @@ fn the_session_stream_feeds_activity_only_and_lets_go_of_a_dropped_feed() {
         "the bridge let go of the dropped feed"
     );
 }
+
+#[test]
+fn record_inbox_changed_advances_revision_and_wakes_subscribers() {
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&wakes);
+    let live = LiveEvents::new(Box::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    assert_eq!(live.mailbox_head(), 0);
+    live.record_inbox_changed();
+    live.record_inbox_changed();
+    assert_eq!(live.mailbox_head(), 2);
+    assert_eq!(wakes.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn record_org_changed_publishes_live_event_and_wakes_without_recursive_mailbox_bump() {
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&wakes);
+    let live = LiveEvents::new(Box::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let start = live.head();
+    assert_eq!(live.org_changed_head(), 0);
+    assert_eq!(live.mailbox_head(), 0);
+    live.record_org_changed();
+    live.record_org_changed();
+    assert_eq!(live.org_changed_head(), 2);
+    assert_eq!(live.mailbox_head(), 0);
+    assert_eq!(wakes.load(Ordering::SeqCst), 2);
+    let head = live.head();
+    let batch = live.since(start.messages, head.messages);
+    assert!(!batch.lost);
+    assert_eq!(batch.events, vec![Live::OrgChanged(1), Live::OrgChanged(2)]);
+}

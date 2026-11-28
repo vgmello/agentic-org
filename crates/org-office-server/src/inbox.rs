@@ -5,9 +5,12 @@ use org_proto::inbox::{InboxCounts, InboxItem, InboxKind, InboxPosition, InboxSt
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+mod approvals_source;
 mod hint;
 mod list;
 mod org_source;
+mod reviews_source;
+pub(crate) use approvals_source::PendingApprovalsInboxSource;
 pub(crate) use hint::Hint;
 
 /// HQ's real source registration and the clock also used by hint delivery.
@@ -38,8 +41,10 @@ impl Hq {
             }),
             office_id,
         );
-        let mut all: Vec<Arc<dyn Source>> = Vec::with_capacity(sources.len() + 1);
+        let reviews = reviews_source::ReviewInboxSource::new(Arc::clone(&office));
+        let mut all: Vec<Arc<dyn Source>> = Vec::with_capacity(sources.len() + 2);
         all.push(Arc::new(source));
+        all.push(Arc::new(reviews));
         all.extend(sources);
         Ok(Self {
             sources: all,
@@ -142,6 +147,7 @@ fn collect(sources: &[&dyn Source], query: &Query<'_>) -> Read {
                     questions: a.questions.checked_add(b.questions)?,
                     decisions: a.decisions.checked_add(b.decisions)?,
                     problems: a.problems.checked_add(b.problems)?,
+                    reviews: a.reviews.checked_add(b.reviews)?,
                     total: a.total.checked_add(b.total)?,
                 },
             ))

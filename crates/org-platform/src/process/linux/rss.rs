@@ -11,6 +11,12 @@ const MAX_STATUS_BYTES: u64 = 64 * 1024;
 /// Upper bound on process-tree nodes walked in one sample so pathological trees stay bounded.
 const MAX_TREE_PIDS: usize = 4096;
 
+/// Returns resident set size (RSS) in bytes for the single process `pid`,
+/// or `None` if `pid` does not exist or cannot be sampled.
+pub(in crate::process) fn process_rss_bytes(pid: u32) -> Option<u64> {
+    read_proc_status(pid)?.1
+}
+
 /// Returns total resident set size (RSS) in bytes across `root_pid` and its live descendant tree,
 /// or `None` if `root_pid` does not exist or cannot be sampled.
 pub(in crate::process) fn process_tree_rss_bytes(root_pid: u32) -> Option<u64> {

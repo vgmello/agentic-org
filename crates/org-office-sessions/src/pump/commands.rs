@@ -8,7 +8,7 @@ use org_proto::sessions::SessionState;
 
 use crate::instructions::{compose_turn_objective, TurnTrigger};
 
-use super::approval::{apply_approval_resolution, record_stop_note};
+use super::approval::{apply_approval_resolution, notify_approval_changed, record_stop_note};
 use super::controls::{request_interrupt, steer};
 use super::events::apply_outputs;
 use super::queue::{merge_queued_turns, QueuedTurn};
@@ -57,6 +57,7 @@ pub(super) fn build_stale_failover_request(
         rate_limit_resets_at: None,
         stop_epoch: ctx.stop_epoch,
         partition: ctx.partition_key(),
+        turn_override: ctx.turn_override.clone(),
     }
 }
 
@@ -82,7 +83,10 @@ pub(super) fn drain_commands(
                 decision,
                 allow_always_tool,
             } => {
-                apply_approval_resolution(&ctx.state, &approval_id, allow_always_tool.as_deref());
+                if apply_approval_resolution(&ctx.state, &approval_id, allow_always_tool.as_deref())
+                {
+                    notify_approval_changed(ctx);
+                }
                 // Wake mid-turn staging once pending approvals clear (`doc-101` §4A).
                 if ctx
                     .state

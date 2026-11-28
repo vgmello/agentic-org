@@ -6,9 +6,10 @@
 	import CircleHelp from '@lucide/svelte/icons/circle-help';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
+	import { tooltipContentClass } from '$lib/components/classes';
 	import type { Connection } from '$lib/proto';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
-	import { UI_THEMES, uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
+	import { tooltipLinkProps } from './tooltip-link-props';
 
 	interface FooterOfficeState {
 		label: string;
@@ -35,6 +36,8 @@
 		onNavigate?: (event: MouseEvent, href: string) => void;
 		onAccountMenuOpenChange?: (open: boolean) => void;
 	} = $props();
+
+	const tessHeadingId = $props.id();
 
 	const tessStatus = $derived(
 		offline
@@ -69,87 +72,72 @@
 	const officeStatusLabel = $derived(`${connection.office.name} office · ${officeStatus.label}`);
 </script>
 
+{#if onToggleTess}
+	<section
+		aria-labelledby={collapsed ? undefined : tessHeadingId}
+		aria-label={collapsed ? 'Chief of staff' : undefined}
+		class={[
+			'exec-sb-contacts shrink-0 py-2',
+			collapsed ? 'flex flex-col items-center px-2' : 'px-3'
+		]}
+	>
+		{#if !collapsed}
+			<h2 id={tessHeadingId} class="exec-nav-label truncate px-2 pb-1">Chief of staff</h2>
+		{/if}
+		<Tooltip.Root disabled={!collapsed}>
+			<Tooltip.Trigger>
+				{#snippet child({ props })}
+					<button
+						{...props}
+						type="button"
+						onclick={onToggleTess}
+						aria-pressed={tessOpen}
+						aria-label="Tess — Chief of staff ({tessStatus.label}, ⌘/)"
+						class={[
+							'exec-tess-contact flex items-center rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
+							collapsed
+								? 'size-10 justify-center p-0 [@media(pointer:coarse)]:size-11 [@media(width<=720px)]:size-11'
+								: 'w-full gap-2.5 px-2 py-1.5',
+							tessOpen && 'is-open'
+						]}
+					>
+						<span
+							class="exec-tess-av relative flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+						>
+							T
+							<span class="exec-tess-badge" aria-hidden="true">
+								<Sparkles class="size-2.5" />
+							</span>
+						</span>
+						{#if !collapsed}
+							<span class="min-w-0 flex-1">
+								<span class="exec-tess-name block truncate text-xs/4 font-semibold">Tess</span>
+								<span class="exec-tess-status flex items-center gap-1.5 text-[11px]/4">
+									<span class={['exec-tess-dot', `is-${tessStatus.tone}`]} aria-hidden="true"
+									></span>
+									<span class="truncate">{tessStatus.label}</span>
+								</span>
+							</span>
+							<kbd class="exec-sidebar-kbd">⌘/</kbd>
+						{/if}
+					</button>
+				{/snippet}
+			</Tooltip.Trigger>
+			<Tooltip.Portal>
+				<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
+					>Tess · {tessStatus.label} (⌘/)</Tooltip.Content
+				>
+			</Tooltip.Portal>
+		</Tooltip.Root>
+	</section>
+{/if}
+
 <div
 	class={[
 		'exec-sidebar-foot shrink-0 py-2',
 		collapsed ? 'flex flex-col items-center gap-1 px-2' : 'px-3'
 	]}
 >
-	{#if onToggleTess}
-		<div class={collapsed ? 'mb-1' : 'mb-2'}>
-			{#if !collapsed}
-				<div class="exec-nav-label px-2 pb-1">Chief of staff</div>
-			{/if}
-			<Tooltip.Root disabled={!collapsed}>
-				<Tooltip.Trigger>
-					{#snippet child({ props })}
-						<button
-							{...props}
-							type="button"
-							onclick={onToggleTess}
-							aria-pressed={tessOpen}
-							aria-label="Tess — Chief of staff ({tessStatus.label}, ⌘/)"
-							class={[
-								'exec-tess-contact flex items-center rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
-								collapsed ? 'size-10 justify-center p-0' : 'w-full gap-2.5 px-2 py-1.5',
-								tessOpen && 'is-open'
-							]}
-						>
-							<span
-								class="exec-tess-av relative flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
-							>
-								T
-								<span class="exec-tess-badge" aria-hidden="true">
-									<Sparkles class="size-2.5" />
-								</span>
-							</span>
-							{#if !collapsed}
-								<span class="min-w-0 flex-1">
-									<span class="exec-tess-name block truncate text-xs/4 font-semibold">Tess</span>
-									<span class="exec-tess-status flex items-center gap-1.5 text-[11px]/4">
-										<span class={['exec-tess-dot', `is-${tessStatus.tone}`]} aria-hidden="true"
-										></span>
-										<span class="truncate">{tessStatus.label}</span>
-									</span>
-								</span>
-								<kbd class="exec-sidebar-kbd">⌘/</kbd>
-							{/if}
-						</button>
-					{/snippet}
-				</Tooltip.Trigger>
-				<Tooltip.Portal>
-					<Tooltip.Content
-						side="right"
-						sideOffset={6}
-						class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-						>Tess · {tessStatus.label} (⌘/)</Tooltip.Content
-					>
-				</Tooltip.Portal>
-			</Tooltip.Root>
-		</div>
-	{/if}
-	{#if !collapsed}
-		<div
-			class="exec-theme-pills mb-1.5 grid grid-cols-4 gap-0.5 rounded-lg p-1"
-			role="group"
-			aria-label="Theme"
-		>
-			{#each UI_THEMES as option (option.id)}
-				<button
-					type="button"
-					onclick={() => uiPrefs.setTheme(option.id)}
-					aria-pressed={uiPrefs.theme === option.id}
-					title={option.label}
-					class={[
-						'exec-theme-pill min-h-7 truncate rounded-md px-1 py-0.5 text-[11px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
-						uiPrefs.theme === option.id && 'is-on'
-					]}
-				>
-					{option.shortLabel}
-				</button>
-			{/each}
-		</div>
-	{/if}
 	<ShellAccountMenu
 		{connection}
 		compact={collapsed}
@@ -159,7 +147,7 @@
 		<Tooltip.Trigger>
 			{#snippet child({ props })}
 				<a
-					{...props}
+					{...tooltipLinkProps(props)}
 					href={resolve('/settings/offices')}
 					onclick={(e) => onNavigate?.(e, '/settings/offices')}
 					aria-label={officeStatusLabel}
@@ -204,10 +192,7 @@
 			{/snippet}
 		</Tooltip.Trigger>
 		<Tooltip.Portal>
-			<Tooltip.Content
-				side="right"
-				sideOffset={6}
-				class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+			<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 				>{officeStatusLabel}</Tooltip.Content
 			>
 		</Tooltip.Portal>
@@ -301,30 +286,5 @@
 	}
 	.exec-tess-dot.is-off {
 		background: var(--exec-dim);
-	}
-	.exec-theme-pills {
-		background: var(--exec-well);
-		box-shadow: inset 0 0 0 1px var(--exec-border);
-	}
-	.exec-theme-pill {
-		color: var(--exec-muted);
-	}
-	.exec-theme-pill:hover {
-		color: var(--exec-ink);
-	}
-	.exec-theme-pill.is-on {
-		background: var(--exec-accent-soft);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink);
-	}
-	@media (max-width: 720px), (pointer: coarse) {
-		.exec-theme-pill {
-			min-height: 44px;
-		}
-	}
-	@media (forced-colors: active) {
-		.exec-theme-pill.is-on {
-			border: 2px solid ButtonText;
-		}
 	}
 </style>

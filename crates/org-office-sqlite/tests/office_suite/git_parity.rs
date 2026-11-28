@@ -7,7 +7,6 @@ use org_proto::{
 use org_store::Id;
 
 fn run_parity_suite(engine: EngineChoice) {
-    org_office_sqlite::install();
     let office = Office::for_test(TestOffice { engine });
     let owner = office.owner_member_id().to_owned();
     let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
@@ -128,5 +127,5 @@ fn run_parity_suite(engine: EngineChoice) {
 #[test]
 fn memory_and_sqlite_project_and_task_repository_parity() {
     run_parity_suite(EngineChoice::Memory);
-    run_parity_suite(EngineChoice::Sqlite);
+    run_parity_suite(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
 }

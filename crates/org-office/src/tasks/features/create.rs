@@ -293,6 +293,8 @@ impl CreateTask {
             severity: self.params.severity.clone(),
             resolution: None,
             blocked_reason: None,
+            blocked_since: None,
+            waiting_on_owner: false,
             rank_order: self.params.rank_order,
             labels,
             reference_files,

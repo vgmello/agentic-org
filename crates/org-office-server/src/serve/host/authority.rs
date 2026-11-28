@@ -1,8 +1,24 @@
 //! Ordered, per-request authority checks. The worker supplies clock, MAC and live state.
 use super::super::{live_owner, live_person, Binding, Shared};
 use crate::revocations::Revocations;
-use org_proto::{Call, ErrorCode, Grant, OfficeInfo, OfficeRole, Request};
+use org_proto::{ApiError, Call, ErrorCode, Grant, OfficeInfo, OfficeRole, Request};
 use std::sync::Mutex;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum AuthRefusal {
+    Opaque(ErrorCode),
+    Detailed(ApiError),
+}
+
+#[cfg(test)]
+impl AuthRefusal {
+    pub(super) fn code(&self) -> ErrorCode {
+        match self {
+            Self::Opaque(code) => *code,
+            Self::Detailed(err) => err.code,
+        }
+    }
+}
 
 pub(super) struct Live<'a> {
     pub shared: &'a Shared,
@@ -78,6 +94,7 @@ fn requires_owner(method: &str) -> bool {
             | "organization.default_dod.set"
             | "member.session_approval"
             | "member.session_clear_stall"
+            | "office.metrics"
             | "provider.enrollment_start"
             | "provider.enrollment_status"
             | "provider.enrollment_submit"
@@ -88,14 +105,18 @@ fn requires_owner(method: &str) -> bool {
             | "cost.subscription_usage.collect"
             | "cost.subscription_usage.credential_set"
             | "cost.subscription_usage.credential_revoke"
+            | "repo.credential_set"
+            | "repo.credential_status"
+            | "repo.credential_revoke"
     )
 }
 
-/// The attachment calls (`TASK-98.1`): never owner-only and never a satellite operator call;
-/// a host channel serves them to any live person, and the office's `AuthorizationPolicy`
-/// decides per file (a person's private space stays theirs alone).
+/// Attachment (`TASK-98.1`) and universal review (`TASK-92.2`) calls: never owner-only and
+/// never a satellite operator call; a host channel serves them to any live active person, and
+/// the office's per-resource authorization decides visibility and action rights.
 fn is_member_scoped_method(method: &str) -> bool {
     org_proto::attachments::ATTACHMENT_METHODS.contains(&method)
+        || org_proto::reviews::REVIEW_METHODS.contains(&method)
 }
 
 fn is_satellite_operator_method(method: &str) -> bool {
@@ -111,54 +132,116 @@ fn is_satellite_operator_method(method: &str) -> bool {
     )
 }
 
+fn is_agent_session_read_method(method: &str) -> bool {
+    matches!(
+        method,
+        org_proto::external_auth::MemberExternalSessions::METHOD
+            | org_proto::external_auth::MemberExternalPending::METHOD
+            | org_proto::sessions::MemberSessionList::METHOD
+    )
+}
+
+#[cfg(test)]
 pub(super) fn authorize(
     request: &Request,
     channel: &str,
     office: &OfficeInfo,
     checks: &impl Checks,
 ) -> Result<String, ErrorCode> {
+    authorize_request(request, channel, office, checks).map_err(|refusal| refusal.code())
+}
+
+fn verify_grant_envelope(
+    request: &Request,
+    channel: &str,
+    office: &OfficeInfo,
+    checks: &impl Checks,
+) -> Result<String, AuthRefusal> {
     let principal = request
         .principal()
         .ok()
         .flatten()
-        .ok_or(ErrorCode::NotAuthorized)?;
+        .ok_or(AuthRefusal::Opaque(ErrorCode::NotAuthorized))?;
     let claims = &principal.grant.claims;
-    if claims.channel_id != channel {
-        return Err(ErrorCode::NotAuthorized);
-    }
-    if !checks.verify(&principal.grant) {
-        return Err(ErrorCode::NotAuthorized);
-    }
-    if checks.now_ms().is_none_or(|now| now >= claims.exp) {
-        return Err(ErrorCode::NotAuthorized);
+    if claims.channel_id != channel
+        || !checks.verify(&principal.grant)
+        || checks.now_ms().is_none_or(|now| now >= claims.exp)
+    {
+        return Err(AuthRefusal::Opaque(ErrorCode::NotAuthorized));
     }
     if claims.office_id != office.id || claims.org_id != office.organization_id {
-        return Err(ErrorCode::NotFound);
+        return Err(AuthRefusal::Opaque(ErrorCode::NotFound));
     }
     if checks.revoked(&claims.session_id) {
-        return Err(ErrorCode::NotAuthorized);
+        return Err(AuthRefusal::Opaque(ErrorCode::NotAuthorized));
     }
+    Ok(claims.member.clone())
+}
+
+fn authorize_agent_session_read(
+    office: &OfficeInfo,
+    member: &str,
+    checks: &impl Checks,
+) -> Result<String, AuthRefusal> {
+    if let Some(person) = checks.person(member) {
+        return Ok(person);
+    }
+    // Valid, unexpired, unrevoked grant for this office, but the caller is not a live
+    // organization person: return an accurate authorization error rather than opaque refusal.
+    let err = if office.role == OfficeRole::Satellite && member == office.id {
+        ApiError::new(
+            ErrorCode::NotAuthorized,
+            "signed-in account is not linked to an active organization person; only the owner, a person who may hire, or the agent's manager or team lead may view agent sessions",
+        )
+        .with_hint(
+            "Sign in with an account linked to an active organization person, or inspect sessions from HQ.",
+        )
+    } else {
+        ApiError::new(
+            ErrorCode::NotAuthorized,
+            "only an active organization person (owner, hiring manager, or the agent's manager or team lead) may view agent sessions",
+        )
+        .with_hint(
+            "Sign in as an active organization person with permission to view this agent's sessions.",
+        )
+    };
+    Err(AuthRefusal::Detailed(err))
+}
+
+pub(super) fn authorize_request(
+    request: &Request,
+    channel: &str,
+    office: &OfficeInfo,
+    checks: &impl Checks,
+) -> Result<String, AuthRefusal> {
+    let member = verify_grant_envelope(request, channel, office, checks)?;
     if requires_owner(&request.method) {
-        checks.owner(&claims.member).ok_or(ErrorCode::NotAuthorized)
-    } else if is_member_scoped_method(&request.method) {
+        return checks
+            .owner(&member)
+            .ok_or(AuthRefusal::Opaque(ErrorCode::NotAuthorized));
+    }
+    if is_member_scoped_method(&request.method) {
         // Any live person: the office's attachment policy then decides file by file.
-        checks
-            .person(&claims.member)
-            .ok_or(ErrorCode::NotAuthorized)
-    } else if office.role == OfficeRole::Satellite
+        return checks
+            .person(&member)
+            .ok_or(AuthRefusal::Opaque(ErrorCode::NotAuthorized));
+    }
+    if office.role == OfficeRole::Satellite
         && is_satellite_operator_method(&request.method)
-        && claims.member == office.id
+        && member == office.id
     {
         // A satellite host's local instance administrator may not hold an org member link yet;
         // the host signs a local-only operator grant with `member == office.id`, admitted here
         // exclusively for read-only replication/org-office/provider discovery and office-local
         // runtime binding/readiness operations (never org-wide mutations).
-        Ok(claims.member.clone())
-    } else {
-        checks
-            .person(&claims.member)
-            .ok_or(ErrorCode::NotAuthorized)
+        return Ok(member);
     }
+    if is_agent_session_read_method(&request.method) {
+        return authorize_agent_session_read(office, &member, checks);
+    }
+    checks
+        .person(&member)
+        .ok_or(AuthRefusal::Opaque(ErrorCode::NotAuthorized))
 }
 
 #[cfg(test)]

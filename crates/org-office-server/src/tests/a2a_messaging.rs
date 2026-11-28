@@ -17,7 +17,7 @@ use org_agent_runtime::{
     StopPlan, StopSignal, StopStep, TurnOutcome, Unavailable, UsageScope, VersionRange,
 };
 use org_office::{
-    CreateInvitationParams, Custody, DataRoots, EngineChoice, Key, NewOffice, Office, OfficeRole,
+    CreateInvitationParams, Custody, DataRoots, Key, NewOffice, Office, OfficeRole,
     SatelliteProvisionSpec, TestOffice,
 };
 use org_office_sessions::{RuntimeRegistry, SessionManager, SessionManagerConfig};
@@ -414,7 +414,11 @@ impl LiveOfficeNode {
             None
         };
 
-        let hq_inbox = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
+        let hq_inbox = crate::office_runtime::hq_inbox_with_sessions(
+            Arc::clone(&office),
+            Some(Arc::clone(&sessions)),
+        )
+        .unwrap();
         let ports = build_office_ports(
             Arc::clone(&office),
             Arc::clone(&sessions),
@@ -531,6 +535,7 @@ impl LiveOfficeNode {
             session_token: Some(token),
             agent_id: Some(employee_id.to_owned()),
             external_state: None,
+            ..Binding::default()
         };
         ScopedBinding {
             sessions: Arc::clone(&self.sessions),
@@ -787,6 +792,7 @@ pub(super) fn enroll_satellite(
             Key::from_bytes([0x33 + inc_suffix; 32]),
             sat_roots,
             sat_custody(&org_id, &sat_office_id, inc_suffix),
+            org_office_sqlite::sqlite_backend(),
         )
         .unwrap(),
     );
@@ -811,10 +817,9 @@ where
 
 #[test]
 fn same_office_a2a_dm_reply_channel_mentions_ask_and_handoff() {
-    org_office_sqlite::install();
-    let office = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let office = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = office.owner_member_id().to_owned();
     let team_id = office.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = office.info().office_id.clone();
@@ -1032,10 +1037,9 @@ fn same_office_a2a_dm_reply_channel_mentions_ask_and_handoff() {
 
 #[test]
 fn cross_office_a2a_hq_satellite_and_sat_to_sat_end_to_end() {
-    org_office_sqlite::install();
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = hq.info().office_id.clone();
@@ -1570,10 +1574,9 @@ fn handoff_accept_delta_files(
 
 #[test]
 fn relayed_handoff_accept_enforces_placement_addressing_validation_and_tiebreak() {
-    org_office_sqlite::install();
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = hq.info().office_id.clone();
@@ -1761,10 +1764,9 @@ fn relayed_handoff_accept_enforces_placement_addressing_validation_and_tiebreak(
 
 #[test]
 fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wake() {
-    org_office_sqlite::install();
-    let hq = Arc::new(Office::for_test(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = hq.info().office_id.clone();
@@ -2038,10 +2040,9 @@ fn assert_proxied_session_auth_and_disconnect(
 
 #[test]
 fn task140_persistent_mtls_low_latency_and_task143_hq_session_proxy_end_to_end() {
-    org_office_sqlite::install();
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
     let hq_id = hq.info().office_id.clone();
@@ -2101,7 +2102,6 @@ fn task140_persistent_mtls_low_latency_and_task143_hq_session_proxy_end_to_end()
 
 #[test]
 fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_sync() {
-    org_office_sqlite::install();
     use crate::git_calls::GitService;
     use crate::live::LiveEvents;
     use org_proto::git::{
@@ -2127,9 +2127,9 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
         );
     };
 
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
     let (_conn_id, profile_id) = setup_provider_on_hq(&hq, &owner);
@@ -2341,7 +2341,9 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
             task: task_id.clone(),
             expected_revision: 1,
             status: TaskStatus::Done,
+            reason: None,
             blocked_reason: None,
+            waiting_on_owner: None,
             resolution: Some("Merged".into()),
             note: None,
             done_anyway_reason: None,
@@ -2601,13 +2603,12 @@ fn assert_sat_worktree_rejects_hq_durable_conflicts(
 
 #[test]
 fn task141_satellite_agent_addresses_owner_by_handle_and_receives_reply() {
-    org_office_sqlite::install();
     use org_proto::chat::{ChatInbox, ChatInboxParams, ChatInboxResult};
     use org_proto::msg::{MsgReply, MsgReplyParams};
 
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
     let (conn_id, profile_id) = setup_provider_on_hq(&hq, &owner);
@@ -2877,16 +2878,13 @@ fn assert_sat_owner_is(sat: &Office, sat_node: &LiveOfficeNode, agent_id: &str, 
 
 #[test]
 fn task141_satellite_tracks_owner_handover_across_reconnect_and_offline_restart() {
-    org_office_sqlite::install();
     use org_proto::org::{TeamSetLead, TeamSetLeadParams};
 
     let hq_dir = tempfile::tempdir().unwrap();
     let hq_root = hq_dir.path().canonicalize().unwrap();
     let (hq_initial, hq_roots, hq_custody, hq_key) = Office::for_test_with_real_ca_in(
         &hq_root,
-        TestOffice {
-            engine: EngineChoice::Sqlite,
-        },
+        TestOffice::sqlite(org_office_sqlite::sqlite_backend()),
     );
     let hq = Arc::new(hq_initial);
     let alice = hq.owner_member_id().to_owned();
@@ -2953,6 +2951,7 @@ fn task141_satellite_tracks_owner_handover_across_reconnect_and_offline_restart(
             hq_roots,
             hq_custody,
             &bob,
+            org_office_sqlite::sqlite_backend(),
         )
         .unwrap(),
     );
@@ -3109,6 +3108,7 @@ fn assert_sat_offline_restart_keeps_owner(
         &sat1_instance,
         sat1_roots,
         sat1_custody,
+        org_office_sqlite::sqlite_backend(),
     )
     .unwrap();
     let offline_owners: Vec<String> = sat1_reopened

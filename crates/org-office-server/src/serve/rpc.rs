@@ -192,6 +192,29 @@ pub(super) fn search_rpc(
     ))
 }
 
+/// `copilot.features` and `copilot.draft` (`TASK-60` AC #3): strictly requires a verified human
+/// grant on a bound connection (`binding.via_grant()`).
+pub(super) fn copilot_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if !crate::copilot_calls::is_copilot_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(crate::copilot_calls::not_authorized(request.id));
+    };
+    if !binding.via_grant() {
+        return Some(crate::copilot_calls::not_authorized(request.id));
+    }
+    Some(dispatch_actor_port(
+        request,
+        member,
+        shared.ports.copilot.as_ref(),
+    ))
+}
+
 pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if !crate::git_calls::is_git_method(request) {
         return None;
@@ -202,14 +225,18 @@ pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> 
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
-    if (request.is::<org_proto::git::RepoRegister>() || request.is::<org_proto::git::RepoAttach>())
+    if (request.is::<org_proto::git::RepoRegister>()
+        || request.is::<org_proto::git::RepoAttach>()
+        || request.is::<org_proto::git::RepoCredentialSet>()
+        || request.is::<org_proto::git::RepoCredentialStatus>()
+        || request.is::<org_proto::git::RepoCredentialRevoke>())
         && !binding.via_grant()
     {
         return Some(Response::error(
             request.id,
             ApiError::new(
                 ErrorCode::NotAuthorized,
-                "repository registration and project attachment require a verified owner grant",
+                "repository registration, attachment, and credential management require a verified owner grant",
             ),
         ));
     }
@@ -218,6 +245,15 @@ pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> 
         member,
         shared.ports.git.as_ref(),
     ))
+}
+
+pub(super) fn reviews_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    crate::review_calls::is_review_method(request)
+        .then(|| dispatch_bound_port(request, binding, None, shared.ports.reviews.as_ref()))
 }
 
 pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -242,10 +278,17 @@ pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -
             ),
         ));
     }
-    Some(dispatch_actor_port(
-        request,
-        member,
-        shared.ports.tasks.as_ref(),
+    if let Some(handler) = shared.ports.tasks.as_ref() {
+        if let Some(response) = handler(Some(member), binding.via_grant(), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
     ))
 }
 

@@ -16,7 +16,7 @@ use super::{
     records::{
         AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode,
         Organization, ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter,
-        WatchingModelSetting,
+        TeamLimitRequest, WatchingModelSetting,
     },
 };
 
@@ -32,6 +32,7 @@ pub struct OrganizationTables {
     teams: BTreeMap<Id, Team>,
     employees: BTreeMap<Id, Employee>,
     hire_requests: BTreeMap<Id, HireRequest>,
+    team_limit_requests: BTreeMap<Id, TeamLimitRequest>,
     agent_executions: BTreeMap<Id, AgentExecutionConfig>,
     provider_connections: BTreeMap<Id, ProviderConnection>,
     model_profiles: BTreeMap<Id, ModelProfile>,
@@ -138,6 +139,10 @@ impl FamilyTable for OrganizationTables {
         lines.extend(rows("employees", self.employees.values()));
         lines.extend(rows("hire_requests", self.hire_requests.values()));
         lines.extend(rows(
+            "team_limit_requests",
+            self.team_limit_requests.values(),
+        ));
+        lines.extend(rows(
             "agent_execution_configs",
             self.agent_executions.values(),
         ));
@@ -172,125 +177,94 @@ fn read<R: Default>(
     Ok(tables.map(query).unwrap_or_default())
 }
 
+macro_rules! map_read {
+    ($get:ident, $list:ident, $field:ident, $ty:ty) => {
+        fn $get(&self, id: &Id) -> Result<Option<$ty>, EngineError> {
+            read(self.table(), |t| t.$field.get(id).cloned())
+        }
+        fn $list(&self) -> Result<Vec<$ty>, EngineError> {
+            read(self.table(), |t| t.$field.values().cloned().collect())
+        }
+    };
+}
+
 macro_rules! memory_read {
     ($($view:ty),+) => {$(
         impl OrganizationRead for $view {
-            fn organization(&self) -> Result<Option<Organization>, EngineError> {
-                read(self.table(), |t| t.organization.clone())
-            }
-
-            fn repositories(&self) -> Result<Vec<Repository>, EngineError> {
-                read(self.table(), |t| t.repositories.clone())
-            }
-
-            fn office(&self, id: &Id) -> Result<Option<Office>, EngineError> {
-                read(self.table(), |t| t.offices.get(id).cloned())
-            }
-
-            fn offices(&self) -> Result<Vec<Office>, EngineError> {
-                read(self.table(), |t| t.offices.values().cloned().collect())
-            }
-
-            fn office_codes(&self) -> Result<Vec<OfficeCode>, EngineError> {
-                read(self.table(), |t| t.office_codes.clone())
-            }
-
-            fn role(&self, id: &Id) -> Result<Option<Role>, EngineError> {
-                read(self.table(), |t| t.roles.get(id).cloned())
-            }
-
-            fn roles(&self) -> Result<Vec<Role>, EngineError> {
-                read(self.table(), |t| t.roles.values().cloned().collect())
-            }
-
-            fn team(&self, id: &Id) -> Result<Option<Team>, EngineError> {
-                read(self.table(), |t| t.teams.get(id).cloned())
-            }
-
-            fn team_by_number(&self, number: u64) -> Result<Option<Team>, EngineError> {
-                read(self.table(), |t| {
-                    t.teams.values().find(|team| team.number == number).cloned()
-                })
-            }
-
-            fn teams(&self) -> Result<Vec<Team>, EngineError> {
-                read(self.table(), |t| t.teams.values().cloned().collect())
-            }
-
-            fn employee(&self, id: &Id) -> Result<Option<Employee>, EngineError> {
-                read(self.table(), |t| t.employees.get(id).cloned())
-            }
-
-            fn employees(&self) -> Result<Vec<Employee>, EngineError> {
-                read(self.table(), |t| t.employees.values().cloned().collect())
-            }
-
-            fn handle_in_use(&self, handle: &str) -> Result<bool, EngineError> {
-                read(self.table(), |t| {
-                    t.employees.values().any(|employee| employee.handle == handle)
-                })
-            }
-
-            fn hire_request(&self, id: &Id) -> Result<Option<HireRequest>, EngineError> {
-                read(self.table(), |t| t.hire_requests.get(id).cloned())
-            }
-
-            fn hire_requests(&self) -> Result<Vec<HireRequest>, EngineError> {
-                read(self.table(), |t| t.hire_requests.values().cloned().collect())
-            }
-
-            fn agent_execution(
-                &self,
-                employee_id: &Id,
-            ) -> Result<Option<AgentExecutionConfig>, EngineError> {
-                read(self.table(), |t| t.agent_executions.get(employee_id).cloned())
-            }
-
-            fn agent_executions(&self) -> Result<Vec<AgentExecutionConfig>, EngineError> {
-                read(self.table(), |t| t.agent_executions.values().cloned().collect())
-            }
-
-            fn provider_connection(
-                &self,
-                id: &Id,
-            ) -> Result<Option<ProviderConnection>, EngineError> {
-                read(self.table(), |t| t.provider_connections.get(id).cloned())
-            }
-
-            fn provider_connections(&self) -> Result<Vec<ProviderConnection>, EngineError> {
-                read(self.table(), |t| {
-                    t.provider_connections.values().cloned().collect()
-                })
-            }
-
-            fn model_profile(&self, id: &Id) -> Result<Option<ModelProfile>, EngineError> {
-                read(self.table(), |t| t.model_profiles.get(id).cloned())
-            }
-
-            fn model_profiles(&self) -> Result<Vec<ModelProfile>, EngineError> {
-                read(self.table(), |t| t.model_profiles.values().cloned().collect())
-            }
-
-            fn watching_model(&self) -> Result<Option<WatchingModelSetting>, EngineError> {
-                read(self.table(), |t| t.watching_model.clone())
-            }
-
-            fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError> {
-                read(self.table(), |t| t.team_counter.clone())
-            }
-
-            fn team_allocations(&self) -> Result<Vec<TeamAllocation>, EngineError> {
-                read(self.table(), |t| t.team_allocations.values().cloned().collect())
-            }
-
-            fn record_refs(&self) -> Result<Vec<RecordRef>, EngineError> {
-                read(self.table(), |t| t.record_refs.iter().cloned().collect())
-            }
+            fn organization(&self) -> Result<Option<Organization>, EngineError> { read(self.table(), |t| t.organization.clone()) }
+            fn repositories(&self) -> Result<Vec<Repository>, EngineError> { read(self.table(), |t| t.repositories.clone()) }
+            fn office_codes(&self) -> Result<Vec<OfficeCode>, EngineError> { read(self.table(), |t| t.office_codes.clone()) }
+            fn team_by_number(&self, number: u64) -> Result<Option<Team>, EngineError> { read(self.table(), |t| t.teams.values().find(|team| team.number == number).cloned()) }
+            fn handle_in_use(&self, handle: &str) -> Result<bool, EngineError> { read(self.table(), |t| t.employees.values().any(|e| e.handle == handle)) }
+            fn watching_model(&self) -> Result<Option<WatchingModelSetting>, EngineError> { read(self.table(), |t| t.watching_model.clone()) }
+            fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError> { read(self.table(), |t| t.team_counter.clone()) }
+            fn team_allocations(&self) -> Result<Vec<TeamAllocation>, EngineError> { read(self.table(), |t| t.team_allocations.values().cloned().collect()) }
+            fn record_refs(&self) -> Result<Vec<RecordRef>, EngineError> { read(self.table(), |t| t.record_refs.iter().cloned().collect()) }
+            map_read!(office, offices, offices, Office);
+            map_read!(role, roles, roles, Role);
+            map_read!(team, teams, teams, Team);
+            map_read!(employee, employees, employees, Employee);
+            map_read!(hire_request, hire_requests, hire_requests, HireRequest);
+            map_read!(team_limit_request, team_limit_requests, team_limit_requests, TeamLimitRequest);
+            map_read!(agent_execution, agent_executions, agent_executions, AgentExecutionConfig);
+            map_read!(provider_connection, provider_connections, provider_connections, ProviderConnection);
+            map_read!(model_profile, model_profiles, model_profiles, ModelProfile);
         }
     )+};
 }
 
 memory_read!(MemoryTx, MemorySnapshot);
+
+macro_rules! opt_write {
+    ($put:ident, $rem:ident, $field:ident, $ty:ty) => {
+        fn $put(&mut self, record: &$ty) -> Result<(), EngineError> {
+            self.table_mut::<OrganizationTables>()?.$field = Some(record.clone());
+            Ok(())
+        }
+        fn $rem(&mut self) -> Result<(), EngineError> {
+            self.table_mut::<OrganizationTables>()?.$field = None;
+            Ok(())
+        }
+    };
+}
+
+macro_rules! map_write {
+    ($put:ident, $rem:ident, $field:ident, $ty:ty, $key:ident) => {
+        fn $put(&mut self, record: &$ty) -> Result<(), EngineError> {
+            self.table_mut::<OrganizationTables>()?
+                .$field
+                .insert(record.$key.clone(), record.clone());
+            Ok(())
+        }
+        fn $rem(&mut self, id: &Id) -> Result<(), EngineError> {
+            self.table_mut::<OrganizationTables>()?.$field.remove(id);
+            Ok(())
+        }
+    };
+}
+
+macro_rules! terminal_map_write {
+    ($put:ident, $rem:ident, $field:ident, $ty:ty, $msg:literal) => {
+        fn $put(&mut self, record: &$ty) -> Result<(), EngineError> {
+            let tables = self.table_mut::<OrganizationTables>()?;
+            if let Some(existing) = tables.$field.get(&record.id) {
+                if existing.state.is_terminal() {
+                    return if existing == record {
+                        Ok(())
+                    } else {
+                        Err(EngineError::new($msg))
+                    };
+                }
+            }
+            tables.$field.insert(record.id.clone(), record.clone());
+            Ok(())
+        }
+        fn $rem(&mut self, id: &Id) -> Result<(), EngineError> {
+            self.table_mut::<OrganizationTables>()?.$field.remove(id);
+            Ok(())
+        }
+    };
+}
 
 impl OrganizationWrite for MemoryTx {
     fn put_organization(&mut self, record: &Organization) -> Result<(), EngineError> {
@@ -315,32 +289,42 @@ impl OrganizationWrite for MemoryTx {
         Ok(())
     }
 
-    fn put_office(&mut self, record: &Office) -> Result<(), EngineError> {
-        let tables = self.table_mut::<OrganizationTables>()?;
-        tables.offices.insert(record.id.clone(), record.clone());
-        Ok(())
-    }
-
-    fn remove_office(&mut self, id: &Id) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?.offices.remove(id);
-        Ok(())
-    }
-
     fn put_office_codes(&mut self, records: &[OfficeCode]) -> Result<(), EngineError> {
         self.table_mut::<OrganizationTables>()?.office_codes = records.to_vec();
         Ok(())
     }
 
-    fn put_role(&mut self, record: &Role) -> Result<(), EngineError> {
-        let tables = self.table_mut::<OrganizationTables>()?;
-        tables.roles.insert(record.id.clone(), record.clone());
-        Ok(())
-    }
-
-    fn remove_role(&mut self, id: &Id) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?.roles.remove(id);
-        Ok(())
-    }
+    map_write!(put_office, remove_office, offices, Office, id);
+    map_write!(put_role, remove_role, roles, Role, id);
+    map_write!(put_employee, remove_employee, employees, Employee, id);
+    map_write!(
+        put_agent_execution,
+        remove_agent_execution,
+        agent_executions,
+        AgentExecutionConfig,
+        employee_id
+    );
+    map_write!(
+        put_model_profile,
+        remove_model_profile,
+        model_profiles,
+        ModelProfile,
+        id
+    );
+    terminal_map_write!(
+        put_hire_request,
+        remove_hire_request,
+        hire_requests,
+        HireRequest,
+        "terminal hire request is immutable"
+    );
+    terminal_map_write!(
+        put_team_limit_request,
+        remove_team_limit_request,
+        team_limit_requests,
+        TeamLimitRequest,
+        "terminal team limit request is immutable"
+    );
 
     fn put_team(&mut self, record: &Team) -> Result<(), EngineError> {
         let tables = self.table_mut::<OrganizationTables>()?;
@@ -353,54 +337,6 @@ impl OrganizationWrite for MemoryTx {
         let tables = self.table_mut::<OrganizationTables>()?;
         tables.record_refs.remove(&record_ref("team", id));
         tables.teams.remove(id);
-        Ok(())
-    }
-
-    fn put_employee(&mut self, record: &Employee) -> Result<(), EngineError> {
-        let tables = self.table_mut::<OrganizationTables>()?;
-        tables.employees.insert(record.id.clone(), record.clone());
-        Ok(())
-    }
-
-    fn remove_employee(&mut self, id: &Id) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?.employees.remove(id);
-        Ok(())
-    }
-
-    fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError> {
-        let tables = self.table_mut::<OrganizationTables>()?;
-        if let Some(existing) = tables.hire_requests.get(&record.id) {
-            if existing.state.is_terminal() {
-                if existing == record {
-                    return Ok(());
-                }
-                return Err(EngineError::new("terminal hire request is immutable"));
-            }
-        }
-        tables
-            .hire_requests
-            .insert(record.id.clone(), record.clone());
-        Ok(())
-    }
-
-    fn remove_hire_request(&mut self, id: &Id) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
-            .hire_requests
-            .remove(id);
-        Ok(())
-    }
-
-    fn put_agent_execution(&mut self, record: &AgentExecutionConfig) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
-            .agent_executions
-            .insert(record.employee_id.clone(), record.clone());
-        Ok(())
-    }
-
-    fn remove_agent_execution(&mut self, employee_id: &Id) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
-            .agent_executions
-            .remove(employee_id);
         Ok(())
     }
 
@@ -427,51 +363,30 @@ impl OrganizationWrite for MemoryTx {
         Ok(())
     }
 
-    fn put_model_profile(&mut self, record: &ModelProfile) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
-            .model_profiles
-            .insert(record.id.clone(), record.clone());
-        Ok(())
-    }
-
-    fn remove_model_profile(&mut self, id: &Id) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
-            .model_profiles
-            .remove(id);
-        Ok(())
-    }
-
-    fn put_watching_model(&mut self, record: &WatchingModelSetting) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?.watching_model = Some(record.clone());
-        Ok(())
-    }
-
-    fn remove_watching_model(&mut self) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?.watching_model = None;
-        Ok(())
-    }
-
-    fn put_team_counter(&mut self, record: &TeamCounter) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?.team_counter = Some(record.clone());
-        Ok(())
-    }
-
-    fn remove_team_counter(&mut self) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?.team_counter = None;
-        Ok(())
-    }
+    opt_write!(
+        put_watching_model,
+        remove_watching_model,
+        watching_model,
+        WatchingModelSetting
+    );
+    opt_write!(
+        put_team_counter,
+        remove_team_counter,
+        team_counter,
+        TeamCounter
+    );
 
     fn put_team_allocation(&mut self, record: &TeamAllocation) -> Result<(), EngineError> {
-        let tables = self.table_mut::<OrganizationTables>()?;
-        tables
+        self.table_mut::<OrganizationTables>()?
             .team_allocations
             .insert(record.number, record.clone());
         Ok(())
     }
 
     fn remove_team_allocation(&mut self, number: u64) -> Result<(), EngineError> {
-        let tables = self.table_mut::<OrganizationTables>()?;
-        tables.team_allocations.remove(&number);
+        self.table_mut::<OrganizationTables>()?
+            .team_allocations
+            .remove(&number);
         Ok(())
     }
 }

@@ -11,7 +11,7 @@ use crate::office_runtime::{
 };
 use crate::startup::Control;
 use crate::{federation, transfer};
-use org_office::{Office, OfficeError};
+use org_office::{Office, OfficeError, OfficeStorageBackend};
 use org_office_launch::{office_dir, FailCode, FirstLine, OfficeFile, ServerEvent};
 use org_office_sessions::RuntimeRegistry;
 use org_proto::OfficeRole;
@@ -21,6 +21,7 @@ pub(crate) fn join_and_serve(
     home: &Path,
     runtime: &Path,
     runtimes: RuntimeRegistry,
+    backend: Arc<dyn OfficeStorageBackend>,
 ) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Join, None) {
         Ok(first) => first,
@@ -37,7 +38,8 @@ pub(crate) fn join_and_serve(
         Ok(admitted) => admitted,
         Err(code) => return code,
     };
-    let Some(office) = run_join_enrollment_and_sync(&mut control, &folder, &join, &token, admitted)
+    let Some(office) =
+        run_join_enrollment_and_sync(&mut control, &folder, &join, &token, admitted, backend)
     else {
         return 1;
     };
@@ -92,6 +94,7 @@ fn run_join_enrollment_and_sync(
     join: &launch::Join,
     token: &org_pki::invitation::InvitationToken,
     admitted: crate::transfer::Admitted,
+    backend: Arc<dyn OfficeStorageBackend>,
 ) -> Option<Office> {
     let (req_id, local_key) =
         match load_or_create_pending_joining_key(folder, &token.org_id, &join.office_id, &join.key)
@@ -118,7 +121,7 @@ fn run_join_enrollment_and_sync(
         }
     };
     let office = match open_or_provision_joined_satellite(
-        folder, join, token, enrolled, &local_key, admitted,
+        folder, join, token, enrolled, &local_key, admitted, backend,
     ) {
         Ok(o) => Arc::new(o),
         Err(e) => {
@@ -202,8 +205,8 @@ fn open_or_provision_joined_satellite(
     enrolled: federation::EnrolledCertificateBundle,
     local_key: &org_pki::SigningKey,
     admitted: transfer::Admitted,
+    backend: Arc<dyn OfficeStorageBackend>,
 ) -> Result<Office, OfficeError> {
-    org_office_sqlite::install();
     if join.re_enroll {
         let opened = Office::open_as_owner(
             folder,
@@ -212,6 +215,7 @@ fn open_or_provision_joined_satellite(
             admitted.roots,
             admitted.custody,
             &admitted.admission.owner_member,
+            backend,
         )?;
         opened.re_enroll_satellite(org_office::SatelliteReEnrollSpec {
             org_id: token.org_id.clone(),
@@ -245,6 +249,7 @@ fn open_or_provision_joined_satellite(
             join.key.clone(),
             admitted.roots,
             admitted.custody,
+            backend,
         )
     }
 }

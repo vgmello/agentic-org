@@ -23,6 +23,8 @@ pub enum Kind {
     AgentExecution(Vec<Id>, Id),
     /// A hire request under its target team chain (`hires/<id>.yaml`).
     HireRequest(Vec<Id>, Id),
+    /// A team `max_members` increase request under its target team chain (`limit-requests/<id>.yaml`).
+    TeamLimitRequest(Vec<Id>, Id),
     /// A provider connection (`provider-connections/<id>.yaml`).
     ProviderConnection(Id),
     /// A model profile (`model-profiles/<id>.yaml`).
@@ -86,6 +88,7 @@ pub fn kind_of(path: &DurablePath) -> Option<Kind> {
                     Some(Kind::AgentExecution(chain, id(employee)?))
                 }
                 ["hires", name] => Some(Kind::HireRequest(chain, file(name)?)),
+                ["limit-requests", name] => Some(Kind::TeamLimitRequest(chain, file(name)?)),
                 _ => None,
             }
         }

@@ -116,9 +116,8 @@ pub(super) fn still_staged(office: &Office, actor: &str, upload_id: &str) -> boo
 
 #[test]
 fn attachment_only_messages_and_replies_carry_images_and_documents_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let image = png(office, &fx.agent, "chart.png");
         let report = pdf(office, &fx.agent, "report.pdf");
@@ -248,9 +247,8 @@ fn attachment_only_messages_and_replies_carry_images_and_documents_on_both_engin
 
 #[test]
 fn a_message_says_something_and_carries_at_most_ten_distinct_files() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let code = |result: Result<ChatSendCommitted, ApiError>| result.unwrap_err().code;
         assert_eq!(
@@ -323,9 +321,8 @@ fn a_message_says_something_and_carries_at_most_ten_distinct_files() {
 
 #[test]
 fn someone_elses_staged_upload_is_not_found_and_stays_theirs() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let theirs = pdf(office, &fx.agent, "plan.pdf");
         let mine = png(office, &fx.person, "mine.png");
@@ -353,9 +350,8 @@ fn someone_elses_staged_upload_is_not_found_and_stays_theirs() {
 
 #[test]
 fn an_exact_retry_with_files_is_answered_once_and_a_changed_one_is_refused() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let image = png(office, &fx.agent, "a.png");
         let report = pdf(office, &fx.agent, "b.pdf");
@@ -405,9 +401,8 @@ fn an_exact_retry_with_files_is_answered_once_and_a_changed_one_is_refused() {
 
 #[test]
 fn a_direct_message_deliverable_is_read_by_its_two_members_and_hidden_from_outsiders() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let report = pdf(office, &fx.agent, "deliverable.pdf");
         let sent = send(
@@ -466,9 +461,8 @@ fn a_direct_message_deliverable_is_read_by_its_two_members_and_hidden_from_outsi
 
 #[test]
 fn a_channel_file_is_every_employees_to_read_but_only_members_post_files() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let image = png(office, &fx.agent, "board.png");
         let sent = send(office, &fx.agent, "#general", "", &[&image]).unwrap();

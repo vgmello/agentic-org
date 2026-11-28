@@ -169,6 +169,10 @@ impl HibernationState {
         lock(&self.live_meta).remove(emp);
     }
 
+    pub(crate) fn live_pid(&self, emp: &str) -> Option<u32> {
+        lock(&self.live_meta).get(emp).and_then(|meta| meta.1)
+    }
+
     pub(crate) fn clear_all_hibernated(&self) {
         lock(&self.hibernated).clear();
     }
@@ -213,6 +217,13 @@ impl HibernationState {
     #[cfg(test)]
     pub(crate) fn has_sweeper_thread(&self) -> bool {
         lock(&self.sweeper_handle).is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_turn_idle(&self, emp: &str) -> bool {
+        lock(&self.live_meta)
+            .get(emp)
+            .is_some_and(|meta| meta.3.is_some())
     }
 }
 
