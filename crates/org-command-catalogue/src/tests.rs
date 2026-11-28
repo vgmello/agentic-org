@@ -15,8 +15,8 @@ fn command_table_passes_all_org_command_contract_checks() {
     );
     assert_eq!(
         live.rows().len(),
-        140,
-        "the agent-os catalogue has 140 commands"
+        148,
+        "the agent-os catalogue has 148 commands"
     );
 }
 

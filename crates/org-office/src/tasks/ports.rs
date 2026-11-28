@@ -59,6 +59,11 @@ pub trait TasksRead: MessagingRead + ProcessesRead + AttachmentsRead {
     /// Every task's history outline, by task ID, read at once for a rebuild's checks
     /// (`TASK-105`, `doc-79`). Tasks with no history are absent.
     fn task_history_outlines(&self) -> Result<BTreeMap<Id, TaskHistoryOutline>, EngineError>;
+    /// Whether canonical feature `feature_id` exists in `project_id` (`TASK-55`).
+    fn feature_in_project(&self, project_id: &Id, feature_id: &Id) -> Result<bool, EngineError>;
+    /// Whether release milestone `milestone_id` exists in `project_id` (`TASK-55`).
+    fn milestone_in_project(&self, project_id: &Id, milestone_id: &Id)
+        -> Result<bool, EngineError>;
 
     /// Resolves a task by canonical UUIDv7 ID or office-coded `T-<CODE><N>` reference.
     fn resolve_task(&self, reference: &str) -> Result<Option<TaskRecord>, EngineError> {

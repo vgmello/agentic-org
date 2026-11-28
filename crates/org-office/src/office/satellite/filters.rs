@@ -302,7 +302,9 @@ pub fn classify_replicated_snapshot_path(path: &str) -> SnapshotPathClass {
     }
     // A project's documentation tree names its project and the employees who wrote it:
     // applied after both, and never through the org-core employee pre-pass (`TASK-55`).
-    if crate::project_docs::paths::parse_durable(&dp).is_some() {
+    if crate::project_docs::paths::parse_durable(&dp).is_some()
+        || org_docs::delivery::paths::parse_delivery_path(path).is_some()
+    {
         return SnapshotPathClass::DependentExecutionDocsAndBudgets;
     }
     if crate::projects::records::kind_of(&dp).is_some() {

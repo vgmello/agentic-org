@@ -388,7 +388,8 @@ impl TasksWrite for SqliteTx {
         run(
             db,
             "DELETE FROM links \
-             WHERE organization_id = ?1 AND source_kind = 'task' AND source_id = ?2",
+             WHERE organization_id = ?1 AND source_kind = 'task' AND source_id = ?2 \
+               AND kind = 'depends_on'",
             vec![text(scope), text(task_id.as_str())],
         )?;
         for l in links {

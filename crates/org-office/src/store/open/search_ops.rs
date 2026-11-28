@@ -5,10 +5,9 @@ use org_proto::ApiError;
 use org_store::{Id, StoreError};
 
 use super::ReadOp;
-use crate::attachments::ports::AttachmentsRead;
+use crate::delivery::ports::DeliveryRead;
 use crate::search::features::query::{read_sources, Resolved, SearchRequest};
 use crate::search::ports::SearchRead;
-use crate::tasks::ports::TasksRead;
 
 /// Resolves a validated search for `caller` and asks the snapshot's sources.
 pub(crate) struct SearchSnapshotRead {
@@ -21,10 +20,7 @@ pub(crate) struct SearchSnapshotRead {
 impl ReadOp for SearchSnapshotRead {
     type Out = Result<Resolved, ApiError>;
 
-    fn read<S: TasksRead + AttachmentsRead + SearchRead>(
-        self,
-        snapshot: &S,
-    ) -> Result<Self::Out, StoreError> {
+    fn read<S: DeliveryRead + SearchRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let owner = crate::organization::owner::effective_owner_id(snapshot, &self.owner)?;
         Ok(read_sources(
             snapshot,

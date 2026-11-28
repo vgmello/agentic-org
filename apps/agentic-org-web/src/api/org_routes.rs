@@ -142,6 +142,9 @@ pub(super) fn route_organization(
     if let Some(routed) = super::doc_routes::try_route(api, request, org, tail) {
         return routed;
     }
+    if let Some(routed) = super::delivery_routes::try_route(api, request, org, tail) {
+        return routed;
+    }
     if let Some(routed) = super::search_routes::try_route(api, request, org, tail) {
         return routed;
     }

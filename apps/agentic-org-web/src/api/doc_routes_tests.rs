@@ -236,6 +236,39 @@ fn bodies_take_the_project_and_document_from_the_path() {
         panic!("a create");
     };
     assert_eq!(params.project, "checkout");
+    let deleted = to_call(
+        DocRoute::Delete(pair, "org".into(), "checkout".into(), "doc".into()),
+        format!(
+            r#"{{"command_id":"{COMMAND_ID}","project":"elsewhere","document_id":"other","expected_revision":4}}"#
+        )
+        .as_bytes(),
+    )
+    .ok()
+    .unwrap();
+    let DocCall::Delete(_, _, params) = deleted else {
+        panic!("a delete");
+    };
+    assert_eq!(
+        (
+            params.project.as_str(),
+            params.document_id.as_str(),
+            params.expected_revision
+        ),
+        ("checkout", "doc", 4)
+    );
+    let media = to_call(
+        DocRoute::PutMedia(pair, "org".into(), "checkout".into()),
+        format!(
+            r#"{{"command_id":"{COMMAND_ID}","project":"elsewhere","file_name":"a.png","media_type":"image/png","type":"image","title":"A","content_base64":"AA=="}}"#
+        )
+        .as_bytes(),
+    )
+    .ok()
+    .unwrap();
+    let DocCall::PutMedia(_, _, params) = media else {
+        panic!("a put_media");
+    };
+    assert_eq!(params.project, "checkout");
     assert!(to_call(
         DocRoute::Create(pair, "org".into(), "p".into()),
         b"not json"

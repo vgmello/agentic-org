@@ -38,7 +38,11 @@ pub fn scan(
 
 impl SearchRead for MemorySnapshot {
     fn search_shared(&self, plan: &SearchPlan) -> Result<SourcePage, EngineError> {
-        Ok(scan(documents::shared_docs(self)?, plan, |_| true))
+        let visible = documents::shared_docs(self)?
+            .into_iter()
+            .filter(|doc| plan.is_visible_shared(doc))
+            .collect();
+        Ok(scan(visible, plan, |_| true))
     }
 
     fn search_messages(

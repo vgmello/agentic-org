@@ -4,10 +4,17 @@
 
 use base64::Engine as _;
 use org_office::{EngineChoice, Office, TestOffice};
+use org_proto::delivery::{
+    DeploymentsCreate, DeploymentsCreateParams, DeploymentsList, DeploymentsListParams,
+    FeaturesCreate, FeaturesCreateParams, FeaturesInspect, FeaturesInspectParams, FeaturesList,
+    FeaturesListParams, FlagValueTypeWire, FlagsCreate, FlagsCreateParams, FlagsList,
+    FlagsListParams, LinkEntityKindWire, LinkKindWire, LinksAdd, LinksAddParams, LinksList,
+    LinksListParams, ReleasesCreate, ReleasesCreateParams, ReleasesList, ReleasesListParams,
+};
 use org_proto::docs::{
-    DocMediaKindWire, DocsCreate, DocsCreateParams, DocsIndex, DocsIndexParams, DocsInspect,
-    DocsInspectParams, DocsList, DocsListParams, DocsMove, DocsMoveParams, DocsPutMedia,
-    DocsPutMediaParams, DocsUpdate, DocsUpdateParams,
+    DocMediaKindWire, DocsCreate, DocsCreateParams, DocsDelete, DocsDeleteParams, DocsIndex,
+    DocsIndexParams, DocsInspect, DocsInspectParams, DocsList, DocsListParams, DocsMove,
+    DocsMoveParams, DocsPutMedia, DocsPutMediaParams, DocsUpdate, DocsUpdateParams,
 };
 use org_proto::hiring::{HireProposalWire, HrHire, HrHireParams};
 use org_proto::org::{ProjectCreateParams, TeamCreateParams};
@@ -272,10 +279,200 @@ fn every_docs_call_dispatches_as_the_bound_member_on_both_engines() {
             outsider,
             &DocsInspectParams {
                 project: s.project.clone(),
-                document: doc,
+                document: doc.clone(),
             },
         );
         assert_eq!(code(&refused), ErrorCode::NotFound);
+
+        // DocsDelete dispatches through the same doc RPC choke-point.
+        let deleted = result(call::<DocsDelete>(
+            &s.office,
+            me,
+            &DocsDeleteParams {
+                command_id: uuid(304),
+                project: s.project.clone(),
+                document_id: doc,
+                expected_revision: 3,
+            },
+        ));
+        assert_eq!(deleted["deleted_path"], "setup.md");
+    }
+}
+
+#[test]
+fn delivery_rpcs_dispatch_and_isolate_outsiders_on_both_engines() {
+    for engine in [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ] {
+        let s = seed(engine);
+        let me = Some(s.member_agent.as_str());
+        let outsider = Some(s.outsider_agent.as_str());
+        let feat = result(call::<FeaturesCreate>(
+            &s.office,
+            me,
+            &FeaturesCreateParams {
+                command_id: uuid(310),
+                project: s.project.clone(),
+                title: "Fast Checkout".into(),
+                ..Default::default()
+            },
+        ));
+        let fid = feat["feature"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            result(call::<FeaturesList>(
+                &s.office,
+                me,
+                &FeaturesListParams {
+                    project: s.project.clone(),
+                    status: None,
+                },
+            ))["features"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            result(call::<FeaturesInspect>(
+                &s.office,
+                me,
+                &FeaturesInspectParams {
+                    project: s.project.clone(),
+                    feature: fid.clone(),
+                },
+            ))["feature"]["key"],
+            "F-1"
+        );
+        result(call::<LinksAdd>(
+            &s.office,
+            me,
+            &LinksAddParams {
+                command_id: uuid(311),
+                project: s.project.clone(),
+                source_kind: LinkEntityKindWire::Feature,
+                source_id: fid.clone(),
+                kind: LinkKindWire::RelatesTo,
+                target_kind: LinkEntityKindWire::Project,
+                target_id: s.project.clone(),
+            },
+        ));
+        assert_eq!(
+            result(call::<LinksList>(
+                &s.office,
+                me,
+                &LinksListParams {
+                    project: s.project.clone(),
+                    ..Default::default()
+                },
+            ))["links"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let rel = result(call::<ReleasesCreate>(
+            &s.office,
+            me,
+            &ReleasesCreateParams {
+                command_id: uuid(312),
+                project: s.project.clone(),
+                title: "v1".into(),
+                ..Default::default()
+            },
+        ));
+        let rid = rel["release"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            result(call::<ReleasesList>(
+                &s.office,
+                me,
+                &ReleasesListParams {
+                    project: s.project.clone(),
+                },
+            ))["releases"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        result(call::<DeploymentsCreate>(
+            &s.office,
+            me,
+            &DeploymentsCreateParams {
+                command_id: uuid(313),
+                project: s.project.clone(),
+                release_id: rid,
+                environment: "prod".into(),
+                ..Default::default()
+            },
+        ));
+        assert_eq!(
+            result(call::<DeploymentsList>(
+                &s.office,
+                me,
+                &DeploymentsListParams {
+                    project: s.project.clone(),
+                    ..Default::default()
+                },
+            ))["deployments"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        result(call::<FlagsCreate>(
+            &s.office,
+            me,
+            &FlagsCreateParams {
+                command_id: uuid(314),
+                project: s.project.clone(),
+                key: "fast-checkout".into(),
+                value_type: FlagValueTypeWire::Boolean,
+                default_value: json!(true),
+                feature_id: Some(fid),
+                owner_employee_id: None,
+                status: None,
+                body_markdown: String::new(),
+            },
+        ));
+        assert_eq!(
+            result(call::<FlagsList>(
+                &s.office,
+                me,
+                &FlagsListParams {
+                    project: s.project.clone(),
+                    status: None,
+                    used_only: false,
+                },
+            ))["flags"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            code(&call::<FeaturesList>(
+                &s.office,
+                outsider,
+                &FeaturesListParams {
+                    project: s.project.clone(),
+                    status: None,
+                },
+            )),
+            ErrorCode::NotFound
+        );
+        assert_eq!(
+            code(&call::<FlagsList>(
+                &s.office,
+                None,
+                &FlagsListParams {
+                    project: s.project.clone(),
+                    status: None,
+                    used_only: false,
+                },
+            )),
+            ErrorCode::NotBound
+        );
     }
 }
 

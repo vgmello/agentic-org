@@ -249,7 +249,7 @@ impl CreateTask {
         let modified_files = normalize_file_paths(&self.params.modified_files, "modified")
             .map_err(|e| refuse(e.code, e.message))?;
         let details = match self.params.details.as_ref() {
-            Some(w) => Some(parse_details(uow.view(), &task_id, w)?),
+            Some(w) => Some(parse_details(uow.view(), &task_id, project_id.as_ref(), w)?),
             None => None,
         };
         let links = build_initial_depends_on(uow.view(), &task_id, &self.params.depends_on)?;

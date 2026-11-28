@@ -475,8 +475,8 @@ fn the_table_has_every_row_of_every_slice_once_and_dispatch_owns_each() {
     );
     assert_eq!(
         live.rows().len(),
-        140,
-        "the agent-os catalogue has 140 commands"
+        148,
+        "the agent-os catalogue has 148 commands"
     );
     // Every row reaches its slice's dispatch, which sends the office its call: none falls
     // through to `not wired`.

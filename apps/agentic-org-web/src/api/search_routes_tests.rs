@@ -72,7 +72,7 @@ fn unknown_repeated_oversized_and_malformed_parameters_are_refused() {
         Some("q=a&limit=101"),
         Some("q=a&limit=-1"),
         Some("q=a&limit=ten"),
-        Some("q=a&types=document"),
+        Some("q=a&types=bogus_entity"),
         Some("q=a&types=task,"),
         Some("q=a&types="),
         Some("q=a&fields=body"),

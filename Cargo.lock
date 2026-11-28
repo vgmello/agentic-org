@@ -1391,7 +1391,9 @@ dependencies = [
 name = "org-docs"
 version = "0.0.0"
 dependencies = [
+ "org-proto",
  "saphyr-parser",
+ "serde",
  "serde_json",
 ]
 
@@ -1681,6 +1683,7 @@ dependencies = [
  "image",
  "org-accounting",
  "org-budgets",
+ "org-docs",
  "org-media",
  "org-office",
  "org-office-sqlite",

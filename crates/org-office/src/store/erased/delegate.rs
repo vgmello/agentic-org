@@ -1,7 +1,11 @@
 //! Delegating read and write port implementations for [`BoxedTx`] and [`BoxedSnapshot`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use org_docs::delivery::records::{
+    DeploymentRecord, EntityLinkRecord, FeatureFlagRecord, FeatureRecord, LinkEntityKind,
+    MilestoneRecord, NumberCounterRecord, ReleaseRecord, ScopedChangelogRecord,
+};
 use org_proto::attachments::AttachmentTargetKind;
 use org_store::{CorePort, CoreRead, Cursor, DurablePath, EngineError, Id, Mark, Receipt, Sha256};
 
@@ -9,6 +13,7 @@ use crate::attachments::{
     ports::{AttachmentsRead, AttachmentsWrite},
     records::AttachmentRecord,
 };
+use crate::delivery::ports::{DeliveryRead, DeliveryWrite};
 use crate::messaging::{
     ports::{BoundMessageFile, MessagingRead, MessagingWrite},
     records::{
@@ -195,6 +200,8 @@ fwd_read!(TasksRead for BoxedTx, BoxedSnapshot {
     task_page(query: &TaskListQuery) -> TaskListPage;
     task_rollups(ids: &[Id]) -> BTreeMap<Id, TaskRollup>;
     task_history_outlines() -> BTreeMap<Id, TaskHistoryOutline>;
+    feature_in_project(project_id: &Id, feature_id: &Id) -> bool;
+    milestone_in_project(project_id: &Id, milestone_id: &Id) -> bool;
 });
 
 fwd_read!(ProjectDocsRead for BoxedTx, BoxedSnapshot {
@@ -202,6 +209,29 @@ fwd_read!(ProjectDocsRead for BoxedTx, BoxedSnapshot {
     project_doc(id: &Id) -> Option<ProjectDoc>;
     project_doc_media(project: &Id) -> Vec<DocMedia>;
     projects_with_docs() -> Vec<Id>;
+    document_link_ids(doc_id: &Id) -> Vec<String>;
+});
+
+fwd_read!(DeliveryRead for BoxedTx, BoxedSnapshot {
+    project_features(project: &Id) -> Vec<FeatureRecord>;
+    feature(id: &Id) -> Option<FeatureRecord>;
+    all_features() -> Vec<FeatureRecord>;
+    project_releases(project: &Id) -> Vec<ReleaseRecord>;
+    release(id: &Id) -> Option<ReleaseRecord>;
+    release_milestones(release: &Id) -> Vec<MilestoneRecord>;
+    project_milestones(project: &Id) -> Vec<MilestoneRecord>;
+    milestone(id: &Id) -> Option<MilestoneRecord>;
+    project_deployments(project: &Id) -> Vec<DeploymentRecord>;
+    deployment(id: &Id) -> Option<DeploymentRecord>;
+    project_flags(project: &Id) -> Vec<FeatureFlagRecord>;
+    flag(id: &Id) -> Option<FeatureFlagRecord>;
+    used_flag_ids(project: &Id) -> BTreeSet<String>;
+    release_changelog(release: &Id) -> Option<ScopedChangelogRecord>;
+    deployment_changelog(deployment: &Id) -> Option<ScopedChangelogRecord>;
+    project_changelogs(project: &Id) -> Vec<ScopedChangelogRecord>;
+    project_links(project: &Id) -> Vec<EntityLinkRecord>;
+    delivery_counter(scope_kind: &str, scope_id: &Id, entity_kind: &str) -> Option<NumberCounterRecord>;
+    projects_with_delivery() -> Vec<Id>;
 });
 
 fwd_read!(ReviewsRead for BoxedTx, BoxedSnapshot {
@@ -317,6 +347,26 @@ fwd_write!(ProjectDocsWrite {
     remove_project_doc_at(project: &Id, path: &str) -> ();
     put_doc_media(media: &DocMedia) -> ();
     remove_doc_media_at(project: &Id, path: &str) -> ();
+});
+
+fwd_write!(DeliveryWrite {
+    put_feature(record: &FeatureRecord) -> ();
+    remove_feature(id: &Id) -> ();
+    put_release(record: &ReleaseRecord) -> ();
+    remove_release(id: &Id) -> ();
+    put_milestone(record: &MilestoneRecord) -> ();
+    remove_milestone(id: &Id) -> ();
+    put_deployment(record: &DeploymentRecord) -> ();
+    remove_deployment(id: &Id) -> ();
+    put_flag(record: &FeatureFlagRecord) -> ();
+    remove_flag(id: &Id) -> ();
+    put_scoped_changelog(record: &ScopedChangelogRecord) -> ();
+    remove_release_changelog(release: &Id) -> ();
+    remove_deployment_changelog(deployment: &Id) -> ();
+    put_entity_link(record: &EntityLinkRecord) -> ();
+    remove_entity_link(source_kind: LinkEntityKind, source_id: &Id, link_id: &Id) -> ();
+    put_delivery_counter(scope_kind: &str, scope_id: &Id, entity_kind: &str, counter: &NumberCounterRecord) -> ();
+    remove_delivery_counter(scope_kind: &str, scope_id: &Id, entity_kind: &str) -> ();
 });
 
 fwd_write!(ReviewsWrite {

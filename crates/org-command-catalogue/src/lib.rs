@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod budget;
+pub mod docs;
 pub mod files;
 pub mod git;
 pub mod hiring;
@@ -37,6 +38,7 @@ pub use org_command::{
 const DOMAIN_ROW_GROUPS: &[&[&[Command]]] = &[
     organization::ALL,
     projects::ALL,
+    docs::ALL,
     hiring::ALL,
     session::ALL,
     messaging::ALL,

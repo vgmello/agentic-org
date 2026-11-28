@@ -44,7 +44,7 @@ fn search_needs_the_cookie_and_its_proof_and_refuses_bad_queries_before_any_offi
         search_path("?q=a&unknown=1"),
         search_path("?q=a&limit=0"),
         search_path("?q=a&limit=101"),
-        search_path("?q=a&types=document"),
+        search_path("?q=a&types=bogus_entity"),
         search_path("?q=a&author_id=not-a-uuid"),
         search_path("?q=a&fields=body"),
         "/api/v1/organizations/not-an-org/search?q=a".to_owned(),
@@ -64,7 +64,9 @@ fn search_needs_the_cookie_and_its_proof_and_refuses_bad_queries_before_any_offi
     // A valid search goes to the organization's office (503 here: the fixture runs none).
     for valid in [
         search_path("?q=zebra"),
-        search_path("?q=foo%22+OR+1%3D1&types=task,message&limit=5&fields=ref,title"),
+        search_path(
+            "?q=foo%22+OR+1%3D1&types=task,message,document,feature&limit=5&fields=ref,title",
+        ),
         search_path("?q=plan&types=private_decision&count_only=true"),
     ] {
         let reply = send(&gateway, Method::GET, &valid, "", Some(&pair), &[]);

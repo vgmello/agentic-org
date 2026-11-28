@@ -17,6 +17,7 @@ use std::sync::{
 };
 
 use org_office::attachments::ports::AttachmentsRead;
+use org_office::delivery::ports::DeliveryRead;
 use org_office::search::features::query as search_query;
 use org_office::search::ports::SearchRead;
 use org_office::tasks::ops::TaskWriteAuthority;
@@ -47,7 +48,7 @@ struct TestSearchRead {
 impl ReadOp for TestSearchRead {
     type Out = SearchQueryResult;
 
-    fn read<S: TasksRead + AttachmentsRead + SearchRead>(
+    fn read<S: TasksRead + AttachmentsRead + DeliveryRead + SearchRead>(
         self,
         snapshot: &S,
     ) -> Result<Self::Out, StoreError> {

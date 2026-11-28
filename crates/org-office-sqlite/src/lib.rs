@@ -26,6 +26,7 @@ mod backend;
 pub mod budgets;
 mod companion;
 mod connection;
+mod delivery;
 #[cfg(any(test, feature = "testkit"))]
 mod dump;
 mod engine;

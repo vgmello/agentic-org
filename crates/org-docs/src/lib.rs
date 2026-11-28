@@ -19,6 +19,10 @@ use std::fmt;
 use saphyr_parser::{Event, Parser, ScalarStyle, ScanError};
 use serde_json::{Map, Number, Value};
 
+/// Pure delivery domain records, paths, invariants, and codecs (`TASK-55`, `L7`/`L11`).
+pub mod delivery;
+/// Pure project documentation tree path validation, status/media helpers, and `index.yaml` renderer.
+pub mod project_tree;
 mod source;
 pub use source::{RootScalarEdit, ScalarValue, SourceDoc, SourceError, MAX_SOURCE_BODY_BYTES};
 

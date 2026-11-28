@@ -17,8 +17,8 @@ use org_office::project_docs::{
 
 use super::{
     organization::{
-        all, id, meta, meta_values, number, one, optional_id, optional_id_value, put, run, text,
-        whole, View, META,
+        all, id, meta, meta_values, number, one, optional_id, optional_id_value, put,
+        put_record_ref, run, text, whole, View, META,
     },
     SqliteSnapshot, SqliteTx,
 };
@@ -126,6 +126,18 @@ macro_rules! sqlite_read {
                            WHERE organization_id = ?1 ORDER BY 1";
                 all(db, sql, vec![text(scope)], |row| id(row, 0))
             }
+
+            fn document_link_ids(&self, doc_id: &Id) -> Result<Vec<String>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = "SELECT id FROM links \
+                           WHERE organization_id = ?1 \
+                             AND ((source_kind = 'document' AND source_id = ?2) \
+                                  OR (target_kind = 'document' AND target_id = ?2)) \
+                           ORDER BY id";
+                all(db, sql, vec![text(scope), text(doc_id.as_str())], |row| {
+                    row.get(0)
+                })
+            }
         }
     )+};
 }
@@ -149,7 +161,8 @@ impl ProjectDocsWrite for SqliteTx {
         ];
         meta_values(&doc.meta, &mut values)?;
         let columns = format!("organization_id, {DOC_COLS}, schema_version, {META}");
-        put(db, "documents", &columns, 2, values)
+        put(db, "documents", &columns, 2, values)?;
+        put_record_ref(db, scope, "document", &doc.id)
     }
 
     fn remove_project_doc_at(&mut self, project: &Id, path: &str) -> Result<(), EngineError> {
@@ -158,6 +171,13 @@ impl ProjectDocsWrite for SqliteTx {
             db,
             "DELETE FROM documents WHERE organization_id = ?1 AND project_id = ?2 AND path = ?3",
             vec![text(scope), text(project.as_str()), text(path)],
+        )?;
+        run(
+            db,
+            "DELETE FROM record_refs WHERE organization_id = ?1 AND kind = 'document' \
+             AND NOT EXISTS (SELECT 1 FROM documents d \
+             WHERE d.organization_id = ?1 AND d.id = record_refs.id)",
+            vec![text(scope)],
         )
     }
 
@@ -177,7 +197,8 @@ impl ProjectDocsWrite for SqliteTx {
         ];
         meta_values(&media.meta, &mut values)?;
         let columns = format!("organization_id, {MEDIA_COLS}, schema_version, {META}");
-        put(db, "documentation_media", &columns, 2, values)
+        put(db, "documentation_media", &columns, 2, values)?;
+        put_record_ref(db, scope, "media", &media.id)
     }
 
     fn remove_doc_media_at(&mut self, project: &Id, path: &str) -> Result<(), EngineError> {
@@ -187,6 +208,13 @@ impl ProjectDocsWrite for SqliteTx {
             "DELETE FROM documentation_media \
              WHERE organization_id = ?1 AND project_id = ?2 AND path = ?3",
             vec![text(scope), text(project.as_str()), text(path)],
+        )?;
+        run(
+            db,
+            "DELETE FROM record_refs WHERE organization_id = ?1 AND kind = 'media' \
+             AND NOT EXISTS (SELECT 1 FROM documentation_media m \
+             WHERE m.organization_id = ?1 AND m.id = record_refs.id)",
+            vec![text(scope)],
         )
     }
 }

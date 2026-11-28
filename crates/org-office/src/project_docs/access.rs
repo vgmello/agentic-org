@@ -53,6 +53,27 @@ impl From<ApiError> for Denied {
     }
 }
 
+impl Denied {
+    /// Converts into an `org_store::Refusal` (refusals are recorded; storage errors abort).
+    pub fn into_refusal(self) -> org_store::Refusal {
+        match self {
+            Self::Refused(error) => {
+                org_store::Refusal::rejected(serde_json::to_vec(&error).unwrap_or_default())
+            }
+            Self::Storage(error) => org_store::Refusal::from(error),
+        }
+    }
+
+    /// Decodes a rejected write reply back into an [`ApiError`].
+    pub fn decode_rejection(
+        bytes: &[u8],
+        fallback_code: ErrorCode,
+        fallback_msg: &str,
+    ) -> ApiError {
+        serde_json::from_slice(bytes).unwrap_or_else(|_| ApiError::new(fallback_code, fallback_msg))
+    }
+}
+
 /// The one answer for a project that is missing or that the caller may not see.
 pub const PROJECT_NOT_FOUND: &str = "project not found";
 

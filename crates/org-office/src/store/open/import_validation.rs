@@ -6,8 +6,9 @@ use org_store::{Id, Projector, StoreError};
 use super::super::{backend::OfficeStorageBackend, erased::DynOfficeEngine};
 use super::OfficeEngine;
 use crate::{
-    attachments::projector::AttachmentFiles, organization::projector::OrganizationFiles,
-    processes::projector::ProcessFiles, projects::projector::ProjectFiles,
+    attachments::projector::AttachmentFiles, delivery::projector::DeliveryFiles,
+    organization::projector::OrganizationFiles, processes::projector::ProcessFiles,
+    project_docs::projector::ProjectDocFiles, projects::projector::ProjectFiles,
     reviews::files::ReviewFiles, tasks::projector::TaskFiles,
 };
 
@@ -38,6 +39,8 @@ fn apply_imported_to_engine<E: OfficeEngine>(
         Box::new(TaskFiles::shared(organization_id.clone())),
         Box::new(ProcessFiles::new()),
         Box::new(AttachmentFiles::new()),
+        Box::new(ProjectDocFiles),
+        Box::new(DeliveryFiles),
         Box::new(ReviewFiles::shared()),
     ];
     engine

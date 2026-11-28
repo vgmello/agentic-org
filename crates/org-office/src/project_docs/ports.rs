@@ -16,6 +16,8 @@ pub trait ProjectDocsRead: ProjectsRead {
     fn project_doc_media(&self, project: &Id) -> Result<Vec<DocMedia>, EngineError>;
     /// Every project with at least one document or media asset, in ID order.
     fn projects_with_docs(&self) -> Result<Vec<Id>, EngineError>;
+    /// Sorted IDs of Why links referencing `(document, doc_id)` as source or target.
+    fn document_link_ids(&self, doc_id: &Id) -> Result<Vec<String>, EngineError>;
 }
 
 /// Changes to projected documents and media inside a store transaction. Rows are keyed by

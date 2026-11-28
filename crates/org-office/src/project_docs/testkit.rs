@@ -89,6 +89,28 @@ macro_rules! memory_read {
                     ids
                 })
             }
+
+            fn document_link_ids(&self, doc_id: &Id) -> Result<Vec<String>, EngineError> {
+                use org_docs::delivery::records::LinkEntityKind;
+                let mut ids: Vec<String> = self
+                    .table::<crate::delivery::testkit::DeliveryTables>()
+                    .map(|t| {
+                        t.links
+                            .values()
+                            .filter(|l| {
+                                (l.source_kind == LinkEntityKind::Document
+                                    && l.source_id == doc_id.as_str())
+                                    || (l.target_kind == LinkEntityKind::Document
+                                        && l.target_id == doc_id.as_str())
+                            })
+                            .map(|l| l.id.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                ids.sort();
+                ids.dedup();
+                Ok(ids)
+            }
         }
     )+};
 }

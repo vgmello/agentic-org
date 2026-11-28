@@ -202,6 +202,7 @@ pub(crate) fn validate_task_type(raw: &str) -> Result<String, Refusal> {
 pub(crate) fn parse_details<R: TasksRead>(
     view: &R,
     task_id: &Id,
+    project_id: Option<&Id>,
     wire: &TaskDetailsWire,
 ) -> Result<TaskDetailsRecord, Refusal> {
     let opt_id = |raw: &Option<String>, field: &str| -> Result<Option<Id>, Refusal> {
@@ -230,12 +231,27 @@ pub(crate) fn parse_details<R: TasksRead>(
             ));
         }
     }
-    if wire.affects_feature_id.is_some() {
-        return Err(refuse(
-            ErrorCode::InvalidRequest,
-            "affects_feature_id cannot be set until the features catalog is enabled",
-        ));
-    }
+    let affects_feature_id = match opt_id(&wire.affects_feature_id, "affects_feature_id")? {
+        None => None,
+        Some(fid) => {
+            let Some(pid) = project_id else {
+                return Err(refuse(
+                    ErrorCode::InvalidRequest,
+                    "affects_feature_id requires the task to belong to a project",
+                ));
+            };
+            if !view
+                .feature_in_project(pid, &fid)
+                .map_err(storage_refusal)?
+            {
+                return Err(refuse(
+                    ErrorCode::NotFound,
+                    format!("referenced feature `{fid}` not found in project"),
+                ));
+            }
+            Some(fid)
+        }
+    };
     validate_i64_u64(wire.reopen_count, "reopen_count")?;
     if let Some(ref src) = wire.routing_source {
         if !matches!(src.as_str(), "person" | "rule" | "copilot") {
@@ -266,7 +282,7 @@ pub(crate) fn parse_details<R: TasksRead>(
         reopen_count: wire.reopen_count,
         duplicate_of_task_id: duplicate_of,
         closed_reason: wire.closed_reason.clone(),
-        affects_feature_id: None,
+        affects_feature_id,
         request_kind: wire.request_kind.clone(),
         request_text: wire.request_text.clone(),
         route_reason: wire.route_reason.clone(),

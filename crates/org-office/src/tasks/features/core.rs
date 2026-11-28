@@ -283,6 +283,68 @@ fn apply_scalar_updates<R: TasksRead>(
     apply_patch_scalar_updates(view, task, params, changed, deltas)
 }
 
+fn resolve_task_project_ref(
+    task_project: Option<&Id>,
+    raw: Option<&str>,
+    field: &'static str,
+    kind: &'static str,
+    exists: impl FnOnce(&Id, &Id) -> Result<bool, org_store::EngineError>,
+) -> Result<Option<Id>, Refusal> {
+    let Some(v) = raw else {
+        return Ok(None);
+    };
+    let target = parse_uuid_v7(v, field)?;
+    let Some(pid) = task_project else {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            format!("{field} requires the task to belong to a project"),
+        ));
+    };
+    if !exists(pid, &target).map_err(storage_refusal)? {
+        return Err(refuse(
+            ErrorCode::NotFound,
+            format!("referenced {kind} `{target}` not found in project"),
+        ));
+    }
+    Ok(Some(target))
+}
+
+fn apply_delivery_patch_fields<R: TasksRead>(
+    view: &R,
+    task: &mut TaskRecord,
+    params: &TasksUpdateParams,
+    changed: &mut Vec<&'static str>,
+    deltas: &mut Map<String, Value>,
+) -> Result<(), Refusal> {
+    if let PatchField::Set(ref raw) = params.feature_id {
+        let next = resolve_task_project_ref(
+            task.project_id.as_ref(),
+            raw.as_deref(),
+            "feature_id",
+            "feature",
+            |pid, fid| view.feature_in_project(pid, fid),
+        )?;
+        let prev = std::mem::replace(&mut task.feature_id, next);
+        let prev_s = prev.as_ref().map(Id::to_string);
+        let next_s = task.feature_id.as_ref().map(Id::to_string);
+        record_delta(changed, deltas, "feature_id", &prev_s, &next_s);
+    }
+    if let PatchField::Set(ref raw) = params.milestone_id {
+        let next = resolve_task_project_ref(
+            task.project_id.as_ref(),
+            raw.as_deref(),
+            "milestone_id",
+            "milestone",
+            |pid, mid| view.milestone_in_project(pid, mid),
+        )?;
+        let prev = std::mem::replace(&mut task.milestone_id, next);
+        let prev_s = prev.as_ref().map(Id::to_string);
+        let next_s = task.milestone_id.as_ref().map(Id::to_string);
+        record_delta(changed, deltas, "milestone_id", &prev_s, &next_s);
+    }
+    Ok(())
+}
+
 fn apply_patch_scalar_updates<R: TasksRead>(
     view: &R,
     task: &mut TaskRecord,
@@ -308,8 +370,9 @@ fn apply_patch_scalar_updates<R: TasksRead>(
         let prev = std::mem::replace(&mut task.rank_order, order);
         record_delta(changed, deltas, "rank_order", &prev, &task.rank_order);
     }
+    apply_delivery_patch_fields(view, task, params, changed, deltas)?;
     if let Some(ref details) = params.details {
-        let mut next = parse_details(view, &task.id, details)?;
+        let mut next = parse_details(view, &task.id, task.project_id.as_ref(), details)?;
         // Only a transition sets or clears the "done anyway" record (`TASK-88`).
         next.done_anyway = task.details.as_ref().and_then(|d| d.done_anyway.clone());
         task.details = Some(next);

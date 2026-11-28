@@ -36,6 +36,8 @@ pub enum SearchEntityType {
     Task,
     Process,
     Project,
+    Document,
+    Feature,
     Member,
     Team,
     Role,
@@ -48,10 +50,12 @@ pub enum SearchEntityType {
 
 impl SearchEntityType {
     /// Every type, in wire order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Task,
         Self::Process,
         Self::Project,
+        Self::Document,
+        Self::Feature,
         Self::Member,
         Self::Team,
         Self::Role,
@@ -60,11 +64,13 @@ impl SearchEntityType {
         Self::PrivateDecision,
     ];
 
-    /// The shared organization knowledge every active member may search.
-    pub const SHARED: [Self; 6] = [
+    /// The shared organization knowledge (project-scoped types filtered by caller visibility).
+    pub const SHARED: [Self; 8] = [
         Self::Task,
         Self::Process,
         Self::Project,
+        Self::Document,
+        Self::Feature,
         Self::Member,
         Self::Team,
         Self::Role,
@@ -76,6 +82,8 @@ impl SearchEntityType {
             Self::Task => "task",
             Self::Process => "process",
             Self::Project => "project",
+            Self::Document => "document",
+            Self::Feature => "feature",
             Self::Member => "member",
             Self::Team => "team",
             Self::Role => "role",

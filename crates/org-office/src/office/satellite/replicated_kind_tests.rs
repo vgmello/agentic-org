@@ -51,6 +51,17 @@ fn project_documentation_applies_after_the_projects_and_employees_it_names() {
         "docs/guides/setup.md",
         "docs/media/architecture.png",
         "docs/media/architecture.png.yaml",
+        "features/_counter.yaml",
+        "features/0195a000-0000-7000-8000-0000000000b1.md",
+        "releases/_counter.yaml",
+        "releases/0195a000-0000-7000-8000-0000000000b2.md",
+        "releases/0195a000-0000-7000-8000-0000000000b2/changelog.md",
+        "releases/0195a000-0000-7000-8000-0000000000b2/milestones/_counter.yaml",
+        "releases/0195a000-0000-7000-8000-0000000000b2/milestones/0195a000-0000-7000-8000-0000000000b3.md",
+        "deployments/0195a000-0000-7000-8000-0000000000b4.md",
+        "deployments/0195a000-0000-7000-8000-0000000000b4/changelog.md",
+        "flags/0195a000-0000-7000-8000-0000000000b5.md",
+        "links/feature/0195a000-0000-7000-8000-0000000000b1/0195a000-0000-7000-8000-0000000000b6.yaml",
     ] {
         let path = format!("state/projects/{project}/{rel}");
         assert_eq!(

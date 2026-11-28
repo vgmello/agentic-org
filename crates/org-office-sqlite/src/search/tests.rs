@@ -267,6 +267,7 @@ fn plan(q: &str, types: &[SearchEntityType]) -> SearchPlan {
         after: None,
         limit: 20,
         count_only: false,
+        visible_projects: None,
     }
 }
 

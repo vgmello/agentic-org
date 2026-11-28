@@ -24,6 +24,7 @@ mod accounting_budget_tests;
 mod attachments;
 mod chief_of_staff_hardening_tests;
 mod chief_of_staff_tests;
+mod delivery_tests;
 mod git_parity;
 mod hiring_tests;
 mod import_tests;

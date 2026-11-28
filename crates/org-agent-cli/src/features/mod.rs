@@ -4,6 +4,7 @@
 
 pub(crate) mod auth;
 pub(crate) mod budget;
+pub(crate) mod docs;
 pub(crate) mod files;
 pub(crate) mod git;
 pub(crate) mod hiring;

@@ -127,6 +127,34 @@ macro_rules! memory_tasks_read {
                 })
             }
 
+            fn feature_in_project(
+                &self,
+                project_id: &Id,
+                feature_id: &Id,
+            ) -> Result<bool, EngineError> {
+                Ok(self
+                    .table::<crate::delivery::testkit::DeliveryTables>()
+                    .is_some_and(|t| {
+                        t.features
+                            .get(feature_id.as_str())
+                            .is_some_and(|f| f.project_id == project_id.as_str())
+                    }))
+            }
+
+            fn milestone_in_project(
+                &self,
+                project_id: &Id,
+                milestone_id: &Id,
+            ) -> Result<bool, EngineError> {
+                Ok(self
+                    .table::<crate::delivery::testkit::DeliveryTables>()
+                    .is_some_and(|t| {
+                        t.milestones
+                            .get(milestone_id.as_str())
+                            .is_some_and(|m| m.project_id == project_id.as_str())
+                    }))
+            }
+
             fn tasks(&self) -> Result<Vec<TaskRecord>, EngineError> {
                 read(self.table(), |t| {
                     let mut out: Vec<TaskRecord> = t.tasks.values().cloned().collect();

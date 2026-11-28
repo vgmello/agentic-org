@@ -14,6 +14,7 @@ use org_store::{CorePort, Cursor, Engine, EngineError, StoreError};
 
 use crate::{
     attachments::ports::{AttachmentsRead, AttachmentsWrite},
+    delivery::ports::{DeliveryRead, DeliveryWrite},
     project_docs::ports::{ProjectDocsRead, ProjectDocsWrite},
     reviews::ports::{ReviewsRead, ReviewsWrite},
     search::ports::SearchRead,
@@ -22,23 +23,36 @@ use crate::{
 
 /// Object-safe super-trait covering every read port of an office store snapshot.
 pub trait OfficeRead:
-    TasksRead + AttachmentsRead + ProjectDocsRead + ReviewsRead + SearchRead
+    TasksRead + AttachmentsRead + ProjectDocsRead + DeliveryRead + ReviewsRead + SearchRead
 {
 }
 
 impl<T> OfficeRead for T where
-    T: TasksRead + AttachmentsRead + ProjectDocsRead + ReviewsRead + SearchRead + ?Sized
+    T: TasksRead
+        + AttachmentsRead
+        + ProjectDocsRead
+        + DeliveryRead
+        + ReviewsRead
+        + SearchRead
+        + ?Sized
 {
 }
 
 /// Object-safe super-trait covering every read and write port of an office store transaction.
 pub trait OfficeWrite:
-    CorePort + TasksWrite + AttachmentsWrite + ProjectDocsWrite + ReviewsWrite + Send
+    CorePort + TasksWrite + AttachmentsWrite + ProjectDocsWrite + DeliveryWrite + ReviewsWrite + Send
 {
 }
 
 impl<T> OfficeWrite for T where
-    T: CorePort + TasksWrite + AttachmentsWrite + ProjectDocsWrite + ReviewsWrite + Send + ?Sized
+    T: CorePort
+        + TasksWrite
+        + AttachmentsWrite
+        + ProjectDocsWrite
+        + DeliveryWrite
+        + ReviewsWrite
+        + Send
+        + ?Sized
 {
 }
 

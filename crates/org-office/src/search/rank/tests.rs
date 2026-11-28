@@ -28,6 +28,7 @@ fn plan(q: &str, limit: usize) -> SearchPlan {
         after: None,
         limit,
         count_only: false,
+        visible_projects: None,
     }
 }
 
@@ -147,7 +148,7 @@ fn a_cursor_that_is_not_a_next_cursor_is_refused() {
         "zzzzzzzzzzzzzzzz~task~2026~id",
         &format!("{:016x}~task~2026~id", f64::NAN.to_bits()),
         &format!("{:016x}~task~2026~id", (-1.0f64).to_bits()),
-        &format!("{:016x}~document~2026~id", 1.0f64.to_bits()),
+        &format!("{:016x}~unknown_kind~2026~id", 1.0f64.to_bits()),
         &format!("{:016x}~task~2026'--~id", 1.0f64.to_bits()),
         &format!("{:016x}~task~2026~", 1.0f64.to_bits()),
         &format!("{:016x}~task~2026~a b", 1.0f64.to_bits()),

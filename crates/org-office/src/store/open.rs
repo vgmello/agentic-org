@@ -12,6 +12,7 @@
 
 pub mod attachment_ops;
 mod companions;
+pub mod delivery_ops;
 pub mod dod_ops;
 pub mod git_ops;
 mod import_validation;
@@ -26,7 +27,11 @@ pub mod task_ops;
 #[cfg(test)]
 mod tests;
 
-use org_store::{Store, StoreError};
+use org_proto::{ApiError, ErrorCode};
+use org_store::{
+    Actor, Change, Id, Operation, Outcome, Refusal, Sha256, Store, StoreError, UnitOfWork,
+};
+use serde::{de::DeserializeOwned, Serialize};
 
 #[cfg(any(test, feature = "testkit"))]
 pub use companions::{
@@ -75,6 +80,7 @@ pub use operations::{
 pub use super::backend::Testing;
 pub use super::backend::{EngineChoice, StoreConfig, PROJECTION_FILE};
 use crate::attachments::ports::{AttachmentsEngine, AttachmentsRead};
+use crate::delivery::ports::{DeliveryEngine, DeliveryRead};
 use crate::project_docs::ports::{ProjectDocsEngine, ProjectDocsRead};
 use crate::reviews::ports::{ReviewsEngine, ReviewsRead};
 use crate::search::ports::{SearchEngine, SearchRead};
@@ -83,12 +89,17 @@ use crate::tasks::ports::{TasksEngine, TasksRead};
 /// An engine every family of the office runs on. It grows by one bound per family (and one
 /// for search, which reads them all).
 pub trait OfficeEngine:
-    TasksEngine + AttachmentsEngine + ProjectDocsEngine + ReviewsEngine + SearchEngine
+    TasksEngine + AttachmentsEngine + ProjectDocsEngine + DeliveryEngine + ReviewsEngine + SearchEngine
 {
 }
 
 impl<E> OfficeEngine for E where
-    E: TasksEngine + AttachmentsEngine + ProjectDocsEngine + ReviewsEngine + SearchEngine
+    E: TasksEngine
+        + AttachmentsEngine
+        + ProjectDocsEngine
+        + DeliveryEngine
+        + ReviewsEngine
+        + SearchEngine
 {
 }
 
@@ -101,8 +112,61 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: TasksRead + AttachmentsRead + ProjectDocsRead + ReviewsRead + SearchRead>(
+    fn read<
+        S: TasksRead + AttachmentsRead + ProjectDocsRead + DeliveryRead + ReviewsRead + SearchRead,
+    >(
         self,
         snapshot: &S,
     ) -> Result<Self::Out, StoreError>;
+}
+
+pub(super) fn build_operation<P: Serialize>(
+    kind: &'static str,
+    command_id: &str,
+    caller: &str,
+    params: &P,
+) -> Result<Operation, ApiError> {
+    let id = org_proto::is_uuid_v7(command_id)
+        .then(|| Id::parse(command_id).ok())
+        .flatten()
+        .ok_or_else(|| {
+            ApiError::new(ErrorCode::InvalidRequest, "command_id: a lowercase UUIDv7")
+        })?;
+    let fields = serde_json::to_vec(params).expect("operation params encode");
+    Ok(Operation {
+        id,
+        kind,
+        actor: Id::parse(caller).map_or(Actor::System, Actor::Employee),
+        fingerprint: Sha256::of_parts(&[kind.as_bytes(), b"\0", &fields]),
+    })
+}
+
+pub(super) fn submit_api_op<E, T, F>(
+    store: &Store<E>,
+    op: Operation,
+    label: &str,
+    decode_err: fn(&[u8]) -> ApiError,
+    decide: F,
+) -> Result<Result<T, ApiError>, StoreError>
+where
+    E: OfficeEngine,
+    T: DeserializeOwned,
+    F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
+{
+    let reply = match store.submit(Some(op), false, decide) {
+        Ok(reply) => reply,
+        Err(StoreError::Conflict) => {
+            return Ok(Err(ApiError::new(
+                ErrorCode::OperationReused,
+                "command_id reused with a different request",
+            )))
+        }
+        Err(error) => return Err(error),
+    };
+    if reply.outcome == Outcome::Rejected {
+        return Ok(Err(decode_err(&reply.bytes)));
+    }
+    serde_json::from_slice(&reply.bytes)
+        .map(Ok)
+        .map_err(|e| StoreError::Invalid(format!("corrupt {label} reply: {e}")))
 }
