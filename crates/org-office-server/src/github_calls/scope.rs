@@ -36,6 +36,19 @@ pub(super) fn resolve_authorized_project_repos(
             "project cannot be empty",
         ));
     }
+    let trimmed_repo_filter = match repo_filter {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "repository filter cannot be empty",
+                ));
+            }
+            Some(trimmed)
+        }
+        None => None,
+    };
     let proj = office
         .inspect_project(trimmed_project)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "the office could not answer"))??;
@@ -48,7 +61,7 @@ pub(super) fn resolve_authorized_project_repos(
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "the office could not answer"))??;
     let mut repos: Vec<Repository> = attached.into_iter().map(|entry| entry.record).collect();
 
-    if let Some(raw_repo) = repo_filter.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(raw_repo) = trimmed_repo_filter {
         repos.retain(|r| {
             r.id.as_str() == raw_repo
                 || r.key

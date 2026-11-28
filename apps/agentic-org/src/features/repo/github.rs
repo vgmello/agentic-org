@@ -114,7 +114,7 @@ struct GitHubArgs {
 }
 
 #[derive(Subcommand, Debug)]
-enum GitHubAction {
+pub(super) enum GitHubAction {
     /// Store wrapped GitHub App RSA private key and optional webhook secret in the office vault
     Configure {
         /// Numeric GitHub App ID
@@ -206,6 +206,10 @@ fn run_with_defaults(
         ctx,
     )?;
 
+    if ctx.modes().dry_run {
+        return Err(refuse_dry_run(&args.action));
+    }
+
     let instance = merge_selector(
         "--instance",
         default_instance,
@@ -214,8 +218,44 @@ fn run_with_defaults(
     let office = merge_selector("--office", default_office, args.office.as_deref())?;
     let target = selection::select(instance, office)?;
     let mut transport = open_channel(target.explicit_instance(), target.explicit_office())?;
+    execute_action(args.action, &mut transport, ctx)
+}
 
-    match args.action {
+fn refuse_dry_run(action: &GitHubAction) -> CliError {
+    match action {
+        GitHubAction::Status => CliError::usage("`repo github status` does not take --dry-run")
+            .with_help("agentic-org repo github --help"),
+        GitHubAction::Configure { .. }
+        | GitHubAction::Revoke
+        | GitHubAction::Bind { .. }
+        | GitHubAction::Unbind { .. } => {
+            let verb = match action {
+                GitHubAction::Configure { .. } => "configure",
+                GitHubAction::Revoke => "revoke",
+                GitHubAction::Bind { .. } => "bind",
+                GitHubAction::Unbind { .. } => "unbind",
+                GitHubAction::Status => unreachable!(),
+            };
+            refusal_to_cli(org_command::Refusal::new(
+                org_proto::ErrorCode::Unsupported,
+                format!(
+                    "`repo github {verb}` does not support --dry-run; refusing to execute live mutation"
+                ),
+                "Remove --dry-run to execute this command.",
+            ))
+        }
+    }
+}
+
+pub(super) fn execute_action(
+    action: GitHubAction,
+    transport: &mut impl OfficeTransport,
+    ctx: &mut ExecutionContext,
+) -> Result<(), CliError> {
+    if ctx.modes().dry_run {
+        return Err(refuse_dry_run(&action));
+    }
+    match action {
         GitHubAction::Configure {
             app_id,
             installation_id,
@@ -237,15 +277,15 @@ fn run_with_defaults(
                 webhook_secret: webhook_secret.map(|s| SecretText::new(s.as_str())),
                 account_hint,
             };
-            let raw = call_rpc::<GitHubAppConfigure>(&mut transport, &params)?;
+            let raw = call_rpc::<GitHubAppConfigure>(transport, &params)?;
             view::detail(ctx, &raw, &raw, "office_id", &STATUS_FIELDS)?;
         }
         GitHubAction::Status => {
-            let raw = call_rpc::<GitHubAppStatus>(&mut transport, &Empty {})?;
+            let raw = call_rpc::<GitHubAppStatus>(transport, &Empty {})?;
             view::detail(ctx, &raw, &raw, "office_id", &STATUS_FIELDS)?;
         }
         GitHubAction::Revoke => {
-            let raw = call_rpc::<GitHubAppRevoke>(&mut transport, &Empty {})?;
+            let raw = call_rpc::<GitHubAppRevoke>(transport, &Empty {})?;
             view::detail(ctx, &raw, &raw, "office_id", &STATUS_FIELDS)?;
         }
         GitHubAction::Bind {
@@ -261,13 +301,13 @@ fn run_with_defaults(
                 repo: name,
                 installation_id,
             };
-            let raw = call_rpc::<GitHubRepoBind>(&mut transport, &params)?;
+            let raw = call_rpc::<GitHubRepoBind>(transport, &params)?;
             view::detail(ctx, &raw, &raw, "repository_id", &BINDING_FIELDS)?;
         }
         GitHubAction::Unbind { repo } => {
             let repository = validate_repo_ref(&repo)?;
             let params = GitHubRepoUnbindParams { repository };
-            let raw = call_rpc::<GitHubRepoUnbind>(&mut transport, &params)?;
+            let raw = call_rpc::<GitHubRepoUnbind>(transport, &params)?;
             view::detail(ctx, &raw, &raw, "repository_id", &UNBIND_FIELDS)?;
         }
     }

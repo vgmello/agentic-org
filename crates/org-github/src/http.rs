@@ -348,7 +348,7 @@ fn kill_and_reap(child: &mut Child) {
     let _ = child.wait();
 }
 
-fn read_bounded_stdout(child: &mut Child) -> Result<Vec<u8>, GitHubError> {
+fn read_bounded_stdout(child: &mut Child) -> Result<Zeroizing<Vec<u8>>, GitHubError> {
     let Some(stdout) = child.stdout.take() else {
         kill_and_reap(child);
         return Err(GitHubError::Transport(
@@ -356,7 +356,7 @@ fn read_bounded_stdout(child: &mut Child) -> Result<Vec<u8>, GitHubError> {
         ));
     };
     let cap = MAX_GITHUB_HTTP_RESPONSE_BYTES + 64;
-    let mut buf = Vec::new();
+    let mut buf = Zeroizing::new(Vec::new());
     if stdout.take((cap + 1) as u64).read_to_end(&mut buf).is_err() {
         kill_and_reap(child);
         return Err(GitHubError::Transport(

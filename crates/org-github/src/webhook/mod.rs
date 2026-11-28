@@ -19,12 +19,12 @@ use crate::sanitize::sanitize_github_meta;
 pub use self::normalize::MAX_CHECK_ANNOTATIONS;
 pub(crate) use self::normalize::{
     normalize_annotations, normalize_check_run, normalize_pull_request, normalize_review,
-    normalize_review_comment, parse_check_conclusion, parse_check_status, RawAnnotation, RawAppRef,
-    RawCheckRun, RawPrRef, RawPullRequest, RawRepo, RawReview, RawReviewComment,
-    MAX_CHECK_NAME_BYTES, MAX_SHA_BYTES,
+    normalize_review_comment, parse_check_conclusion, parse_check_status,
+    sanitize_git_sha_optional, RawAnnotation, RawAppRef, RawCheckRun, RawPrRef, RawPullRequest,
+    RawRepo, RawReview, RawReviewComment, MAX_CHECK_NAME_BYTES,
 };
 
-/// Maximum accepted raw webhook payload size (1 MiB).
+/// Maximum accepted raw webhook payload size (512 KiB).
 pub const MAX_WEBHOOK_PAYLOAD_BYTES: usize = GITHUB_WEBHOOK_MAX_BYTES;
 
 /// Default bounded capacity for `X-GitHub-Delivery` replay deduplication.
@@ -32,11 +32,14 @@ pub const MAX_DEDUP_DELIVERIES: usize = 4096;
 
 const MAX_EVENT_NAME_BYTES: usize = 64;
 
-/// Verifies webhook payload size, required headers (`X-GitHub-Event`, `X-GitHub-Delivery`,
-/// `X-Hub-Signature-256`), and constant-time HMAC-SHA256 signature via `ring::hmac::verify`.
+/// Verifies webhook payload size, constant-time HMAC-SHA256 signature (`X-Hub-Signature-256`) via
+/// `ring::hmac::verify`, and then required event/delivery headers (`X-GitHub-Event`,
+/// `X-GitHub-Delivery`).
 ///
-/// Fails closed on any missing/malformed header, oversized payload, unconfigured secret, or
-/// mismatched MAC.
+/// Signature authentication strictly precedes event/delivery syntax validation so unauthenticated
+/// callers cannot probe secret configuration or organization existence via a `400` vs `401`
+/// oracle. Fails closed on any oversized payload, unconfigured secret, mismatched MAC, or
+/// missing/malformed header.
 pub fn verify_webhook_headers_and_signature(
     event: &str,
     delivery_id: &str,
@@ -50,6 +53,18 @@ pub fn verify_webhook_headers_and_signature(
     if webhook_secret.is_empty() {
         return Err(WebhookError::SecretNotConfigured);
     }
+
+    let sig = signature_256.trim();
+    if sig.is_empty() {
+        return Err(WebhookError::MissingHeader("X-Hub-Signature-256"));
+    }
+    let hex_digest = sig
+        .strip_prefix("sha256=")
+        .ok_or(WebhookError::MalformedSignature)?;
+    let sig_bytes = decode_hex_32(hex_digest).ok_or(WebhookError::MalformedSignature)?;
+
+    let key = hmac::Key::new(hmac::HMAC_SHA256, webhook_secret.as_bytes());
+    hmac::verify(&key, payload, &sig_bytes).map_err(|_| WebhookError::InvalidSignature)?;
 
     let event = event.trim();
     if event.is_empty() {
@@ -70,18 +85,6 @@ pub fn verify_webhook_headers_and_signature(
     if !is_valid_uuid(delivery_id) {
         return Err(WebhookError::InvalidDeliveryId);
     }
-
-    let sig = signature_256.trim();
-    if sig.is_empty() {
-        return Err(WebhookError::MissingHeader("X-Hub-Signature-256"));
-    }
-    let hex_digest = sig
-        .strip_prefix("sha256=")
-        .ok_or(WebhookError::MalformedSignature)?;
-    let sig_bytes = decode_hex_32(hex_digest).ok_or(WebhookError::MalformedSignature)?;
-
-    let key = hmac::Key::new(hmac::HMAC_SHA256, webhook_secret.as_bytes());
-    hmac::verify(&key, payload, &sig_bytes).map_err(|_| WebhookError::InvalidSignature)?;
 
     Ok((event.to_owned(), delivery_id.to_ascii_lowercase()))
 }
@@ -296,7 +299,7 @@ fn parse_pull_request_review_webhook(
         head_sha: parsed
             .pull_request
             .head
-            .map(|h| sanitize_github_meta(&h.sha, MAX_SHA_BYTES)),
+            .and_then(|h| sanitize_git_sha_optional(&h.sha)),
         review: normalize_review(parsed.review),
     })
 }
@@ -326,7 +329,7 @@ fn parse_pull_request_review_comment_webhook(
         head_sha: parsed
             .pull_request
             .head
-            .map(|h| sanitize_github_meta(&h.sha, MAX_SHA_BYTES)),
+            .and_then(|h| sanitize_git_sha_optional(&h.sha)),
         comment: normalize_review_comment(parsed.comment),
     })
 }
@@ -410,7 +413,7 @@ fn parse_check_suite_webhook(payload: &[u8]) -> Result<ParsedCheckSuiteEvent, We
             .conclusion
             .as_deref()
             .map(parse_check_conclusion),
-        head_sha: sanitize_github_meta(&parsed.check_suite.head_sha, MAX_SHA_BYTES),
+        head_sha: sanitize_git_sha_optional(&parsed.check_suite.head_sha).unwrap_or_default(),
         details_url: parsed
             .check_suite
             .url

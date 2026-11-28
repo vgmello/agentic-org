@@ -442,7 +442,18 @@ fn is_disallowed_v6_prefix(segs: [u16; 8]) -> bool {
     let nat64 = segs[0..6] == [0x0064, 0xff9b, 0, 0, 0, 0] || segs[0..3] == [0x0064, 0xff9b, 1];
     let discard = segs[0..4] == [0x0100, 0, 0, 0];
     let ipv4_translated = segs[0..6] == [0, 0, 0, 0, 0xffff, 0];
-    unique_local || link_local || deprecated_site_local || nat64 || discard || ipv4_translated
+    let six_to_four = segs[0] == 0x2002;
+    let teredo = segs[0] == 0x2001 && segs[1] == 0x0000;
+    let documentation = segs[0] == 0x2001 && segs[1] == 0x0db8;
+    unique_local
+        || link_local
+        || deprecated_site_local
+        || nat64
+        || discard
+        || ipv4_translated
+        || six_to_four
+        || teredo
+        || documentation
 }
 
 fn is_disallowed_v6_embedded_v4(v6: Ipv6Addr, segs: [u16; 8]) -> bool {

@@ -87,6 +87,12 @@ fn ssrf_api_base_url_and_repo_slug_validation_fail_closed() {
         "https://[fc00::1]",
         "https://[fe80::1]",
         "https://[::ffff:127.0.0.1]",
+        "https://[2002:7f00:0001::1]",
+        "https://[2002:a9fe:a9fe::1]",
+        "https://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]",
+        "https://[2001::1]",
+        "https://[2001:db8::1]",
+        "https://[2001:db8:abcd::42]",
         "https://0x7f000001",
         "https://2130706433",
         "https://user:pass@api.github.com",
@@ -100,6 +106,13 @@ fn ssrf_api_base_url_and_repo_slug_validation_fail_closed() {
             "expected SSRF/malformed URL to be rejected: {bad}"
         );
     }
+
+    assert_eq!(
+        ValidatedApiBaseUrl::parse("https://[2001:4860:4860::8888]")
+            .unwrap()
+            .as_str(),
+        "https://[2001:4860:4860::8888]"
+    );
 
     let slug = ValidatedRepoSlug::new("acme-org", "agentic_org.rs").unwrap();
     assert_eq!(slug.full_name(), "acme-org/agentic_org.rs");
@@ -282,7 +295,46 @@ fn webhook_hmac_verification_and_replay_dedup_fail_closed() {
         Err(WebhookError::MalformedSignature)
     );
 
-    // Oversized payload > 1 MiB fails closed before HMAC.
+    // Unauthenticated callers with invalid event/delivery headers MUST fail HMAC authentication
+    // before header syntax validation (zero secret-configuration / org-existence oracle).
+    let wrong_sig = format!("sha256={}", "0".repeat(64));
+    assert_eq!(
+        verify_webhook_headers_and_signature(
+            "BAD!EVENT",
+            "not-a-uuid",
+            &wrong_sig,
+            payload,
+            secret
+        ),
+        Err(WebhookError::InvalidSignature)
+    );
+    assert_eq!(
+        verify_webhook_headers_and_signature(
+            "BAD!EVENT",
+            "not-a-uuid",
+            "sha1=bad",
+            payload,
+            secret
+        ),
+        Err(WebhookError::MalformedSignature)
+    );
+    assert_eq!(
+        verify_webhook_headers_and_signature("BAD!EVENT", "not-a-uuid", "", payload, secret),
+        Err(WebhookError::MissingHeader("X-Hub-Signature-256"))
+    );
+    assert_eq!(
+        verify_webhook_headers_and_signature("BAD!EVENT", "not-a-uuid", &wrong_sig, payload, ""),
+        Err(WebhookError::SecretNotConfigured)
+    );
+
+    // Exact 512 KiB payload passes verification; 512 KiB + 1 byte fails closed before HMAC.
+    assert_eq!(MAX_WEBHOOK_PAYLOAD_BYTES, 512 * 1024);
+    let exact_max = vec![b'a'; MAX_WEBHOOK_PAYLOAD_BYTES];
+    let exact_sig = sign_webhook_hmac(secret, &exact_max);
+    assert!(
+        verify_webhook_headers_and_signature("ping", delivery, &exact_sig, &exact_max, secret)
+            .is_ok()
+    );
     let huge = vec![b'a'; MAX_WEBHOOK_PAYLOAD_BYTES + 1];
     assert_eq!(
         verify_webhook_headers_and_signature("ping", delivery, &sig, &huge, secret),
@@ -554,6 +606,42 @@ fn sync_client_hydrates_pr_reviews_comments_checks_and_annotations() {
     assert_eq!(synced.check_runs.len(), 1);
     assert_eq!(synced.check_runs[0].annotations.len(), 1);
     assert_eq!(synced.check_runs[0].annotations[0].start_line, 42);
+}
+
+#[test]
+fn multibyte_non_hex_head_sha_fails_closed_on_pr_and_strips_on_check_run() {
+    let adversarial_sha = format!("{}é", "a".repeat(39));
+    let pr_json = json!({
+        "repository": { "full_name": "acme/backend" },
+        "pull_request": {
+            "number": 55,
+            "state": "open",
+            "title": "Adversarial SHA",
+            "head": { "ref": "feat/test", "sha": adversarial_sha },
+            "base": { "ref": "main", "sha": "cafebabe1234" }
+        }
+    });
+    assert!(matches!(
+        parse_webhook_event("pull_request", pr_json.to_string().as_bytes()),
+        Err(WebhookError::MalformedPayload(_))
+    ));
+
+    let check_json = json!({
+        "repository": { "full_name": "acme/backend" },
+        "check_run": {
+            "id": 999,
+            "name": "ci",
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": format!("{}é", "b".repeat(39))
+        }
+    });
+    let ParsedWebhookEvent::CheckRun(cr) =
+        parse_webhook_event("check_run", check_json.to_string().as_bytes()).unwrap()
+    else {
+        panic!("expected CheckRun");
+    };
+    assert!(cr.check_run.head_sha.is_empty());
 }
 
 #[test]

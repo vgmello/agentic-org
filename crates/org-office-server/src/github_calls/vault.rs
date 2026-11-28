@@ -430,19 +430,28 @@ pub(super) fn load_github_webhook_secret(
         app_id: record.app_id,
         purpose: PURPOSE_WEBHOOK_SECRET,
     };
-    let plaintext = unwrap_github_app_credential(&key, &binding, &ciphertext).map_err(|_| {
-        ApiError::new(
-            ErrorCode::StorageError,
-            "stored GitHub webhook secret failed decryption or binding verification",
-        )
-    })?;
-    let text = String::from_utf8(plaintext.to_vec()).map_err(|_| {
-        ApiError::new(
+    let mut plaintext =
+        unwrap_github_app_credential(&key, &binding, &ciphertext).map_err(|_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                "stored GitHub webhook secret failed decryption or binding verification",
+            )
+        })?;
+    if std::str::from_utf8(&plaintext).is_err() {
+        return Err(ApiError::new(
             ErrorCode::StorageError,
             "stored GitHub webhook secret is not valid UTF-8",
-        )
-    })?;
-    Ok(Some(Zeroizing::new(text)))
+        ));
+    }
+    let text = Zeroizing::new(String::from_utf8(std::mem::take(&mut *plaintext)).map_err(
+        |_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                "stored GitHub webhook secret is not valid UTF-8",
+            )
+        },
+    )?);
+    Ok(Some(text))
 }
 
 /// Durably removes `<office.folder()>/github-app/app.v1.json` (idempotent when absent).

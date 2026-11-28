@@ -3,16 +3,20 @@
 
 use std::sync::Mutex;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use org_github::{
     parse_webhook_event, verify_webhook_headers_and_signature, ParsedWebhookEvent, WebhookError,
 };
 use org_office::Office;
-use org_proto::github::{GitHubCheckRunView, GitHubWebhookIngestParams, GitHubWebhookIngestResult};
+use org_proto::github::{
+    GitHubCheckRunView, GitHubWebhookIngestParams, GitHubWebhookIngestResult,
+    GITHUB_WEBHOOK_MAX_BASE64_CHARS, GITHUB_WEBHOOK_MAX_BYTES,
+};
 use org_proto::{ApiError, ErrorCode};
 
 use crate::live::LiveEvents;
 
-use super::linking::resolve_pr_links;
+use super::linking::{resolve_pr_links, ProjectReviewLinkCache};
 use super::store::{
     list_prs_for_repo, load_bindings, load_dedup, load_pr, save_dedup, save_pr, StoredPrRecord,
     StoredRepoBinding,
@@ -47,23 +51,33 @@ pub(super) fn handle_webhook_ingest(
     store_lock: &Mutex<()>,
     params: GitHubWebhookIngestParams,
 ) -> Result<GitHubWebhookIngestResult, ApiError> {
-    let secret = load_github_webhook_secret(office)?.ok_or_else(|| {
-        ApiError::new(
-            ErrorCode::NotAuthorized,
-            "GitHub webhook secret is not configured for this office",
-        )
-    })?;
+    if params.payload_base64.len() > GITHUB_WEBHOOK_MAX_BASE64_CHARS {
+        return Err(ApiError::new(
+            ErrorCode::TooLarge,
+            "webhook payload exceeds maximum allowed size",
+        ));
+    }
+    let payload = BASE64
+        .decode(params.payload_base64.as_bytes())
+        .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "malformed webhook payload"))?;
+    if payload.len() > GITHUB_WEBHOOK_MAX_BYTES {
+        return Err(ApiError::new(
+            ErrorCode::TooLarge,
+            "webhook payload exceeds maximum allowed size",
+        ));
+    }
+
+    let secret = load_github_webhook_secret(office)?.ok_or_else(webhook_auth_error)?;
     let (event, delivery_id) = verify_webhook_headers_and_signature(
         &params.event,
         &params.delivery_id,
         params.signature_256.expose(),
-        params.payload.as_bytes(),
+        &payload,
         secret.as_str(),
     )
     .map_err(map_webhook_error)?;
 
-    let parsed =
-        parse_webhook_event(&event, params.payload.as_bytes()).map_err(map_webhook_error)?;
+    let parsed = parse_webhook_event(&event, &payload).map_err(map_webhook_error)?;
 
     let (result, changed) = {
         let _guard = store_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -130,14 +144,14 @@ fn apply_webhook_event(
                 return Ok(WebhookApplyOutcome::ignored());
             };
             let pr_num = ev.pr_number;
-            let record = match load_pr(office, &repo_id, pr_num)? {
+            let mut record = match load_pr(office, &repo_id, pr_num)? {
                 Some(mut existing) => {
                     existing.apply_pull_request(ev);
                     existing
                 }
                 None => StoredPrRecord::from_parsed(repo_id.clone(), ev),
             };
-            save_pr(office, &record)?;
+            save_pr(office, &mut record)?;
             let links = resolve_pr_links(office, owner, None, &record);
             Ok(WebhookApplyOutcome {
                 changed: true,
@@ -157,7 +171,7 @@ fn apply_webhook_event(
             };
             record.upsert_review(ev.review);
             record.updated_at = now_rfc3339();
-            save_pr(office, &record)?;
+            save_pr(office, &mut record)?;
             let links = resolve_pr_links(office, owner, None, &record);
             Ok(WebhookApplyOutcome {
                 changed: true,
@@ -177,7 +191,7 @@ fn apply_webhook_event(
             };
             record.upsert_review_comment(ev.comment);
             record.updated_at = now_rfc3339();
-            save_pr(office, &record)?;
+            save_pr(office, &mut record)?;
             let links = resolve_pr_links(office, owner, None, &record);
             Ok(WebhookApplyOutcome {
                 changed: true,
@@ -238,6 +252,7 @@ fn apply_check_event(
     }
 
     let owner = office.owner_member_id();
+    let mut link_cache = ProjectReviewLinkCache::load(office, owner, None);
     let mut first_pr = None;
     let mut linked_task_ids = Vec::new();
     let mut linked_review_ids = Vec::new();
@@ -247,8 +262,8 @@ fn apply_check_event(
         }
         rec.upsert_check_run(check_run.clone());
         rec.updated_at = now_rfc3339();
-        save_pr(office, &rec)?;
-        let links = resolve_pr_links(office, owner, None, &rec);
+        save_pr(office, &mut rec)?;
+        let links = link_cache.resolve(None, &rec);
         for id in links.linked_task_ids {
             if !linked_task_ids.contains(&id) {
                 linked_task_ids.push(id);
@@ -270,16 +285,19 @@ fn apply_check_event(
     })
 }
 
+fn webhook_auth_error() -> ApiError {
+    ApiError::new(ErrorCode::NotAuthorized, "webhook authentication failed")
+}
+
 fn map_webhook_error(err: WebhookError) -> ApiError {
     match err {
         WebhookError::PayloadTooLarge => ApiError::new(ErrorCode::TooLarge, err.to_string()),
-        WebhookError::MissingHeader(_)
+        WebhookError::MissingHeader("X-Hub-Signature-256")
         | WebhookError::MalformedSignature
         | WebhookError::InvalidSignature
-        | WebhookError::SecretNotConfigured => {
-            ApiError::new(ErrorCode::NotAuthorized, err.to_string())
-        }
-        WebhookError::InvalidDeliveryId
+        | WebhookError::SecretNotConfigured => webhook_auth_error(),
+        WebhookError::MissingHeader(_)
+        | WebhookError::InvalidDeliveryId
         | WebhookError::InvalidEventName
         | WebhookError::MalformedPayload(_) => {
             ApiError::new(ErrorCode::InvalidRequest, err.to_string())

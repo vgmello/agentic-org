@@ -808,3 +808,121 @@ fn satellite_operator_channel_survives_reap_while_admin_and_revokes_on_demotion(
         .grant(&connection, &signed_in.session, "sat-office", &ch_id)
         .is_err());
 }
+
+#[test]
+fn browser_webhook_channels_are_bounded_per_org_and_isolated_from_session_grants() {
+    use crate::supervisor::channels::tests::{await_closed, in_memory_endpoint_fixture};
+    use org_host_control::browser::{
+        BrowserOpenChannelParams, BrowserOrigin, BrowserSessionGrantParams,
+        BrowserWebhookGrantParams, Digest32,
+    };
+    use org_host_control::organization::BrowserAuth;
+
+    let (_root, auth, connection) = fixture();
+    let signed_in = login(&auth, &connection);
+    link_owner(&auth, &connection, &signed_in.session);
+    let worker = in_memory_endpoint_fixture();
+
+    // Open up to the per-org webhook channel cap (2); a 3rd webhook channel is refused so
+    // webhook bursts can never exhaust MAX_WEB_CHANNELS (24) or starve human browser channels.
+    let (wh_id_1, wh_stream_1, wh_slot_1) = auth
+        .open_webhook_channel(&connection, Arc::clone(&worker.endpoint), "org")
+        .expect("1st webhook channel opens");
+    let (wh_id_2, _wh_stream_2, wh_slot_2) = auth
+        .open_webhook_channel(&connection, Arc::clone(&worker.endpoint), "org")
+        .expect("2nd webhook channel opens");
+    assert!(
+        auth.open_webhook_channel(&connection, Arc::clone(&worker.endpoint), "org")
+            .is_err(),
+        "3rd concurrent webhook channel for the same org must be refused"
+    );
+
+    connection.record_received_slot_for_test(&wh_id_1, wh_slot_1.clone());
+    connection.record_received_slot_for_test(&wh_id_2, wh_slot_2);
+
+    let grant = auth
+        .grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "office".into(),
+                channel_id: wh_id_1.clone(),
+            },
+        )
+        .expect("webhook grant succeeds on webhook channel");
+    assert_eq!(
+        grant.grant.claims.member,
+        org_proto::github::WEBHOOK_PRINCIPAL_MEMBER
+    );
+
+    // Human browser channel opens cleanly alongside the capped webhook channels (no starvation).
+    let mut ended = Vec::new();
+    let owner_id = AccountId::parse(&signed_in.account).unwrap();
+    let origin =
+        crate::sessions::Origin::new(crate::sessions::Scheme::Http, "127.0.0.1", 8080).unwrap();
+    auth.start(
+        &owner_id,
+        crate::sessions::SessionDigest([0x11; 32]),
+        crate::sessions::SessionDigest([0x22; 32]),
+        origin,
+        1_000,
+        &mut ended,
+    )
+    .expect("browser session created");
+    let browser_auth = BrowserAuth {
+        cookie_digest: Digest32([0x11; 32]),
+        proof_digest: Digest32([0x22; 32]),
+        origin: BrowserOrigin {
+            scheme: "http".into(),
+            host: "127.0.0.1".into(),
+            port: 8080,
+        },
+        local_authless: false,
+    };
+    let (br_id, _br_stream, br_slot) = auth
+        .open_browser_channel(
+            &connection,
+            &BrowserOpenChannelParams {
+                auth: browser_auth.clone(),
+                office_id: "office".into(),
+            },
+            Arc::clone(&worker.endpoint),
+            "org",
+            1_000,
+            &mut ended,
+        )
+        .expect("browser channel must not be starved by webhook cap");
+    connection.record_received_slot_for_test(&br_id, br_slot);
+
+    // Cross-kind isolation: webhook grants fail on browser channels and browser grants fail on
+    // webhook channels.
+    assert!(auth
+        .grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "office".into(),
+                channel_id: br_id,
+            },
+        )
+        .is_err());
+    assert!(auth
+        .grant_browser(
+            &connection,
+            &BrowserSessionGrantParams {
+                auth: browser_auth,
+                office_id: "office".into(),
+                channel_id: wh_id_1,
+            },
+            1_000,
+            &mut ended,
+        )
+        .is_err());
+
+    // Dropping one webhook channel frees its slot for a clean reconnect.
+    drop(wh_stream_1);
+    await_closed(&wh_slot_1);
+    assert!(auth
+        .open_webhook_channel(&connection, Arc::clone(&worker.endpoint), "org")
+        .is_ok());
+}

@@ -68,6 +68,7 @@ fn a_cancelled_or_failed_round_trip_removes_its_pending_entry() {
         let (writer, mut write_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(CHANNEL_WRITE_QUEUE);
         let pending: PendingMap = Arc::new(Mutex::new(BTreeMap::new()));
         let channel = MultiplexedChannel {
+            office_id: "office-1".into(),
             channel_id: "ch-1".into(),
             writer: writer.clone(),
             pending: Arc::clone(&pending),
@@ -122,6 +123,7 @@ fn a_completed_round_trip_returns_its_reply_and_leaves_no_entry() {
         let (writer, mut write_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(CHANNEL_WRITE_QUEUE);
         let pending: PendingMap = Arc::new(Mutex::new(BTreeMap::new()));
         let channel = Arc::new(MultiplexedChannel {
+            office_id: "office-1".into(),
             channel_id: "ch-1".into(),
             writer,
             pending: Arc::clone(&pending),
@@ -161,6 +163,7 @@ fn multiplexed_channel_works_over_in_memory_duplex_streams_and_forwards_events_t
         let mut sub = bus.subscribe();
         let channels = Arc::new(Mutex::new(BTreeMap::new()));
         let channel = MultiplexedChannel::from_async_halves(
+            "office-duplex".into(),
             "office-duplex".into(),
             "ch-duplex".into(),
             client_read,
@@ -208,5 +211,244 @@ fn multiplexed_channel_works_over_in_memory_duplex_streams_and_forwards_events_t
             other => panic!("unexpected event: {other:?}"),
         }
         peer.await.unwrap();
+    });
+}
+
+fn synthetic_webhook_principal(org_id: &str, office_id: &str, channel_id: &str) -> Principal {
+    Principal {
+        grant: org_proto::Grant {
+            claims: org_proto::GrantClaims {
+                account: "github-webhook".into(),
+                member: org_proto::github::WEBHOOK_PRINCIPAL_MEMBER.into(),
+                org_id: org_id.into(),
+                office_id: office_id.into(),
+                channel_id: channel_id.into(),
+                session_id: "01000000000000000000000001".into(),
+                exp: 1_794_312_060_000,
+            },
+            mac: org_proto::GrantMac::from_bytes([0x11; org_proto::GRANT_MAC_BYTES]),
+        },
+    }
+}
+
+#[test]
+fn webhook_channel_pool_reuses_single_channel_bounds_concurrency_and_reconnects_on_drop() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let pool = Arc::new(WebhookChannelPool::new(4));
+        let open_count = Arc::new(AtomicUsize::new(0));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak_in_flight = Arc::new(AtomicUsize::new(0));
+        let release_gate = Arc::new(tokio::sync::Notify::new());
+        let four_arrived = Arc::new(tokio::sync::Notify::new());
+        let server_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let bus: Arc<dyn EventBus> = Arc::new(InMemoryEventBus::default());
+        let next_rpc = Arc::new(AtomicU64::new(10));
+
+        let make_opener = |open_count: Arc<AtomicUsize>,
+                           in_flight: Arc<AtomicUsize>,
+                           peak_in_flight: Arc<AtomicUsize>,
+                           release_gate: Arc<tokio::sync::Notify>,
+                           four_arrived: Arc<tokio::sync::Notify>,
+                           server_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+                           bus: Arc<dyn EventBus>,
+                           hold_first_wave: bool| {
+            move |cache: ChannelMap| {
+                let open_count = Arc::clone(&open_count);
+                let in_flight = Arc::clone(&in_flight);
+                let peak_in_flight = Arc::clone(&peak_in_flight);
+                let release_gate = Arc::clone(&release_gate);
+                let four_arrived = Arc::clone(&four_arrived);
+                let server_tasks = Arc::clone(&server_tasks);
+                let bus = Arc::clone(&bus);
+                async move {
+                    let seq = open_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    let ch_id = format!("wh-ch-{seq}");
+                    let (client, server) = tokio::io::duplex(16 * 1024);
+                    let (client_read, client_write) = tokio::io::split(client);
+                    let (server_read, server_write) = tokio::io::split(server);
+                    let server_write = Arc::new(tokio::sync::Mutex::new(server_write));
+                    let channel = MultiplexedChannel::from_async_halves(
+                        "org-1".into(),
+                        "office-hq".into(),
+                        ch_id,
+                        client_read,
+                        client_write,
+                        cache,
+                        bus,
+                        None,
+                    );
+                    let handle = tokio::spawn(async move {
+                        let mut reader = BufReader::new(server_read);
+                        let mut line = String::new();
+                        loop {
+                            line.clear();
+                            let Ok(n) = reader.read_line(&mut line).await else {
+                                break;
+                            };
+                            if n == 0 {
+                                break;
+                            }
+                            let req: Value = serde_json::from_str(&line).unwrap();
+                            let id = req["id"].as_u64().unwrap();
+                            let w = Arc::clone(&server_write);
+                            let in_flight = Arc::clone(&in_flight);
+                            let peak = Arc::clone(&peak_in_flight);
+                            let gate = Arc::clone(&release_gate);
+                            let arrived = Arc::clone(&four_arrived);
+                            tokio::spawn(async move {
+                                let cur = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                                peak.fetch_max(cur, Ordering::SeqCst);
+                                if hold_first_wave && seq == 1 {
+                                    if cur == 4 {
+                                        arrived.notify_one();
+                                    }
+                                    gate.notified().await;
+                                }
+                                in_flight.fetch_sub(1, Ordering::SeqCst);
+                                let reply = serde_json::json!({ "id": id, "result": { "seq": seq, "id": id } });
+                                let mut guard = w.lock().await;
+                                let _ = guard.write_all(format!("{reply}\n").as_bytes()).await;
+                                let _ = guard.flush().await;
+                            });
+                        }
+                    });
+                    server_tasks.lock().unwrap().push(handle);
+                    Ok(channel)
+                }
+            }
+        };
+
+        // Spawn 4 concurrent calls that hold all 4 semaphore permits on ONE pooled channel.
+        let mut wave = Vec::new();
+        for _ in 0..4 {
+            let pool = Arc::clone(&pool);
+            let opener = make_opener(
+                Arc::clone(&open_count),
+                Arc::clone(&in_flight),
+                Arc::clone(&peak_in_flight),
+                Arc::clone(&release_gate),
+                Arc::clone(&four_arrived),
+                Arc::clone(&server_tasks),
+                Arc::clone(&bus),
+                true,
+            );
+            let rpc_id = next_rpc.fetch_add(1, Ordering::SeqCst);
+            wave.push(tokio::spawn(async move {
+                pool.dispatch(
+                    "org-1",
+                    rpc_id,
+                    "github.webhook.ingest",
+                    serde_json::json!({}),
+                    opener,
+                    |office, ch| async move { Ok(synthetic_webhook_principal("org-1", &office, &ch)) },
+                )
+                .await
+            }));
+        }
+
+        // Wait until all 4 are in flight on the single cached channel.
+        tokio::time::timeout(Duration::from_secs(2), four_arrived.notified())
+            .await
+            .expect("4 concurrent webhooks must reach the pooled channel");
+        assert_eq!(open_count.load(Ordering::SeqCst), 1);
+
+        // A 5th concurrent webhook MUST fail closed immediately with RateLimited (never opens a
+        // new Web channel or blocks indefinitely).
+        let excess_err = pool
+            .dispatch(
+                "org-1",
+                next_rpc.fetch_add(1, Ordering::SeqCst),
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                make_opener(
+                    Arc::clone(&open_count),
+                    Arc::clone(&in_flight),
+                    Arc::clone(&peak_in_flight),
+                    Arc::clone(&release_gate),
+                    Arc::clone(&four_arrived),
+                    Arc::clone(&server_tasks),
+                    Arc::clone(&bus),
+                    true,
+                ),
+                |office, ch| async move { Ok(synthetic_webhook_principal("org-1", &office, &ch)) },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            excess_err,
+            OfficeFailure::Refused(ref e) if e.code == org_proto::ErrorCode::RateLimited
+        ));
+        assert_eq!(open_count.load(Ordering::SeqCst), 1);
+        assert_eq!(peak_in_flight.load(Ordering::SeqCst), 4);
+
+        // Release the 4 in-flight calls and confirm all 4 complete cleanly on channel #1.
+        release_gate.notify_waiters();
+        for task in wave {
+            let reply = task.await.unwrap().expect("pooled webhook call succeeded");
+            assert_eq!(reply["seq"], 1);
+        }
+        assert_eq!(open_count.load(Ordering::SeqCst), 1);
+
+        // Simulate office drop/restart: abort server task (closing duplex peer) -> read_loop
+        // evicts cached channel -> next call cleanly opens replacement channel #2 and succeeds.
+        for handle in server_tasks.lock().unwrap().drain(..) {
+            handle.abort();
+        }
+        for _ in 0..50 {
+            if pool.channels.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            pool.channels.lock().unwrap().is_empty(),
+            "dropped webhook channel must be evicted from pool"
+        );
+
+        let after_drop = pool
+            .dispatch(
+                "org-1",
+                next_rpc.fetch_add(1, Ordering::SeqCst),
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                make_opener(
+                    Arc::clone(&open_count),
+                    Arc::clone(&in_flight),
+                    Arc::clone(&peak_in_flight),
+                    Arc::clone(&release_gate),
+                    Arc::clone(&four_arrived),
+                    Arc::clone(&server_tasks),
+                    Arc::clone(&bus),
+                    false,
+                ),
+                |office, ch| async move { Ok(synthetic_webhook_principal("org-1", &office, &ch)) },
+            )
+            .await
+            .expect("replacement webhook channel must reconnect cleanly");
+        assert_eq!(after_drop["seq"], 2);
+        assert_eq!(open_count.load(Ordering::SeqCst), 2);
+
+        // Unknown org returns BeforeDispatch(NotFound) without caching any entry.
+        let missing = pool
+            .dispatch(
+                "org-missing",
+                next_rpc.fetch_add(1, Ordering::SeqCst),
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                |_| async { Err(OfficeFailure::BeforeDispatch(Failure::NotFound)) },
+                |office, ch| async move { Ok(synthetic_webhook_principal("org-missing", &office, &ch)) },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(missing, OfficeFailure::BeforeDispatch(Failure::NotFound)));
+        assert!(!pool.channels.lock().unwrap().contains_key("org-missing"));
     });
 }

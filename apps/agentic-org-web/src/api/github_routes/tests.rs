@@ -6,13 +6,14 @@ use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use http_body_util::{BodyExt, Full};
 use hyper::{body::Bytes, header, Method, Request, StatusCode};
 use org_host_control::listen::{ListenMode, ListenOrigin};
 use org_host_control::organization::BrowserAuth;
 use org_proto::github::{
     GitHubAppStatusView, GitHubCiOverallStatus, GitHubPrChecksResult, GitHubPrListResult,
-    GitHubWebhookIngestResult,
+    GitHubWebhookIngestResult, GITHUB_WEBHOOK_MAX_BYTES,
 };
 use org_proto::{ApiError, ErrorCode};
 use serde_json::{json, Value};
@@ -256,19 +257,25 @@ fn make_fake_office() -> Arc<FakeOffice> {
             if sig != "sha256=valid" {
                 return Err(OfficeFailure::Refused(ApiError::new(
                     ErrorCode::NotAuthorized,
-                    "invalid HMAC",
+                    "webhook authentication failed",
                 )));
             }
+            let payload_b64 = params["payload_base64"]
+                .as_str()
+                .expect("payload_base64 field present");
+            BASE64
+                .decode(payload_b64.as_bytes())
+                .expect("payload_base64 decodes cleanly");
             Ok(serde_json::to_value(GitHubWebhookIngestResult {
                 delivery_id: params["delivery_id"].as_str().unwrap().into(),
                 event: params["event"].as_str().unwrap().into(),
                 accepted: true,
                 duplicate: false,
                 ignored: false,
-                repository_id: Some("repo-1".into()),
+                repository_id: Some("repo-internal-secret-id".into()),
                 pr_number: Some(42),
-                linked_task_ids: vec![],
-                linked_review_ids: vec![],
+                linked_task_ids: vec!["task-internal-secret-id".into()],
+                linked_review_ids: vec!["review-internal-secret-id".into()],
             })
             .unwrap())
         }),
@@ -299,9 +306,11 @@ fn webhook_request(
 #[test]
 fn webhook_route_admits_signed_post_without_cookie_and_enforces_security_guards() {
     run_async(async {
-        let service = build_service(make_fake_office());
+        let office = make_fake_office();
+        let service = build_service(Arc::clone(&office));
         let webhook_path = format!("/api/v1/organizations/{ORG_ID}/integrations/github/webhook");
 
+        // P2-4: HTTP 200 OK JSON is minimal and NEVER echoes internal repository/task/review IDs.
         let (status, body) = send(
             &service,
             webhook_request(
@@ -313,9 +322,34 @@ fn webhook_route_admits_signed_post_without_cookie_and_enforces_security_guards(
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["result"]["pr_number"], json!(42));
+        assert_eq!(
+            body,
+            json!({
+                "accepted": true,
+                "duplicate": false,
+                "ignored": false,
+                "delivery_id": "11111111-2222-4333-8444-555555555555",
+                "event": "pull_request"
+            })
+        );
+        let body_text = body.to_string();
+        for forbidden in [
+            "repository_id",
+            "pr_number",
+            "linked_task_ids",
+            "linked_review_ids",
+            "repo-internal-secret-id",
+            "task-internal-secret-id",
+            "review-internal-secret-id",
+        ] {
+            assert!(
+                !body_text.contains(forbidden),
+                "webhook HTTP 200 must never leak `{forbidden}`: {body_text}"
+            );
+        }
 
-        let (status, _) = send(
+        // Invalid signature returns 401 Unauthorized.
+        let (status, unauth_body) = send(
             &service,
             webhook_request(
                 &webhook_path,
@@ -327,12 +361,56 @@ fn webhook_route_admits_signed_post_without_cookie_and_enforces_security_guards(
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+        // P1-2: Unauthenticated probe with invalid event & delivery returns IDENTICAL 401 body.
+        let bad_headers_req = Request::builder()
+            .method(Method::POST)
+            .uri(&webhook_path)
+            .header(header::HOST, HOST)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-github-event", "INVALID!EVENT")
+            .header("x-github-delivery", "not-a-uuid")
+            .header("x-hub-signature-256", "sha256=bad")
+            .body(Full::new(Bytes::from_static(br#"{}"#)))
+            .unwrap();
+        let (status, oracle_body) = send(&service, bad_headers_req).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(oracle_body, unauth_body);
+
+        // P1-4: Exact 512 KiB raw payload (including non-UTF-8 bytes!) succeeds and preserves
+        // exact bytes via base64; 512 KiB + 1 byte returns 413 Payload Too Large.
+        assert_eq!(GITHUB_WEBHOOK_MAX_BYTES, 512 * 1024);
+        let mut exact_512k = vec![b'a'; GITHUB_WEBHOOK_MAX_BYTES];
+        exact_512k[0] = 0xff;
+        exact_512k[1] = 0xfe;
         let (status, _) = send(
             &service,
             webhook_request(
                 &webhook_path,
                 "sha256=valid",
-                Bytes::from(vec![b'a'; 1024 * 1024 + 1]),
+                Bytes::from(exact_512k.clone()),
+                &[],
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        {
+            let seen = office.seen_webhooks.lock().unwrap();
+            let last_b64 = seen
+                .last()
+                .unwrap()
+                .1
+                .get("payload_base64")
+                .and_then(Value::as_str)
+                .unwrap();
+            assert_eq!(BASE64.decode(last_b64.as_bytes()).unwrap(), exact_512k);
+        }
+
+        let (status, _) = send(
+            &service,
+            webhook_request(
+                &webhook_path,
+                "sha256=valid",
+                Bytes::from(vec![b'a'; GITHUB_WEBHOOK_MAX_BYTES + 1]),
                 &[],
             ),
         )
@@ -355,6 +433,63 @@ fn webhook_route_admits_signed_post_without_cookie_and_enforces_security_guards(
             .await;
             assert_eq!(status, StatusCode::FORBIDDEN);
         }
+    });
+}
+
+#[test]
+fn webhook_unconfigured_and_missing_org_return_uniform_401_and_rate_limit_returns_429() {
+    run_async(async {
+        let missing_org_office = Arc::new(FakeOffice {
+            rpc: Arc::new(|_, _| Err(OfficeFailure::Transport)),
+            webhook: Arc::new(|_, _| Err(OfficeFailure::BeforeDispatch(Failure::NotFound))),
+            seen_webhooks: Mutex::new(Vec::new()),
+        });
+        let unconfigured_office = Arc::new(FakeOffice {
+            rpc: Arc::new(|_, _| Err(OfficeFailure::Transport)),
+            webhook: Arc::new(|_, _| {
+                Err(OfficeFailure::Refused(ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "webhook authentication failed",
+                )))
+            }),
+            seen_webhooks: Mutex::new(Vec::new()),
+        });
+        let rate_limited_office = Arc::new(FakeOffice {
+            rpc: Arc::new(|_, _| Err(OfficeFailure::Transport)),
+            webhook: Arc::new(|_, _| {
+                Err(OfficeFailure::Refused(ApiError::new(
+                    ErrorCode::RateLimited,
+                    "too many concurrent webhook deliveries in progress",
+                )))
+            }),
+            seen_webhooks: Mutex::new(Vec::new()),
+        });
+
+        let webhook_path = format!("/api/v1/organizations/{ORG_ID}/integrations/github/webhook");
+        let probe = || {
+            Request::builder()
+                .method(Method::POST)
+                .uri(&webhook_path)
+                .header(header::HOST, HOST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-github-event", "BAD!EVENT")
+                .header("x-github-delivery", "not-a-uuid")
+                .header("x-hub-signature-256", "sha256=0000")
+                .body(Full::new(Bytes::from_static(br#"{}"#)))
+                .unwrap()
+        };
+
+        let (s1, b1) = send(&build_service(missing_org_office), probe()).await;
+        let (s2, b2) = send(&build_service(unconfigured_office), probe()).await;
+        assert_eq!(s1, StatusCode::UNAUTHORIZED);
+        assert_eq!(s2, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            b1, b2,
+            "missing org and unconfigured secret must return identical 401"
+        );
+
+        let (s3, _) = send(&build_service(rate_limited_office), probe()).await;
+        assert_eq!(s3, StatusCode::TOO_MANY_REQUESTS);
     });
 }
 

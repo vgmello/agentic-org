@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
 use super::credential_status::execute_status;
+use super::github::{self, GitHubAction};
 use super::revoke_credential::execute_revoke;
 use super::set_credential::{execute_set, read_token, read_token_from_reader, SetCredentialArgs};
 use super::{is_local_verb, reads_a_secret};
@@ -137,4 +138,95 @@ fn repo_credential_verbs_call_expected_rpcs_and_never_echo_secret_tokens() {
     let err = streams.stderr.text();
     assert!(!out.contains(secret), "stdout must never echo token: {out}");
     assert!(!err.contains(secret), "stderr must never echo token: {err}");
+}
+
+#[test]
+fn repo_github_dry_run_fails_closed_without_executing_live_mutations() {
+    use org_cli_shell::error::CliDiagnostic;
+
+    let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert!(is_local_verb(&s(&["github", "status"])));
+    assert!(reads_a_secret(&s(&["github", "configure"])));
+
+    // 1. CLI entry point fails closed on `--dry-run` before opening any channel or touching files.
+    for argv in [
+        s(&[
+            "configure",
+            "--app-id",
+            "123",
+            "--installation-id",
+            "456",
+            "--private-key-stdin",
+            "--dry-run",
+        ]),
+        s(&["revoke", "--dry-run"]),
+        s(&[
+            "bind",
+            "--repo",
+            "backend",
+            "--owner",
+            "acme",
+            "--name",
+            "backend",
+            "--dry-run",
+        ]),
+        s(&["unbind", "--repo", "backend", "--dry-run"]),
+    ] {
+        let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+        let err = github::run(&argv, &mut ctx).unwrap_err();
+        assert_eq!(err.code(), "office::unsupported", "{argv:?}: {err}");
+        assert!(
+            err.to_string().contains("does not support --dry-run"),
+            "{argv:?}: {err}"
+        );
+    }
+
+    // Status read also refuses --dry-run cleanly.
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    let status_err = github::run(&s(&["status", "--dry-run"]), &mut ctx).unwrap_err();
+    assert_eq!(status_err.code(), "cli::usage");
+
+    // 2. Direct executor with pre-set `dry_run: true` never invokes the transport for any mutation.
+    let mut transport = StubTransport {
+        calls: Vec::new(),
+        reply: json!({}),
+    };
+    let (mut ctx, _) = captured(
+        Modes {
+            dry_run: true,
+            ..Default::default()
+        },
+        Terminal::piped(),
+        &[],
+    );
+    for action in [
+        GitHubAction::Configure {
+            app_id: 1,
+            installation_id: 2,
+            api_base_url: None,
+            private_key_file: None,
+            private_key_stdin: true,
+            webhook_secret_file: None,
+            webhook_secret_prompt: false,
+            account_hint: None,
+        },
+        GitHubAction::Revoke,
+        GitHubAction::Bind {
+            repo: "backend".into(),
+            owner: "acme".into(),
+            name: "backend".into(),
+            installation_id: None,
+        },
+        GitHubAction::Unbind {
+            repo: "backend".into(),
+        },
+    ] {
+        let err = github::execute_action(action, &mut transport, &mut ctx).unwrap_err();
+        assert_eq!(err.code(), "office::unsupported", "{err}");
+    }
+    assert!(
+        transport.calls.is_empty(),
+        "dry-run must never dispatch any live mutation RPC: {:?}",
+        transport.calls
+    );
 }

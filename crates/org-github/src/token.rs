@@ -124,15 +124,16 @@ impl InstallationTokenManager {
             json_body: Some(payload),
             timeout: DEFAULT_HTTP_TIMEOUT,
         };
-        let resp = self.http.send(&req)?;
-        if resp.body.len() > MAX_GITHUB_HTTP_RESPONSE_BYTES {
+        let crate::http::GitHubHttpResponse { status, body } = self.http.send(&req)?;
+        let body = Zeroizing::new(body);
+        if body.len() > MAX_GITHUB_HTTP_RESPONSE_BYTES {
             return Err(GitHubError::MalformedResponse(
                 "installation token response exceeded maximum size".into(),
             ));
         }
-        match resp.status {
+        match status {
             200..=299 => {}
-            401 | 403 => return Err(GitHubError::AuthRejected(resp.status)),
+            401 | 403 => return Err(GitHubError::AuthRejected(status)),
             404 => return Err(GitHubError::NotFound),
             429 => return Err(GitHubError::RateLimited),
             code => {
@@ -145,15 +146,15 @@ impl InstallationTokenManager {
 
         #[derive(Deserialize)]
         struct TokenResponse {
-            token: String,
+            token: org_proto::github::SecretText,
             expires_at: String,
         }
-        let parsed: TokenResponse = serde_json::from_slice(&resp.body).map_err(|_| {
+        let parsed: TokenResponse = serde_json::from_slice(&body).map_err(|_| {
             GitHubError::MalformedResponse(
                 "installation token response missing required fields".into(),
             )
         })?;
-        let token = Zeroizing::new(parsed.token.trim().to_owned());
+        let token = Zeroizing::new(parsed.token.expose().trim().to_owned());
         if token.is_empty() || token.chars().any(char::is_control) {
             return Err(GitHubError::MalformedResponse(
                 "installation token is empty or contains control characters".into(),

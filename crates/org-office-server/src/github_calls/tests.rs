@@ -1,6 +1,7 @@
 use std::fs;
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use org_github::testkit::{sign_webhook_hmac, test_rsa_keypair_pem, FakeGitHubHttpClient};
 use org_github::HttpMethod;
 use org_office::reviews::records::ResolvedCodePin;
@@ -9,11 +10,13 @@ use org_office::{EngineChoice, Office, TestOffice};
 use org_proto::git::RepositoryKindWire;
 use org_proto::github::{
     GitHubAppConfigure, GitHubAppConfigureParams, GitHubAppRevoke, GitHubAppStatus,
-    GitHubCheckConclusion, GitHubCiOverallStatus, GitHubPrChecks, GitHubPrChecksParams,
-    GitHubPrInspect, GitHubPrInspectParams, GitHubPrList, GitHubPrListParams, GitHubPrSync,
-    GitHubPrSyncParams, GitHubRepoBind, GitHubRepoBindParams, GitHubRepoUnbind,
-    GitHubRepoUnbindParams, GitHubWebhookIngest, GitHubWebhookIngestParams, SecretText,
-    GITHUB_WEBHOOK_MAX_BYTES, WEBHOOK_PRINCIPAL_MEMBER,
+    GitHubCheckAnnotationView, GitHubCheckConclusion, GitHubCheckRunView, GitHubCheckStatus,
+    GitHubCiOverallStatus, GitHubPrChecks, GitHubPrChecksParams, GitHubPrInspect,
+    GitHubPrInspectParams, GitHubPrList, GitHubPrListParams, GitHubPrReviewCommentView,
+    GitHubPrReviewView, GitHubPrState, GitHubPrSync, GitHubPrSyncParams, GitHubRepoBind,
+    GitHubRepoBindParams, GitHubRepoUnbind, GitHubRepoUnbindParams, GitHubReviewState,
+    GitHubWebhookIngest, GitHubWebhookIngestParams, SecretText, GITHUB_WEBHOOK_MAX_BYTES,
+    WEBHOOK_PRINCIPAL_MEMBER,
 };
 use org_proto::hiring::{
     HireProposalWire, HrHire, HrHireParams, ProviderConnectionCreate,
@@ -22,12 +25,34 @@ use org_proto::hiring::{
 use org_proto::org::{ProjectCreateParams, TeamCreateParams};
 use org_proto::reviews::{ReviewRequestParams, ReviewRoutingSpec, ReviewTargetKind, RoutingMode};
 use org_proto::tasks::TasksCreateParams;
-use org_proto::{Call, Empty, ErrorCode, Outcome, Request};
+use org_proto::{ApiError, Call, Empty, ErrorCode, Outcome, Request, MAX_FRAME_BYTES};
 use serde_json::json;
 
 use crate::live::LiveEvents;
 
+use super::linking::sha_matches;
+use super::store::{load_pr, save_pr, StoredPrRecord, MAX_PR_RECORD_BYTES, MAX_STORE_FILE_BYTES};
 use super::GitHubService;
+
+fn call_err_detail<C: Call>(
+    svc: &GitHubService,
+    member: &str,
+    via_grant: bool,
+    params: &C::Params,
+) -> ApiError {
+    let req = Request::new::<C>(1, params).unwrap();
+    let resp = svc
+        .dispatch(Some(member), via_grant, &req)
+        .expect("handled");
+    match resp.outcome {
+        Outcome::Error(e) => e,
+        Outcome::Result(v) => panic!("expected error for {}, got result: {v}", C::METHOD),
+    }
+}
+
+fn b64(bytes: &[u8]) -> String {
+    BASE64.encode(bytes)
+}
 
 fn uuid(n: u64) -> String {
     format!("018bce83-9720-7000-8000-{n:012x}")
@@ -523,7 +548,7 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
                 event: "pull_request".into(),
                 delivery_id: delivery_pr.into(),
                 signature_256: SecretText::new(pr_sig.clone()),
-                payload: pr_body.clone(),
+                payload_base64: b64(pr_body.as_bytes()),
             }
         ),
         ErrorCode::NotAuthorized
@@ -539,7 +564,7 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
                 signature_256: SecretText::new(
                     "sha256=0000000000000000000000000000000000000000000000000000000000000000"
                 ),
-                payload: pr_body.clone(),
+                payload_base64: b64(pr_body.as_bytes()),
             }
         ),
         ErrorCode::NotAuthorized
@@ -553,7 +578,7 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
                 event: "pull_request".into(),
                 delivery_id: delivery_pr.into(),
                 signature_256: SecretText::new(pr_sig.clone()),
-                payload: "x".repeat(GITHUB_WEBHOOK_MAX_BYTES + 1),
+                payload_base64: b64(&vec![b'x'; GITHUB_WEBHOOK_MAX_BYTES + 1]),
             }
         ),
         ErrorCode::TooLarge
@@ -569,7 +594,7 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
             event: "pull_request".into(),
             delivery_id: delivery_pr.into(),
             signature_256: SecretText::new(pr_sig.clone()),
-            payload: pr_body.clone(),
+            payload_base64: b64(pr_body.as_bytes()),
         },
     );
     assert!(ingested.accepted && !ingested.duplicate && !ingested.ignored);
@@ -587,7 +612,7 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
             event: "pull_request".into(),
             delivery_id: delivery_pr.into(),
             signature_256: SecretText::new(pr_sig),
-            payload: pr_body,
+            payload_base64: b64(pr_body.as_bytes()),
         },
     );
     assert!(replay.accepted && replay.duplicate);
@@ -617,7 +642,7 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
                 webhook_secret,
                 comment_body.as_bytes(),
             )),
-            payload: comment_body,
+            payload_base64: b64(comment_body.as_bytes()),
         },
     );
 
@@ -655,7 +680,7 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
                 webhook_secret,
                 check_body.as_bytes(),
             )),
-            payload: check_body,
+            payload_base64: b64(check_body.as_bytes()),
         },
     );
     assert_eq!(check_res.pr_number, Some(42));
@@ -894,4 +919,430 @@ fn ac2_and_ac3_signed_webhooks_task_review_linking_scoping_and_redaction() {
     assert!(!pr42_disk.contains("ghp_leakedPatToken9999"));
     assert!(!pr42_disk.contains("whsec_leakedCiSecret99999"));
     assert!(!pr42_disk.contains(install_token));
+}
+
+#[test]
+fn p1_1_multibyte_head_sha_never_panics_on_webhook_ingest_or_pr_reads() {
+    let fx = setup_fixture();
+    let keys = test_rsa_keypair_pem();
+    let hook_key = ["whsec_", "p1-1-utf8-sha"].concat();
+    call_ok::<GitHubAppConfigure>(
+        &fx.svc,
+        &fx.owner,
+        true,
+        &GitHubAppConfigureParams {
+            app_id: 101,
+            installation_id: 202,
+            api_base_url: None,
+            private_key_pem: SecretText::new(keys.pkcs8_pem.as_str()),
+            webhook_secret: Some(SecretText::new(hook_key.as_str())),
+            account_hint: None,
+        },
+    );
+    call_ok::<GitHubRepoBind>(
+        &fx.svc,
+        &fx.owner,
+        true,
+        &GitHubRepoBindParams {
+            repository: fx.repo_a.clone(),
+            owner: "acme".into(),
+            repo: "backend".into(),
+            installation_id: None,
+        },
+    );
+
+    // 39 ASCII bytes + 2-byte `é` (41 bytes total) against 40-byte `round.head_oid`:
+    // slicing at byte 40 used to panic mid-codepoint.
+    let adversarial_sha = format!("{}é", &fx.head_sha[..39]);
+    assert_eq!(adversarial_sha.len(), 41);
+    assert!(!sha_matches(&adversarial_sha, &fx.head_sha));
+    assert!(!sha_matches(&fx.head_sha, &adversarial_sha));
+    assert!(sha_matches(&fx.head_sha[..12], &fx.head_sha));
+    assert!(sha_matches(&fx.head_sha, &fx.head_sha[..12].to_uppercase()));
+    assert!(!sha_matches("short", &fx.head_sha));
+
+    // Webhook ingest fails closed cleanly on non-hex multibyte head_sha (never enters store).
+    let pr_body = json!({
+        "action": "opened",
+        "repository": { "full_name": "acme/backend" },
+        "pull_request": {
+            "number": 77,
+            "state": "open",
+            "title": "Adversarial multibyte SHA",
+            "head": { "ref": "feat/adversarial", "sha": adversarial_sha },
+            "base": { "ref": "main", "sha": "00112233445566778899aabbccddeeff00112233" },
+            "user": { "login": "mallory" }
+        }
+    })
+    .to_string();
+    let sig = sign_webhook_hmac(&hook_key, pr_body.as_bytes());
+    assert_eq!(
+        call_err::<GitHubWebhookIngest>(
+            &fx.svc,
+            WEBHOOK_PRINCIPAL_MEMBER,
+            true,
+            &GitHubWebhookIngestParams {
+                event: "pull_request".into(),
+                delivery_id: "22222222-2222-4333-8444-555555555501".into(),
+                signature_256: SecretText::new(sig),
+                payload_base64: b64(pr_body.as_bytes()),
+            }
+        ),
+        ErrorCode::InvalidRequest
+    );
+    assert!(load_pr(&fx.office, &fx.repo_a, 77).unwrap().is_none());
+
+    // Defense in depth: even if a persisted PR record somehow holds a multibyte `head_sha`
+    // (39 ASCII + 2-byte `é`) with non-matching branch/task (forcing SHA comparison against the
+    // 40-byte `round.head_oid`), `github.pr.{list,inspect,checks}` all complete with zero panic.
+    let mut rec = StoredPrRecord {
+        repository_id: fx.repo_a.clone(),
+        repo_full_name: "acme/backend".into(),
+        pr_number: 78,
+        state: GitHubPrState::Open,
+        draft: false,
+        title: "Legacy adversarial record".into(),
+        body_excerpt: None,
+        html_url: "https://github.com/acme/backend/pull/78".into(),
+        diff_url: "https://github.com/acme/backend/pull/78.diff".into(),
+        head_ref: "unrelated-branch".into(),
+        head_sha: adversarial_sha,
+        base_ref: "main".into(),
+        base_sha: None,
+        author_login: "alice".into(),
+        linked_task_refs: vec![],
+        updated_at: "2026-11-27T12:00:00Z".into(),
+        reviews: vec![],
+        review_comments: vec![],
+        check_runs: vec![],
+    };
+    save_pr(&fx.office, &mut rec).unwrap();
+
+    let listed = call_ok::<GitHubPrList>(
+        &fx.svc,
+        &fx.team_a_agent,
+        false,
+        &GitHubPrListParams {
+            project: fx.project_a.clone(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(listed.pull_requests.len(), 1);
+    assert!(listed.pull_requests[0].linked_review_ids.is_empty());
+
+    let detail = call_ok::<GitHubPrInspect>(
+        &fx.svc,
+        &fx.team_a_agent,
+        false,
+        &GitHubPrInspectParams {
+            project: fx.project_a.clone(),
+            repository: Some("backend".into()),
+            pr_number: 78,
+        },
+    );
+    assert_eq!(detail.pr.pr_number, 78);
+
+    let checks = call_ok::<GitHubPrChecks>(
+        &fx.svc,
+        &fx.team_a_agent,
+        false,
+        &GitHubPrChecksParams {
+            project: fx.project_a.clone(),
+            repository: Some("backend".into()),
+            pr_number: 78,
+            only_failures: false,
+        },
+    );
+    assert_eq!(checks.pr_number, 78);
+}
+
+#[test]
+fn p1_2_and_p1_4_webhook_oracle_closed_and_512kib_boundary_enforced() {
+    let fx = setup_fixture();
+    let probe = GitHubWebhookIngestParams {
+        event: "BAD!EVENT".into(),
+        delivery_id: "not-a-uuid".into(),
+        signature_256: SecretText::new(format!("sha256={}", "0".repeat(64))),
+        payload_base64: b64(br#"{"zen":"probe"}"#),
+    };
+
+    // Unconfigured office: invalid event/delivery + bad sig returns uniform NotAuthorized.
+    let err_unconfigured =
+        call_err_detail::<GitHubWebhookIngest>(&fx.svc, WEBHOOK_PRINCIPAL_MEMBER, true, &probe);
+    assert_eq!(err_unconfigured.code, ErrorCode::NotAuthorized);
+
+    // Configure webhook secret and repeat exact same probe: MUST return identical error.
+    let keys = test_rsa_keypair_pem();
+    let hook_key = ["whsec_", "p1-2-oracle-test"].concat();
+    call_ok::<GitHubAppConfigure>(
+        &fx.svc,
+        &fx.owner,
+        true,
+        &GitHubAppConfigureParams {
+            app_id: 303,
+            installation_id: 404,
+            api_base_url: None,
+            private_key_pem: SecretText::new(keys.pkcs8_pem.as_str()),
+            webhook_secret: Some(SecretText::new(hook_key.as_str())),
+            account_hint: None,
+        },
+    );
+    let err_configured =
+        call_err_detail::<GitHubWebhookIngest>(&fx.svc, WEBHOOK_PRINCIPAL_MEMBER, true, &probe);
+    assert_eq!(err_configured.code, err_unconfigured.code);
+    assert_eq!(err_configured.message, err_unconfigured.message);
+
+    // Exact 512 KiB signed JSON webhook succeeds; 512 KiB + 1 byte returns TooLarge.
+    let prefix = br#"{"zen":""#;
+    let suffix = br#""}"#;
+    let mut exact_512k = Vec::with_capacity(GITHUB_WEBHOOK_MAX_BYTES);
+    exact_512k.extend_from_slice(prefix);
+    exact_512k.resize(GITHUB_WEBHOOK_MAX_BYTES - suffix.len(), b'z');
+    exact_512k.extend_from_slice(suffix);
+    assert_eq!(exact_512k.len(), 512 * 1024);
+
+    let ok_512k = call_ok::<GitHubWebhookIngest>(
+        &fx.svc,
+        WEBHOOK_PRINCIPAL_MEMBER,
+        true,
+        &GitHubWebhookIngestParams {
+            event: "ping".into(),
+            delivery_id: "33333333-2222-4333-8444-555555555501".into(),
+            signature_256: SecretText::new(sign_webhook_hmac(&hook_key, &exact_512k)),
+            payload_base64: b64(&exact_512k),
+        },
+    );
+    assert!(ok_512k.accepted && ok_512k.ignored);
+
+    let mut over_512k = exact_512k;
+    over_512k.push(b' ');
+    assert_eq!(over_512k.len(), 512 * 1024 + 1);
+    assert_eq!(
+        call_err::<GitHubWebhookIngest>(
+            &fx.svc,
+            WEBHOOK_PRINCIPAL_MEMBER,
+            true,
+            &GitHubWebhookIngestParams {
+                event: "ping".into(),
+                delivery_id: "33333333-2222-4333-8444-555555555502".into(),
+                signature_256: SecretText::new(sign_webhook_hmac(&hook_key, &over_512k)),
+                payload_base64: b64(&over_512k),
+            }
+        ),
+        ErrorCode::TooLarge
+    );
+}
+
+#[test]
+fn p2_2_blank_repository_filter_rejected_with_invalid_request() {
+    let fx = setup_fixture();
+    for blank in ["", "   ", "\t\n"] {
+        assert_eq!(
+            call_err::<GitHubPrSync>(
+                &fx.svc,
+                &fx.team_a_agent,
+                false,
+                &GitHubPrSyncParams {
+                    project: fx.project_a.clone(),
+                    repository: blank.into(),
+                    pr_number: None,
+                }
+            ),
+            ErrorCode::InvalidRequest
+        );
+        assert_eq!(
+            call_err::<GitHubPrList>(
+                &fx.svc,
+                &fx.team_a_agent,
+                false,
+                &GitHubPrListParams {
+                    project: fx.project_a.clone(),
+                    repository: Some(blank.into()),
+                    ..Default::default()
+                }
+            ),
+            ErrorCode::InvalidRequest
+        );
+        assert_eq!(
+            call_err::<GitHubPrInspect>(
+                &fx.svc,
+                &fx.team_a_agent,
+                false,
+                &GitHubPrInspectParams {
+                    project: fx.project_a.clone(),
+                    repository: Some(blank.into()),
+                    pr_number: 1,
+                }
+            ),
+            ErrorCode::InvalidRequest
+        );
+        assert_eq!(
+            call_err::<GitHubPrChecks>(
+                &fx.svc,
+                &fx.team_a_agent,
+                false,
+                &GitHubPrChecksParams {
+                    project: fx.project_a.clone(),
+                    repository: Some(blank.into()),
+                    pr_number: 1,
+                    only_failures: false,
+                }
+            ),
+            ErrorCode::InvalidRequest
+        );
+    }
+}
+
+#[test]
+fn p2_3_oversized_pr_record_is_trimmed_within_store_and_frame_caps() {
+    let fx = setup_fixture();
+    let big_annotations: Vec<GitHubCheckAnnotationView> = (0..20)
+        .map(|i| GitHubCheckAnnotationView {
+            path: format!("crates/module/src/file_{i}.rs"),
+            start_line: i + 1,
+            end_line: Some(i + 2),
+            level: "failure".into(),
+            message: "x".repeat(480),
+        })
+        .collect();
+    let reviews: Vec<GitHubPrReviewView> = (1..=100)
+        .map(|i| GitHubPrReviewView {
+            review_id: i,
+            state: GitHubReviewState::Commented,
+            author_login: "reviewer".into(),
+            body_excerpt: Some("r".repeat(1800)),
+            commit_id: Some(fx.head_sha.clone()),
+            html_url: Some(format!("https://github.com/acme/backend/pull/88#r{i}")),
+            submitted_at: Some("2026-11-27T12:00:00Z".into()),
+        })
+        .collect();
+    let review_comments: Vec<GitHubPrReviewCommentView> = (1..=200)
+        .map(|i| GitHubPrReviewCommentView {
+            comment_id: i,
+            author_login: "reviewer".into(),
+            path: format!("src/file_{i}.rs"),
+            line: Some(i as u32),
+            body_excerpt: "c".repeat(1800),
+            html_url: Some(format!("https://github.com/acme/backend/pull/88#c{i}")),
+            updated_at: Some("2026-11-27T12:00:00Z".into()),
+        })
+        .collect();
+    let check_runs: Vec<GitHubCheckRunView> = (1..=100)
+        .map(|i| GitHubCheckRunView {
+            check_run_id: i,
+            name: format!("check-{i}"),
+            workflow_name: Some("CI".into()),
+            status: GitHubCheckStatus::Completed,
+            conclusion: Some(if i >= 95 {
+                GitHubCheckConclusion::Failure
+            } else {
+                GitHubCheckConclusion::Success
+            }),
+            head_sha: fx.head_sha.clone(),
+            details_url: Some(format!("https://github.com/acme/backend/runs/{i}")),
+            title: Some("Detailed check title".into()),
+            summary: Some("s".repeat(3800)),
+            annotations: big_annotations.clone(),
+            completed_at: Some("2026-11-27T12:00:00Z".into()),
+        })
+        .collect();
+
+    let mut bloated = StoredPrRecord {
+        repository_id: fx.repo_a.clone(),
+        repo_full_name: "acme/backend".into(),
+        pr_number: 88,
+        state: GitHubPrState::Open,
+        draft: false,
+        title: format!("Massive PR {}", fx.task_key),
+        body_excerpt: Some("b".repeat(4000)),
+        html_url: "https://github.com/acme/backend/pull/88".into(),
+        diff_url: "https://github.com/acme/backend/pull/88.diff".into(),
+        head_ref: format!("task/{}-massive", fx.task_key),
+        head_sha: fx.head_sha.clone(),
+        base_ref: "main".into(),
+        base_sha: Some("00112233445566778899aabbccddeeff00112233".into()),
+        author_login: "alice".into(),
+        linked_task_refs: vec![fx.task_key.clone()],
+        updated_at: "2026-11-27T12:00:00Z".into(),
+        reviews,
+        review_comments,
+        check_runs,
+    };
+    let raw_size = serde_json::to_vec_pretty(&bloated).unwrap().len();
+    assert!(
+        raw_size as u64 > MAX_STORE_FILE_BYTES,
+        "test fixture must exceed 1 MiB before trimming (was {raw_size})"
+    );
+
+    save_pr(&fx.office, &mut bloated).expect("save_pr must trim and succeed");
+    let pr88_path = fx
+        .office
+        .durable_root()
+        .join("local")
+        .join("offices")
+        .join(&fx.office.info().office_id)
+        .join("github-context")
+        .join("repos")
+        .join(&fx.repo_a)
+        .join("pr-88.v1.json");
+    let disk_len = fs::metadata(&pr88_path).unwrap().len();
+    assert!(
+        disk_len <= MAX_PR_RECORD_BYTES as u64,
+        "disk_len={disk_len}"
+    );
+    assert!(disk_len <= MAX_STORE_FILE_BYTES);
+
+    let reloaded = load_pr(&fx.office, &fx.repo_a, 88)
+        .expect("reloading trimmed PR must succeed")
+        .expect("PR exists");
+    assert!(
+        reloaded
+            .check_runs
+            .iter()
+            .any(|c| c.conclusion == Some(GitHubCheckConclusion::Failure)),
+        "trimming must preserve failing checks"
+    );
+
+    let inspect_req = Request::new::<GitHubPrInspect>(
+        1,
+        &GitHubPrInspectParams {
+            project: fx.project_a.clone(),
+            repository: Some("backend".into()),
+            pr_number: 88,
+        },
+    )
+    .unwrap();
+    let inspect_resp = fx
+        .svc
+        .dispatch(Some(&fx.team_a_agent), false, &inspect_req)
+        .unwrap();
+    assert!(matches!(inspect_resp.outcome, Outcome::Result(_)));
+    let inspect_wire = serde_json::to_vec(&inspect_resp).unwrap();
+    assert!(
+        inspect_wire.len() < MAX_FRAME_BYTES,
+        "inspect response {} >= MAX_FRAME_BYTES",
+        inspect_wire.len()
+    );
+
+    let checks_req = Request::new::<GitHubPrChecks>(
+        2,
+        &GitHubPrChecksParams {
+            project: fx.project_a.clone(),
+            repository: Some("backend".into()),
+            pr_number: 88,
+            only_failures: false,
+        },
+    )
+    .unwrap();
+    let checks_resp = fx
+        .svc
+        .dispatch(Some(&fx.team_a_agent), false, &checks_req)
+        .unwrap();
+    assert!(matches!(checks_resp.outcome, Outcome::Result(_)));
+    let checks_wire = serde_json::to_vec(&checks_resp).unwrap();
+    assert!(
+        checks_wire.len() < MAX_FRAME_BYTES,
+        "checks response {} >= MAX_FRAME_BYTES",
+        checks_wire.len()
+    );
 }

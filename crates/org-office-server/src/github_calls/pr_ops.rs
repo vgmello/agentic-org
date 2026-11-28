@@ -19,9 +19,11 @@ use org_proto::{ApiError, ErrorCode};
 
 use crate::live::LiveEvents;
 
-use super::linking::resolve_pr_links;
+use super::linking::{resolve_pr_links, ProjectReviewLinkCache};
 use super::scope::resolve_authorized_project_repos;
-use super::store::{list_prs_for_repo, load_bindings, load_pr, save_pr, StoredPrRecord};
+use super::store::{
+    list_prs_for_repo, load_bindings, load_pr, save_pr, StoredPrRecord, MAX_PR_RECORD_BYTES,
+};
 use super::vault::{load_github_app_private_key, now_rfc3339};
 
 pub(super) fn handle_pr_list(
@@ -60,6 +62,7 @@ pub(super) fn handle_pr_list(
         None => None,
     };
 
+    let mut link_cache = ProjectReviewLinkCache::load(office, member, Some(&auth.project_id));
     let mut summaries = Vec::new();
     for repo in &auth.repos {
         for rec in list_prs_for_repo(office, repo.id.as_str())? {
@@ -68,7 +71,7 @@ pub(super) fn handle_pr_list(
                     continue;
                 }
             }
-            let links = resolve_pr_links(office, member, Some(&auth.project_id), &rec);
+            let links = link_cache.resolve(Some(&auth.project_id), &rec);
             if let Some((ref tid, ref tkey)) = task_filter_id {
                 let matches_task = links.linked_task_ids.iter().any(|id| id == tid)
                     || rec
@@ -110,7 +113,9 @@ pub(super) fn handle_pr_inspect(
         &params.project,
         params.repository.as_deref(),
     )?;
-    let (repo_key, record) = find_pr_in_authorized_repos(office, &auth.repos, params.pr_number)?;
+    let (repo_key, mut record) =
+        find_pr_in_authorized_repos(office, &auth.repos, params.pr_number)?;
+    record.trim_to_budget(MAX_PR_RECORD_BYTES)?;
     let links = resolve_pr_links(office, member, Some(&auth.project_id), &record);
     let summary = record.to_summary_view(
         repo_key,
@@ -145,7 +150,9 @@ pub(super) fn handle_pr_checks(
         &params.project,
         params.repository.as_deref(),
     )?;
-    let (_repo_key, record) = find_pr_in_authorized_repos(office, &auth.repos, params.pr_number)?;
+    let (_repo_key, mut record) =
+        find_pr_in_authorized_repos(office, &auth.repos, params.pr_number)?;
+    record.trim_to_budget(MAX_PR_RECORD_BYTES)?;
     let links = resolve_pr_links(office, member, Some(&auth.project_id), &record);
     let overall_status = compute_ci_overall_status(&record.check_runs);
     let failure_summaries: Vec<GitHubFailureSummaryView> = record
@@ -274,7 +281,7 @@ pub(super) fn handle_pr_sync(
             for check in item.check_runs {
                 record.upsert_check_run(check);
             }
-            save_pr(office, &record)?;
+            save_pr(office, &mut record)?;
             synced_prs.push(pr_num);
         }
     }

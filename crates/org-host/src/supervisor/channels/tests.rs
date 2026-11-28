@@ -621,6 +621,96 @@ pub(crate) fn worker_fixture(office: &str) -> WorkerFixture {
         worker: Some(thread),
     }
 }
+
+/// Pure in-memory worker endpoint for `--lib` unit tests that does not require spawning
+/// `examples/recording_worker`.
+pub(crate) struct InMemoryEndpointFixture {
+    pub endpoint: Arc<Endpoint>,
+    stop: Arc<AtomicBool>,
+    _close: UnixStream,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for InMemoryEndpointFixture {
+    fn drop(&mut self) {
+        self.endpoint.fail();
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+pub(crate) fn in_memory_endpoint_fixture() -> InMemoryEndpointFixture {
+    use std::io::Read;
+    let (endpoint, _seed_slot, worker_dgram, close) = Endpoint::for_grant_test();
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let worker_ep = Arc::clone(&endpoint);
+    let thread = std::thread::spawn(move || {
+        worker_dgram
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut receiver = org_socket::rights::DatagramReceiver::new(worker_dgram);
+        let mut buffer = [0u8; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
+        let mut channel_threads = Vec::new();
+        while !worker_stop.load(Ordering::SeqCst) {
+            let received = match receiver.receive(&mut buffer, 1, &SPAWN_LOCK) {
+                Ok(v) => v,
+                Err(org_socket::rights::ReceiveError::WouldBlock) => continue,
+                Err(_) => break,
+            };
+            let Ok(record) = org_office_launch::decode_transfer_record(&buffer[..received.bytes])
+            else {
+                break;
+            };
+            let mut fds = received.descriptors;
+            let org_office_launch::TransferRecord::Channel { channel_id, .. } = record else {
+                continue;
+            };
+            let stream = org_socket::rights::connected_unix_stream(fds.pop().unwrap()).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let _ = worker_ep.receipt(org_office_launch::RendezvousEvent::FdsReceived {
+                of: channel_id.clone(),
+            });
+            let ep_clone = Arc::clone(&worker_ep);
+            let stop_clone = Arc::clone(&worker_stop);
+            channel_threads.push(std::thread::spawn(move || {
+                let mut stream = stream;
+                let mut buf = [0u8; 64];
+                while !stop_clone.load(Ordering::SeqCst) {
+                    match stream.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            continue;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                drop(stream);
+                let _ = ep_clone
+                    .receipt(org_office_launch::RendezvousEvent::ChannelClosed { of: channel_id });
+            }));
+        }
+        for t in channel_threads {
+            let _ = t.join();
+        }
+    });
+    InMemoryEndpointFixture {
+        endpoint,
+        stop,
+        _close: close,
+        worker: Some(thread),
+    }
+}
 fn synthetic_worker_handoff(
     mut worker: UnixStream,
 ) -> (org_socket::rights::DatagramReceiver, Arc<Mutex<UnixStream>>) {

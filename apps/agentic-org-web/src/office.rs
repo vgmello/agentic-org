@@ -40,25 +40,138 @@ use channel::{evict_channel, negotiate};
 
 const CHANNEL_WRITE_QUEUE: usize = 64;
 const MAX_ISOLATED_COLLECT_CHANNELS: usize = 2;
+/// Bounded concurrent external webhook dispatches across all organizations (separate from human
+/// browser sessions so unauthenticated webhook bursts cannot starve browser channels or host jobs).
+const MAX_CONCURRENT_WEBHOOKS: usize = 8;
+/// Fixed-size striped open locks for coalescing concurrent cold webhook channel opens per org
+/// with O(1) bounded memory even under random-org-id floods.
+const WEBHOOK_OPEN_LOCK_STRIPES: usize = 16;
 
 /// The sole production [`OfficeTransport`] adapter over host-transferred local Unix channels.
 pub type LocalUnixOfficeTransport = OfficeBridge;
 
 type PendingMap = Arc<Mutex<BTreeMap<u64, oneshot::Sender<Value>>>>;
+type ChannelMap = Arc<Mutex<BTreeMap<String, Arc<MultiplexedChannel>>>>;
 
 struct MultiplexedChannel {
+    office_id: String,
     channel_id: String,
     writer: mpsc::Sender<Vec<u8>>,
     pending: PendingMap,
+}
+
+/// Pooled, multiplexed per-organization webhook channel cache with dedicated bounded concurrency.
+#[derive(Clone)]
+struct WebhookChannelPool {
+    channels: ChannelMap,
+    open_locks: Arc<[tokio::sync::Mutex<()>; WEBHOOK_OPEN_LOCK_STRIPES]>,
+    slots: Arc<tokio::sync::Semaphore>,
+}
+
+impl WebhookChannelPool {
+    fn new(max_concurrent: usize) -> Self {
+        Self {
+            channels: Arc::new(Mutex::new(BTreeMap::new())),
+            open_locks: Arc::new(std::array::from_fn(|_| tokio::sync::Mutex::new(()))),
+            slots: Arc::new(tokio::sync::Semaphore::new(max_concurrent)),
+        }
+    }
+
+    fn open_lock_for(&self, org_id: &str) -> &tokio::sync::Mutex<()> {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in org_id.as_bytes() {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        &self.open_locks[(hash as usize) % WEBHOOK_OPEN_LOCK_STRIPES]
+    }
+
+    fn evict(&self, org_id: &str, channel_id: &str) {
+        evict_channel(&self.channels, org_id, channel_id);
+    }
+
+    async fn get_or_open<Open, OpenFut>(
+        &self,
+        org_id: &str,
+        open: &mut Open,
+    ) -> Result<Arc<MultiplexedChannel>, OfficeFailure>
+    where
+        Open: FnMut(ChannelMap) -> OpenFut,
+        OpenFut: std::future::Future<Output = Result<Arc<MultiplexedChannel>, OfficeFailure>>,
+    {
+        if let Ok(channels) = self.channels.lock() {
+            if let Some(existing) = channels.get(org_id) {
+                return Ok(Arc::clone(existing));
+            }
+        }
+        let _guard = self.open_lock_for(org_id).lock().await;
+        if let Ok(channels) = self.channels.lock() {
+            if let Some(existing) = channels.get(org_id) {
+                return Ok(Arc::clone(existing));
+            }
+        }
+        let channel = open(Arc::clone(&self.channels)).await?;
+        if let Ok(mut channels) = self.channels.lock() {
+            channels.insert(org_id.to_owned(), Arc::clone(&channel));
+        }
+        Ok(channel)
+    }
+
+    async fn dispatch<Open, OpenFut, Grant, GrantFut>(
+        &self,
+        org_id: &str,
+        rpc_id: u64,
+        method: &'static str,
+        params: Value,
+        mut open: Open,
+        mut grant: Grant,
+    ) -> Result<Value, OfficeFailure>
+    where
+        Open: FnMut(ChannelMap) -> OpenFut,
+        OpenFut: std::future::Future<Output = Result<Arc<MultiplexedChannel>, OfficeFailure>>,
+        Grant: FnMut(String, String) -> GrantFut,
+        GrantFut: std::future::Future<Output = Result<Principal, Failure>>,
+    {
+        let Ok(_permit) = Arc::clone(&self.slots).try_acquire_owned() else {
+            return Err(OfficeFailure::Refused(org_proto::ApiError::new(
+                org_proto::ErrorCode::RateLimited,
+                "too many concurrent webhook deliveries in progress",
+            )));
+        };
+        let channel = self.get_or_open(org_id, &mut open).await?;
+        let (channel, principal) =
+            match grant(channel.office_id.clone(), channel.channel_id.clone()).await {
+                Ok(principal) => (channel, principal),
+                Err(Failure::Unavailable) => {
+                    self.evict(org_id, &channel.channel_id);
+                    let fresh = self.get_or_open(org_id, &mut open).await?;
+                    let principal = grant(fresh.office_id.clone(), fresh.channel_id.clone())
+                        .await
+                        .map_err(OfficeFailure::BeforeDispatch)?;
+                    (fresh, principal)
+                }
+                Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
+            };
+        let request = build_request(rpc_id, method, params, &principal)?;
+        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
+            Ok(raw) => raw,
+            Err(_) => {
+                self.evict(org_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+        };
+        decode_response(raw)
+    }
 }
 
 /// Manages async multiplexed host-opened Web channels to offices.
 #[derive(Clone)]
 pub struct OfficeBridge {
     host: Arc<HostControl>,
-    channels: Arc<Mutex<BTreeMap<String, Arc<MultiplexedChannel>>>>,
+    channels: ChannelMap,
     open_locks: Arc<Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     isolated_slots: Arc<tokio::sync::Semaphore>,
+    webhooks: WebhookChannelPool,
     events: Arc<dyn EventBus>,
     next_id: Arc<AtomicU64>,
 }
@@ -70,6 +183,7 @@ impl OfficeBridge {
             channels: Arc::new(Mutex::new(BTreeMap::new())),
             open_locks: Arc::new(Mutex::new(BTreeMap::new())),
             isolated_slots: Arc::new(tokio::sync::Semaphore::new(MAX_ISOLATED_COLLECT_CHANNELS)),
+            webhooks: WebhookChannelPool::new(MAX_CONCURRENT_WEBHOOKS),
             events,
             next_id: Arc::new(AtomicU64::new(2)),
         }
@@ -322,42 +436,55 @@ impl OfficeBridge {
         method: &'static str,
         params: Value,
     ) -> Result<Value, OfficeFailure> {
-        let (office_id, channel_id, stream) = self
-            .host
-            .open_webhook_channel_async(org_id.to_owned())
-            .await
-            .map_err(OfficeFailure::BeforeDispatch)?;
-        let isolated = Arc::new(Mutex::new(BTreeMap::new()));
-        let channel = MultiplexedChannel::from_local_unix(
-            office_id.clone(),
-            channel_id.clone(),
-            stream,
-            isolated,
-            Arc::clone(&self.events),
-        )
-        .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
-        if negotiate(&channel).await.is_err() {
-            return Err(OfficeFailure::BeforeDispatch(Failure::Unavailable));
-        }
-        let granted = self
-            .host
-            .request_async::<BrowserWebhookGrant>(&BrowserWebhookGrantParams {
-                org_id: org_id.to_owned(),
-                office_id: office_id.clone(),
-                channel_id: channel_id.clone(),
-            })
-            .await
-            .map_err(OfficeFailure::BeforeDispatch)?;
-        let principal = Principal {
-            grant: granted.grant,
-        };
+        let host = Arc::clone(&self.host);
+        let events = Arc::clone(&self.events);
+        let org_for_open = org_id.to_owned();
+        let host_for_grant = Arc::clone(&self.host);
+        let org_for_grant = org_id.to_owned();
         let rpc_id = self.next_rpc_id();
-        let request = build_request(rpc_id, method, params, &principal)?;
-        let raw = channel
-            .roundtrip_raw(&request, rpc_id)
+        self.webhooks
+            .dispatch(
+                org_id,
+                rpc_id,
+                method,
+                params,
+                move |cache| {
+                    let host = Arc::clone(&host);
+                    let events = Arc::clone(&events);
+                    let org = org_for_open.clone();
+                    async move {
+                        let (office_id, channel_id, stream) = host
+                            .open_webhook_channel_async(org.clone())
+                            .await
+                            .map_err(OfficeFailure::BeforeDispatch)?;
+                        let channel = MultiplexedChannel::from_local_unix_keyed(
+                            org, office_id, channel_id, stream, cache, events, None,
+                        )
+                        .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+                        if negotiate(&channel).await.is_err() {
+                            return Err(OfficeFailure::BeforeDispatch(Failure::Unavailable));
+                        }
+                        Ok(channel)
+                    }
+                },
+                move |office_id, channel_id| {
+                    let host = Arc::clone(&host_for_grant);
+                    let org = org_for_grant.clone();
+                    async move {
+                        let granted = host
+                            .request_async::<BrowserWebhookGrant>(&BrowserWebhookGrantParams {
+                                org_id: org,
+                                office_id,
+                                channel_id,
+                            })
+                            .await?;
+                        Ok(Principal {
+                            grant: granted.grant,
+                        })
+                    }
+                },
+            )
             .await
-            .map_err(|_| OfficeFailure::Transport)?;
-        decode_response(raw)
     }
 }
 

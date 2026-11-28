@@ -173,6 +173,19 @@ pub(crate) struct RawCheckRun {
     pub pull_requests: Vec<RawPrRef>,
 }
 
+/// Validates and normalizes an optional Git commit SHA strictly to lowercase ASCII hex
+/// (`1..=MAX_SHA_BYTES`). Rejects any non-ASCII-hex or multibyte UTF-8 characters.
+pub(crate) fn sanitize_git_sha_optional(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_SHA_BYTES
+        || !trimmed.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(trimmed.to_ascii_lowercase())
+}
+
 pub(crate) fn normalize_pull_request(
     repo_full_name: String,
     raw: RawPullRequest,
@@ -203,10 +216,15 @@ pub(crate) fn normalize_pull_request(
         .map(|b| sanitize_github_body(b, MAX_PR_BODY_BYTES))
         .filter(|s| !s.is_empty());
     let head_ref = sanitize_github_meta(&raw.head.git_ref, MAX_REF_BYTES);
-    let head_sha = sanitize_github_meta(&raw.head.sha, MAX_SHA_BYTES);
+    let head_sha = if raw.head.sha.trim().is_empty() {
+        String::new()
+    } else {
+        sanitize_git_sha_optional(&raw.head.sha).ok_or_else(|| {
+            WebhookError::MalformedPayload("pull_request.head.sha must be ASCII hex".into())
+        })?
+    };
     let base_ref = sanitize_github_meta(&raw.base.git_ref, MAX_REF_BYTES);
-    let base_sha =
-        Some(sanitize_github_meta(&raw.base.sha, MAX_SHA_BYTES)).filter(|s| !s.is_empty());
+    let base_sha = sanitize_git_sha_optional(&raw.base.sha);
     let author_login = raw
         .user
         .map(|u| sanitize_github_meta(&u.login, MAX_LOGIN_BYTES))
@@ -252,11 +270,7 @@ pub(crate) fn normalize_review(raw: RawReview) -> GitHubPrReviewView {
             .as_deref()
             .map(|b| sanitize_github_body(b, MAX_REVIEW_BODY_BYTES))
             .filter(|s| !s.is_empty()),
-        commit_id: raw
-            .commit_id
-            .as_deref()
-            .map(|c| sanitize_github_meta(c, MAX_SHA_BYTES))
-            .filter(|s| !s.is_empty()),
+        commit_id: raw.commit_id.as_deref().and_then(sanitize_git_sha_optional),
         html_url: raw.html_url.as_deref().and_then(validate_html_url),
         submitted_at: raw
             .submitted_at
@@ -334,7 +348,7 @@ pub(crate) fn normalize_check_run(raw: RawCheckRun) -> GitHubCheckRunView {
             .filter(|s| !s.is_empty()),
         status: parse_check_status(&raw.status),
         conclusion: raw.conclusion.as_deref().map(parse_check_conclusion),
-        head_sha: sanitize_github_meta(&raw.head_sha, MAX_SHA_BYTES),
+        head_sha: sanitize_git_sha_optional(&raw.head_sha).unwrap_or_default(),
         details_url,
         title,
         summary,

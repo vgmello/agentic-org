@@ -20,8 +20,22 @@ use crate::{Call, Empty};
 /// and refuses every other RPC fail-closed.
 pub const WEBHOOK_PRINCIPAL_MEMBER: &str = "__github_webhook__";
 
-/// Maximum accepted raw GitHub webhook payload size in bytes (1 MiB).
-pub const GITHUB_WEBHOOK_MAX_BYTES: usize = 1024 * 1024;
+/// Maximum accepted raw GitHub webhook payload size in bytes (512 KiB).
+///
+/// Raw bytes are base64-encoded on the RPC wire so every worst-case webhook request (including
+/// HMAC grant and JSON-RPC framing) fits strictly inside [`crate::MAX_FRAME_BYTES`].
+pub const GITHUB_WEBHOOK_MAX_BYTES: usize = 512 * 1024;
+
+/// Maximum base64-encoded length for a raw webhook payload: `4 * ceil(512 KiB / 3)`.
+pub const GITHUB_WEBHOOK_MAX_BASE64_CHARS: usize = GITHUB_WEBHOOK_MAX_BYTES.div_ceil(3) * 4;
+
+/// Conservative upper bound on JSON-RPC envelope, headers, and HMAC grant bytes around
+/// [`GitHubWebhookIngestParams::payload_base64`].
+const GITHUB_WEBHOOK_RPC_OVERHEAD_BYTES: usize = 16 * 1024;
+
+const _: () = assert!(
+    GITHUB_WEBHOOK_MAX_BASE64_CHARS + GITHUB_WEBHOOK_RPC_OVERHEAD_BYTES < crate::MAX_FRAME_BYTES
+);
 
 /// Maximum limit for `github.pr.list`.
 pub const GITHUB_PR_LIST_MAX_LIMIT: u32 = 200;
@@ -275,13 +289,25 @@ impl Call for GitHubRepoUnbind {
 /// secret in constant time, deduplicates by `X-GitHub-Delivery`, and indexes PR/review/CI state.
 pub struct GitHubWebhookIngest;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitHubWebhookIngestParams {
     pub event: String,
     pub delivery_id: String,
     pub signature_256: SecretText,
-    pub payload: String,
+    /// Standard base64-encoded raw HTTP webhook payload bytes (exact bytes used for HMAC-SHA256).
+    pub payload_base64: String,
+}
+
+impl fmt::Debug for GitHubWebhookIngestParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GitHubWebhookIngestParams")
+            .field("event", &self.event)
+            .field("delivery_id", &self.delivery_id)
+            .field("signature_256", &self.signature_256)
+            .field("payload_base64_len", &self.payload_base64.len())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -577,9 +603,55 @@ mod tests {
             event: "pull_request".into(),
             delivery_id: "11111111-2222-3333-4444-555555555555".into(),
             signature_256: SecretText::new("sha256=SIG_SENTINEL"),
-            payload: "{}".into(),
+            payload_base64: "UEFZTE9BRF9TRU5USU5FTA==".into(),
         };
         let hdbg = format!("{hook:?}");
         assert!(!hdbg.contains("SIG_SENTINEL"));
+        assert!(!hdbg.contains("UEFZTE9BRF9TRU5USU5FTA=="));
+    }
+
+    #[test]
+    fn max_size_webhook_rpc_frame_with_grant_fits_inside_max_frame_bytes() {
+        assert_eq!(GITHUB_WEBHOOK_MAX_BYTES, 512 * 1024);
+        assert_eq!(
+            GITHUB_WEBHOOK_MAX_BYTES.div_ceil(3) * 4,
+            GITHUB_WEBHOOK_MAX_BASE64_CHARS
+        );
+        const {
+            assert!(
+                GITHUB_WEBHOOK_MAX_BASE64_CHARS + GITHUB_WEBHOOK_RPC_OVERHEAD_BYTES
+                    < crate::MAX_FRAME_BYTES
+            );
+        }
+
+        let params = GitHubWebhookIngestParams {
+            event: "pull_request_review_comment".into(),
+            delivery_id: "11111111-2222-4333-8444-555555555555".into(),
+            signature_256: SecretText::new(format!("sha256={}", "a".repeat(64))),
+            payload_base64: "A".repeat(GITHUB_WEBHOOK_MAX_BASE64_CHARS),
+        };
+        let grant = crate::Grant {
+            claims: crate::GrantClaims {
+                account: "github-webhook".into(),
+                member: WEBHOOK_PRINCIPAL_MEMBER.into(),
+                org_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+                office_id: "0193a5c0-0000-7000-8000-000000000002".into(),
+                channel_id: "0193a5c0-0000-7000-8000-000000000003".into(),
+                session_id: "01000000000000000000000001".into(),
+                exp: 1_794_312_060_000,
+            },
+            mac: crate::GrantMac::from_bytes([0xab; crate::GRANT_MAC_BYTES]),
+        };
+        let req = crate::Request::new::<GitHubWebhookIngest>(u64::MAX / 2, &params)
+            .unwrap()
+            .with_principal(&crate::Principal { grant })
+            .unwrap();
+        let encoded = serde_json::to_vec(&req).unwrap();
+        assert!(
+            encoded.len() < crate::MAX_FRAME_BYTES,
+            "encoded webhook RPC frame {} >= MAX_FRAME_BYTES {}",
+            encoded.len(),
+            crate::MAX_FRAME_BYTES
+        );
     }
 }

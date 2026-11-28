@@ -21,7 +21,13 @@ use serde::{Deserialize, Serialize};
 
 const BINDINGS_FILE: &str = "bindings.v1.json";
 const DELIVERIES_FILE: &str = "deliveries.v1.json";
-const MAX_STORE_FILE_BYTES: u64 = 1024 * 1024;
+pub(super) const MAX_STORE_FILE_BYTES: u64 = 1024 * 1024;
+/// Deterministic serialized JSON ceiling for one `StoredPrRecord` (448 KiB).
+///
+/// Keeps every persisted PR file strictly `<= MAX_STORE_FILE_BYTES` (1 MiB) AND ensures derived
+/// `GitHubPrDetailView` (record + <=16 KiB fenced context) and `GitHubPrChecksResult` (check runs
+/// + failing check summaries) fit strictly below `org_proto::MAX_FRAME_BYTES` (1 MiB).
+pub(super) const MAX_PR_RECORD_BYTES: usize = 448 * 1024;
 const MAX_BINDINGS: usize = 256;
 const MAX_REVIEWS_PER_PR: usize = 100;
 const MAX_COMMENTS_PER_PR: usize = 200;
@@ -170,6 +176,52 @@ impl StoredPrRecord {
         self.check_runs.push(check);
     }
 
+    /// Deterministically trims oldest/excess review comments, reviews, annotations, and check
+    /// runs (preserving recent failing checks longest) so the pretty-printed record stays
+    /// strictly `<= max_bytes` on disk and within RPC wire frame limits.
+    pub(super) fn trim_to_budget(&mut self, max_bytes: usize) -> Result<(), ApiError> {
+        while pretty_json_len(self)? > max_bytes {
+            if self.review_comments.len() > 20 {
+                let drop_n = (self.review_comments.len() - 20).div_ceil(2);
+                self.review_comments.drain(..drop_n);
+            } else if self.reviews.len() > 20 {
+                let drop_n = (self.reviews.len() - 20).div_ceil(2);
+                self.reviews.drain(..drop_n);
+            } else if let Some(chk) = self.check_runs.iter_mut().find(|c| c.annotations.len() > 5) {
+                chk.annotations.truncate(5);
+            } else if let Some(idx) = self
+                .check_runs
+                .iter()
+                .position(|c| !c.conclusion.is_some_and(GitHubCheckConclusion::is_failure))
+            {
+                self.check_runs.remove(idx);
+            } else if !self.review_comments.is_empty() {
+                let drop_n = (self.review_comments.len() / 2).max(1);
+                self.review_comments.drain(..drop_n);
+            } else if !self.reviews.is_empty() {
+                let drop_n = (self.reviews.len() / 2).max(1);
+                self.reviews.drain(..drop_n);
+            } else if let Some(chk) = self
+                .check_runs
+                .iter_mut()
+                .find(|c| !c.annotations.is_empty())
+            {
+                chk.annotations.clear();
+            } else if self.check_runs.len() > 1 {
+                self.check_runs.remove(0);
+            } else if let Some(chk) = self.check_runs.first_mut().filter(|c| c.summary.is_some()) {
+                chk.summary = None;
+            } else if !self.check_runs.is_empty() {
+                self.check_runs.clear();
+            } else if self.body_excerpt.is_some() {
+                self.body_excerpt = None;
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn to_summary_view(
         &self,
         repository_key: Option<String>,
@@ -311,6 +363,30 @@ fn ensure_owner_only_dir(office: &Office, dir: &Path) -> Result<PathBuf, ApiErro
     })
 }
 
+struct ByteCounter(usize);
+
+impl io::Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn pretty_json_len<T: Serialize>(value: &T) -> Result<usize, ApiError> {
+    let mut counter = ByteCounter(0);
+    serde_json::to_writer_pretty(&mut counter, value).map_err(|_| {
+        ApiError::new(
+            ErrorCode::StorageError,
+            "could not encode office github-context JSON",
+        )
+    })?;
+    Ok(counter.0.saturating_add(1))
+}
+
 fn write_json_atomic<T: Serialize>(
     office: &Office,
     dir: &Path,
@@ -325,6 +401,12 @@ fn write_json_atomic<T: Serialize>(
         )
     })?;
     bytes.push(b'\n');
+    if bytes.len() as u64 > MAX_STORE_FILE_BYTES {
+        return Err(ApiError::new(
+            ErrorCode::StorageError,
+            "office github-context file exceeds size limit",
+        ));
+    }
     org_platform::fs::write_regular_beneath(&canon_dir, Path::new(file_name), &bytes).map_err(
         |_| {
             ApiError::new(
@@ -453,7 +535,8 @@ pub(super) fn load_pr(
     read_json_optional(office, &dir, &name)
 }
 
-pub(super) fn save_pr(office: &Office, record: &StoredPrRecord) -> Result<(), ApiError> {
+pub(super) fn save_pr(office: &Office, record: &mut StoredPrRecord) -> Result<(), ApiError> {
+    record.trim_to_budget(MAX_PR_RECORD_BYTES)?;
     let dir = repo_dir_path(office, &record.repository_id)?;
     let name = format!("pr-{}.v1.json", record.pr_number);
     write_json_atomic(office, &dir, &name, record)

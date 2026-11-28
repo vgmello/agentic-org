@@ -5,6 +5,7 @@
 //! - Owner-only GitHub App config/status/revoke and repository bind/unbind routes.
 //! - Project-scoped PR list, inspect, CI failure analysis, and on-demand sync routes.
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hyper::{http::request::Parts, Method, StatusCode};
 use org_proto::github::{
     GitHubAppConfigure, GitHubAppConfigureParams, GitHubAppRevoke, GitHubAppStatus, GitHubPrChecks,
@@ -15,7 +16,7 @@ use org_proto::github::{
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use org_proto::Empty;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::hq_context::{resolve_hq_office, revalidate_and_resolve_hq};
@@ -71,6 +72,17 @@ struct PrSyncBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmptyObject {}
+
+/// Minimal public HTTP `200 OK` JSON returned to GitHub's external Webhook Deliveries log.
+/// Never echoes internal repository, task, or review identifiers.
+#[derive(Serialize)]
+struct PublicWebhookReply {
+    accepted: bool,
+    duplicate: bool,
+    ignored: bool,
+    delivery_id: String,
+    event: String,
+}
 
 fn valid_org_id(id: &str) -> Result<(), ApiReply> {
     org_office_launch::is_storage_id(id)
@@ -378,16 +390,14 @@ pub(super) fn prepare(route: GitHubRoute, bytes: &[u8]) -> Result<PreparedCall<C
                     "Webhook payload is too large.",
                 ));
             }
-            let payload = std::str::from_utf8(bytes)
-                .map_err(|_| invalid())?
-                .to_owned();
+            let payload_base64 = BASE64.encode(bytes);
             GitHubCall::Webhook(
                 org,
                 GitHubWebhookIngestParams {
                     event,
                     delivery_id,
                     signature_256,
-                    payload,
+                    payload_base64,
                 },
             )
         }
@@ -479,7 +489,17 @@ async fn execute_webhook(
         .call_webhook_typed::<GitHubWebhookIngest>(org_id, params)
         .await
     {
-        Ok(res) => result(res),
+        Ok(res) => ApiReply::json(
+            StatusCode::OK,
+            serde_json::to_value(PublicWebhookReply {
+                accepted: res.accepted,
+                duplicate: res.duplicate,
+                ignored: res.ignored,
+                delivery_id: res.delivery_id,
+                event: res.event,
+            })
+            .unwrap_or(Value::Null),
+        ),
         Err(OfficeFailure::BeforeDispatch(Failure::Denied | Failure::NotFound)) => webhook_unauth(),
         Err(OfficeFailure::Refused(err))
             if matches!(
@@ -494,6 +514,13 @@ async fn execute_webhook(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 WebErrorCode::TooLarge,
                 "Webhook payload is too large.",
+            )
+        }
+        Err(OfficeFailure::Refused(err)) if err.code == org_proto::ErrorCode::RateLimited => {
+            ApiReply::error(
+                StatusCode::TOO_MANY_REQUESTS,
+                WebErrorCode::RateLimited,
+                "Too many concurrent webhook deliveries.",
             )
         }
         Err(OfficeFailure::Refused(err)) if err.code == org_proto::ErrorCode::InvalidRequest => {

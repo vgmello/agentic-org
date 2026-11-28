@@ -31,7 +31,15 @@ impl MultiplexedChannel {
         channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
         events: Arc<dyn EventBus>,
     ) -> io::Result<Arc<Self>> {
-        Self::from_local_unix_with_permit(office_id, channel_id, stream, channels, events, None)
+        Self::from_local_unix_keyed(
+            office_id.clone(),
+            office_id,
+            channel_id,
+            stream,
+            channels,
+            events,
+            None,
+        )
     }
 
     pub(super) fn from_local_unix_with_permit(
@@ -42,8 +50,29 @@ impl MultiplexedChannel {
         events: Arc<dyn EventBus>,
         slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> io::Result<Arc<Self>> {
+        Self::from_local_unix_keyed(
+            office_id.clone(),
+            office_id,
+            channel_id,
+            stream,
+            channels,
+            events,
+            slot_permit,
+        )
+    }
+
+    pub(super) fn from_local_unix_keyed(
+        map_key: String,
+        office_id: String,
+        channel_id: String,
+        stream: LocalUnixOfficeStream,
+        channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
+        events: Arc<dyn EventBus>,
+        slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> io::Result<Arc<Self>> {
         let (read_half, write_half) = stream.into_async_split()?;
         Ok(Self::from_async_halves(
+            map_key,
             office_id,
             channel_id,
             read_half,
@@ -54,7 +83,12 @@ impl MultiplexedChannel {
         ))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "channel halves, cache map key, office/channel ids, bus, and optional slot permit"
+    )]
     pub(super) fn from_async_halves<R, W>(
+        map_key: String,
         office_id: String,
         channel_id: String,
         read_half: R,
@@ -70,6 +104,7 @@ impl MultiplexedChannel {
         let (writer, write_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_WRITE_QUEUE);
         let pending: PendingMap = Arc::new(Mutex::new(BTreeMap::new()));
         let channel = Arc::new(Self {
+            office_id,
             channel_id: channel_id.clone(),
             writer,
             pending: Arc::clone(&pending),
@@ -79,7 +114,7 @@ impl MultiplexedChannel {
             read_half,
             pending,
             channels,
-            office_id,
+            map_key,
             channel_id,
             events,
             slot_permit,
@@ -459,6 +494,7 @@ mod tests {
             channels.lock().unwrap().insert(
                 "office-1".to_owned(),
                 Arc::new(MultiplexedChannel {
+                    office_id: "office-1".to_owned(),
                     channel_id: "ch-1".to_owned(),
                     writer,
                     pending: Arc::clone(&pending),

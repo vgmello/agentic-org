@@ -99,6 +99,12 @@ fn validate_registration_inputs(
     Ok((username, origin))
 }
 
+/// Maximum concurrent live webhook Web channels permitted per organization on the host.
+///
+/// Leaves at least `MAX_WEB_CHANNELS - MAX_WEBHOOK_CHANNELS_PER_ORG` slots free for human
+/// browser sessions even during unauthenticated webhook bursts or reconnect overlap.
+const MAX_WEBHOOK_CHANNELS_PER_ORG: usize = 2;
+
 /// Opened Web channel descriptor returned to the service layer for transfer delivery.
 pub(crate) type OpenedWebChannel = (
     String,
@@ -469,6 +475,7 @@ impl Authentication {
                 endpoint: Arc::downgrade(&endpoint),
                 organization: organization.into(),
                 connection: alive,
+                webhook_only: false,
                 _slot: slot.clone(),
             },
         );
@@ -507,7 +514,10 @@ impl Authentication {
         let (endpoint, organization) = {
             let channels = self.web_channels.lock().map_err(|_| unavailable())?;
             let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
-            if !bound.connection.ptr_eq(&connection.liveness()) || !bound._slot.is_live() {
+            if bound.webhook_only
+                || !bound.connection.ptr_eq(&connection.liveness())
+                || !bound._slot.is_live()
+            {
                 return Err(denied());
             }
             let endpoint = bound.endpoint.upgrade().ok_or_else(unavailable)?;
@@ -540,12 +550,27 @@ impl Authentication {
 
     /// `browser.webhook_open_channel`: opens a Web channel to an organization's HQ office for
     /// forwarding HMAC-signed external webhooks from the admitted web process.
+    ///
+    /// Caps live webhook channels per organization (`MAX_WEBHOOK_CHANNELS_PER_ORG`) before
+    /// acquiring an office `ChannelKind::Web` slot so webhook floods cannot exhaust
+    /// `MAX_WEB_CHANNELS` or starve browser sessions.
     pub(crate) fn open_webhook_channel(
         &self,
         connection: &Connection,
         endpoint: Arc<crate::supervisor::channels::Endpoint>,
         organization: &str,
     ) -> Result<OpenedWebChannel, ApiError> {
+        {
+            let mut channels = self.web_channels.lock().map_err(|_| unavailable())?;
+            channels.retain(|_, channel| channel.live());
+            let org_webhooks = channels
+                .values()
+                .filter(|c| c.webhook_only && c.organization == organization)
+                .count();
+            if channels.len() >= 64 || org_webhooks >= MAX_WEBHOOK_CHANNELS_PER_ORG {
+                return Err(unavailable());
+            }
+        }
         let (id, socket, slot) = endpoint
             .open(org_office_launch::ChannelKind::Web)
             .map_err(|_| unavailable())?;
@@ -559,7 +584,11 @@ impl Authentication {
         }
         let mut channels = self.web_channels.lock().map_err(|_| unavailable())?;
         channels.retain(|_, channel| channel.live());
-        if channels.len() >= 64 {
+        let org_webhooks = channels
+            .values()
+            .filter(|c| c.webhook_only && c.organization == organization)
+            .count();
+        if channels.len() >= 64 || org_webhooks >= MAX_WEBHOOK_CHANNELS_PER_ORG {
             return Err(unavailable());
         }
         channels.insert(
@@ -568,6 +597,7 @@ impl Authentication {
                 endpoint: Arc::downgrade(&endpoint),
                 organization: organization.into(),
                 connection: alive,
+                webhook_only: true,
                 _slot: slot.clone(),
             },
         );
@@ -588,7 +618,8 @@ impl Authentication {
         let endpoint = {
             let channels = self.web_channels.lock().map_err(|_| unavailable())?;
             let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
-            if !bound.connection.ptr_eq(&connection.liveness())
+            if !bound.webhook_only
+                || !bound.connection.ptr_eq(&connection.liveness())
                 || !bound._slot.is_live()
                 || bound.organization != params.org_id
             {
