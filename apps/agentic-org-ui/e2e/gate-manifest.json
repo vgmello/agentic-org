@@ -428,7 +428,12 @@
 			"sources": ["e2e/dialog-title-open.ts", "e2e/org-chart-menu.ts"]
 		},
 		"chat": {
-			"specs": ["chat.spec.ts", "chat-*.spec.ts", "chat-followups-default-font.ts"],
+			"specs": [
+				"chat.spec.ts",
+				"chat-*.spec.ts",
+				"chat-followups-default-font.ts",
+				"attachments.spec.ts"
+			],
 			"sources": [
 				"src/routes/(shell)/chat/**",
 				"src/lib/modules/chat/**",
@@ -723,6 +728,7 @@
 		],
 		"shared": [
 			"src/lib/components/ui/**",
+			"src/lib/components/attachments/**",
 			"src/app.*",
 			"src/hooks.*",
 			"src/params/**",

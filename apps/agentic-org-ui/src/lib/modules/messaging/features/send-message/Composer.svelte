@@ -1,10 +1,16 @@
 <script lang="ts">
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
-	import { tick, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
+	import {
+		markInterruptedUploads,
+		revokeStagedPreviews,
+		stagedToAttachmentMeta,
+		type StagedAttachment
+	} from '$lib/components/attachments/model';
+	import { subscribeAttachmentsSessionEnded } from '$lib/platform/http/attachments-runtime';
 	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
-	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import {
 		applyMention,
@@ -15,11 +21,16 @@
 		parseSlash,
 		slashSuggestions
 	} from '$lib/modules/messaging/model';
-	import { CHAT_LIMITS, type Conversation } from '$lib/modules/messaging/types';
+	import {
+		CHAT_LIMITS,
+		type AttachmentMeta,
+		type Conversation
+	} from '$lib/modules/messaging/types';
+	import ComposerAttachments, { fileDropZone } from './ComposerAttachments.svelte';
 
 	/**
-	 * The message box (CHAT-14): `@` completes a name to the member's handle, `/` lists the commands, Enter adds a line (⌘ or
-	 * Ctrl+Enter sends; "Enter sends" in the corner turns that around), and Attach adds files by name in the sample.
+	 * The message box (CHAT-14): `@` completes a name to the member's handle, `/` lists commands,
+	 * Enter adds a line (⌘/Ctrl+Enter sends; "Enter sends" toggles), and Attach/paste/drop uploads files.
 	 */
 	let {
 		placeholder,
@@ -47,24 +58,31 @@
 		/** Resolves `false` when the message was not sent, so the text stays in the box. */
 		onsend: (
 			text: string,
-			options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }
+			options: {
+				alsoInChannel: boolean;
+				attachments: string[];
+				attachmentIds?: string[];
+				attachmentMeta?: AttachmentMeta[];
+				asMessage?: boolean;
+			}
 		) => Promise<boolean | void> | boolean | void;
 	} = $props();
 
 	const attachmentFocus =
 		'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 	const drafts: Record<string, string> = {};
-	let attached = $state<HTMLUListElement>();
+	const draftAttachments: Record<string, StagedAttachment[]> = {};
 	let attachButton = $state<HTMLButtonElement>();
+	let attachmentsBar = $state<ReturnType<typeof ComposerAttachments> | undefined>();
 	let text = $state('');
 	let caret = $state(0);
 	let picked = $state(0);
 	let dismissed = $state(false);
-	let attachments = $state<string[]>([]);
+	let staged = $state<StagedAttachment[]>([]);
+	let dragging = $state(false);
 	let alsoInChannel = $state(false);
 	let busy = $state(false);
 	let box = $state<HTMLTextAreaElement | undefined>();
-	let files = $state<HTMLInputElement | undefined>();
 	let enterSends = $state(false);
 	let lastKey = '';
 	let lastDraft: DraftText | undefined;
@@ -85,19 +103,54 @@
 		}
 	};
 
+	function clearLocalDraftAttachments() {
+		for (const key of Object.keys(draftAttachments)) {
+			revokeStagedPreviews(draftAttachments[key]);
+			delete draftAttachments[key];
+		}
+		if (!draft && staged.length) {
+			revokeStagedPreviews(staged);
+			staged = [];
+		}
+	}
+
+	function handleSessionEnded() {
+		attachmentsBar?.clear(true);
+		staged = [];
+		clearLocalDraftAttachments();
+	}
+
+	const unsubscribeSessionEnded = subscribeAttachmentsSessionEnded(handleSessionEnded);
+	onDestroy(() => {
+		unsubscribeSessionEnded();
+		clearLocalDraftAttachments();
+	});
+
 	// Conversation drafts live here. Thread drafts are supplied by the retained shell.
 	$effect(() => {
 		const key = resetKey;
 		const nextDraft = draft;
 		untrack(() => {
-			if (lastKey && !lastDraft) drafts[lastKey] = text;
+			if (lastKey === key && lastDraft === nextDraft) return;
+			if (lastKey) {
+				const outgoing = attachmentsBar?.interruptUploads() ?? markInterruptedUploads(staged);
+				if (lastDraft) {
+					if (outgoing.length) lastDraft.writeAttachments?.(outgoing);
+				} else {
+					drafts[lastKey] = text;
+					draftAttachments[lastKey] = outgoing;
+				}
+			}
 			lastKey = key;
 			lastDraft = nextDraft;
 			text = nextDraft ? nextDraft.read() : (drafts[key] ?? '');
+			staged = nextDraft?.readAttachments
+				? nextDraft.readAttachments()
+				: (draftAttachments[key] ?? []);
 			if (nextDraft && text) void restoreCaret(nextDraft, text);
-			attachments = [];
 			alsoInChannel = false;
 			dismissed = false;
+			dragging = false;
 			error = undefined;
 			unknownCommand = false;
 		});
@@ -114,6 +167,19 @@
 	const mentions = $derived(at && !dismissed ? mentionOptions(ctx, conversation, at.query) : []);
 	const slashes = $derived(!dismissed && !at ? slashSuggestions(text) : []);
 	const popup = $derived(mentions.length ? 'mention' : slashes.length ? 'slash' : undefined);
+	const readyIds = $derived(
+		staged.filter((item) => item.status === 'ready' && item.uploadId).map((item) => item.uploadId!)
+	);
+	const hasPendingUploads = $derived(staged.some((item) => item.status === 'uploading'));
+	const hasFailedUploads = $derived(staged.some((item) => item.status === 'error'));
+	const canSend = $derived(
+		!busy && !hasPendingUploads && !hasFailedUploads && (text.trim() !== '' || readyIds.length > 0)
+	);
+
+	function syncStagedDraft(next: StagedAttachment[]) {
+		if (draft?.writeAttachments) draft.writeAttachments(next);
+		else draftAttachments[resetKey] = next;
+	}
 
 	function pickMention(handle: string) {
 		if (!at) return;
@@ -126,21 +192,6 @@
 			caret = next.caret;
 		});
 		picked = 0;
-	}
-	async function removeAttachment(name: string) {
-		const index = attachments.indexOf(name),
-			key = resetKey;
-		const next = attachments[index + 1],
-			previous = attachments[index - 1];
-		attachments = attachments.filter((attachment) => attachment !== name);
-		await tick();
-		if (key !== resetKey) return;
-		const buttons = [
-			...(attached?.querySelectorAll<HTMLButtonElement>('button[data-attachment]') ?? [])
-		];
-		const nextButton = buttons.find((button) => button.dataset.attachment === next);
-		const previousButton = buttons.find((button) => button.dataset.attachment === previous);
-		(nextButton ?? previousButton ?? attachButton)?.focus();
 	}
 
 	function pickSlash(name: string) {
@@ -156,12 +207,21 @@
 
 	async function send(asMessage = false) {
 		const body = text.trim();
-		if (!canWrite || busy || body === '') return;
+		if (!canWrite || busy) return;
+		if (hasPendingUploads) {
+			error = 'Wait for attachments to finish uploading before sending.';
+			return;
+		}
+		if (hasFailedUploads) {
+			error = 'Retry or remove failed attachments before sending.';
+			return;
+		}
+		if (body === '' && readyIds.length === 0) return;
 		if (new TextEncoder().encode(body).byteLength > CHAT_LIMITS.bodyMax) {
 			error = 'That message is too long. Shorten it or attach it as a file.';
 			return;
 		}
-		const slash = asMessage ? undefined : parseSlash(text);
+		const slash = asMessage || body === '' ? undefined : parseSlash(text);
 		if (slash && !slash.ok && slash.unknown) {
 			error = slash.message;
 			unknownCommand = true;
@@ -174,14 +234,36 @@
 		const sendingDraft = draft;
 		const clearDraft = sendingDraft?.clearOnSuccess();
 		const submittedText = text;
+		const submittedStaged = staged;
+		const attachmentIds = readyIds;
+		const attachmentNames = submittedStaged.map((item) => item.filename);
+		const attachmentMeta = stagedToAttachmentMeta(
+			submittedStaged,
+			ctx.actor,
+			new Date().toISOString()
+		);
 		try {
-			if ((await onsend(submittedText, { alsoInChannel, attachments, asMessage })) === false)
+			if (
+				(await onsend(submittedText, {
+					alsoInChannel,
+					attachments: attachmentNames,
+					attachmentIds,
+					attachmentMeta,
+					asMessage
+				})) === false
+			) {
 				return;
+			}
 			if (clearDraft) clearDraft();
-			else drafts[key] = '';
+			else {
+				drafts[key] = '';
+				draftAttachments[key] = [];
+				revokeStagedPreviews(submittedStaged);
+			}
 			if (key === resetKey && sendingDraft === draft && text === submittedText) {
 				text = '';
-				attachments = [];
+				attachmentsBar?.clear(false);
+				staged = [];
 				alsoInChannel = false;
 			}
 		} finally {
@@ -223,6 +305,12 @@
 		}
 	}
 
+	const bindDropZone = fileDropZone({
+		canDrop: () => canWrite && !busy,
+		onDragging: (active) => (dragging = active),
+		onFiles: (files) => attachmentsBar?.addFiles(files)
+	});
+
 	const track = () => {
 		caret = box?.selectionStart ?? text.length;
 		dismissed = false;
@@ -237,7 +325,12 @@
 	);
 </script>
 
-<div class="chat-compose border-t border-line bg-surface-sunken/30 px-4 py-3">
+<div
+	{@attach bindDropZone}
+	class="chat-compose border-t border-line bg-surface-sunken/30 px-4 py-3 transition-colors motion-reduce:transition-none {dragging
+		? 'ring-2 ring-inset ring-focus bg-surface-raised'
+		: ''}"
+>
 	{#if displayNote}<p
 			class="mb-2 text-sm/6 {canWrite ? 'text-info-text-strong' : 'text-fg-secondary'}"
 			data-testid="composer-note"
@@ -317,6 +410,7 @@
 				maxlength={CHAT_LIMITS.bodyMax}
 				disabled={busy}
 				{onkeydown}
+				onpaste={(event) => void attachmentsBar?.handlePaste(event)}
 				oninput={(event) => {
 					draft?.write(event.currentTarget.value);
 					error = undefined;
@@ -336,32 +430,14 @@
 						onclick={() => void send(true)}>Send as message</button
 					>{/if}
 			</p>{/if}
-		{#if attachments.length}
-			<ul
-				bind:this={attached}
-				class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto"
-				aria-label="Attached"
-			>
-				{#each attachments as a (a)}
-					<li
-						class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-surface-overlay px-2 py-0.5 text-xs/5 text-fg-body"
-					>
-						<HeroIcon variant="micro" name="paper-clip" />
-						<span class="min-w-0 truncate" title={a}>{a}</span>
-						<ModalTooltip label="Remove {a}">
-							<button
-								type="button"
-								data-attachment={a}
-								class="shrink-0 text-fg-muted hover:text-fg {attachmentFocus}"
-								aria-label="Remove {a}"
-								onclick={() => void removeAttachment(a)}
-								><HeroIcon class="text-current" variant="mini" name="x-mark" /></button
-							>
-						</ModalTooltip>
-					</li>
-				{/each}
-			</ul>
-		{/if}
+		<ComposerAttachments
+			bind:this={attachmentsBar}
+			bind:items={staged}
+			disabled={busy}
+			{resetKey}
+			{attachButton}
+			onItemsChange={syncStagedDraft}
+		/>
 		<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-fg-muted">
 				<span><kbd class="font-mono">@</kbd> mention · <kbd class="font-mono">/</kbd> command</span>
@@ -369,22 +445,9 @@
 					type="button"
 					bind:this={attachButton}
 					class="inline-flex items-center gap-x-1 hover:text-fg {attachmentFocus}"
-					onclick={() => files?.click()}
+					onclick={() => attachmentsBar?.openPicker()}
 					><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach</button
 				>
-				<input
-					bind:this={files}
-					type="file"
-					multiple
-					class="hidden"
-					aria-label="Attach files"
-					onchange={(e) => {
-						attachments = [
-							...new Set([...attachments, ...[...(e.currentTarget.files ?? [])].map((f) => f.name)])
-						].slice(0, 10);
-						e.currentTarget.value = '';
-					}}
-				/>
 				<label class="inline-flex items-center gap-x-1"
 					><input
 						type="checkbox"
@@ -402,7 +465,7 @@
 				type="button"
 				size="sm"
 				class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-				disabled={busy || text.trim() === ''}
+				disabled={!canSend}
 				onclick={() => void send()}
 				><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button
 			>

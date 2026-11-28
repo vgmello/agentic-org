@@ -1,3 +1,4 @@
+import { bindAttachmentsRuntime } from '../http/attachments-runtime';
 import { createOperationClock, formatUuidV7 } from '../http/clock';
 import { createEventStreamClient } from '../http/events';
 import { createAuthlessJsonHttp, createGatewayPublicHttp, createJsonHttp } from '../http/json-http';
@@ -23,6 +24,7 @@ const LIMITS = {
 function compose() {
 	let state = $state<AppSessionState>({ kind: 'loading' });
 	let access = $state<AccessView>({ auth_enabled: true, listen_scheme: 'unknown' });
+	const hasSessionPair = $derived(state.kind === 'signed-in' && !state.authless);
 	let controller: Controller | undefined;
 	let booted: Promise<void> | undefined;
 	let operationClock: ReturnType<typeof createOperationClock> | undefined;
@@ -109,6 +111,10 @@ function compose() {
 		get listenScheme() {
 			return access.listen_scheme;
 		},
+		/** True when a full signed-in browser session pair (cookie + proof) is active (false in local authless mode). */
+		get hasSessionPair() {
+			return hasSessionPair;
+		},
 		/** Fires when the active caller signs out or switches account (not during same-account reauth). */
 		onSessionEnded(listener: (caller: string | undefined) => void): () => void {
 			if (!sessionEndedListeners.includes(listener)) sessionEndedListeners.push(listener);
@@ -117,6 +123,11 @@ function compose() {
 			};
 		},
 		controller: get,
+		patch: (path: string, body: unknown, signal?: AbortSignal) => get().patch(path, body, signal),
+		uploadAttachment: (request: Parameters<Controller['uploadAttachment']>[0]) =>
+			get().uploadAttachment(request),
+		downloadAttachment: (request: Parameters<Controller['downloadAttachment']>[0]) =>
+			get().downloadAttachment(request),
 		/** Mints a canonical lowercase UUIDv7 calibrated immediately on sign-in/refresh. */
 		newOperationId(): string {
 			if (operationClock) return operationClock.newId();
@@ -138,3 +149,14 @@ function compose() {
 }
 
 export const appSession = compose();
+
+bindAttachmentsRuntime({
+	read: (path, signal) => appSession.controller().read(path, signal),
+	submit: (path, body, signal) => appSession.controller().submit(path, body, signal),
+	patch: (path, body, signal) => appSession.patch(path, body, signal),
+	uploadAttachment: (req) => appSession.uploadAttachment(req),
+	downloadAttachment: (req) => appSession.downloadAttachment(req),
+	newOperationId: () => appSession.newOperationId(),
+	hasSessionPair: () => appSession.hasSessionPair,
+	onSessionEnded: (listener) => appSession.onSessionEnded(listener)
+});

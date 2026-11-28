@@ -87,7 +87,7 @@ fn is_javascript_url(value: &str) -> bool {
 mod tests {
     use super::*;
 
-    const EXPECTED_HTML: &str = "default-src 'none'; script-src 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
+    const EXPECTED_HTML: &str = "default-src 'none'; script-src 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
     const EXPECTED_NON_HTML: &str =
         "default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'";
 

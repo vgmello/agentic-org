@@ -188,6 +188,7 @@ const LEGACY_SESSION_STORAGE_FILES = ['src/lib/modules/workitems/archive.ts'];
 
 /** Sole transport choke-points permitted to call raw browser fetch() and use SESSION_PROOF_HEADER. */
 const HTTP_TRANSPORT_FILES = [
+	'src/lib/platform/auth/session-binary.ts',
 	'src/lib/platform/auth/session-controller.ts',
 	'src/lib/platform/http/events.ts',
 	'src/lib/platform/http/json-http.ts'

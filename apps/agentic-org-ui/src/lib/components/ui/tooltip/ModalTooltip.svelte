@@ -43,7 +43,7 @@
 
 	function close() {
 		clearTimer();
-		open = false;
+		if (open) open = false;
 	}
 
 	function onFocusIn(event: FocusEvent) {
@@ -67,18 +67,25 @@
 	}
 
 	function trackTooltip(node: HTMLElement) {
+		const onFocusOut = () => {
+			clearTimer();
+			// Removing a focused trigger from the DOM fires focusout synchronously during
+			// Svelte teardown; skip reactive $state mutation once disconnected.
+			if (!node.isConnected) return;
+			if (open) open = false;
+		};
 		node.addEventListener('pointerenter', scheduleOpen);
 		node.addEventListener('pointerleave', close);
 		node.addEventListener('pointerdown', close);
 		node.addEventListener('focusin', onFocusIn);
-		node.addEventListener('focusout', close);
+		node.addEventListener('focusout', onFocusOut);
 		return () => {
 			clearTimer();
 			node.removeEventListener('pointerenter', scheduleOpen);
 			node.removeEventListener('pointerleave', close);
 			node.removeEventListener('pointerdown', close);
 			node.removeEventListener('focusin', onFocusIn);
-			node.removeEventListener('focusout', close);
+			node.removeEventListener('focusout', onFocusOut);
 		};
 	}
 

@@ -16,6 +16,7 @@ import type {
 	ChatState
 } from '../../../src/lib/modules/messaging/types';
 import { SAMPLE_DIRECTORY, sampleChatFull } from './chat-sample';
+import { resolveFakeAttachmentMeta } from '../attachments-store';
 
 export { chatSender, type ChatApi, type ChatDraft };
 
@@ -138,6 +139,16 @@ export function createMockChat(
 			throw unavailable();
 		}
 		const { state, accepted } = applyChat(before, call, ctx);
+		if (call.method === 'msg.send' && accepted.id && call.attachment_ids?.length) {
+			const meta = resolveFakeAttachmentMeta(organizationId, call.attachment_ids, ctx.actor);
+			const created = state.messages.find((m) => m.id === accepted.id);
+			if (created && meta.length) created.attachment_meta = meta;
+		}
+		if (call.method === 'chat.answer' && call.attachment_ids?.length) {
+			const meta = resolveFakeAttachmentMeta(organizationId, call.attachment_ids, ctx.actor);
+			const ask = state.messages.find((m) => m.id === call.ask_id);
+			if (ask?.answer && meta.length) ask.answer.attachment_meta = meta;
+		}
 		if (scenario() === 'hq' && call.method === 'msg.send' && accepted.id) {
 			const c = state.conversations.find((x) => x.id === accepted.conversation_id);
 			const { snapshot } = await org.view(organizationId);

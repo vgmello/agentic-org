@@ -5,12 +5,19 @@ import { foldText } from './model-composer';
 import { ms, muteOf, nameOf, titleOf } from './model-sidebar';
 import type { ChatMessage, ChatState, Conversation, MessageKind } from './types';
 
+const RASTER_MIMES: ReadonlySet<string> = new Set([
+	'image/png',
+	'image/jpeg',
+	'image/webp',
+	'image/gif'
+]);
+
 export interface SearchQuery {
 	text: string;
 	from?: string;
 	in?: string;
 	member?: string;
-	/** `ask`, `announcement`, `handoff`, `reply`, `thread` or `attachment`. */
+	/** `ask`, `announcement`, `handoff`, `reply`, `thread`, `attachment`, `image` or `file`. */
 	has?: string;
 	kind?: MessageKind;
 	before?: string;
@@ -35,10 +42,31 @@ export function parseSearch(q: string): SearchQuery {
 	return out;
 }
 
+function hasImageAttachment(m: ChatMessage): boolean {
+	return Boolean(
+		m.attachment_meta?.some((a) => RASTER_MIMES.has(a.mime_type.toLowerCase())) ||
+		m.answer?.attachment_meta?.some((a) => RASTER_MIMES.has(a.mime_type.toLowerCase()))
+	);
+}
+
+function hasFileAttachment(m: ChatMessage): boolean {
+	return Boolean(
+		m.attachment_meta?.some((a) => !RASTER_MIMES.has(a.mime_type.toLowerCase())) ||
+		m.answer?.attachment_meta?.some((a) => !RASTER_MIMES.has(a.mime_type.toLowerCase())) ||
+		(!m.attachment_meta?.length && m.attachments?.length)
+	);
+}
+
 function matchesHasFilter(s: ChatState, m: ChatMessage, has: string): boolean {
 	if (has === 'ask') return m.kind === 'request';
 	if (has === 'thread') return s.messages.some((r) => r.thread_root_id === m.id);
-	if (has === 'attachment') return !!m.attachments?.length;
+	if (has === 'image') return hasImageAttachment(m);
+	if (has === 'file') return hasFileAttachment(m);
+	if (has === 'attachment') {
+		return Boolean(
+			m.attachment_meta?.length || m.answer?.attachment_meta?.length || m.attachments?.length
+		);
+	}
 	return m.kind === has;
 }
 
@@ -96,7 +124,13 @@ export function searchMessages(s: ChatState, ctx: ChatContext, q: SearchQuery): 
 			if (q.kind && m.kind !== q.kind) return false;
 			if (q.has && !matchesHasFilter(s, m, q.has)) return false;
 			if (!matchesTimeWindow(m.created_at, before, after)) return false;
-			return text === '' || foldText(plain(m.body)).includes(text);
+			if (text === '') return true;
+			if (foldText(plain(m.body)).includes(text)) return true;
+			return Boolean(
+				m.attachment_meta?.some(
+					(a) => foldText(a.filename).includes(text) || foldText(a.title).includes(text)
+				)
+			);
 		})
 		.sort((a, b) => ms(b.created_at) - ms(a.created_at));
 }
