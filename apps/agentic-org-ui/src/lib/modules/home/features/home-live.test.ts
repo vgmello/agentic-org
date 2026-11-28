@@ -344,4 +344,132 @@ describe('HomeLiveState', () => {
 		}
 		live.destroy();
 	});
+
+	it('publishes project health overlays once after both feeds settle, preserves due dates on homeApi failure, and clears volatile counts on destroy (N2)', async () => {
+		const { projectsApi } = await import('$lib/modules/projects/api');
+		const { homeApi } = await import('$lib/modules/home/api');
+		const { mergeProjectHealthOverlayMap } = await import('$lib/platform/workspace/project-health');
+
+		workSnapshot.mockResolvedValue({ items: [] });
+		inboxList.mockResolvedValue([]);
+
+		let resolveProjects!: (v: unknown) => void;
+		let resolveHomeProjects!: (v: unknown) => void;
+		(projectsApi.list as ReturnType<typeof vi.fn>).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveProjects = resolve;
+				})
+		);
+		(homeApi.projects as ReturnType<typeof vi.fn>).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveHomeProjects = resolve;
+				})
+		);
+
+		let storedOverlays = {};
+		const onProjectHealthOverlays = vi.fn((_orgId, overlays, options) => {
+			storedOverlays = mergeProjectHealthOverlayMap(storedOverlays, overlays, options);
+		});
+		const onClearVolatileProjectHealthCounts = vi.fn();
+
+		const live = new HomeLiveState({
+			overview: vi.fn().mockResolvedValue(undefined),
+			layer: (base) => base,
+			onProjectHealthOverlays,
+			onClearVolatileProjectHealthCounts
+		});
+		const cancel = live.connect('org-1', baseOffices);
+
+		resolveProjects({
+			projects: [
+				{
+					id: 'p-1',
+					number: 1,
+					slug: 'federation',
+					name: 'Federation',
+					ownerTeam: { id: 'team-1', name: 'Platform', ref: 'TEAM-1' },
+					contributors: [],
+					archived: false,
+					tasks: { todo: 1, inProgress: 0, blocked: 1, done: 0, cancelled: 0 },
+					bugs: { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 },
+					developmentProcess: null
+				}
+			]
+		});
+		await flushMicrotasks();
+		// Still waiting on homeApi.projects -> zero premature publishes.
+		expect(onProjectHealthOverlays).toHaveBeenCalledTimes(0);
+
+		resolveHomeProjects([
+			{
+				id: 'p-1',
+				name: 'Federation',
+				done: 1,
+				total: 3,
+				open: 2,
+				blocked: 1,
+				members: 2,
+				due: '2026-11-20'
+			}
+		]);
+		await flushMicrotasks();
+		expect(onProjectHealthOverlays).toHaveBeenCalledTimes(1);
+		expect(onProjectHealthOverlays).toHaveBeenLastCalledWith(
+			'org-1',
+			{
+				'p-1': {
+					dueDate: '2026-11-20',
+					doneCount: 1,
+					totalCount: 3,
+					blockedCount: 1,
+					teamIds: ['team-1']
+				}
+			},
+			{ preserveTeamIds: false, preserveDueDate: false }
+		);
+
+		// On a subsequent load where homeApi.projects fails, publish once with preserveDueDate: true
+		// so previously known due dates are not erased.
+		(projectsApi.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+			projects: [
+				{
+					id: 'p-1',
+					number: 1,
+					slug: 'federation',
+					name: 'Federation',
+					ownerTeam: { id: 'team-1', name: 'Platform', ref: 'TEAM-1' },
+					contributors: [],
+					archived: false,
+					tasks: { todo: 0, inProgress: 0, blocked: 0, done: 3, cancelled: 0 },
+					bugs: { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 },
+					developmentProcess: null
+				}
+			]
+		});
+		(homeApi.projects as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error('Home API down')
+		);
+		await live.load('org-1', baseOffices);
+		await flushMicrotasks();
+
+		expect(onProjectHealthOverlays).toHaveBeenCalledTimes(2);
+		expect(onProjectHealthOverlays.mock.calls[1][2]).toEqual({
+			preserveTeamIds: false,
+			preserveDueDate: true
+		});
+		expect(storedOverlays).toEqual({
+			'p-1': {
+				dueDate: '2026-11-20',
+				doneCount: 3,
+				totalCount: 3,
+				teamIds: ['team-1']
+			}
+		});
+
+		cancel();
+		live.destroy();
+		expect(onClearVolatileProjectHealthCounts).toHaveBeenCalledWith('org-1');
+	});
 });

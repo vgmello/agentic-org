@@ -2,7 +2,12 @@ import { untrack } from 'svelte';
 import type { OfficeInfo, OrgSnapshot, ProjectTeam, WorkItemSummary } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/platform/workspace/inbox-types';
-import type { ProjectHealthOverlay } from '$lib/platform/workspace/project-health';
+import {
+	mergeProjectHealthOverlayMap,
+	stripVolatileOverlayMap,
+	type ProjectHealthOverlay,
+	type ProjectHealthOverlayUpdateOptions
+} from '$lib/platform/workspace/project-health';
 import {
 	setShellDataContext,
 	useShellData,
@@ -87,12 +92,12 @@ export class ShellData implements ShellDataContext {
 		if (!lookup) return raw;
 		const filtered: Record<string, ProjectHealthOverlay> = {};
 		for (const [id, overlay] of Object.entries(raw)) {
-			if (overlay.rowTeamIds === undefined) {
+			if (overlay.teamIds === undefined) {
 				filtered[id] = overlay;
 			} else {
 				filtered[id] = Object.freeze({
 					...overlay,
-					rowTeamIds: Object.freeze(overlay.rowTeamIds.filter((teamId) => Boolean(lookup[teamId])))
+					teamIds: Object.freeze(overlay.teamIds.filter((teamId) => Boolean(lookup[teamId])))
 				});
 			}
 		}
@@ -111,17 +116,20 @@ export class ShellData implements ShellDataContext {
 
 	setProjectHealthOverlays(
 		organizationId: string,
-		overlays: Readonly<Record<string, ProjectHealthOverlay>>
+		overlays: Readonly<Record<string, ProjectHealthOverlay>>,
+		options?: ProjectHealthOverlayUpdateOptions
 	): void {
 		if (this.#leaving || organizationId !== this.organizationId) return;
-		const next: Record<string, ProjectHealthOverlay> = {};
-		for (const [id, overlay] of Object.entries(overlays)) {
-			next[id] = Object.freeze({
-				...overlay,
-				...(overlay.rowTeamIds ? { rowTeamIds: Object.freeze([...overlay.rowTeamIds]) } : {})
-			});
-		}
-		this.#rawProjectHealthById = Object.freeze(next);
+		this.#rawProjectHealthById = mergeProjectHealthOverlayMap(
+			this.#rawProjectHealthById,
+			overlays,
+			options
+		);
+	}
+
+	clearVolatileProjectHealthCounts(organizationId = this.organizationId): void {
+		if (this.#leaving || organizationId !== this.organizationId) return;
+		this.#rawProjectHealthById = stripVolatileOverlayMap(this.#rawProjectHealthById);
 	}
 
 	#resetFields(): void {
@@ -149,6 +157,7 @@ export class ShellData implements ShellDataContext {
 		if (workUpdated) {
 			this.workItems = workRes.value;
 			this.workError = undefined;
+			this.#rawProjectHealthById = stripVolatileOverlayMap(this.#rawProjectHealthById);
 		} else {
 			this.workError = workRes.reason;
 			this.workErrorSeq += 1;

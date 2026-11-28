@@ -14,7 +14,12 @@ export {
 	deriveKpiMetrics,
 	deriveTaskTimeBreakdown
 } from './kpis';
-export { deriveProjectCards, deriveUpcomingMilestones } from './projects';
+export {
+	buildHomeProjectHealthOverlay,
+	buildHomeProjectHealthOverlays,
+	deriveProjectCards,
+	deriveUpcomingMilestones
+} from './projects';
 export { answerExecutiveQuestion, type DecisionAiContext } from './qa';
 export {
 	formatCompactUsd,

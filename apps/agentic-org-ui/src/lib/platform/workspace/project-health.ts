@@ -22,26 +22,30 @@ export interface ProjectHealthSignals {
 }
 
 /**
- * Supplemental server-side project health signals hydrated from `projectsApi.list` (`ProjectRow`)
- * and `homeApi.projects` (`HomeProject`) so Executive Home and sidebar favorites share identical inputs.
+ * Supplemental project health overlay combining persistent metadata (`dueDate`, `teamIds`)
+ * with optional volatile work counts (`doneCount`, `totalCount`, `blockedCount`, `criticalBugCount`).
  */
 export interface ProjectHealthOverlay {
-	due?: string;
+	dueDate?: string;
 	doneCount?: number;
 	totalCount?: number;
 	blockedCount?: number;
-	criticalBugs?: number;
-	rowTeamIds?: readonly string[];
+	criticalBugCount?: number;
+	teamIds?: readonly string[];
 }
 
-export interface ProjectHealthOverlaySource {
-	due?: string;
-	homeDone?: number;
-	homeTotal?: number;
-	homeBlocked?: number;
-	rowTasks?: { todo: number; inProgress: number; blocked: number; done: number };
-	rowBugs?: { critical: number; major: number };
-	rowTeamIds?: readonly string[];
+export interface ProjectHealthOverlayInput {
+	dueDate?: string;
+	doneCount?: number;
+	totalCount?: number;
+	blockedCount?: number;
+	criticalBugCount?: number;
+	teamIds?: readonly string[];
+}
+
+export interface ProjectHealthOverlayUpdateOptions {
+	preserveDueDate?: boolean;
+	preserveTeamIds?: boolean;
 }
 
 export function isSeriousOpenBug(item: WorkItemSummary): boolean {
@@ -75,63 +79,124 @@ function utcNoonMs(nowMs: number): number {
 
 /** True when a project has a past target date and incomplete work remaining. */
 export function isProjectOverdue(
-	due: string | undefined,
+	dueDate: string | undefined,
 	doneCount: number,
 	totalCount: number,
 	nowMs = Date.now()
 ): boolean {
-	if (!due || totalCount <= 0 || doneCount >= totalCount) return false;
-	const dueMs = parseIsoDateUtcMs(due);
+	if (!dueDate || totalCount <= 0 || doneCount >= totalCount) return false;
+	const dueMs = parseIsoDateUtcMs(dueDate);
 	if (dueMs === null) return false;
 	return dueMs < utcNoonMs(nowMs);
 }
 
-function resolveOverlayCounts(
-	source: ProjectHealthOverlaySource
-): { doneCount: number; totalCount: number } | undefined {
-	if (source.homeTotal !== undefined && source.homeTotal > 0) {
-		return { doneCount: source.homeDone ?? 0, totalCount: source.homeTotal };
-	}
-	if (!source.rowTasks) return undefined;
-	const rowTotal =
-		source.rowTasks.todo +
-		source.rowTasks.inProgress +
-		source.rowTasks.blocked +
-		source.rowTasks.done;
-	return rowTotal > 0 ? { doneCount: source.rowTasks.done, totalCount: rowTotal } : undefined;
-}
-
 /**
- * Build a normalized, frozen `ProjectHealthOverlay` from optional `HomeProject` and `ProjectRow` data.
- * Used identically by Executive Home cards and `ShellData` sidebar sync.
+ * Normalize and freeze a domain-neutral `ProjectHealthOverlay`.
+ * Volatile counts are included only when meaningful (`totalCount > 0`, counts `> 0`);
+ * `teamIds` preserves explicit emptiness (`[]`) when provided so unassigned checks stay honest.
  */
-export function buildProjectHealthOverlay(
-	source: ProjectHealthOverlaySource
-): ProjectHealthOverlay {
+export function buildProjectHealthOverlay(input: ProjectHealthOverlayInput): ProjectHealthOverlay {
 	const overlay: ProjectHealthOverlay = {};
-	if (source.due) overlay.due = source.due;
-	const counts = resolveOverlayCounts(source);
-	if (counts) {
-		overlay.doneCount = counts.doneCount;
-		overlay.totalCount = counts.totalCount;
+	if (input.dueDate) overlay.dueDate = input.dueDate;
+	if (input.totalCount !== undefined && input.totalCount > 0) {
+		overlay.doneCount = input.doneCount ?? 0;
+		overlay.totalCount = input.totalCount;
 	}
-	const blocked = Math.max(source.rowTasks?.blocked ?? 0, source.homeBlocked ?? 0);
-	if (blocked > 0) overlay.blockedCount = blocked;
-	if (source.rowBugs) {
-		const serious = source.rowBugs.critical + source.rowBugs.major;
-		if (serious > 0) overlay.criticalBugs = serious;
+	if (input.blockedCount !== undefined && input.blockedCount > 0) {
+		overlay.blockedCount = input.blockedCount;
 	}
-	if (source.rowTeamIds !== undefined) {
-		overlay.rowTeamIds = Object.freeze(
-			source.rowTeamIds.map((id) => id.trim()).filter((id) => id.length > 0)
+	if (input.criticalBugCount !== undefined && input.criticalBugCount > 0) {
+		overlay.criticalBugCount = input.criticalBugCount;
+	}
+	if (input.teamIds !== undefined) {
+		overlay.teamIds = Object.freeze(
+			input.teamIds.map((id) => id.trim()).filter((id) => id.length > 0)
 		);
 	}
 	return Object.freeze(overlay);
 }
 
+/** Keep persistent project metadata (`dueDate`, `teamIds`) and drop volatile count fields. */
+export function stripVolatileProjectHealthCounts(
+	overlay: ProjectHealthOverlay
+): ProjectHealthOverlay | undefined {
+	const next: ProjectHealthOverlay = {};
+	if (overlay.dueDate) next.dueDate = overlay.dueDate;
+	if (overlay.teamIds !== undefined) next.teamIds = Object.freeze([...overlay.teamIds]);
+	return next.dueDate !== undefined || next.teamIds !== undefined ? Object.freeze(next) : undefined;
+}
+
+/** Strip volatile count fields from an entire overlay map while preserving persistent metadata. */
+export function stripVolatileOverlayMap(
+	overlays: Readonly<Record<string, ProjectHealthOverlay>>
+): Readonly<Record<string, ProjectHealthOverlay>> {
+	const next: Record<string, ProjectHealthOverlay> = {};
+	for (const [id, overlay] of Object.entries(overlays)) {
+		const stripped = stripVolatileProjectHealthCounts(overlay);
+		if (stripped) next[id] = stripped;
+	}
+	return Object.freeze(next);
+}
+
+function freezeOverlay(overlay: ProjectHealthOverlay): ProjectHealthOverlay {
+	return Object.freeze({
+		...overlay,
+		...(overlay.teamIds !== undefined ? { teamIds: Object.freeze([...overlay.teamIds]) } : {})
+	});
+}
+
+function mergeSingleOverlay(
+	prev: ProjectHealthOverlay | undefined,
+	incoming: ProjectHealthOverlay,
+	options: ProjectHealthOverlayUpdateOptions | undefined
+): ProjectHealthOverlay {
+	const dueDate = incoming.dueDate ?? (options?.preserveDueDate ? prev?.dueDate : undefined);
+	const teamIds = incoming.teamIds ?? (options?.preserveTeamIds ? prev?.teamIds : undefined);
+	return freezeOverlay({
+		...incoming,
+		...(dueDate !== undefined ? { dueDate } : {}),
+		...(teamIds !== undefined ? { teamIds } : {})
+	});
+}
+
+function retainPreservedMetadata(
+	prev: ProjectHealthOverlay,
+	options: ProjectHealthOverlayUpdateOptions
+): ProjectHealthOverlay | undefined {
+	const next: ProjectHealthOverlay = {};
+	if (options.preserveDueDate && prev.dueDate) next.dueDate = prev.dueDate;
+	if (options.preserveTeamIds && prev.teamIds !== undefined) {
+		next.teamIds = Object.freeze([...prev.teamIds]);
+	}
+	return next.dueDate !== undefined || next.teamIds !== undefined ? Object.freeze(next) : undefined;
+}
+
 /**
- * Single canonical project health classifier shared by Executive Home scorecards and
- * sidebar Favorite projects so both surfaces always show identical health tones and labels.
+ * Merge incoming project health overlays into the previous map, optionally preserving
+ * previously known `dueDate` and/or `teamIds` when a backing feed failed.
+ */
+export function mergeProjectHealthOverlayMap(
+	previous: Readonly<Record<string, ProjectHealthOverlay>>,
+	incoming: Readonly<Record<string, ProjectHealthOverlay>>,
+	options?: ProjectHealthOverlayUpdateOptions
+): Readonly<Record<string, ProjectHealthOverlay>> {
+	const next: Record<string, ProjectHealthOverlay> = {};
+	for (const [id, overlay] of Object.entries(incoming)) {
+		next[id] = mergeSingleOverlay(previous[id], overlay, options);
+	}
+	if (options?.preserveDueDate || options?.preserveTeamIds) {
+		for (const [id, prev] of Object.entries(previous)) {
+			if (id in next) continue;
+			const kept = retainPreservedMetadata(prev, options);
+			if (kept) next[id] = kept;
+		}
+	}
+	return Object.freeze(next);
+}
+
+/**
+ * Single canonical project health classifier shared across shell and workspace surfaces
+ * so every project badge displays identical health tones and labels.
  */
 export function classifyProjectHealth(signals: ProjectHealthSignals): ProjectHealthResult {
 	const offTrack =
@@ -160,7 +225,7 @@ export interface ProjectHealthInput {
 	projectTeams?: readonly ProjectTeam[];
 	knownTeamIds?: ReadonlySet<string>;
 	overlay?: ProjectHealthOverlay;
-	due?: string;
+	dueDate?: string;
 	doneCount?: number;
 	totalCount?: number;
 	nowMs?: number;
@@ -169,7 +234,7 @@ export interface ProjectHealthInput {
 function hasValidTeamAssignment(
 	projectId: string,
 	projectTeams: readonly ProjectTeam[] | undefined,
-	rowTeamIds: readonly string[] | undefined,
+	teamIds: readonly string[] | undefined,
 	knownTeamIds: ReadonlySet<string> | undefined
 ): boolean {
 	const isKnown = (teamId: string) =>
@@ -177,13 +242,12 @@ function hasValidTeamAssignment(
 	if (projectTeams?.some((pt) => pt.project_id === projectId && isKnown(pt.team_id))) {
 		return true;
 	}
-	return rowTeamIds?.some(isKnown) ?? false;
+	return teamIds?.some(isKnown) ?? false;
 }
 
 /**
- * Single canonical signal builder shared by Executive Home scorecards and sidebar Favorite projects.
- * Evaluates work items, open Inbox items, due dates, server-side row overlays, and team assignment
- * using one consistent rule.
+ * Single canonical signal builder evaluating live work items, open Inbox items,
+ * team assignment, and optional supplemental overlay using one consistent rule.
  */
 export function buildProjectHealthSignals(input: ProjectHealthInput): ProjectHealthSignals {
 	const projItems = input.workItems.filter(
@@ -196,7 +260,7 @@ export function buildProjectHealthSignals(input: ProjectHealthInput): ProjectHea
 	const blockedCount = Math.max(workBlocked, input.overlay?.blockedCount ?? 0);
 	const criticalBugs = Math.max(
 		projItems.filter(isSeriousOpenBug).length,
-		input.overlay?.criticalBugs ?? 0
+		input.overlay?.criticalBugCount ?? 0
 	);
 	const scopedReqsCount = projItems.filter(
 		(item) => item.kind === 'request' && item.status === 'scoped'
@@ -205,22 +269,22 @@ export function buildProjectHealthSignals(input: ProjectHealthInput): ProjectHea
 		(item) => item.state === 'open' && item.project?.id === input.projectId
 	);
 	const problemCount = openInbox.filter((item) => item.kind === 'problem').length;
-	const canCheckTeam = input.projectTeams !== undefined || input.overlay?.rowTeamIds !== undefined;
+	const canCheckTeam = input.projectTeams !== undefined || input.overlay?.teamIds !== undefined;
 	const unassignedTeam =
 		canCheckTeam &&
 		!hasValidTeamAssignment(
 			input.projectId,
 			input.projectTeams,
-			input.overlay?.rowTeamIds,
+			input.overlay?.teamIds,
 			input.knownTeamIds
 		);
-	const due = input.overlay?.due ?? input.due;
+	const dueDate = input.overlay?.dueDate ?? input.dueDate;
 
 	return {
 		criticalBugs,
 		blockedCount,
 		problemCount,
-		isOverdue: isProjectOverdue(due, doneCount, totalCount, input.nowMs),
+		isOverdue: isProjectOverdue(dueDate, doneCount, totalCount, input.nowMs),
 		scopedReqsCount,
 		openInboxCount: openInbox.length,
 		unassignedTeam

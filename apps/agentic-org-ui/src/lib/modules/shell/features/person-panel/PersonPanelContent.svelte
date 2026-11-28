@@ -214,7 +214,7 @@
 						All {totalOpenWork} open items
 					</a>
 				{/if}
-			{:else if openWorkUnavailable}
+			{:else if openWorkUnavailable || Boolean(error)}
 				<p class="pp-empty">Could not load open work.</p>
 			{:else}
 				<p class="pp-empty">No open work assigned.</p>

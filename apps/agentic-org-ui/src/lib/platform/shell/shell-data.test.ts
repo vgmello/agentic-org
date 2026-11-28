@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '$lib/modules/inbox/types';
-import type { OfficeInfo } from '$lib/proto';
+import { deriveProjectHealth } from '$lib/platform/workspace/project-health';
+import type { OfficeInfo, WorkItemSummary } from '$lib/proto';
 
 const orgView = vi.fn();
 const workSnapshot = vi.fn();
@@ -164,26 +165,26 @@ describe('ShellData inboxLoadedOrganizationId', () => {
 
 		// Wrong organization updates are ignored.
 		shell.setProjectHealthOverlays('org-other', {
-			'p-1': { due: '2026-11-20', blockedCount: 2, rowTeamIds: ['team-1'] }
+			'p-1': { dueDate: '2026-11-20', blockedCount: 2, teamIds: ['team-1'] }
 		});
 		expect(shell.projectHealthById).toEqual({});
 
-		// Active org overlays are frozen and stale rowTeamIds are filtered against snapshot.teams.
+		// Active org overlays are frozen and stale teamIds are filtered against snapshot.teams.
 		shell.setProjectHealthOverlays('org-1', {
 			'p-1': {
-				due: '2026-11-20',
+				dueDate: '2026-11-20',
 				blockedCount: 1,
-				criticalBugs: 2,
-				rowTeamIds: ['team-1', 'team-deleted']
+				criticalBugCount: 2,
+				teamIds: ['team-1', 'team-deleted']
 			}
 		});
 		expect(Object.isFrozen(shell.projectHealthById)).toBe(true);
 		expect(Object.isFrozen(shell.projectHealthById['p-1'])).toBe(true);
 		expect(shell.projectHealthById['p-1']).toEqual({
-			due: '2026-11-20',
+			dueDate: '2026-11-20',
 			blockedCount: 1,
-			criticalBugs: 2,
-			rowTeamIds: ['team-1']
+			criticalBugCount: 2,
+			teamIds: ['team-1']
 		});
 
 		// Switching org with reset=true clears stale overlays.
@@ -193,7 +194,119 @@ describe('ShellData inboxLoadedOrganizationId', () => {
 
 		// Updates after dispose() are ignored.
 		shell.dispose();
-		shell.setProjectHealthOverlays('org-2', { 'p-1': { due: '2026-12-01' } });
+		shell.setProjectHealthOverlays('org-2', { 'p-1': { dueDate: '2026-12-01' } });
 		expect(shell.projectHealthById).toEqual({});
+	});
+
+	it('clears volatile Home counts on live refresh and on leaving Home while preserving dueDate and teamIds (N2)', async () => {
+		const nowMs = Date.parse('2026-11-27T12:00:00Z');
+		orgView.mockResolvedValue({
+			snapshot: {
+				members: [],
+				teams: [{ id: 'team-1', name: 'Platform', version: 1 }],
+				projects: [{ id: 'p-1', name: 'Federation' }],
+				project_teams: []
+			}
+		});
+		inboxList.mockResolvedValue([]);
+		workSnapshot.mockResolvedValueOnce({ items: [] });
+
+		const shell = new ShellData({
+			getOrganizationId: () => 'org-1',
+			getBaseOffices: () => baseOffices,
+			loadOffices: async (_id, offices) => offices
+		});
+		await shell.load('org-1', true).promise;
+
+		// Home publishes volatile counts + dueDate + teamIds -> sidebar reflects Off track.
+		shell.setProjectHealthOverlays('org-1', {
+			'p-1': {
+				dueDate: '2026-11-20',
+				doneCount: 1,
+				totalCount: 2,
+				blockedCount: 1,
+				criticalBugCount: 1,
+				teamIds: ['team-1']
+			}
+		});
+		expect(
+			deriveProjectHealth({
+				projectId: 'p-1',
+				workItems: shell.workItems,
+				inboxItems: shell.inboxItems,
+				projectTeams: shell.validProjectTeams,
+				overlay: shell.projectHealthById['p-1'],
+				nowMs
+			}).tone
+		).toBe('bad');
+
+		// Live refresh lands with all work completed & 0 blockers/bugs -> volatile counts stripped,
+		// dueDate + teamIds preserved, sidebar immediately transitions to On track!
+		const doneTask: WorkItemSummary = {
+			id: 'w-1',
+			kind: 'task',
+			project_id: 'p-1',
+			short_id: 'ORG-1',
+			title: 'Finished task',
+			status: 'done',
+			created_by: 'owner',
+			created_at: '2026-11-20T10:00:00Z',
+			updated_at: '2026-11-27T10:00:00Z',
+			severity_confirmed: false,
+			reopen_count: 0,
+			fixes: [],
+			fixed_by: [],
+			checklist: { total: 0, done: 0, required_left: 0 },
+			done_anyway: false,
+			owner_office_id: 'office-1',
+			generation: 1,
+			version: 1,
+			deleted: false
+		};
+		workSnapshot.mockResolvedValueOnce({ items: [doneTask] });
+		await shell.refresh();
+
+		expect(shell.projectHealthById['p-1']).toEqual({
+			dueDate: '2026-11-20',
+			teamIds: ['team-1']
+		});
+		expect(
+			deriveProjectHealth({
+				projectId: 'p-1',
+				workItems: shell.workItems,
+				inboxItems: shell.inboxItems,
+				projectTeams: shell.validProjectTeams,
+				overlay: shell.projectHealthById['p-1'],
+				nowMs
+			})
+		).toEqual({ tone: 'ok', label: 'On track', statusPillClass: 't-green' });
+
+		// Leaving Home (clearVolatileProjectHealthCounts) also clears volatile counts immediately while keeping dueDate & teamIds.
+		shell.setProjectHealthOverlays('org-1', {
+			'p-1': {
+				dueDate: '2026-11-20',
+				doneCount: 0,
+				totalCount: 2,
+				blockedCount: 2,
+				teamIds: ['team-1']
+			}
+		});
+		shell.clearVolatileProjectHealthCounts('org-1');
+		expect(shell.projectHealthById['p-1']).toEqual({
+			dueDate: '2026-11-20',
+			teamIds: ['team-1']
+		});
+
+		// Preserving dueDate on failed homeApi.projects retains dueDate without losing it.
+		shell.setProjectHealthOverlays(
+			'org-1',
+			{ 'p-1': { teamIds: ['team-1'] } },
+			{ preserveDueDate: true }
+		);
+		expect(shell.projectHealthById['p-1']).toEqual({
+			dueDate: '2026-11-20',
+			teamIds: ['team-1']
+		});
+		shell.dispose();
 	});
 });

@@ -7,7 +7,8 @@ import {
 	buildProjectHealthOverlay,
 	buildProjectHealthSignals,
 	classifyProjectHealth,
-	isSeriousOpenBug
+	isSeriousOpenBug,
+	type ProjectHealthOverlay
 } from '$lib/platform/workspace/project-health';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import {
@@ -231,6 +232,42 @@ const RISK_RANK: Record<ProjectBentoCard['health'], number> = {
 	'On track': 2
 };
 
+/**
+ * Single canonical mapper from Home/Projects API rows to a domain-neutral `ProjectHealthOverlay`.
+ * Shared by `deriveProjectCards` and `HomeLiveState` so Home and Sidebar stay strictly in sync.
+ */
+export function buildHomeProjectHealthOverlay(
+	row: ProjectRow | undefined,
+	homeProj: HomeProject | undefined
+): ProjectHealthOverlay {
+	const rowTotal = row
+		? row.tasks.todo + row.tasks.inProgress + row.tasks.blocked + row.tasks.done
+		: 0;
+	const hasHomeTotal = Boolean(homeProj && homeProj.total > 0);
+	return buildProjectHealthOverlay({
+		dueDate: homeProj?.due,
+		doneCount: hasHomeTotal ? homeProj?.done : rowTotal > 0 ? row?.tasks.done : undefined,
+		totalCount: hasHomeTotal ? homeProj?.total : rowTotal > 0 ? rowTotal : undefined,
+		blockedCount: Math.max(row?.tasks.blocked ?? 0, homeProj?.blocked ?? 0),
+		criticalBugCount: row ? row.bugs.critical + row.bugs.major : 0,
+		teamIds: row ? [row.ownerTeam.id, ...row.contributors.map((c) => c.id)] : undefined
+	});
+}
+
+/** Build the complete frozen `projectId -> ProjectHealthOverlay` map for Home -> Shell sync. */
+export function buildHomeProjectHealthOverlays(
+	projectRows: readonly ProjectRow[] | undefined,
+	homeProjects: readonly HomeProject[] | undefined
+): Readonly<Record<string, ProjectHealthOverlay>> {
+	const rowById = new Map((projectRows ?? []).filter((r) => !r.archived).map((r) => [r.id, r]));
+	const homeById = new Map((homeProjects ?? []).map((h) => [h.id, h]));
+	const overlays: Record<string, ProjectHealthOverlay> = {};
+	for (const id of new Set([...rowById.keys(), ...homeById.keys()])) {
+		overlays[id] = buildHomeProjectHealthOverlay(rowById.get(id), homeById.get(id));
+	}
+	return Object.freeze(overlays);
+}
+
 export function deriveProjectCards(
 	snapshot: OrgSnapshot,
 	items: readonly WorkItemSummary[],
@@ -265,15 +302,7 @@ export function deriveProjectCards(
 		const teams = teamsOfProject(snapshot, projectId);
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
-		const overlay = buildProjectHealthOverlay({
-			due: homeProj?.due,
-			homeDone: homeProj?.done,
-			homeTotal: homeProj?.total,
-			homeBlocked: homeProj?.blocked,
-			rowTasks: row?.tasks,
-			rowBugs: row?.bugs,
-			rowTeamIds: row ? [row.ownerTeam.id, ...row.contributors.map((c) => c.id)] : undefined
-		});
+		const overlay = buildHomeProjectHealthOverlay(row, homeProj);
 		const healthSignals = buildProjectHealthSignals({
 			projectId,
 			workItems: items,
