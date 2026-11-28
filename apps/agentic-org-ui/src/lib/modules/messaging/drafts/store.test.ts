@@ -1,5 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { markInterruptedUploads, type StagedAttachment } from '$lib/components/attachments/model';
 import { createDraftStore } from './store';
+
+function stagedPreview(id: string, previewUrl: string): StagedAttachment {
+	return {
+		localId: id,
+		filename: `${id}.png`,
+		mimeType: 'image/png',
+		byteCount: 16,
+		previewUrl,
+		status: 'ready',
+		uploadId: `u-${id}`
+	};
+}
 
 describe('same-tab Chat drafts', () => {
 	it('keeps thread replies and individual asks separate, even for the same id', () => {
@@ -66,5 +79,57 @@ describe('same-tab Chat drafts', () => {
 		b.write('B again');
 		expect(c.read()).toBe('C');
 		expect(b.read()).toBe('B again');
+	});
+
+	it('revokes staged blob preview URLs on session end, org switch, eviction, clearOnSuccess, and dispose', () => {
+		const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+		try {
+			let endSession!: () => void;
+			const unsub = vi.fn();
+			const store = createDraftStore(
+				() => 'org-a',
+				2,
+				(listener) => {
+					endSession = listener;
+					return unsub;
+				}
+			);
+			const t1 = store.forThread('t1').reply;
+			t1.writeAttachments?.([stagedPreview('1', 'blob:draft/1')]);
+			const clearT1 = t1.clearOnSuccess();
+			clearT1();
+			expect(revokeSpy).toHaveBeenCalledWith('blob:draft/1');
+
+			const t2 = store.forThread('t2').reply;
+			t2.writeAttachments?.([stagedPreview('2', 'blob:draft/2')]);
+			endSession();
+			expect(revokeSpy).toHaveBeenCalledWith('blob:draft/2');
+			expect(store.forThread('t2').reply.readAttachments?.()).toEqual([]);
+
+			store.dispose();
+			expect(unsub).toHaveBeenCalledTimes(1);
+		} finally {
+			revokeSpy.mockRestore();
+		}
+	});
+
+	it('marks interrupted uploading items as retryable errors without altering ready items', () => {
+		const uploading: StagedAttachment = {
+			localId: 'u1',
+			filename: 'shot.png',
+			mimeType: 'image/png',
+			byteCount: 128,
+			previewUrl: 'blob:draft/shot',
+			status: 'uploading'
+		};
+		const ready = stagedPreview('r1', 'blob:draft/ready');
+		const next = markInterruptedUploads([uploading, ready]);
+		expect(next[0]).toMatchObject({
+			localId: 'u1',
+			status: 'error',
+			previewUrl: 'blob:draft/shot'
+		});
+		expect(next[0].error).toMatch(/interrupted/i);
+		expect(next[1]).toBe(ready);
 	});
 });

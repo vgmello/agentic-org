@@ -18,11 +18,13 @@
 		askId,
 		questions,
 		disabled = false,
+		submitDisabled = false,
 		onsubmit
 	}: {
 		askId: string;
 		questions: AskQuestion[];
 		disabled?: boolean;
+		submitDisabled?: boolean;
 		onsubmit: (answers: QuestionAnswer[]) => Promise<void> | void;
 	} = $props();
 
@@ -94,7 +96,7 @@
 	function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (!last) return go(step + 1);
-		if (missing.length || disabled) return;
+		if (missing.length || disabled || submitDisabled) return;
 		const payload: QuestionAnswer[] = questions
 			.map((q): QuestionAnswer => {
 				const current = valueOf(q.id);
@@ -256,7 +258,7 @@
 			<Button
 				type="submit"
 				size="sm"
-				disabled={disabled || missing.length > 0}
+				disabled={disabled || submitDisabled || missing.length > 0}
 				data-testid="send-answers">Send answers</Button
 			>
 			{#if missing.length}<p class="text-xs/5 text-fg-muted" aria-live="polite">

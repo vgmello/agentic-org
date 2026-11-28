@@ -11,6 +11,7 @@ export function testComposition(): Plugin {
 	const replacements = new Map(
 		[
 			['platform/shell/capabilities', 'capabilities'],
+			['platform/http/attachments-runtime', 'attachments-runtime'],
 			['modules/offices/office-api', 'office-api'],
 			['modules/organization/api', 'org-api'],
 			['modules/work', 'work-api'],

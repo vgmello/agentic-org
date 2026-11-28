@@ -3,9 +3,12 @@ import type { OfficeInfo, WorkItemSummary } from '$lib/proto';
 import type { AgentBudgets, OrganizationCost } from '$lib/modules/costs/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import { sampleOrg } from '$lib/modules/organization/sample';
+import type { ProjectRow } from '$lib/modules/projects/types';
+import { deriveProjectHealth } from '$lib/platform/workspace/project-health';
 import {
 	KPI_PILLAR_ORDER,
 	answerExecutiveQuestion,
+	buildHomeProjectHealthOverlays,
 	deriveDecisionSpotlight,
 	deriveExecutiveBrief,
 	deriveFinancialKpi,
@@ -1028,4 +1031,116 @@ describe('executive home view model', () => {
 		expect(beforeDue.lenses.today.sections[1].body).not.toContain(`${firstProject.name} (At risk)`);
 		expect(afterDue.lenses.today.sections[1].body).toContain(`${firstProject.name} (At risk)`);
 	});
+
+	it('keeps Home deriveProjectCards and sidebar deriveProjectHealth in exact agreement across all risk states', () => {
+		const base = sampleOrg('hq');
+		const nowMs = Date.parse('2026-11-27T12:00:00Z');
+		const team = base.teams[0];
+		const snap = {
+			...base,
+			projects: [
+				{ id: 'p-overdue', name: 'Overdue project' },
+				{ id: 'p-row-blocked', name: 'Row blocked project' },
+				{ id: 'p-row-bug', name: 'Row bug project' },
+				{ id: 'p-noteam-empty', name: 'Empty row team project' },
+				{ id: 'p-noteam-stale', name: 'Stale row team project' },
+				{ id: 'p-ok', name: 'On-track project' }
+			],
+			project_teams: ['p-overdue', 'p-row-blocked', 'p-row-bug', 'p-ok'].map((project_id, i) => ({
+				id: `pt-${i + 1}`,
+				project_id,
+				team_id: team.id,
+				version: 1
+			}))
+		};
+		const items: WorkItemSummary[] = [
+			makeItem({ id: 'w-overdue', project_id: 'p-overdue', status: 'in_progress' }),
+			makeItem({ id: 'w-ok', project_id: 'p-ok', status: 'done' })
+		];
+		const projectRows = buildParityProjectRows(team);
+		const homeProjects = [
+			{
+				id: 'p-overdue',
+				name: 'Overdue project',
+				done: 0,
+				total: 1,
+				open: 1,
+				blocked: 0,
+				members: 1,
+				due: '2026-11-20'
+			}
+		];
+		const knownTeamIds = new Set(snap.teams.map((t) => t.id));
+		const overlays = buildHomeProjectHealthOverlays(projectRows, homeProjects);
+		const cards = deriveProjectCards(
+			snap,
+			items,
+			{ projectRows, homeProjects, inboxItems: [] },
+			nowMs
+		);
+
+		for (const project of snap.projects) {
+			const card = cards.find((c) => c.id === project.id);
+			const sidebar = deriveProjectHealth({
+				projectId: project.id,
+				workItems: items,
+				inboxItems: [],
+				projectTeams: snap.project_teams,
+				knownTeamIds,
+				overlay: overlays[project.id],
+				nowMs
+			});
+			expect({ tone: sidebar.tone, label: sidebar.label }).toEqual({
+				tone: card?.healthTone,
+				label: card?.health
+			});
+		}
+		expect(Object.fromEntries(cards.map((c) => [c.id, c.health]))).toEqual({
+			'p-overdue': 'At risk',
+			'p-row-blocked': 'At risk',
+			'p-row-bug': 'Off track',
+			'p-noteam-empty': 'At risk',
+			'p-noteam-stale': 'At risk',
+			'p-ok': 'On track'
+		});
+	});
 });
+
+function buildParityProjectRows(team: { id: string; name: string }): ProjectRow[] {
+	const row = (
+		id: string,
+		number: number,
+		name: string,
+		overrides: Partial<ProjectRow> = {}
+	): ProjectRow => ({
+		id,
+		number,
+		slug: id,
+		name,
+		ownerTeam: { id: team.id, name: team.name, ref: `TEAM-${number}` },
+		contributors: [],
+		archived: false,
+		tasks: { todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0 },
+		bugs: { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 },
+		developmentProcess: null,
+		...overrides
+	});
+	return [
+		row('p-overdue', 1, 'Overdue project'),
+		row('p-row-blocked', 2, 'Row blocked project', {
+			tasks: { todo: 1, inProgress: 0, blocked: 1, done: 0, cancelled: 0 }
+		}),
+		row('p-row-bug', 3, 'Row bug project', {
+			bugs: { critical: 1, major: 0, minor: 0, trivial: 0, unset: 0 }
+		}),
+		row('p-noteam-empty', 4, 'Empty row team project', {
+			ownerTeam: { id: '', name: '', ref: '' }
+		}),
+		row('p-noteam-stale', 5, 'Stale row team project', {
+			ownerTeam: { id: 'team-deleted', name: 'Ghost team', ref: 'TEAM-99' }
+		}),
+		row('p-ok', 6, 'On-track project', {
+			tasks: { todo: 0, inProgress: 0, blocked: 0, done: 2, cancelled: 0 }
+		})
+	];
+}

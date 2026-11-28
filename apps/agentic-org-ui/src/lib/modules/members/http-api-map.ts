@@ -62,6 +62,22 @@ export function parseLinkResult(reply: GatewayReply, fallback: string): SignInLi
 	return { url: result.url, expiresAt: new Date(result.expires_at_ms).toISOString() };
 }
 
+function resolveCanSignIn(
+	m: Member,
+	status: MemberRow['status'],
+	access: GatewayAccessEntry | undefined,
+	org: OrganizationView | undefined
+): boolean {
+	if (status === 'inactive' || m.kind !== 'person') return false;
+	return access ? Boolean(access.account_id) : Boolean(m.owner && org?.employee_id === m.id);
+}
+
+function countDirectReports(snapshot: OrgSnapshot, memberId: string): number {
+	return snapshot.members.filter(
+		(other) => memberStatus(other) !== 'inactive' && other.reports_to_member_id === memberId
+	).length;
+}
+
 export function mapMemberRow(
 	m: Member,
 	snapshot: OrgSnapshot,
@@ -74,29 +90,23 @@ export function mapMemberRow(
 	const status = memberStatus(m);
 	const homeTeam = m.home_team_id ? teamRef(teamsById.get(m.home_team_id)) : undefined;
 	const manager = m.reports_to_member_id ? membersById.get(m.reports_to_member_id) : undefined;
-	const access = accessById?.get(m.id);
-	const canSignIn =
-		status !== 'inactive' &&
-		m.kind === 'person' &&
-		(access ? Boolean(access.account_id) : Boolean(m.owner && org?.employee_id === m.id));
-	const directReports = snapshot.members.filter(
-		(other) => memberStatus(other) !== 'inactive' && other.reports_to_member_id === m.id
-	).length;
-	return {
+	const row: MemberRow = {
 		id: m.id,
 		kind: m.kind === 'agent' ? 'agent' : 'person',
 		name: m.name,
 		handle: memberHandle(m),
-		...(m.agent?.role ? { role: m.agent.role } : {}),
 		status,
 		owner: Boolean(m.owner),
-		canSignIn,
-		...(homeTeam ? { homeTeam } : {}),
-		...(m.kind === 'agent' ? { office: agentPlacement(m, org, officeNamesById) } : {}),
-		...(manager ? { reportsTo: { id: manager.id, name: manager.name } } : {}),
-		...(m.contact ? { contact: m.contact } : {}),
-		directReports
+		canSignIn: resolveCanSignIn(m, status, accessById?.get(m.id), org),
+		directReports: countDirectReports(snapshot, m.id)
 	};
+	if (m.agent?.role) row.role = m.agent.role;
+	if (m.builtin_key) row.builtinKey = m.builtin_key;
+	if (homeTeam) row.homeTeam = homeTeam;
+	if (m.kind === 'agent') row.office = agentPlacement(m, org, officeNamesById);
+	if (manager) row.reportsTo = { id: manager.id, name: manager.name };
+	if (m.contact) row.contact = m.contact;
+	return row;
 }
 
 function decodeTurnState(raw: unknown): TurnState {

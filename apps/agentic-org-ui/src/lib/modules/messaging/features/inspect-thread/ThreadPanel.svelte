@@ -6,6 +6,7 @@
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { composerState, titleOf } from '$lib/modules/messaging/model';
 	import type {
+		AttachmentMeta,
 		ChatMessage,
 		ChatState,
 		Conversation,
@@ -62,7 +63,13 @@
 		undelivered?: Snippet;
 		onsend: (
 			text: string,
-			options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }
+			options: {
+				alsoInChannel: boolean;
+				attachments: string[];
+				attachmentIds?: string[];
+				attachmentMeta?: AttachmentMeta[];
+				asMessage?: boolean;
+			}
 		) => Promise<boolean | void> | boolean | void;
 		onreact: (m: ChatMessage, r: Reaction) => void;
 		onturn: (m: ChatMessage, into: 'bug' | 'request' | 'task', opener: HTMLElement) => void;
@@ -70,7 +77,12 @@
 		onpin: (m: ChatMessage) => void;
 		onanswer: (
 			m: ChatMessage,
-			answer: { option_id?: string; text?: string; answers?: QuestionAnswer[] }
+			answer: {
+				option_id?: string;
+				text?: string;
+				answers?: QuestionAnswer[];
+				attachment_ids?: readonly string[];
+			}
 		) => Promise<void> | void;
 		onaccept: (m: ChatMessage) => Promise<void> | void;
 		onhandback?: (m: ChatMessage, reason: string) => Promise<void> | void;

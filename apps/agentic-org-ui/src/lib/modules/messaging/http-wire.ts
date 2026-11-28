@@ -4,6 +4,7 @@ import {
 	type GatewayReply
 } from '$lib/platform/http/gateway-errors';
 import { asBool, asNum, asRec, asStr, asStrList, type Rec } from '$lib/platform/http/decode';
+import { decodeMessageAttachments } from './http-wire-attachments';
 import {
 	ANNOUNCEMENT_REASONS,
 	type AnnouncementReason,
@@ -160,7 +161,8 @@ function normalizeAnswer(raw: unknown): Answer | undefined {
 		at: asIso(r.at),
 		...optField('option_id', asStr(r.option_id)),
 		...optField('text', asStr(r.text)),
-		...optField('answers', normalizeQuestionAnswers(r.answers))
+		...optField('answers', normalizeQuestionAnswers(r.answers)),
+		...optField('attachment_meta', decodeMessageAttachments(r.attachments))
 	};
 }
 
@@ -391,6 +393,7 @@ export function mapMessage(
 		...optField('withdrawn', normalizeWithdrawal(r.withdrawal)),
 		...resolveAcceptance(r.acceptance),
 		...optField('reactions', normalizeReactions(r.reactions)),
+		...optField('attachment_meta', decodeMessageAttachments(r.attachments)),
 		...optField('pinned', pinnedIds.has(id) ? true : undefined)
 	};
 	return { message, seq: asNum(r.origin_sequence) ?? 0, sender };

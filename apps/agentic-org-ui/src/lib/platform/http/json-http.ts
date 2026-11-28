@@ -2,7 +2,7 @@ import { NotDispatchedError } from './errors';
 import { readRegister, readSignIn } from './wire';
 
 type JsonRequest = { path: string; signal?: AbortSignal } & (
-	{ method: 'GET'; body?: never } | { method: 'POST'; body: unknown }
+	{ method: 'GET'; body?: never } | { method: 'POST' | 'PATCH'; body: unknown }
 );
 export type JsonHttpRequest = JsonRequest & { proof: string };
 type JsonHttpOptions = {
@@ -59,6 +59,9 @@ function assertNoProof(url: URL, proof: string) {
 		throw new NotDispatchedError('Session proof must be supplied only in the header');
 }
 
+const ALLOWED_METHODS: ReadonlySet<string> = new Set(['GET', 'POST', 'PATCH']);
+const BODY_METHODS: ReadonlySet<string> = new Set(['POST', 'PATCH']);
+
 function createBoundedJsonHttp(
 	{
 		origin,
@@ -110,8 +113,7 @@ function createBoundedJsonHttp(
 			if (!confined(path, url, origin))
 				throw new NotDispatchedError('Only same-origin API paths are allowed');
 			if (sessionProof !== undefined) assertNoProof(url, sessionProof);
-			if (method !== 'GET' && method !== 'POST')
-				throw new NotDispatchedError('Unsupported HTTP method');
+			if (!ALLOWED_METHODS.has(method)) throw new NotDispatchedError('Unsupported HTTP method');
 			if (method === 'GET' && body !== undefined)
 				throw new NotDispatchedError('GET requests cannot have a body');
 			headers = new Headers({ Accept: 'application/json' });
@@ -128,8 +130,8 @@ function createBoundedJsonHttp(
 								throw new NotDispatchedError('Session proof must be supplied only in the header');
 							return value;
 						});
-			if (method === 'POST' && encoded === undefined)
-				throw new NotDispatchedError('POST requires a JSON body');
+			if (BODY_METHODS.has(method) && encoded === undefined)
+				throw new NotDispatchedError(`${method} requires a JSON body`);
 			if (encoded !== undefined && new TextEncoder().encode(encoded).byteLength > maxRequestBytes)
 				throw new NotDispatchedError('JSON request exceeds its limit');
 			if (encoded !== undefined) headers.set('Content-Type', 'application/json');

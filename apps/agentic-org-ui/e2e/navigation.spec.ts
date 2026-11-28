@@ -3,7 +3,7 @@ import { visit } from './ready';
 import { shot } from './shot';
 import { enterMockedOrganization } from './mock-organization';
 
-// The ExecutiveSidebar main navigation in group order (Focus, Workspace, Organization).
+// The ExecutiveSidebar default pinned navigation in group order (Focus, Workspace, Organization).
 const SECTIONS = [
 	['Home', '/home', 1, null],
 	['Inbox', '/inbox', 1, 'Inbox'],
@@ -11,18 +11,19 @@ const SECTIONS = [
 	['Chat', '/chat', 2, 'Channels'],
 	['Activity', '/activity', 1, 'Activity'],
 	['Projects', '/projects', 2, 'Projects'],
+	['Insights', '/insights', 2, 'Insights'],
 	['Teams', '/teams', 2, 'Teams'],
-	['Org chart', '/teams/org-chart', 2, 'Org chart'],
-	['Members', '/teams/members', 2, 'Members'],
-	['Processes', '/settings/processes', 2, 'Processes'],
-	['Offices', '/settings/offices', 2, 'Offices'],
 	['Settings', '/settings', 2, 'General']
 ] as const;
 const JOURNEY_SECTIONS = ['Chat', 'Teams', 'Projects', 'Work', 'Settings'];
 const slug = (path: string) => path.slice(1).replaceAll('/', '-');
-/** The primary destinations in ExecutiveSidebar, excluding pinned Favorite projects. */
+/** The default pinned destinations in ExecutiveSidebar, excluding Favorite projects and More lists. */
 const destinations = (page: Page) =>
-	page.getByRole('navigation', { name: 'Main' }).locator('ul:not(#exec-nav-favs) > li > a');
+	page
+		.getByRole('navigation', { name: 'Main' })
+		.locator(
+			'ul:not([data-sidebar-favs]):not([data-org-zone="more"]):not([data-ws-zone="more"]) > li > a'
+		);
 
 test.beforeEach(async ({ page }) => {
 	await enterMockedOrganization(page);
@@ -34,6 +35,7 @@ test('the sidebar lists every section, with its icon', { tag: '@journey' }, asyn
 	for (const [index, [name]] of SECTIONS.entries()) {
 		const expected = name === 'Inbox' ? /^Inbox/ : name;
 		await expect(destinations(page).nth(index)).toHaveAccessibleName(expected);
+		await expect(destinations(page).nth(index)).not.toHaveAttribute('type', 'button');
 	}
 	await expect(destinations(page).locator('svg')).toHaveCount(SECTIONS.length);
 });
@@ -64,6 +66,22 @@ for (const [name, path, level, heading] of SECTIONS) {
 		}
 	);
 }
+
+test('Organization More reveals Processes and marks it current on navigation', async ({ page }) => {
+	await page.getByTestId('organization-more-toggle').click();
+	const moreList = page.getByTestId('organization-more-list');
+	const processesLink = moreList.getByRole('link', { name: 'Processes', exact: true });
+	await expect(processesLink).toBeVisible();
+	await processesLink.click();
+	await expect(page).toHaveURL(/\/settings\/processes$/);
+	await expect(processesLink).toHaveAttribute('aria-current', 'page');
+	await expect(
+		page
+			.getByRole('main')
+			.getByRole('heading', { level: 2, name: /^Processes/ })
+			.first()
+	).toBeVisible();
+});
 
 test('an unknown section is a 404, not a blank page', async ({ page }) => {
 	await visit(page, '/nope');

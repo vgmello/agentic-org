@@ -1,0 +1,227 @@
+import { describe, expect, it, vi } from 'vitest';
+
+const untrackState = vi.hoisted(() => ({ depth: 0 }));
+
+vi.mock('svelte', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('svelte')>();
+	return {
+		...actual,
+		untrack<T>(fn: () => T): T {
+			untrackState.depth += 1;
+			try {
+				return actual.untrack(fn);
+			} finally {
+				untrackState.depth -= 1;
+			}
+		}
+	};
+});
+
+import { PersonPanelLoader } from './person-panel-loader.svelte';
+import type { PersonPanelDataSource, PersonPanelLoadedData, PersonPanelProfile } from './types';
+
+function fakeProfile(id: string, name: string): PersonPanelProfile {
+	return {
+		id,
+		name,
+		kind: 'agent',
+		kindLabel: 'Agent',
+		owner: false,
+		role: 'Platform Engineer',
+		status: 'active',
+		isSelf: false,
+		presenceLabel: 'Active',
+		presenceTone: 'ok',
+		homeTeam: { id: 'platform', name: 'Platform' },
+		profileHref: `/members/${id}`,
+		workTabHref: `/members/${id}/work`
+	};
+}
+
+describe('PersonPanelLoader', () => {
+	it('loads profile and open work while forwarding AbortSignal', async () => {
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>(
+			async (_org, memberId, signal) => {
+				expect(signal.aborted).toBe(false);
+				return {
+					profile: fakeProfile(memberId, 'Rowan'),
+					openWork: [
+						{
+							id: 't1',
+							ref: 'ORG-1',
+							title: 'Custody lock fix',
+							statusLabel: 'In progress',
+							href: '/work/ORG-1'
+						}
+					],
+					totalOpenWork: 4
+				};
+			}
+		);
+
+		const loader = new PersonPanelLoader({ loadMember });
+		const { done } = loader.load('org-1', 'rowan');
+		await done;
+
+		expect(loader.loading).toBe(false);
+		expect(loader.error).toBeUndefined();
+		expect(loader.profile?.name).toBe('Rowan');
+		expect(loader.openWork).toHaveLength(1);
+		expect(loader.totalOpenWork).toBe(4);
+		loader.dispose();
+	});
+
+	it('aborts the previous request and ignores stale responses when switching members', async () => {
+		let resolveFirst: ((value: PersonPanelLoadedData) => void) | undefined;
+		let firstSignal: AbortSignal | undefined;
+
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>((_org, memberId, signal) => {
+			if (memberId === 'rowan') {
+				firstSignal = signal;
+				return new Promise<PersonPanelLoadedData>((resolve) => {
+					resolveFirst = resolve;
+				});
+			}
+			return Promise.resolve({
+				profile: fakeProfile('maya', 'Maya Chen'),
+				openWork: [],
+				totalOpenWork: 0
+			});
+		});
+
+		const loader = new PersonPanelLoader({ loadMember });
+		const first = loader.load('org-1', 'rowan');
+		const second = loader.load('org-1', 'maya');
+		await second.done;
+
+		expect(firstSignal?.aborted).toBe(true);
+		expect(loader.profile?.name).toBe('Maya Chen');
+
+		resolveFirst?.({
+			profile: fakeProfile('rowan', 'Rowan'),
+			openWork: [],
+			totalOpenWork: 0
+		});
+		await first.done;
+
+		expect(loader.profile?.name).toBe('Maya Chen');
+		loader.dispose();
+	});
+
+	it('drops stale rejection when superseded and aborts cleanly on dispose', async () => {
+		let rejectFirst: ((err: Error) => void) | undefined;
+		let activeSignal: AbortSignal | undefined;
+
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>((_org, memberId, signal) => {
+			activeSignal = signal;
+			if (memberId === 'first') {
+				return new Promise<PersonPanelLoadedData>((_resolve, reject) => {
+					rejectFirst = reject;
+				});
+			}
+			return new Promise<PersonPanelLoadedData>(() => undefined);
+		});
+
+		const loader = new PersonPanelLoader({ loadMember });
+		const first = loader.load('org-1', 'first');
+		const second = loader.load('org-1', 'second');
+
+		rejectFirst?.(new Error('stale boom'));
+		await first.done;
+		expect(loader.error).toBeUndefined();
+
+		loader.dispose();
+		expect(activeSignal?.aborted).toBe(true);
+		expect(loader.disposed).toBe(true);
+		second.cancel();
+	});
+
+	it('cancel() aborts an in-flight retry request and drops late results while staying reusable', async () => {
+		let retrySignal: AbortSignal | undefined;
+		let resolveRetry: ((value: PersonPanelLoadedData) => void) | undefined;
+		let calls = 0;
+
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>((_org, memberId, signal) => {
+			calls += 1;
+			if (calls === 1) {
+				return Promise.reject({ source: 'api', code: 'unavailable', message: 'Gateway down' });
+			}
+			if (calls === 2) {
+				retrySignal = signal;
+				return new Promise<PersonPanelLoadedData>((resolve) => {
+					resolveRetry = resolve;
+				});
+			}
+			return Promise.resolve({
+				profile: fakeProfile(memberId, 'Recovered'),
+				openWork: [],
+				totalOpenWork: 0
+			});
+		});
+
+		const loader = new PersonPanelLoader({ loadMember });
+		await loader.load('org-1', 'rowan').done;
+		expect(loader.error).toBe('Gateway down');
+
+		const retry = loader.load('org-1', 'rowan');
+		expect(loader.loading).toBe(true);
+		expect(retrySignal?.aborted).toBe(false);
+
+		loader.cancel();
+		expect(retrySignal?.aborted).toBe(true);
+		expect(loader.loading).toBe(false);
+
+		resolveRetry?.({
+			profile: fakeProfile('rowan', 'Late Response'),
+			openWork: [],
+			totalOpenWork: 0
+		});
+		await retry.done;
+		expect(loader.profile).toBeUndefined();
+
+		await loader.load('org-1', 'rowan').done;
+		expect(loader.profile?.name).toBe('Recovered');
+		expect(loader.error).toBeUndefined();
+		loader.dispose();
+	});
+
+	it('executes loadMember strictly inside untrack() so reactive ShellData reads cannot retrigger caller effects (N1)', async () => {
+		let observedDepth = 0;
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>((_org, memberId) => {
+			observedDepth = untrackState.depth;
+			return Promise.resolve({
+				profile: fakeProfile(memberId, 'Rowan'),
+				openWork: [],
+				totalOpenWork: 0
+			});
+		});
+
+		const loader = new PersonPanelLoader({ loadMember });
+		expect(untrackState.depth).toBe(0);
+		await loader.load('org-1', 'rowan').done;
+		expect(observedDepth).toBeGreaterThan(0);
+		expect(untrackState.depth).toBe(0);
+		loader.dispose();
+	});
+
+	it('surfaces openWorkUnavailable honestly and resets it immediately on subsequent load', async () => {
+		let failWork = true;
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>(async (_org, memberId) => ({
+			profile: fakeProfile(memberId, 'Rowan'),
+			openWork: [],
+			totalOpenWork: 0,
+			openWorkUnavailable: failWork
+		}));
+
+		const loader = new PersonPanelLoader({ loadMember });
+		await loader.load('org-1', 'rowan').done;
+		expect(loader.openWorkUnavailable).toBe(true);
+
+		failWork = false;
+		const next = loader.load('org-1', 'rowan');
+		expect(loader.openWorkUnavailable).toBe(false);
+		await next.done;
+		expect(loader.openWorkUnavailable).toBe(false);
+		loader.dispose();
+	});
+});

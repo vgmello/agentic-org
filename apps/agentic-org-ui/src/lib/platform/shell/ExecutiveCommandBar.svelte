@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
-	import { afterNavigate, goto } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { Connection, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import type { Conversation } from '$lib/modules/messaging/types';
-	import ExecutiveHomeSearchBar from './ExecutiveHomeSearchBar.svelte';
 	import NewMenu, { type NewMenuAction } from './NewMenu.svelte';
 	import {
 		buildActionEntries,
@@ -18,17 +17,13 @@
 		computeCommandEntries,
 		type CommandEntry
 	} from './command-palette-entries';
-	import {
-		exitHomeSearchFocus,
-		hasBlockingOverlay,
-		isChatHashShortcut
-	} from './command-palette-shortcuts';
+	import { hasBlockingOverlay, isChatHashShortcut } from './command-palette-shortcuts';
+	import { findTessDmId, resolveMemberDmId } from './shell-chat-nav';
 	import type { ShellAiAskOptions } from '$lib/platform/workspace/shell-ai';
 	import { useShellData } from './shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
 	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import type CommandPaletteModalType from './CommandPaletteModal.svelte';
-	import type CommandPaletteResultsType from './CommandPaletteResults.svelte';
 
 	let {
 		connection,
@@ -63,24 +58,23 @@
 
 	const shellData = useShellData();
 	const organizationId = $derived(shellData.organizationId);
-	const isHome = $derived(page.url.pathname === '/home');
 	const isChat = $derived(page.url.pathname === '/chat' || page.url.pathname.startsWith('/chat/'));
 	const openInboxCount = $derived(inboxItems.filter((item) => item.state === 'open').length);
 
 	let chatConversations = $state.raw<Conversation[] | undefined>(undefined);
 	let chatConversationsOrgId = $state<string | undefined>(undefined);
 	let chatLoadSeq = 0;
+	let chatLoadAbort: AbortController | undefined;
 	let destroyed = false;
 
 	let PaletteModal = $state.raw<typeof CommandPaletteModalType | undefined>(undefined);
 	let modalRef = $state<ReturnType<typeof CommandPaletteModalType> | undefined>(undefined);
 	let modalLoading = false;
 
-	let PaletteResults = $state.raw<typeof CommandPaletteResultsType | undefined>(undefined);
-	let resultsLoading = false;
-
 	onDestroy(() => {
 		destroyed = true;
+		chatLoadAbort?.abort();
+		chatLoadAbort = undefined;
 	});
 
 	async function ensureModalLoaded() {
@@ -96,27 +90,24 @@
 		}
 	}
 
-	async function ensureResultsLoaded() {
-		if (PaletteResults || resultsLoading) return;
-		resultsLoading = true;
-		try {
-			const mod = await import('./CommandPaletteResults.svelte');
-			if (!destroyed) PaletteResults = mod.default;
-		} catch {
-			// User can retry on focus.
-		} finally {
-			resultsLoading = false;
-		}
-	}
-
 	async function loadChatConversations(targetOrgId = organizationId) {
 		if (!targetOrgId) return;
+		chatLoadAbort?.abort();
+		const controller = new AbortController();
+		chatLoadAbort = controller;
 		const seq = ++chatLoadSeq;
 		try {
 			const { chatApi } = await import('$lib/modules/messaging/api');
-			const snap = await chatApi.snapshot(targetOrgId);
-			if (destroyed || seq !== chatLoadSeq || targetOrgId !== organizationId) return;
-			if (!activeEntryId && (open || inlineOpen) && query.trim().length > 0 && safeActiveIdx >= 0) {
+			const snap = await chatApi.snapshot(targetOrgId, controller.signal);
+			if (
+				destroyed ||
+				controller.signal.aborted ||
+				seq !== chatLoadSeq ||
+				targetOrgId !== organizationId
+			) {
+				return;
+			}
+			if (!activeEntryId && open && query.trim().length > 0 && safeActiveIdx >= 0) {
 				const currentEntry = entries[safeActiveIdx];
 				if (currentEntry) activeEntryId = currentEntry.id;
 			}
@@ -124,18 +115,17 @@
 			chatConversationsOrgId = targetOrgId;
 		} catch {
 			// Unserved or offline chat falls back to snapshot-derived channel suggestions.
+		} finally {
+			if (chatLoadAbort === controller) chatLoadAbort = undefined;
 		}
 	}
 
 	let open = $state(false);
 	let modalMode = $state<'cmd' | 'ai'>('cmd');
-	let inlineOpen = $state(false);
 	let query = $state('');
 	const isChannelQuery = $derived(query.trimStart().startsWith('#'));
 	let activeIdx = $state(0);
 	let activeEntryId = $state<string | undefined>(undefined);
-	let homeInputEl = $state<HTMLInputElement | null>(null);
-	let homeShellEl = $state<HTMLDivElement | null>(null);
 	let skipRestoreFocus = $state(false);
 
 	function triggerNewAction(kind: NewMenuAction, fallbackHref?: string) {
@@ -147,7 +137,6 @@
 	}
 
 	function handoffToTess(prompt: string, opts?: ShellAiAskOptions) {
-		closeInline(true);
 		closeModal(false);
 		onAskTess?.(prompt, opts);
 	}
@@ -159,7 +148,7 @@
 	const entries = $derived.by<CommandEntry[]>(() => {
 		void offices;
 		void ownerId;
-		if (!open && !inlineOpen) return [];
+		if (!open) return [];
 		const baseList: CommandEntry[] = [
 			...buildActionEntries(triggerNewAction),
 			...buildAskTessEntries(handoffToTess),
@@ -194,14 +183,21 @@
 	const activeOptionId = $derived(
 		open && safeActiveIdx >= 0 ? `exec-cmdk-opt-${safeActiveIdx}` : undefined
 	);
-	const inlineListboxVisible = $derived(isHome && inlineOpen && entries.length > 0);
-	const inlineActiveOptionId = $derived(
-		inlineListboxVisible && safeActiveIdx >= 0 ? `exec-cmdk-home-opt-${safeActiveIdx}` : undefined
-	);
+
+	function scrollActiveIntoView(idx: number) {
+		if (!open || idx < 0) return;
+		const targetId = `exec-cmdk-opt-${idx}`;
+		void tick().then(() => {
+			if (!destroyed && open) {
+				document.getElementById(targetId)?.scrollIntoView({ block: 'nearest' });
+			}
+		});
+	}
 
 	function setActiveIndex(idx: number) {
 		activeIdx = idx;
 		activeEntryId = entries[idx]?.id;
+		scrollActiveIntoView(idx);
 	}
 
 	function resetActive() {
@@ -209,75 +205,41 @@
 		activeEntryId = undefined;
 	}
 
-	afterNavigate(() => {
-		if (inlineOpen) closeInline(true);
-	});
-
 	function resetModalState() {
 		query = '';
 		modalMode = 'cmd';
 		resetActive();
 	}
 
-	function closeInline(clearQuery = true) {
-		inlineOpen = false;
-		if (clearQuery) query = '';
-		resetActive();
-	}
-
-	function openInline() {
-		open = false;
-		inlineOpen = true;
-		resetActive();
-		void ensureResultsLoaded();
-		void loadChatConversations(organizationId);
-		void tick().then(() => homeInputEl?.focus());
-	}
-
 	export function openPalette(prefill?: string) {
+		if (offline) return;
 		if (prefill && prefill.trim().length > 0) openModalWithQuery(prefill.trim());
 		else openModal();
 	}
 
-	function isTessMember(m: NonNullable<OrgSnapshot>['members'][number]): boolean {
-		return (
-			m.name.toLowerCase().includes('tess') ||
-			m.agent?.messaging_name?.toLowerCase() === 'tess' ||
-			Boolean(m.agent?.role?.toLowerCase().includes('chief of staff'))
-		);
-	}
-
-	async function findTessDmId(orgId: string): Promise<string | undefined> {
-		try {
-			const { chatApi } = await import('$lib/modules/messaging/api');
-			const snap = await chatApi.snapshot(orgId);
-			const tessMember = (snapshot?.members ?? []).find((m) => isTessMember(m));
-			const tessDm = snap.state.conversations.find(
-				(c) =>
-					c.kind === 'dm' &&
-					!c.archived &&
-					(Boolean(tessMember && c.members.includes(tessMember.id)) ||
-						Boolean(c.name?.toLowerCase().includes('tess')))
-			);
-			return tessDm?.id;
-		} catch {
-			return undefined;
+	async function navigateToChatConversation(conversationId?: string) {
+		const base = resolve('/chat');
+		if (conversationId) {
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- base passes through resolve() while query string stays intact
+			await goto(`${base}?c=${encodeURIComponent(conversationId)}`);
+			return;
 		}
+		await goto(base);
 	}
 
 	export async function openTessChat() {
-		const tessDmId = organizationId ? await findTessDmId(organizationId) : undefined;
-		if (tessDmId) {
-			const base = resolve('/chat');
-			// eslint-disable-next-line svelte/no-navigation-without-resolve -- base passes through resolve() while query string stays intact
-			await goto(`${base}?c=${encodeURIComponent(tessDmId)}`);
-			return;
-		}
-		await goto(resolve('/chat'));
+		const tessDmId = organizationId ? await findTessDmId(organizationId, snapshot) : undefined;
+		await navigateToChatConversation(tessDmId);
+	}
+
+	export async function openMemberDm(memberId: string) {
+		const conversationId = organizationId
+			? await resolveMemberDmId(organizationId, memberId)
+			: undefined;
+		await navigateToChatConversation(conversationId);
 	}
 
 	function openModal() {
-		closeInline(false);
 		skipRestoreFocus = false;
 		open = true;
 		resetActive();
@@ -286,7 +248,6 @@
 	}
 
 	function openModalWithQuery(nextQuery: string) {
-		closeInline(false);
 		skipRestoreFocus = false;
 		query = nextQuery;
 		open = true;
@@ -302,16 +263,9 @@
 	}
 
 	function runEntry(entry: CommandEntry) {
-		if (inlineOpen) closeInline(true);
-		else closeModal(!entry.href);
+		closeModal(!entry.href);
 		if (entry.action) entry.action();
 		else if (entry.href) void goto(resolve(entry.href as '/'));
-	}
-
-	function handleWindowPointerDown(event: PointerEvent) {
-		if (!inlineOpen) return;
-		if (event.target instanceof Node && homeShellEl?.contains(event.target)) return;
-		closeInline(false);
 	}
 
 	function toggleCommandPaletteFromShortcut() {
@@ -319,13 +273,8 @@
 			closeModal();
 			return;
 		}
-		if (isHome && inlineOpen && document.activeElement === homeInputEl) {
-			closeInline(false);
-			homeInputEl?.blur();
-			return;
-		}
-		if (isHome) openInline();
-		else openModal();
+		if (offline) return;
+		openModal();
 	}
 
 	function toggleTessFromShortcut() {
@@ -334,7 +283,6 @@
 			modalRef?.focusInput();
 			return;
 		}
-		if (inlineOpen) closeInline(false);
 		onToggleTess?.();
 	}
 
@@ -354,7 +302,6 @@
 		if (event.shiftKey && (lower === 'e' || lower === 'm')) {
 			event.preventDefault();
 			if (open) closeModal(false);
-			if (inlineOpen) closeInline(false);
 			onToggleTessExpand?.();
 			return true;
 		}
@@ -364,19 +311,18 @@
 	function handleSingleKeyShortcut(event: KeyboardEvent) {
 		if (isChatHashShortcut(event, isChat)) {
 			event.preventDefault();
-			openModalWithQuery('#');
+			if (!offline) openModalWithQuery('#');
 			return;
 		}
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
-		if (!inlineOpen && connection && event.key.toLowerCase() === 'n') {
+		if (connection && event.key.toLowerCase() === 'n') {
 			event.preventDefault();
 			newMenu?.openMenu();
 			return;
 		}
 		if (event.key === '/' && !event.shiftKey) {
 			event.preventDefault();
-			if (isHome) openInline();
-			else openModal();
+			if (!offline) openModal();
 		}
 	}
 
@@ -395,34 +341,9 @@
 		handleSingleKeyShortcut(event);
 	}
 
-	$effect(() => {
-		if (!open && !inlineListboxVisible) return;
-		if (entries.length === 0 || safeActiveIdx < 0) return;
-		void query;
-		const targetId = inlineListboxVisible
-			? `exec-cmdk-home-opt-${safeActiveIdx}`
-			: `exec-cmdk-opt-${safeActiveIdx}`;
-		let cancelled = false;
-		void tick().then(() => {
-			if (!cancelled) {
-				document.getElementById(targetId)?.scrollIntoView({ block: 'nearest' });
-			}
-		});
-		return () => {
-			cancelled = true;
-		};
-	});
-
 	function stepActiveIndex(delta: 1 | -1) {
-		const defaultIdx = delta === 1 ? 0 : entries.length - 1;
-		if (isHome && !open && !inlineOpen) {
-			inlineOpen = true;
-			void ensureResultsLoaded();
-			if (entries.length > 0) setActiveIndex(defaultIdx);
-			else resetActive();
-			return;
-		}
 		if (entries.length === 0) return;
+		const defaultIdx = delta === 1 ? 0 : entries.length - 1;
 		const next =
 			safeActiveIdx < 0 ? defaultIdx : (safeActiveIdx + delta + entries.length) % entries.length;
 		setActiveIndex(next);
@@ -437,37 +358,19 @@
 			}
 			return;
 		}
-		const canRun = open || (isHome && !open && inlineOpen);
-		if (canRun && safeActiveIdx >= 0 && entries[safeActiveIdx]) {
+		if (open && safeActiveIdx >= 0 && entries[safeActiveIdx]) {
 			event.preventDefault();
 			runEntry(entries[safeActiveIdx]);
 		}
 	}
 
-	function handleInlineEscape(event: KeyboardEvent) {
-		event.preventDefault();
-		event.stopPropagation();
-		if (inlineOpen) {
-			closeInline(false);
-			if (query.length === 0) exitHomeSearchFocus(homeInputEl);
-			return;
-		}
-		exitHomeSearchFocus(homeInputEl);
-	}
-
 	function handleInputKeydown(event: KeyboardEvent) {
 		if (event.isComposing || event.keyCode === 229) return;
-		if (event.key === 'Tab' && isHome && !open && inlineOpen) {
-			inlineOpen = false;
-			return;
-		}
 		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 			event.preventDefault();
 			stepActiveIndex(event.key === 'ArrowDown' ? 1 : -1);
 		} else if (event.key === 'Enter') {
 			handleEnterKey(event);
-		} else if (event.key === 'Escape' && isHome && !open) {
-			handleInlineEscape(event);
 		}
 	}
 
@@ -478,39 +381,8 @@
 	}
 </script>
 
-<svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
+<svelte:window onkeydown={handleWindowKeydown} />
 
-{#if isHome}
-	<ExecutiveHomeSearchBar
-		bind:query
-		bind:homeInputEl
-		bind:homeShellEl
-		{inlineOpen}
-		{inlineListboxVisible}
-		{inlineActiveOptionId}
-		{isChannelQuery}
-		{entries}
-		{safeActiveIdx}
-		{offline}
-		{PaletteResults}
-		onFocusSearch={() => {
-			inlineOpen = true;
-			resetActive();
-			void ensureResultsLoaded();
-			void loadChatConversations(organizationId);
-		}}
-		onInputSearch={(value) => {
-			inlineOpen = true;
-			resetActive();
-			void ensureResultsLoaded();
-			if (value.trimStart().startsWith('#')) handleHashQueryTyped();
-		}}
-		onInputKeydown={handleInputKeydown}
-		onSelectIndex={setActiveIndex}
-		onRunEntry={runEntry}
-		onAskTess={handoffToTess}
-	/>
-{/if}
 {#if connection}
 	<NewMenu bind:this={newMenu} {connection} headless />
 {/if}

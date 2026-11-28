@@ -52,6 +52,10 @@ export const DEFAULT_ACCESS: AccessView = Object.freeze({
  */
 export const SIGN_OUT_ENDED: ReadonlySet<number> = new Set([401]);
 
+export type SessionSendRequest = { path: string; signal?: AbortSignal } & (
+	{ method: 'GET' } | { method: 'POST' | 'PATCH'; body: unknown }
+);
+
 export const sameAccount = (a: SessionRecord, b: SessionRecord) =>
 	a.instance_id === b.instance_id && a.account_id === b.account_id;
 

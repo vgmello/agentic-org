@@ -55,7 +55,7 @@ Enforced via real TypeScript + Svelte AST import parsing across tracked and untr
 
 ## 4. Security, Auth, CSP & Built-in Agent Immutability
 
-- **Single auth & SSE choke-point (enforced by `eslint.config.js`):** All authenticated HTTP & SSE calls go through `appSession.controller()` (`read`, `submit`, `subscribeEvents`, `openSseStream`). Raw `fetch`, `window`/`globalThis`/`self.fetch`, destructured `fetch`, `EventSource`, `'X-Org-Session-Proof'` literals, and `SESSION_PROOF_HEADER` imports are banned outside `session-controller.ts`, `events.ts`, `json-http.ts`, and `wire.ts`.
+- **Single auth & SSE choke-point (enforced by `eslint.config.js`):** All authenticated HTTP & SSE calls go through `appSession.controller()` (`read`, `submit`, `subscribeEvents`, `openSseStream`). Raw `fetch`, `window`/`globalThis`/`self.fetch`, destructured `fetch`, `EventSource`, `'X-Org-Session-Proof'` literals, and `SESSION_PROOF_HEADER` imports are banned outside `session-controller.ts`, `session-binary.ts`, `events.ts`, `json-http.ts`, and `wire.ts`.
 - **Zero raw DOM HTML sinks (enforced by `eslint.config.js`):** Zero `{@html ...}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval`, or `new Function()`.
 - **Single safe-URL helper:** Validate every server-supplied or query-derived navigation target through `$lib/platform/http/safe-url` (`safeInternalPath` / `splitSafeHref`) or `$lib/platform/auth/return-target` (`safeReturnTarget`). Every `eslint-disable-next-line svelte/no-navigation-without-resolve` must route its pathname through `resolve()` and carry `-- <reason>`.
 - **Links & buttons (enforced by `eslint.config.js`):** `svelte/no-target-blank` and `svelte/button-has-type` are errors.

@@ -98,11 +98,17 @@ export function createChatMessageActions(deps: ChatActionDeps) {
 
 	async function submit(
 		text: string,
-		options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean },
+		options: {
+			alsoInChannel: boolean;
+			attachments: string[];
+			attachmentIds?: string[];
+			attachmentMeta?: ChatMessage['attachment_meta'];
+			asMessage?: boolean;
+		},
 		c: Conversation,
 		thread?: string
 	): Promise<boolean> {
-		const slash = options.asMessage ? undefined : parseSlash(text);
+		const slash = options.asMessage || text.trim() === '' ? undefined : parseSlash(text);
 		if (slash) {
 			if (!slash.ok) {
 				toast.error(slash.message);
@@ -118,6 +124,8 @@ export function createChatMessageActions(deps: ChatActionDeps) {
 			also_in_channel: thread && options.alsoInChannel ? true : undefined,
 			body: text.trim(),
 			attachments: options.attachments,
+			attachment_ids: options.attachmentIds?.length ? options.attachmentIds : undefined,
+			attachment_meta: options.attachmentMeta?.length ? options.attachmentMeta : undefined,
 			status: 'sending'
 		});
 		void deliver(pushed);
@@ -154,7 +162,12 @@ export function createChatMessageActions(deps: ChatActionDeps) {
 
 	async function answer(
 		m: ChatMessage,
-		a: { option_id?: string; text?: string; answers?: QuestionAnswer[] }
+		a: {
+			option_id?: string;
+			text?: string;
+			answers?: QuestionAnswer[];
+			attachment_ids?: readonly string[];
+		}
 	) {
 		const origin = document.activeElement;
 		const area = origin?.closest('[data-focus-scope]');

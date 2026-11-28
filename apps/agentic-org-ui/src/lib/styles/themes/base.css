@@ -536,14 +536,12 @@
 @media (prefers-reduced-motion: reduce) {
 	.exec-cta,
 	.exec-cta .exec-cta-fill,
-	.exec-cta .exec-cta-sheen,
-	.exec-cmdk-bar {
+	.exec-cta .exec-cta-sheen {
 		transition: none !important;
 	}
 	.exec-cta:hover,
 	.exec-cta:focus-visible,
-	.exec-cta:active,
-	.exec-cmdk-bar:hover {
+	.exec-cta:active {
 		transform: none !important;
 	}
 	[data-slot='dialog-content'],

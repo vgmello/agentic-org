@@ -168,7 +168,8 @@ export async function deliverPendingMessage(input: {
 			also_in_channel: p.also_in_channel,
 			kind: 'msg',
 			body: p.body,
-			attachments: p.attachments.length ? p.attachments : undefined
+			attachments: p.attachments.length ? p.attachments : undefined,
+			attachment_ids: p.attachment_ids?.length ? p.attachment_ids : undefined
 		} satisfies ChatCall);
 		deliveredId = accepted.id;
 		input.removePending(p.key);

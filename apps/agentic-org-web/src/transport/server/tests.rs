@@ -696,7 +696,7 @@ fn https_static_html_sends_the_full_policy_and_hsts_only_for_its_authority() {
     use crate::{assets::BuildFiles, Hsts, StaticUi};
     use std::collections::BTreeMap;
 
-    const CSP: &str = "default-src 'none'; script-src 'self' 'sha256-X+zrZv/IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V+k='; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests";
+    const CSP: &str = "default-src 'none'; script-src 'self' 'sha256-X+zrZv/IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V+k='; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests";
     let html = b"<!doctype html><script>0</script>";
     let length = html.len().to_string();
     let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());

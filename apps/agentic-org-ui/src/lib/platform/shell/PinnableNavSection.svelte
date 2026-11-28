@@ -1,62 +1,63 @@
-<script lang="ts">
+<!--
+  @component
+  Shared pinnable & reorderable sidebar navigation section (used by Workspace and Organization).
+  Supports drag-and-drop and Alt+ArrowUp/ArrowDown reordering, pin/unpin focus restoration,
+  WCAG 1.4.13 tooltips, and a compact rail More dropdown so unpinned items stay reachable in
+  collapsed and 200%-text icon-rail modes.
+-->
+<script lang="ts" generics="TId extends string">
 	import { tick } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { Tooltip, mergeProps } from 'bits-ui';
-	import Activity from '@lucide/svelte/icons/activity';
-	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
-	import Folder from '@lucide/svelte/icons/folder';
-	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Minus from '@lucide/svelte/icons/minus';
 	import Plus from '@lucide/svelte/icons/plus';
-	import {
-		WORKSPACE_NAV_IDS,
-		uiPrefs,
-		type WorkspaceNavId
-	} from '$lib/platform/workspace/ui-preferences.svelte';
-
-	interface WorkspaceNavMeta {
-		id: WorkspaceNavId;
-		href: '/work' | '/chat' | '/activity' | '/projects' | '/insights';
-		label: string;
-		Icon: typeof ClipboardList;
-	}
-
-	const WORKSPACE_META: Record<WorkspaceNavId, WorkspaceNavMeta> = {
-		work: { id: 'work', href: '/work', label: 'Work', Icon: ClipboardList },
-		chat: { id: 'chat', href: '/chat', label: 'Chat', Icon: MessageSquare },
-		activity: { id: 'activity', href: '/activity', label: 'Activity', Icon: Activity },
-		projects: { id: 'projects', href: '/projects', label: 'Projects', Icon: Folder },
-		insights: { id: 'insights', href: '/insights', label: 'Insights', Icon: BarChart3 }
-	};
+	import { tooltipContentClass } from '$lib/components/classes';
+	import PinnableNavRailMoreMenu from './PinnableNavRailMoreMenu.svelte';
+	import type { PinnableNavItem, PinnableNavSectionConfig } from './sidebar-nav-items';
+	import { tooltipLinkProps } from './tooltip-link-props';
 
 	let {
+		config,
+		pinnedIds,
 		collapsed = false,
-		isActive,
+		isItemActive,
+		onMoveItem,
+		onTogglePin,
 		onNavigate
 	}: {
+		config: PinnableNavSectionConfig<TId>;
+		pinnedIds: readonly TId[];
 		collapsed?: boolean;
-		isActive: (href: string) => boolean;
+		isItemActive: (item: PinnableNavItem<TId>) => boolean;
+		onMoveItem: (id: TId, beforeId: TId | null, zone: 'pinned' | 'more') => void;
+		onTogglePin: (id: TId) => void;
 		onNavigate?: (event: MouseEvent, href: string) => void;
 	} = $props();
 
-	let draggingId = $state<WorkspaceNavId | null>(null);
-	let dropHint = $state<{ id: WorkspaceNavId; edge: 'before' | 'after' } | null>(null);
+	let draggingId = $state<TId | null>(null);
+	let dropHint = $state<{ id: TId; edge: 'before' | 'after' } | null>(null);
 	let moreDropActive = $state(false);
 	let moreUserOpen = $state<boolean | null>(null);
 	let liveAnnouncement = $state('');
+	const uid = $props.id();
+	const moreListId = `${uid}-more`;
 	let navListEl = $state<HTMLUListElement | null>(null);
 
-	const pinnedItems = $derived(uiPrefs.workspaceNav.map((id) => WORKSPACE_META[id]));
+	const pinnedItems = $derived(pinnedIds.map((id) => config.meta[id]));
 	const moreItems = $derived(
-		WORKSPACE_NAV_IDS.filter((id) => !uiPrefs.workspaceNav.includes(id)).map(
-			(id) => WORKSPACE_META[id]
-		)
+		config.allIds.filter((id) => !pinnedIds.includes(id)).map((id) => config.meta[id])
 	);
-	const anyMoreActive = $derived(moreItems.some((item) => isActive(item.href)));
+	const anyMoreActive = $derived(moreItems.some((item) => isItemActive(item)));
 	const moreOpen = $derived(moreUserOpen ?? anyMoreActive);
+
+	function zoneAttrs(zone: 'pinned' | 'more', key?: TId): Record<string, string> {
+		if (config.zoneKind === 'ws') {
+			return key ? { 'data-ws-zone': zone, 'data-ws-key': key } : { 'data-ws-zone': zone };
+		}
+		return key ? { 'data-org-zone': zone, 'data-org-key': key } : { 'data-org-zone': zone };
+	}
 
 	function announce(text: string) {
 		liveAnnouncement = '';
@@ -65,21 +66,21 @@
 		});
 	}
 
-	function focusItem(id: WorkspaceNavId) {
+	function focusItem(id: TId) {
 		void tick().then(() => {
 			navListEl
-				?.querySelector<HTMLAnchorElement>(`[data-ws-link="${id}"]`)
+				?.querySelector<HTMLAnchorElement>(`[data-nav-link="${id}"]`)
 				?.focus({ preventScroll: true });
 		});
 	}
 
-	function handleDragStart(event: DragEvent, id: WorkspaceNavId) {
+	function handleDragStart(event: DragEvent, id: TId) {
 		draggingId = id;
 		event.dataTransfer?.setData('text/plain', id);
 		if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
 	}
 
-	function handleItemDragOver(event: DragEvent, targetId: WorkspaceNavId, zone: 'pinned' | 'more') {
+	function handleItemDragOver(event: DragEvent, targetId: TId, zone: 'pinned' | 'more') {
 		if (!draggingId || draggingId === targetId) return;
 		event.preventDefault();
 		if (zone === 'more') {
@@ -93,7 +94,7 @@
 		dropHint = { id: targetId, edge };
 	}
 
-	function handleItemDrop(event: DragEvent, targetId: WorkspaceNavId, zone: 'pinned' | 'more') {
+	function handleItemDrop(event: DragEvent, targetId: TId, zone: 'pinned' | 'more') {
 		if (!draggingId) return;
 		event.preventDefault();
 		const movedId = draggingId;
@@ -102,22 +103,20 @@
 		dropHint = null;
 		moreDropActive = false;
 		if (zone === 'more') {
-			const wasPinned = uiPrefs.workspaceNav.includes(movedId);
-			if (!wasPinned || uiPrefs.workspaceNav.length <= 1) return;
-			uiPrefs.moveWorkspaceItem(movedId, null, 'more');
-			announce(`Moved ${WORKSPACE_META[movedId].label} to More.`);
+			if (!pinnedIds.includes(movedId) || pinnedIds.length <= 1) return;
+			onMoveItem(movedId, null, 'more');
+			announce(`Moved ${config.meta[movedId].label} to More.`);
 			return;
 		}
-		let beforeId: WorkspaceNavId | null = targetId;
+		let beforeId: TId | null = targetId;
 		if (hint?.id === targetId && hint.edge === 'after') {
-			const idx = uiPrefs.workspaceNav.indexOf(targetId);
-			beforeId =
-				idx >= 0 && idx + 1 < uiPrefs.workspaceNav.length ? uiPrefs.workspaceNav[idx + 1] : null;
+			const idx = pinnedIds.indexOf(targetId);
+			beforeId = idx >= 0 && idx + 1 < pinnedIds.length ? pinnedIds[idx + 1] : null;
 		}
 		if (beforeId === movedId) return;
-		uiPrefs.moveWorkspaceItem(movedId, beforeId, 'pinned');
-		const pos = uiPrefs.workspaceNav.indexOf(movedId) + 1;
-		announce(`Moved ${WORKSPACE_META[movedId].label} to position ${pos} in Workspace.`);
+		onMoveItem(movedId, beforeId, 'pinned');
+		const pos = pinnedIds.indexOf(movedId) + 1;
+		announce(`Moved ${config.meta[movedId].label} to position ${pos} in ${config.sectionLabel}.`);
 		focusItem(movedId);
 	}
 
@@ -128,10 +127,9 @@
 		draggingId = null;
 		dropHint = null;
 		moreDropActive = false;
-		const wasPinned = uiPrefs.workspaceNav.includes(movedId);
-		if (!wasPinned || uiPrefs.workspaceNav.length <= 1) return;
-		uiPrefs.moveWorkspaceItem(movedId, null, 'more');
-		announce(`Moved ${WORKSPACE_META[movedId].label} to More.`);
+		if (!pinnedIds.includes(movedId) || pinnedIds.length <= 1) return;
+		onMoveItem(movedId, null, 'more');
+		announce(`Moved ${config.meta[movedId].label} to More.`);
 	}
 
 	function clearDrag() {
@@ -140,54 +138,60 @@
 		moreDropActive = false;
 	}
 
-	function handleItemKeydown(event: KeyboardEvent, id: WorkspaceNavId, zone: 'pinned' | 'more') {
+	function handleItemKeydown(event: KeyboardEvent, id: TId, zone: 'pinned' | 'more') {
 		if (!event.altKey || zone !== 'pinned') return;
 		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-		const idx = uiPrefs.workspaceNav.indexOf(id);
+		const idx = pinnedIds.indexOf(id);
 		const nextIdx = event.key === 'ArrowUp' ? idx - 1 : idx + 1;
-		if (idx < 0 || nextIdx < 0 || nextIdx >= uiPrefs.workspaceNav.length) return;
+		if (idx < 0 || nextIdx < 0 || nextIdx >= pinnedIds.length) return;
 		event.preventDefault();
 		const beforeId =
-			event.key === 'ArrowUp'
-				? uiPrefs.workspaceNav[nextIdx]
-				: (uiPrefs.workspaceNav[nextIdx + 1] ?? null);
-		uiPrefs.moveWorkspaceItem(id, beforeId, 'pinned');
-		announce(
-			`Moved ${WORKSPACE_META[id].label} to position ${nextIdx + 1} of ${uiPrefs.workspaceNav.length}.`
-		);
+			event.key === 'ArrowUp' ? pinnedIds[nextIdx] : (pinnedIds[nextIdx + 1] ?? null);
+		onMoveItem(id, beforeId, 'pinned');
+		announce(`Moved ${config.meta[id].label} to position ${nextIdx + 1} of ${pinnedIds.length}.`);
 		focusItem(id);
 	}
 
-	function handleTogglePin(item: WorkspaceNavMeta, pinned: boolean) {
-		if (pinned && uiPrefs.workspaceNav.length <= 1) return;
-		uiPrefs.toggleWorkspacePin(item.id);
-		announce(pinned ? `Moved ${item.label} to More.` : `Pinned ${item.label} to Workspace.`);
+	function handleTogglePin(item: PinnableNavItem<TId>, pinned: boolean) {
+		if (pinned && pinnedIds.length <= 1) return;
+		onTogglePin(item.id);
+		announce(
+			pinned ? `Moved ${item.label} to More.` : `Pinned ${item.label} to ${config.sectionLabel}.`
+		);
+		if (pinned) {
+			void tick().then(() => {
+				navListEl
+					?.querySelector<HTMLElement>(`[data-testid="${config.moreToggleTestId}"]`)
+					?.focus();
+			});
+		} else {
+			focusItem(item.id);
+		}
 	}
 </script>
 
-<div class={collapsed ? 'w-full' : undefined} data-testid="workspace-nav-section">
+<div class={collapsed ? 'w-full' : undefined} data-testid={config.sectionTestId}>
 	{#if !collapsed}
-		<div class="exec-nav-label px-2.5 pb-1.5">Workspace</div>
+		<div class="exec-nav-label px-2.5 pb-1.5">{config.sectionLabel}</div>
 	{/if}
 	<p class="sr-only" aria-live="polite" aria-atomic="true">{liveAnnouncement}</p>
 	<ul
 		bind:this={navListEl}
 		class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}
-		data-ws-zone="pinned"
+		{...zoneAttrs('pinned')}
 	>
 		{#each pinnedItems as item (item.id)}
 			{@const NavIcon = item.Icon}
-			{@const active = isActive(item.href)}
+			{@const active = isItemActive(item)}
 			<li
 				draggable={!collapsed}
-				data-ws-key={item.id}
-				data-ws-zone="pinned"
+				{...zoneAttrs('pinned', item.id)}
 				ondragstart={(e) => handleDragStart(e, item.id)}
 				ondragover={(e) => handleItemDragOver(e, item.id, 'pinned')}
 				ondrop={(e) => handleItemDrop(e, item.id, 'pinned')}
 				ondragend={clearDrag}
 				class={[
-					'ws-nav-row group relative flex items-center gap-0.5',
+					'pin-nav-row group relative flex items-center gap-0.5',
 					collapsed && 'justify-center',
 					draggingId === item.id && 'opacity-50',
 					dropHint?.id === item.id && dropHint.edge === 'before' && 'is-drop-before',
@@ -198,11 +202,11 @@
 					<Tooltip.Trigger>
 						{#snippet child({ props })}
 							<a
-								{...mergeProps(props, {
+								{...mergeProps(tooltipLinkProps(props), {
 									onclick: (e: MouseEvent) => onNavigate?.(e, item.href),
 									onkeydown: (e: KeyboardEvent) => handleItemKeydown(e, item.id, 'pinned')
 								})}
-								data-ws-link={item.id}
+								data-nav-link={item.id}
 								href={resolve(item.href)}
 								aria-current={active ? 'page' : undefined}
 								title={collapsed ? undefined : `${item.label} (drag or Alt+↑/↓ to reorder)`}
@@ -218,10 +222,7 @@
 						{/snippet}
 					</Tooltip.Trigger>
 					<Tooltip.Portal>
-						<Tooltip.Content
-							side="right"
-							sideOffset={6}
-							class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+						<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
 							>{item.label}</Tooltip.Content
 						>
 					</Tooltip.Portal>
@@ -236,7 +237,7 @@
 									})}
 									type="button"
 									aria-label="Move {item.label} to More"
-									class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100"
+									class="pin-action-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100 [@media(width<=720px)]:size-11"
 								>
 									<Minus class="size-3.5" aria-hidden="true" />
 								</button>
@@ -244,10 +245,10 @@
 						</Tooltip.Trigger>
 						<Tooltip.Portal>
 							<Tooltip.Content
+								role="tooltip"
 								side="right"
 								sideOffset={6}
-								class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-								>Move to More</Tooltip.Content
+								class={tooltipContentClass}>Move to More</Tooltip.Content
 							>
 						</Tooltip.Portal>
 					</Tooltip.Root>
@@ -255,7 +256,15 @@
 			</li>
 		{/each}
 
-		{#if moreItems.length > 0 && !collapsed}
+		{#if moreItems.length > 0 && collapsed}
+			<PinnableNavRailMoreMenu
+				items={moreItems}
+				ariaLabel={config.moreListAriaLabel}
+				testId="{config.moreToggleTestId}-rail"
+				active={anyMoreActive}
+				{isItemActive}
+			/>
+		{:else if moreItems.length > 0}
 			<li
 				class={['mt-0.5', moreDropActive && 'is-more-drop']}
 				ondragover={(e) => {
@@ -271,8 +280,8 @@
 					type="button"
 					onclick={() => (moreUserOpen = !moreOpen)}
 					aria-expanded={moreOpen}
-					aria-controls="exec-nav-more-list"
-					data-testid="workspace-more-toggle"
+					aria-controls={moreListId}
+					data-testid={config.moreToggleTestId}
 					class="exec-nav-item w-full"
 				>
 					<Ellipsis class="size-[18px] shrink-0" aria-hidden="true" />
@@ -287,18 +296,18 @@
 				</button>
 				{#if moreOpen}
 					<ul
-						id="exec-nav-more-list"
+						id={moreListId}
+						data-testid={config.moreListTestId}
 						class="mt-0.5 flex flex-col gap-0.5 pl-3"
-						aria-label="More workspace items"
-						data-ws-zone="more"
+						aria-label={config.moreListAriaLabel}
+						{...zoneAttrs('more')}
 					>
 						{#each moreItems as item (item.id)}
 							{@const MoreIcon = item.Icon}
-							{@const active = isActive(item.href)}
+							{@const active = isItemActive(item)}
 							<li
 								draggable="true"
-								data-ws-key={item.id}
-								data-ws-zone="more"
+								{...zoneAttrs('more', item.id)}
 								ondragstart={(e) => handleDragStart(e, item.id)}
 								ondragover={(e) => handleItemDragOver(e, item.id, 'more')}
 								ondrop={(e) => handleItemDrop(e, item.id, 'more')}
@@ -306,7 +315,7 @@
 								class="group flex items-center gap-0.5"
 							>
 								<a
-									data-ws-link={item.id}
+									data-nav-link={item.id}
 									href={resolve(item.href)}
 									onclick={(e) => onNavigate?.(e, item.href)}
 									aria-current={active ? 'page' : undefined}
@@ -323,8 +332,8 @@
 													onclick: () => handleTogglePin(item, false)
 												})}
 												type="button"
-												aria-label="Pin {item.label} to Workspace"
-												class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100"
+												aria-label="Pin {item.label} to {config.sectionLabel}"
+												class="pin-action-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100 [@media(width<=720px)]:size-11"
 											>
 												<Plus class="size-3.5" aria-hidden="true" />
 											</button>
@@ -332,10 +341,10 @@
 									</Tooltip.Trigger>
 									<Tooltip.Portal>
 										<Tooltip.Content
+											role="tooltip"
 											side="right"
 											sideOffset={6}
-											class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-											>Pin to Workspace</Tooltip.Content
+											class={tooltipContentClass}>Pin to {config.sectionLabel}</Tooltip.Content
 										>
 									</Tooltip.Portal>
 								</Tooltip.Root>
@@ -394,15 +403,15 @@
 	.exec-nav-item.is-active :global(svg) {
 		color: var(--exec-accent-ink);
 	}
-	.ws-pin-btn {
+	.pin-action-btn {
 		color: var(--exec-muted);
 	}
-	.ws-pin-btn:hover {
+	.pin-action-btn:hover {
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
 	}
-	.ws-nav-row.is-drop-before::before,
-	.ws-nav-row.is-drop-after::after {
+	.pin-nav-row.is-drop-before::before,
+	.pin-nav-row.is-drop-after::after {
 		content: '';
 		position: absolute;
 		inset-inline: 8px;
@@ -411,10 +420,10 @@
 		background: var(--exec-accent-ink);
 		pointer-events: none;
 	}
-	.ws-nav-row.is-drop-before::before {
+	.pin-nav-row.is-drop-before::before {
 		top: -1px;
 	}
-	.ws-nav-row.is-drop-after::after {
+	.pin-nav-row.is-drop-after::after {
 		bottom: -1px;
 	}
 	.is-more-drop {
@@ -423,7 +432,7 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.exec-nav-item,
-		.ws-pin-btn {
+		.pin-action-btn {
 			transition: none;
 		}
 	}

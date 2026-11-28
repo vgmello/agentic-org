@@ -1,10 +1,11 @@
 <!--
   @component
-  The header of a page or a detail view: one heading, an optional real count, optional description, the
-  page's actions on the right (at most one primary) and, on a detail page, one named back link above the
-  heading instead of a breadcrumb (app-shell-ux §6a).
+  The header of a page or a detail view: "Title | subtitle" inline on desktop with a 1px x 18px
+  shared-divider separator (Prototype Release c773480f1), wrapping cleanly on narrow screens,
+  plus an optional real count, right-aligned actions (at most one primary) and, on a detail page,
+  one named back link above the heading instead of a breadcrumb (app-shell-ux §6a).
 
-  The shell's top bar holds the page's `h1` (the area name), so a page header is an `h2` by default.
+  Default heading level is `h2` (pass `level={1}` on standalone routes that own the page's primary `h1`).
   Usage:
     <PageHeader title="Members" count={12} countLabel="members" description="People and agents.">
       {#snippet actions()}<Button variant="outline">Add a person</Button>{/snippet}
@@ -56,13 +57,13 @@
 			>{back.label}</a
 		>
 	{/if}
-	<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
-		<div class="min-w-0 flex-1 basis-64">
+	<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
+		<div class="ph-title-row min-w-0 flex-1 basis-64">
 			<svelte:element
 				this={level === 1 ? 'h1' : 'h2'}
 				{id}
 				tabindex="-1"
-				class="flex flex-wrap items-baseline gap-x-2.5 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
+				class="flex max-w-full shrink-0 flex-wrap items-baseline gap-x-2.5 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
 			>
 				{title}
 				{#if count !== undefined}
@@ -73,19 +74,73 @@
 					>
 				{/if}
 			</svelte:element>
-			{#if typeof description === 'string'}
-				<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{description}</p>
-			{:else if description}
-				<div class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{@render description()}</div>
+			{#if description}
+				<span class="ph-sep" aria-hidden="true"></span>
+				{#if typeof description === 'string'}
+					<p class="ph-sub max-w-3xl text-sm/6 text-fg-muted">{description}</p>
+				{:else}
+					<div class="ph-sub max-w-3xl text-sm/6 text-fg-muted">{@render description()}</div>
+				{/if}
 			{/if}
 		</div>
 		{#if actions || (showSearch && shellCommand)}
-			<div class="flex flex-wrap items-center justify-end gap-3">
+			<div class="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-3">
 				{#if actions}{@render actions()}{/if}
 				{#if showSearch && shellCommand}
-					<InteriorSearchBar class="w-full sm:w-[clamp(18rem,28vw,25rem)]" />
+					<InteriorSearchBar class="w-full max-w-full sm:w-[clamp(18rem,28vw,25rem)]" />
 				{/if}
 			</div>
 		{/if}
 	</div>
 </header>
+
+<style>
+	.page-header-lit {
+		container-type: inline-size;
+	}
+	.ph-title-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px 12px;
+	}
+	.ph-sep {
+		display: inline-block;
+		flex: none;
+		align-self: center;
+		width: 1px;
+		height: 18px;
+		background: var(--toolbar-divider-color, var(--line));
+	}
+	.ph-sub {
+		flex: 1 1 16rem;
+		margin: 0;
+		min-width: 0;
+	}
+	@media (max-width: 639px) {
+		.ph-title-row {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 4px;
+		}
+		.ph-sep {
+			display: none;
+		}
+		.ph-sub {
+			flex: none;
+		}
+	}
+	@container (max-width: 30rem) {
+		.ph-title-row {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 4px;
+		}
+		.ph-sep {
+			display: none;
+		}
+		.ph-sub {
+			flex: none;
+		}
+	}
+</style>

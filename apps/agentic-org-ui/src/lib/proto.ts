@@ -123,6 +123,8 @@ export const API_ERROR_CODES = [
 	'not_bound',
 	'too_large',
 	'checklist_incomplete',
+	'rate_limited',
+	'timeout',
 	// The protocol has the call; this office does not serve it yet. Not temporary: unlike
 	// `unavailable`, a retry against the same build answers the same.
 	'unsupported',

@@ -18,6 +18,11 @@ import {
 	unwrapChatReply,
 	type DirectoryEntry
 } from './http-wire';
+import {
+	attachmentFilterFields,
+	attachmentIdsField,
+	type MessageAttachmentFilter
+} from './http-wire-attachments';
 
 export interface CacheState {
 	reactions: Map<string, Partial<Record<Reaction, string[]>>>;
@@ -82,7 +87,8 @@ async function dispatchAsk(
 			...optField('addressed_to', call.addressed_to),
 			...optField('required', call.required),
 			...optField('blocks', call.blocks),
-			...optField('approval', call.approval)
+			...optField('approval', call.approval),
+			...attachmentIdsField(call.attachment_ids)
 		},
 		'The ask could not be sent.'
 	);
@@ -113,13 +119,33 @@ async function dispatchOrdinaryMessage(
 			...optField('reply_to', call.thread_root_id ?? call.reply_to),
 			...optField('also_in_channel', call.also_in_channel || undefined),
 			...optField('reason', call.reason),
-			...optField('meta', Object.keys(meta).length ? meta : undefined)
+			...optField('meta', Object.keys(meta).length ? meta : undefined),
+			...attachmentIdsField(call.attachment_ids)
 		},
 		'The message could not be sent.'
 	);
 	return {
 		id: asStr(res.id) ?? call.change_id,
 		conversation_id: asStr(res.conversation_id) ?? call.conversation_id
+	};
+}
+
+export function buildMessageListBody(
+	conversation: string,
+	limit = 100,
+	filter?: MessageAttachmentFilter
+): Rec {
+	return { conversation, limit, ...attachmentFilterFields(filter) };
+}
+
+export function buildChatInboxBody(
+	params: { include_all?: boolean; limit?: number; cursor?: number } & MessageAttachmentFilter = {}
+): Rec {
+	return {
+		...optField('include_all', params.include_all || undefined),
+		...optField('limit', params.limit),
+		...optField('cursor', params.cursor),
+		...attachmentFilterFields(params)
 	};
 }
 
@@ -141,11 +167,29 @@ export const CALL_HANDLERS: Partial<{ [M in ChatCall['method']]: CallHandler<M> 
 				ask_id: call.ask_id,
 				...optField('answers', call.answers),
 				...optField('option_id', call.option_id),
-				...optField('text', call.text)
+				...optField('text', call.text),
+				...attachmentIdsField(call.attachment_ids)
 			},
 			'The answer could not be recorded.'
 		);
 		return { id: asStr(res.ask_id) ?? call.ask_id, conversation_id: asStr(res.conversation_id) };
+	},
+	'msg.reply': async ({ base, http }, call) => {
+		const res = await safeSubmit(
+			http,
+			`${base}/reply`,
+			{
+				id: call.change_id,
+				to_id: call.to_id,
+				body: call.body,
+				...attachmentIdsField(call.attachment_ids)
+			},
+			'The reply could not be sent.'
+		);
+		return {
+			id: asStr(res.id) ?? call.change_id,
+			conversation_id: asStr(res.conversation_id)
+		};
 	},
 	'chat.withdraw': async ({ base, http }, call) => {
 		const res = await safeSubmit(

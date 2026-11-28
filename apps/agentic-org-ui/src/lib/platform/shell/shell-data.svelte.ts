@@ -1,7 +1,13 @@
 import { untrack } from 'svelte';
-import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import type { OfficeInfo, OrgSnapshot, ProjectTeam, WorkItemSummary } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/platform/workspace/inbox-types';
+import {
+	mergeProjectHealthOverlayMap,
+	stripVolatileOverlayMap,
+	type ProjectHealthOverlay,
+	type ProjectHealthOverlayUpdateOptions
+} from '$lib/platform/workspace/project-health';
 import {
 	setShellDataContext,
 	useShellData,
@@ -35,10 +41,12 @@ export class ShellData implements ShellDataContext {
 	inboxItems = $state.raw<InboxItem[]>([]);
 	inboxLoadedOrganizationId = $state<string | undefined>(undefined);
 	#layeredOffices = $state.raw<OfficeInfo[]>([]);
+	#rawProjectHealthById = $state.raw<Readonly<Record<string, ProjectHealthOverlay>>>({});
 	loaded = $state(false);
 	loadedOrganizationId = $state<string | undefined>(undefined);
 
 	#loadSeq = 0;
+	#volatileOverlayLoadSeq = -1;
 	#leaving = false;
 	#activeAbort: AbortController | undefined;
 	#latestLoad: { seq: number; orgId: string; promise: Promise<ShellRefreshResult> } | undefined =
@@ -64,6 +72,69 @@ export class ShellData implements ShellDataContext {
 		return this.#layeredOffices.length > 0 ? this.#layeredOffices : this.#options.getBaseOffices();
 	}
 
+	readonly #knownTeamLookup = $derived.by((): Readonly<Record<string, true>> | undefined => {
+		const snap = this.snapshot;
+		if (!snap) return undefined;
+		const lookup: Record<string, true> = {};
+		for (const team of snap.teams) lookup[team.id] = true;
+		return lookup;
+	});
+
+	readonly validProjectTeams = $derived.by((): readonly ProjectTeam[] | undefined => {
+		const snap = this.snapshot;
+		const lookup = this.#knownTeamLookup;
+		if (!snap || !lookup) return undefined;
+		return (snap.project_teams ?? []).filter((pt) => Boolean(lookup[pt.team_id]));
+	});
+
+	readonly projectHealthById = $derived.by((): Readonly<Record<string, ProjectHealthOverlay>> => {
+		const raw = this.#rawProjectHealthById;
+		const lookup = this.#knownTeamLookup;
+		if (!lookup) return raw;
+		const filtered: Record<string, ProjectHealthOverlay> = {};
+		for (const [id, overlay] of Object.entries(raw)) {
+			if (overlay.teamIds === undefined) {
+				filtered[id] = overlay;
+			} else {
+				filtered[id] = Object.freeze({
+					...overlay,
+					teamIds: Object.freeze(overlay.teamIds.filter((teamId) => Boolean(lookup[teamId])))
+				});
+			}
+		}
+		return Object.freeze(filtered);
+	});
+
+	personPanelContext() {
+		const id = this.organizationId;
+		return {
+			organizationId: id,
+			snapshot: this.snapshot,
+			workItems: this.workItems,
+			workLoaded: this.loaded && this.loadedOrganizationId === id && this.workError === undefined
+		};
+	}
+
+	setProjectHealthOverlays(
+		organizationId: string,
+		overlays: Readonly<Record<string, ProjectHealthOverlay>>,
+		options?: ProjectHealthOverlayUpdateOptions
+	): void {
+		if (this.#leaving || organizationId !== this.organizationId) return;
+		this.#volatileOverlayLoadSeq = this.#loadSeq;
+		this.#rawProjectHealthById = mergeProjectHealthOverlayMap(
+			this.#rawProjectHealthById,
+			overlays,
+			options
+		);
+	}
+
+	clearVolatileProjectHealthCounts(organizationId = this.organizationId): void {
+		if (this.#leaving || organizationId !== this.organizationId) return;
+		this.#volatileOverlayLoadSeq = -1;
+		this.#rawProjectHealthById = stripVolatileOverlayMap(this.#rawProjectHealthById);
+	}
+
 	#resetFields(): void {
 		this.snapshot = undefined;
 		this.workItems = [];
@@ -71,23 +142,33 @@ export class ShellData implements ShellDataContext {
 		this.inboxItems = [];
 		this.inboxLoadedOrganizationId = undefined;
 		this.#layeredOffices = [];
+		this.#rawProjectHealthById = {};
+		this.#volatileOverlayLoadSeq = -1;
 		this.loaded = false;
 		this.loadedOrganizationId = undefined;
 	}
 
 	#applyLoadResults(
 		id: string,
+		seq: number,
 		baseOffices: OfficeInfo[],
-		orgRes: PromiseSettledResult<{ snapshot: OrgSnapshot }>,
-		workRes: PromiseSettledResult<WorkItemSummary[]>,
-		inboxRes: PromiseSettledResult<InboxItem[]>,
-		officesRes: PromiseSettledResult<OfficeInfo[]>
+		settled: [
+			PromiseSettledResult<{ snapshot: OrgSnapshot }>,
+			PromiseSettledResult<WorkItemSummary[]>,
+			PromiseSettledResult<InboxItem[]>,
+			PromiseSettledResult<OfficeInfo[]>
+		]
 	): ShellRefreshResult {
+		const [orgRes, workRes, inboxRes, officesRes] = settled;
 		if (orgRes.status === 'fulfilled') this.snapshot = orgRes.value.snapshot;
 		const workUpdated = workRes.status === 'fulfilled';
 		if (workUpdated) {
 			this.workItems = workRes.value;
 			this.workError = undefined;
+			if (seq > this.#volatileOverlayLoadSeq) {
+				this.#rawProjectHealthById = stripVolatileOverlayMap(this.#rawProjectHealthById);
+				this.#volatileOverlayLoadSeq = -1;
+			}
 		} else {
 			this.workError = workRes.reason;
 			this.workErrorSeq += 1;
@@ -127,13 +208,13 @@ export class ShellData implements ShellDataContext {
 			loadShellWorkItems(id, controller.signal),
 			inboxApi.list(id, controller.signal),
 			this.#options.loadOffices(id, baseOffices, controller.signal)
-		]).then(async ([orgRes, workRes, inboxRes, officesRes]): Promise<ShellRefreshResult> => {
+		]).then(async (settled): Promise<ShellRefreshResult> => {
 			if (this.#activeAbort === controller) this.#activeAbort = undefined;
 			if (this.#leaving || cancelled) return { inboxUpdated: false, workUpdated: false };
 			if (controller.signal.aborted || seq !== this.#loadSeq) {
 				return await this.#awaitSuperseded(id, seq);
 			}
-			return this.#applyLoadResults(id, baseOffices, orgRes, workRes, inboxRes, officesRes);
+			return this.#applyLoadResults(id, seq, baseOffices, settled);
 		});
 		// Retain #latestLoad until overwritten by a newer load or dispose() so slower superseded loads can read its result.
 		this.#latestLoad = { seq, orgId: id, promise };

@@ -1,6 +1,9 @@
 // Chat as ADR-0003 section 6 sketches it (amended 2026-11-08: chat, proposed) and docs/specs/chat-ux.md specifies it. A mirror
 // to build against until the Rust types land in crates/org-proto; replace it with the real shapes then.
 // Unknown enum values from a newer office decode as 'unknown' and are never written.
+import type { AttachmentMeta } from '$lib/platform/http/attachments';
+
+export type { AttachmentMeta };
 
 export type ConversationKind = 'dm' | 'group_dm' | 'channel' | 'unknown';
 
@@ -118,6 +121,8 @@ export interface Answer {
 	text?: string;
 	/** An ask with several questions: one entry per answered question. */
 	answers?: QuestionAnswer[];
+	/** Files bound to the recorded answer (`TASK-98.2`). */
+	attachment_meta?: readonly AttachmentMeta[];
 }
 
 /** An ask closed by its asker, or by the system when either party left the organization. */
@@ -171,6 +176,8 @@ export interface ChatMessage {
 	/** The platform a message came from; it was posted as the bridged person (decision 11). */
 	bridge?: Bridge;
 	attachments?: string[];
+	/** Canonical file bindings returned by the office (`TASK-98.2`). */
+	attachment_meta?: readonly AttachmentMeta[];
 	pinned?: boolean;
 	/** The task or bug a hand-off is linked to. */
 	linked_ref?: string;
@@ -233,6 +240,7 @@ export type ChatCall =
 			wait_until?: string;
 			questions?: AskQuestion[];
 			attachments?: string[];
+			attachment_ids?: readonly string[];
 			linked_ref?: string;
 	  }
 	| {
@@ -242,6 +250,14 @@ export type ChatCall =
 			option_id?: string;
 			text?: string;
 			answers?: QuestionAnswer[];
+			attachment_ids?: readonly string[];
+	  }
+	| {
+			method: 'msg.reply';
+			change_id: string;
+			to_id: string;
+			body: string;
+			attachment_ids?: readonly string[];
 	  }
 	| { method: 'chat.withdraw'; change_id: string; ask_id: string; reason?: string }
 	| { method: 'chat.accept_handoff'; change_id: string; message_id: string }

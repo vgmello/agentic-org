@@ -489,7 +489,7 @@ fn the_composed_https_service_sends_html_hash_upgrade_and_authority_hsts() {
             .insert(name.to_ascii_lowercase(), value.trim())
             .is_none());
     }
-    let expected = "default-src 'none'; script-src 'self' 'sha256-X+zrZv/IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V+k='; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests";
+    let expected = "default-src 'none'; script-src 'self' 'sha256-X+zrZv/IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V+k='; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests";
     for (name, value) in [
         ("content-security-policy", expected), ("cache-control", "no-cache"),
         ("content-type", "text/html; charset=utf-8"), ("content-length", "33"),

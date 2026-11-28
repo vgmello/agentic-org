@@ -1,6 +1,7 @@
 <script lang="ts">
 	import X from '@lucide/svelte/icons/x';
 	import { mergeProps } from 'bits-ui';
+	import AttachmentGallery from '$lib/components/attachments/AttachmentGallery.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import Rich from '$lib/modules/messaging/components/Rich.svelte';
@@ -82,6 +83,9 @@
 					{clockTime(m.created_at)}
 				</p>
 				<div class="mt-1 line-clamp-4"><Rich body={m.body} /></div>
+				{#if m.attachment_meta?.length}
+					<AttachmentGallery attachments={m.attachment_meta} compact />
+				{/if}
 				<div class="mt-1 flex flex-wrap gap-x-3">
 					<button
 						type="button"

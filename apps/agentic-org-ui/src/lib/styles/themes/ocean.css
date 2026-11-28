@@ -299,7 +299,6 @@ html[data-ui-theme='ocean']
 		.exec-card,
 		.exec-well,
 		.exec-sidebar,
-		.exec-cmdk-bar,
 		.inbox-card,
 		[data-slot='dialog-content'],
 		[data-slot='sheet-content'],
@@ -401,8 +400,7 @@ html[data-ui-theme='ocean'][data-interior-page] .exec-nav-item.is-active {
 	background-color: var(--ocean-selected);
 }
 
-html[data-ui-theme='ocean'][data-interior-page]
-	:is(.exec-card, .exec-well, .exec-cmdk-bar, .inbox-card) {
+html[data-ui-theme='ocean'][data-interior-page] :is(.exec-card, .exec-well, .inbox-card) {
 	-webkit-backdrop-filter: none;
 	backdrop-filter: none;
 }
