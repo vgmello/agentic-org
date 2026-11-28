@@ -1178,3 +1178,45 @@ fn tess_wake_enforces_mutation_policy_and_blocks_unconfirmed_writes() {
         );
     }
 }
+
+#[test]
+fn office_metrics_is_never_delegated_and_agents_fail_closed() {
+    use crate::serve::tests::{launch_key, ports, test_info};
+    use crate::serve::SnapshotFailure;
+
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let dir = tempfile::TempDir::new().unwrap();
+    let port = Arc::new(FakePort::new("tess", the_owner()));
+    let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    ports.delegation = Some(Arc::clone(&port) as Arc<dyn ChiefOfStaffPort>);
+    let shared = Shared::new(
+        &test_info(),
+        &dir.path().join("d.sock"),
+        ports,
+        launch_key(),
+    );
+
+    // `office.metrics` is in NEVER so Tess acting for owner must fail closed.
+    let req = Request {
+        id: 101,
+        method: "office.metrics".into(),
+        principal: None,
+        params: json!({}),
+    };
+    let tess_resp = shared.answer_for_test(&req, "tess", false);
+    assert!(
+        matches!(
+            tess_resp.outcome,
+            Outcome::Error(ref e) if e.code == ErrorCode::NotAuthorized
+        ),
+        "Tess must fail closed with NotAuthorized on office.metrics, got {tess_resp:?}"
+    );
+    let agent_resp = shared.answer_for_test(&req, "ordinary-agent", false);
+    assert!(
+        matches!(
+            agent_resp.outcome,
+            Outcome::Error(ref e) if e.code == ErrorCode::NotAuthorized
+        ),
+        "ordinary agent on office socket must fail closed with NotAuthorized on office.metrics, got {agent_resp:?}"
+    );
+}

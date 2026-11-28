@@ -41,6 +41,10 @@ impl SessionManager {
     ) -> Result<SessionView, ApiError> {
         self.authorize_owner_or_person_inner(actor_member_id, hq_attested_owner)?;
         let control = validate_start_affinity_params(params)?;
+        let turn_override = crate::router::validate_turn_override(
+            params.model.as_deref(),
+            params.effort.as_deref(),
+        )?;
         let employee = self.require_active_agent(&params.employee_id)?;
         let emp_id = employee.id.as_str();
         self.check_not_recovery_required(emp_id)?;
@@ -61,6 +65,7 @@ impl SessionManager {
             params.workspace.as_deref(),
             partition.as_ref(),
             control,
+            &turn_override,
         )?;
         if let Some(view) = reservation.live_view {
             return Ok(view);
@@ -85,8 +90,14 @@ impl SessionManager {
         } else {
             explicit_resume.or_else(|| turn.and_then(|t| t.resume_runtime_session_id.as_deref()))
         };
-        let opts = LaunchRouteOpts::fresh(resume, None, reservation.start_stop_epoch, partition)
-            .with_affinity(params.fresh, explicit_resume.is_some(), false);
+        let opts = LaunchRouteOpts::fresh(
+            resume,
+            None,
+            reservation.start_stop_epoch,
+            partition,
+            turn_override,
+        )
+        .with_affinity(params.fresh, explicit_resume.is_some(), false);
         let prepared = self.prepare_and_spawn_raw(
             &employee,
             params,
@@ -155,12 +166,13 @@ impl SessionManager {
             task_ref,
             trigger_entry,
             wake_partition,
+            crate::router::TurnModelOverride::default(),
         )
     }
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "autonomous session launch with review affinity threads employee, turn payload, resume/fresh controls, task ref, trigger, and partition"
+        reason = "autonomous session launch with review affinity threads employee, turn payload, resume/fresh controls, task ref, trigger, partition, and model/effort override"
     )]
     pub(crate) fn spawn_or_send_autonomous_with_affinity(
         &self,
@@ -174,6 +186,7 @@ impl SessionManager {
         task_ref: Option<&str>,
         trigger_entry: serde_json::Value,
         wake_partition: Option<PartitionKey>,
+        turn_override: crate::router::TurnModelOverride,
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
@@ -188,6 +201,8 @@ impl SessionManager {
                 .then(|| resume_runtime_session_id.map(str::to_owned))
                 .flatten(),
             fresh: force_fresh,
+            model: turn_override.model.clone(),
+            effort: turn_override.effort_str().map(str::to_owned),
         };
         let control = if force_fresh {
             WarmReuseControl::ForceFresh
@@ -206,6 +221,7 @@ impl SessionManager {
             None,
             partition.as_ref(),
             control,
+            &turn_override,
         )?;
         if let Some(view) = reservation.live_view {
             let tokens = self.bindings.active_tokens();
@@ -228,13 +244,18 @@ impl SessionManager {
                 resume_runtime_session_id,
             )
         };
-        let opts =
-            LaunchRouteOpts::fresh(resume, task_ref, reservation.start_stop_epoch, partition)
-                .with_affinity(
-                    force_fresh,
-                    enforce_affinity_guard,
-                    allow_sandbox_spec_change,
-                );
+        let opts = LaunchRouteOpts::fresh(
+            resume,
+            task_ref,
+            reservation.start_stop_epoch,
+            partition,
+            turn_override,
+        )
+        .with_affinity(
+            force_fresh,
+            enforce_affinity_guard,
+            allow_sandbox_spec_change,
+        );
         let prepared =
             self.prepare_and_spawn_raw(employee, &params, objective, attachment_ids, opts)?;
         self.install_live_session(prepared, slot)

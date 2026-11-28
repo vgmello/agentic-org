@@ -965,7 +965,7 @@ fn operation_get_returns_stored_outcomes_for_each_legacy_binding() {
 fn default_dod_setters_refuse_non_grant_office_socket_callers() {
     let dir = tempfile::tempdir().unwrap();
     let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-    ports.tasks = Some(Box::new(|_caller, request| {
+    ports.tasks = Some(Box::new(|_caller, _via_grant, request| {
         Some(Response {
             id: request.id,
             outcome: org_proto::Outcome::Result(serde_json::json!({"ok": true})),

@@ -256,6 +256,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org office sync-status [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
   Show live federation and replication sync status for an HQ or satellite office.
   **Use when:** verifying live mTLS federation and replication health on either HQ or a satellite.
+- `agentic-org office metrics [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
+  Show live per-office aggregate and per-agent efficiency telemetry (active/idle sessions, turn p50/p95/avg latency, token and cache-hit ratios, current/peak RSS bytes, sandbox denial counts, active model and effort; owner-only).
+  **Use when:** monitoring live agent dogfood efficiency, cache-hit rates, memory footprint, and sandbox denials on an office.
 - `agentic-org office join (--invitation-file <path> | --invitation-stdin) [--yes] [--login <login>] [--name <instance>] [--json]`
   Join this host as a satellite office using an HQ-issued invitation token.
   **Use when:** enrolling this remote host as a new satellite office after running `agentic-org setup`.

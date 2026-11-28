@@ -291,3 +291,56 @@ pub(super) fn is_warm_state_reusable(state: SessionState) -> bool {
             | SessionState::RecoveryRequired
     )
 }
+
+impl super::SessionManager {
+    pub(super) fn resolve_effective_resume_for_launch(
+        &self,
+        emp_id: &str,
+        adapter: &dyn org_agent_runtime::AgentRuntime,
+        workspace_spec_str: &str,
+        spec_hash: &str,
+        opts: &super::warm::LaunchRouteOpts<'_>,
+    ) -> (Option<String>, Option<String>) {
+        let runtime_id = adapter.id().as_str().to_owned();
+        let resume_res = resolve_and_audit_resume(
+            &self.store,
+            &self.bindings,
+            &ResumeAffinityCheck {
+                employee_id: emp_id,
+                requested_resume: opts.resume_runtime_session_id,
+                force_fresh: opts.force_fresh,
+                enforce_affinity_guard: opts.enforce_affinity_guard,
+                allow_sandbox_spec_change: opts.allow_sandbox_spec_change,
+                runtime_id: &runtime_id,
+                workspace: workspace_spec_str,
+                spec_hash,
+                capabilities: adapter.capabilities(),
+            },
+        );
+        let effective = if let Some(explicit) = resume_res.effective_resume {
+            Some(explicit)
+        } else if opts.force_fresh || resume_res.fallback_notice.is_some() {
+            None
+        } else {
+            self.resolve_hibernated_resume_id(emp_id, &runtime_id, spec_hash, opts)
+        };
+        (effective, resume_res.fallback_notice)
+    }
+
+    fn resolve_hibernated_resume_id(
+        &self,
+        emp_id: &str,
+        runtime_id: &str,
+        spec_hash: &str,
+        opts: &super::warm::LaunchRouteOpts<'_>,
+    ) -> Option<String> {
+        if opts.resume_runtime_session_id.is_some()
+            || opts.partition.is_some()
+            || opts.is_failover_switch
+        {
+            return None;
+        }
+        self.hibernation
+            .matching_resume_id(emp_id, runtime_id, spec_hash, opts.start_stop_epoch)
+    }
+}

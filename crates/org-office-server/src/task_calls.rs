@@ -83,6 +83,8 @@ pub(crate) fn is_task_method(request: &Request) -> bool {
         || is_task_dod_method(request)
 }
 
+mod routing_labels;
+
 /// Live task RPC service composed over [`Office`], [`LiveEvents`], and optional [`SessionManager`].
 pub(crate) struct TaskService {
     office: Arc<Office>,
@@ -123,7 +125,17 @@ impl TaskService {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn dispatch(&self, member: Option<&str>, request: &Request) -> Option<Response> {
+        self.dispatch_with_grant(member, true, request)
+    }
+
+    pub(crate) fn dispatch_with_grant(
+        &self,
+        member: Option<&str>,
+        via_grant: bool,
+        request: &Request,
+    ) -> Option<Response> {
         if !is_task_method(request) {
             return None;
         }
@@ -147,16 +159,24 @@ impl TaskService {
                 ),
             ));
         }
-        self.dispatch_core(member, request)
+        self.dispatch_core(member, via_grant, request)
             .or_else(|| self.dispatch_collab(member, request))
             .or_else(|| self.dispatch_checklist(member, request))
             .or_else(|| self.dispatch_notes(member, request))
             .or_else(|| self.dispatch_dod(member, request))
     }
 
-    fn dispatch_core(&self, member: &str, request: &Request) -> Option<Response> {
+    fn dispatch_core(&self, member: &str, via_grant: bool, request: &Request) -> Option<Response> {
         if request.is::<TasksCreate>() {
             return Some(self.run_write::<TasksCreate>(member, request, |p| {
+                if let Err(err) = routing_labels::validate_create_routing_labels(
+                    &self.office,
+                    member,
+                    via_grant,
+                    &p.labels,
+                ) {
+                    return Ok(Err(err));
+                }
                 self.office.task_create(member, p)
             }));
         }
@@ -172,6 +192,14 @@ impl TaskService {
         }
         if request.is::<TasksUpdate>() {
             return Some(self.run_write::<TasksUpdate>(member, request, |p| {
+                if let Err(err) = routing_labels::validate_update_routing_labels(
+                    &self.office,
+                    member,
+                    via_grant,
+                    &p,
+                ) {
+                    return Ok(Err(err));
+                }
                 self.office.task_update(member, p)
             }));
         }
@@ -448,7 +476,9 @@ impl TaskService {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let _ = sessions.on_task_assigned_with_attachments(
+        let turn_override =
+            org_office_sessions::parse_task_routing_labels_or_default(&outcome.task.labels);
+        let _ = sessions.on_task_assigned_with_overrides(
             agent_id.as_str(),
             actor,
             &actor_name,
@@ -456,6 +486,7 @@ impl TaskService {
             &outcome.task.key,
             &outcome.task.title,
             attachment_ids,
+            turn_override,
         );
     }
 

@@ -20,14 +20,21 @@ use org_proto::{ApiError, ErrorCode};
 use crate::credentials::CredentialVault;
 use crate::runtime_registry::RuntimeRegistry;
 
+mod overrides;
 mod warm_permit;
 
 use warm_permit::compute_route_digest;
 
+pub(crate) use overrides::select_atomic_turn_override;
+pub use overrides::{
+    is_task_routing_label, parse_task_routing_labels, parse_task_routing_labels_or_default,
+    validate_effort_override, validate_model_override, validate_turn_override, TurnModelOverride,
+};
 #[cfg(test)]
-pub(crate) use warm_permit::compute_route_digest_with_wt;
+pub(crate) use warm_permit::{acquire_warm_permit_for_office, compute_route_digest_with_wt};
 pub(crate) use warm_permit::{
-    acquire_warm_permit_for_office, compute_worktree_sandbox_digest, WarmPermitOutcome,
+    acquire_warm_permit_for_office_with_override, compute_worktree_sandbox_digest,
+    WarmPermitOutcome,
 };
 
 pub(crate) struct AdmittedRoute {
@@ -427,6 +434,48 @@ pub(crate) struct AdmitRouteRequest<'a> {
     pub task_id: Option<&'a str>,
     pub is_failover_switch: bool,
     pub excluded_connections: &'a HashSet<String>,
+    pub turn_override: Option<&'a TurnModelOverride>,
+}
+
+fn admit_default_adapter_route(
+    runtimes: &RuntimeRegistry,
+    override_model: Option<&str>,
+    override_effort: Option<ReasoningEffort>,
+) -> Result<AdmittedRoute, ApiError> {
+    if override_model.is_some() {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "MODEL_UNVERIFIED: explicit model override requires a configured agent execution route with a confirmed provider connection",
+        ));
+    }
+    let adapter = runtimes
+        .default_adapter()
+        .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
+    let effort = override_effort
+        .map(|e| Token::try_from(e.as_str()))
+        .transpose()
+        .map_err(|_| {
+            ApiError::new(
+                ErrorCode::InvalidRequest,
+                "invalid reasoning effort override",
+            )
+        })?;
+    Ok(AdmittedRoute {
+        adapter,
+        model_token: None,
+        model_supports_vision: true,
+        effort,
+        auth_mode: None,
+        auth_env: Vec::new(),
+        endpoint_env: Vec::new(),
+        oauth_expires_at_ms: None,
+        oauth_token_fp: None,
+        preset: PermissionPreset::SafeAsk,
+        sandbox_enabled: true,
+        connection_id: None,
+        permit: None,
+        route_digest_suffix: String::new(),
+    })
 }
 
 /// Deterministic ordered pool selection & permit admission (`doc-88` §6 steps 1-3).
@@ -443,30 +492,15 @@ pub(crate) fn select_and_admit_route(
         task_id,
         is_failover_switch,
         excluded_connections,
+        turn_override,
     } = req;
+    let override_model = turn_override.and_then(|o| o.model.as_deref());
+    let override_effort = turn_override.and_then(|o| o.effort);
     let exec = office
         .load_agent_execution(employee_id)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load execution config"))?;
     let Some(cfg) = exec else {
-        let adapter = runtimes
-            .default_adapter()
-            .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
-        return Ok(AdmittedRoute {
-            adapter,
-            model_token: None,
-            model_supports_vision: true,
-            effort: None,
-            auth_mode: None,
-            auth_env: Vec::new(),
-            endpoint_env: Vec::new(),
-            oauth_expires_at_ms: None,
-            oauth_token_fp: None,
-            preset: PermissionPreset::SafeAsk,
-            sandbox_enabled: true,
-            connection_id: None,
-            permit: None,
-            route_digest_suffix: String::new(),
-        });
+        return admit_default_adapter_route(runtimes, override_model, override_effort);
     };
     if !cfg.enabled {
         return Err(ApiError::new(
@@ -503,6 +537,8 @@ pub(crate) fn select_and_admit_route(
             .map(|id| id.as_str())
             .collect()
     };
+    let effective_model_id = override_model.unwrap_or(&cfg.model_id);
+    let effective_effort = override_effort.or(cfg.effort);
     let fallback_refresh = crate::host_auth::VaultRefreshCoordinator::noop();
     let walk = RouteWalkCtx {
         office,
@@ -512,10 +548,10 @@ pub(crate) fn select_and_admit_route(
         oauth_refresh: oauth_refresh.unwrap_or(&fallback_refresh),
         employee_id,
         task_id,
-        model_id: &cfg.model_id,
+        model_id: effective_model_id,
         profile_key: &profile.key,
         preset: cfg.permission_preset,
-        effort: cfg.effort,
+        effort: effective_effort,
         exec_rev: cfg.meta.revision,
         is_failover_switch,
         now_ms: office.current_time_ms(),

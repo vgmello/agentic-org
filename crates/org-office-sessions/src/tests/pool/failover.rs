@@ -124,6 +124,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -244,6 +246,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -340,6 +344,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -389,6 +395,8 @@ done
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
             session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(
@@ -530,6 +538,8 @@ done
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect_err("missing vault credential must refuse session launch");
@@ -580,6 +590,8 @@ done
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect_err("expired unrefreshable vault OAuth must refuse session launch");
@@ -704,6 +716,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -784,6 +798,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -888,6 +904,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -964,6 +982,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -1029,6 +1049,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -1109,6 +1131,8 @@ fn task132_mixed_pool_exhaustion_preserves_pool_exhausted_and_earliest_cooldown(
                     workspace: None,
                     resume_runtime_session_id: None,
                     fresh: false,
+                    model: None,
+                    effort: None,
                 },
             )
             .expect_err("mixed pool must refuse launch");
@@ -1200,6 +1224,8 @@ done
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .is_err());
@@ -1233,6 +1259,8 @@ done
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .is_err());
@@ -1260,6 +1288,7 @@ done
             task_id: None,
             is_failover_switch: false,
             excluded_connections: &excluded,
+            turn_override: None,
         });
     }));
     assert!(panicked.is_err(), "refresher panic should unwind");
@@ -1287,6 +1316,7 @@ done
         task_id: None,
         is_failover_switch: false,
         excluded_connections: &excluded,
+        turn_override: None,
     })
     .err()
     .expect("MissingSecretsKey must return Unavailable");
@@ -1322,6 +1352,8 @@ done
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();

@@ -203,6 +203,81 @@ pub(crate) fn candidates(
         .unwrap_or_default()
 }
 
+/// Formats a concise one-line office efficiency summary (shared by `office metrics` and `doctor`).
+pub(crate) fn format_office_summary_line(
+    metrics: &org_proto::telemetry::OfficeMetricsResult,
+) -> String {
+    let agg = &metrics.aggregate;
+    let latency = match (
+        agg.p50_wall_latency_ms,
+        agg.p95_wall_latency_ms,
+        agg.avg_wall_latency_ms,
+    ) {
+        (Some(p50), Some(p95), Some(avg)) => {
+            format!(
+                "p50 {} / p95 {} / avg {}",
+                format_ms(p50),
+                format_ms(p95),
+                format_ms(avg)
+            )
+        }
+        _ => "n/a".to_owned(),
+    };
+    let cache = format_ratio(agg.cache_hit_ratio);
+    let budget = agg
+        .rss_budget_bytes
+        .map(|b| format!(" / budget {}", format_bytes(b)))
+        .unwrap_or_default();
+    format!(
+        "office {}: {} active / {} idle sessions, {} recent turns ({}), tokens in/out/cache/thought {}/{}/{}/{} (cache {}), RSS {} (peak {}{}), {} sandbox denials",
+        metrics.office_id,
+        agg.active_sessions,
+        agg.idle_sessions,
+        agg.recent_turn_count,
+        latency,
+        agg.input_tokens,
+        agg.output_tokens,
+        agg.cached_read_tokens,
+        agg.thought_tokens,
+        cache,
+        format_bytes(agg.current_rss_bytes),
+        format_bytes(agg.peak_rss_bytes),
+        budget,
+        agg.sandbox_denial_count,
+    )
+}
+
+pub(crate) fn format_ratio(ratio: Option<f64>) -> String {
+    match ratio {
+        Some(r) if r.is_finite() => format!("{:.1}%", (r * 100.0).clamp(0.0, 100.0)),
+        _ => "-".to_owned(),
+    }
+}
+
+pub(crate) fn format_ms(ms: u64) -> String {
+    if ms >= 1000 {
+        format!("{:.2}s", (ms as f64) / 1000.0)
+    } else {
+        format!("{ms}ms")
+    }
+}
+
+pub(crate) fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let b = bytes as f64;
+    if b >= GIB {
+        format!("{:.2} GiB", b / GIB)
+    } else if b >= MIB {
+        format!("{:.1} MiB", b / MIB)
+    } else if b >= KIB {
+        format!("{:.1} KiB", b / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use org_cli_shell::context::testing::{captured, tty};

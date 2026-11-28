@@ -10,7 +10,7 @@ use super::{check, invalid, unsupported, ExitFields, Uids};
 mod rss;
 mod scan;
 
-pub(super) use rss::process_tree_rss_bytes;
+pub(super) use rss::{process_rss_bytes, process_tree_rss_bytes};
 pub(super) use scan::RecoveryScan;
 
 pub(super) fn uids() -> io::Result<Uids> {

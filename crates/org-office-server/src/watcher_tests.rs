@@ -1345,6 +1345,8 @@ fn watch_8_real_session_manager_wakes_only_on_confident_person_match_and_prepend
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .expect("send second turn to Ada");

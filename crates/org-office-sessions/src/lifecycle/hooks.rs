@@ -41,6 +41,7 @@ impl SessionManager {
         oauth_expires_at_ms: Option<u64>,
         sandbox_plan: SandboxPlan,
         partitioned: bool,
+        turn_override: crate::router::TurnModelOverride,
     ) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
@@ -90,7 +91,13 @@ impl SessionManager {
         });
 
         let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
-            build_permit_hooks(self, employee_id, route_digest, oauth_expires_at_ms);
+            build_permit_hooks(
+                self,
+                employee_id,
+                route_digest,
+                oauth_expires_at_ms,
+                turn_override,
+            );
 
         let on_rate_limit = build_rate_limit_hook(self);
 
@@ -455,6 +462,7 @@ pub(super) fn build_permit_hooks(
     employee_id: &str,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
+    turn_override: crate::router::TurnModelOverride,
 ) -> (
     PermitAcquireHook,
     PermitRenewHook,
@@ -469,13 +477,14 @@ pub(super) fn build_permit_hooks(
             return Err("WARM_ROUTE_STALE: oauth token expiring".into());
         }
         let digest = (!route_digest.is_empty()).then_some(route_digest.as_str());
-        match crate::router::acquire_warm_permit_for_office(
+        match crate::router::acquire_warm_permit_for_office_with_override(
             &acq_office,
             acq_hq_permits.as_deref(),
             conn_id,
             &acq_emp,
             task_id,
             digest,
+            Some(&turn_override),
         ) {
             crate::router::WarmPermitOutcome::Granted(p) => Ok(p),
             crate::router::WarmPermitOutcome::StaleWarm => {

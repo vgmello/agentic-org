@@ -16,7 +16,22 @@ use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
 use crate::redact::redact_text;
 use crate::redact::sanitize::sanitize_single_line_display;
 
-use super::{persist_turn_update, PumpContext, SessionRuntimeState};
+use super::{PumpContext, SessionRuntimeState};
+
+/// Applies `mutate` to this run's durable `active-turn.v1.json` record (a newer run's record is
+/// never touched) and stamps `updated_at`.
+pub(super) fn persist_turn_update(
+    ctx: &PumpContext,
+    mutate: impl FnOnce(&mut crate::recovery::ActiveTurnRecord),
+) {
+    let _ = ctx.store.update_active_turn(&ctx.employee_id, |persisted| {
+        if persisted.run_id != ctx.run_id {
+            return;
+        }
+        mutate(persisted);
+        persisted.updated_at = rfc3339_now();
+    });
+}
 
 /// Internal pending approval record pairing the redacted/sanitized display view with the
 /// validated concrete [`RuleTool`] permitted for `allow_always` (computed from the raw request
@@ -80,7 +95,7 @@ pub(super) fn handle_approval_request(
     state: &mut SessionRuntimeState,
     req: &ApprovalRequest,
     active_tokens: &[&str],
-) -> Option<Control> {
+) -> (Option<Control>, Option<String>) {
     let writable_roots = state
         .sandbox_enabled
         .then_some(state.writable_roots.as_slice());
@@ -91,17 +106,26 @@ pub(super) fn handle_approval_request(
         state.allowed_tools.as_deref(),
         writable_roots,
     ) {
-        EscalationDisposition::AllowByPolicy => Some(Control::Answer {
-            request_id: req.id.clone(),
-            decision: Decision::AllowOnce,
-        }),
-        EscalationDisposition::AutoDeny { reason } => Some(Control::Answer {
-            request_id: req.id.clone(),
-            decision: Decision::Deny {
-                message: Some(redact_text(&reason, active_tokens)),
-                stop_turn: false,
-            },
-        }),
+        EscalationDisposition::AllowByPolicy => (
+            Some(Control::Answer {
+                request_id: req.id.clone(),
+                decision: Decision::AllowOnce,
+            }),
+            None,
+        ),
+        EscalationDisposition::AutoDeny { reason } => {
+            let redacted = redact_text(&reason, active_tokens);
+            (
+                Some(Control::Answer {
+                    request_id: req.id.clone(),
+                    decision: Decision::Deny {
+                        message: Some(redacted.clone()),
+                        stop_turn: false,
+                    },
+                }),
+                Some(redacted),
+            )
+        }
         EscalationDisposition::EscalateToOwner { warning } => {
             state.state = SessionState::WaitingApproval;
             let entry = build_pending_approval_entry(req, &warning, active_tokens);
@@ -114,7 +138,7 @@ pub(super) fn handle_approval_request(
             } else {
                 state.pending_approvals.push(entry);
             }
-            None
+            (None, None)
         }
     }
 }

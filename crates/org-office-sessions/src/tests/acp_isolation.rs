@@ -205,6 +205,8 @@ fn gemini_kimi_and_pi_sessions_enforce_credential_isolation_redaction_and_transc
                     workspace: None,
                     resume_runtime_session_id: None,
                     fresh: false,
+                    model: None,
+                    effort: None,
                 },
             )
             .unwrap_or_else(|e| panic!("{vendor} start_session: {e:?}"));

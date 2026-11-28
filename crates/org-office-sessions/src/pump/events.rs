@@ -124,13 +124,23 @@ fn apply_unredacted_approval(
     raw_req: &org_agent_runtime::ApprovalRequest,
     active_tokens: &[&str],
 ) -> Option<Control> {
-    let (ctrl, escalated) = {
+    let (ctrl, denied_reason, escalated) = {
         let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
         state.watchdog.record_activity(Instant::now());
-        let ctrl = handle_approval_request(&mut state, raw_req, active_tokens);
+        let (ctrl, denied_reason) = handle_approval_request(&mut state, raw_req, active_tokens);
         let escalated = ctrl.is_none();
-        (ctrl, escalated)
+        (ctrl, denied_reason, escalated)
     };
+    if let Some(reason) = denied_reason {
+        if let Some(t) = ctx.telemetry.as_ref() {
+            t.on_auto_deny(
+                &ctx.employee_id,
+                &raw_req.tool,
+                raw_req.tool_use_id.as_deref(),
+                Some(&reason),
+            );
+        }
+    }
     if escalated {
         notify_approval_changed(ctx);
     }
@@ -194,6 +204,9 @@ pub(super) fn handle_event(
             drop(state);
             if cleared {
                 notify_approval_changed(ctx);
+            }
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_turn_started(&ctx.employee_id);
             }
             persist_turn_update(ctx, |rec| rec.active = true);
         }
@@ -263,6 +276,13 @@ pub(super) fn handle_event(
             if cleared {
                 notify_approval_changed(ctx);
             }
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_turn_ended(
+                    &ctx.employee_id,
+                    matches!(outcome, org_agent_runtime::TurnOutcome::Completed),
+                    errors,
+                );
+            }
         }
         SessionEvent::StartFailed { reason } => {
             state.last_error = Some(format!("start failed: {reason:?}"));
@@ -274,12 +294,36 @@ pub(super) fn handle_event(
             let emp_id = ctx.employee_id.clone();
             let hook = ctx.hooks.on_usage.clone();
             drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_usage(&emp_id, &run_id, usage);
+            }
             // How full the partition's conversation is: at 60% its next turn rotates.
             if let Some(partition) = ctx.partition.as_ref() {
                 partition.observe_usage(usage);
             }
             if let Some(cb) = hook {
                 cb(&emp_id, &run_id, usage);
+            }
+        }
+        SessionEvent::ActionDenied {
+            tool,
+            tool_use_id,
+            message,
+        } => {
+            drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_action_denied(
+                    &ctx.employee_id,
+                    tool,
+                    tool_use_id.as_deref(),
+                    message.as_deref(),
+                );
+            }
+        }
+        SessionEvent::Notice { text, .. } => {
+            drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_notice(&ctx.employee_id, text);
             }
         }
         SessionEvent::RateLimit(rl) => {
@@ -350,7 +394,7 @@ pub(super) fn handle_tool_or_approval_event(
         }
         SessionEvent::Usage(usage) => state.backgrounds.record_usage(usage),
         SessionEvent::ApprovalRequested(req) => {
-            let ctrl = handle_approval_request(state, req, &[]);
+            let (ctrl, _) = handle_approval_request(state, req, &[]);
             let escalated = ctrl.is_none();
             return (ctrl, escalated);
         }
@@ -538,6 +582,7 @@ pub(super) fn evaluate_turn_failover(
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
         stop_epoch: ctx.stop_epoch,
         partition: ctx.partition_key(),
+        turn_override: ctx.turn_override.clone(),
     });
     loop_state.stop_requested = true;
     false

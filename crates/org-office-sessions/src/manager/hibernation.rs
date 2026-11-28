@@ -169,6 +169,10 @@ impl HibernationState {
         lock(&self.live_meta).remove(emp);
     }
 
+    pub(crate) fn live_pid(&self, emp: &str) -> Option<u32> {
+        lock(&self.live_meta).get(emp).and_then(|meta| meta.1)
+    }
+
     pub(crate) fn clear_all_hibernated(&self) {
         lock(&self.hibernated).clear();
     }

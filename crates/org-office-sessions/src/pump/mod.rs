@@ -15,7 +15,6 @@ use org_proto::sessions::{SessionState, SessionView};
 use org_supervise::StopMode;
 
 use crate::binding::RunBindingRegistry;
-use crate::credentials::rfc3339_now;
 use crate::instructions::SAME_USER_ISOLATION_NOTICE;
 use crate::recovery::{SessionStore, StallWatchdog};
 use crate::subagents::BackgroundRegistry;
@@ -32,7 +31,7 @@ mod turn;
 
 use activity::settle_activity_idle;
 pub use approval::is_allow_always_eligible;
-use approval::{begin_pump_teardown, check_and_handle_stall};
+use approval::{begin_pump_teardown, check_and_handle_stall, persist_turn_update};
 pub(crate) use approval::{finalize_child, remove_pending_approval_locked, PendingApprovalEntry};
 use commands::{
     drain_commands, enqueue_background_wakes, mark_active_permit_release_pending,
@@ -131,6 +130,7 @@ pub(crate) struct FailoverRequest {
     /// The Chief of Staff partition the failed run served (`TASK-80.1`): its relaunch serves the
     /// same one and so acts for exactly the same caller ([`Self::acting_for_caller_id`]).
     pub partition: Option<crate::partition::PartitionKey>,
+    pub turn_override: crate::router::TurnModelOverride,
 }
 
 impl FailoverRequest {
@@ -352,6 +352,8 @@ pub(crate) struct PumpContext {
     pub model_supports_vision: bool,
     /// Consumer-owned port resolving policy-authorized attachment payloads at turn preparation.
     pub attachment_resolver: Arc<dyn crate::turn_attachments::TurnAttachmentResolver>,
+    pub turn_override: crate::router::TurnModelOverride,
+    pub telemetry: Option<crate::telemetry::PumpTelemetry>,
 }
 
 impl PumpContext {
@@ -633,6 +635,13 @@ fn finish_pump(
     out_reader: JoinHandle<()>,
     err_reader: JoinHandle<()>,
 ) {
+    // Finalize any orphaned in-flight turn before child teardown (crash, stall, stop, or EOF
+    // without `TurnEnded`) so latency/tokens/denials are closed cleanly with `succeeded = false`.
+    if loop_state.turn_active {
+        if let Some(t) = ctx.telemetry.as_ref() {
+            t.on_turn_ended(&ctx.employee_id, false, &[]);
+        }
+    }
     let (reaped_bg, session_id_snap, rsid_snap) = if loop_state.suspend_now {
         let guard = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
         (
@@ -680,21 +689,6 @@ fn finish_pump(
         // Unproven cleanup (`AE-07`): keep slot occupied in `release_pending` & require recovery.
         mark_active_permit_release_pending(ctx);
     }
-}
-
-/// Applies `mutate` to this run's durable `active-turn.v1.json` record (a newer run's record is
-/// never touched) and stamps `updated_at`.
-fn persist_turn_update(
-    ctx: &PumpContext,
-    mutate: impl FnOnce(&mut crate::recovery::ActiveTurnRecord),
-) {
-    let _ = ctx.store.update_active_turn(&ctx.employee_id, |persisted| {
-        if persisted.run_id != ctx.run_id {
-            return;
-        }
-        mutate(persisted);
-        persisted.updated_at = rfc3339_now();
-    });
 }
 
 fn should_finish_after_exit(

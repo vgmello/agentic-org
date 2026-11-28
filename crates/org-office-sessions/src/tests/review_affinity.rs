@@ -300,6 +300,8 @@ fn review_wake_kinds_hints_and_review_reply_deduplication() {
         enqueued_at_ms: 100,
         attachment_ids: vec![att.into()],
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     };
     assert!(q.push_dedup(mk_reply("rep-1", "First reply", false, "att-1")));
     // Duplicate item_id ignored.
@@ -340,6 +342,8 @@ fn review_warm_resume_guards_workspace_and_spec_hash_and_honors_fresh() {
                 workspace: None,
                 resume_runtime_session_id: Some("sess-review-round-1".into()),
                 fresh: true,
+                model: None,
+                effort: None,
             },
         )
         .unwrap_err();
@@ -362,6 +366,8 @@ fn review_warm_resume_guards_workspace_and_spec_hash_and_honors_fresh() {
             enqueued_at_ms: 1,
             attachment_ids: Vec::new(),
             session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(r1, WakeOutcome::Started);
@@ -392,6 +398,8 @@ fn review_warm_resume_guards_workspace_and_spec_hash_and_honors_fresh() {
                 resume_runtime_session_id: Some("sess-review-round-1".into()),
                 fresh: false,
             }),
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(r2, WakeOutcome::Started);
@@ -419,6 +427,8 @@ fn review_warm_resume_guards_workspace_and_spec_hash_and_honors_fresh() {
                 workspace: Some(alt_ws.display().to_string()),
                 resume_runtime_session_id: Some("sess-review-round-1".into()),
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -460,6 +470,8 @@ fn review_warm_resume_guards_workspace_and_spec_hash_and_honors_fresh() {
                 resume_runtime_session_id: Some("sess-review-round-1".into()),
                 fresh: false,
             }),
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(r3, WakeOutcome::Started);
@@ -495,6 +507,8 @@ fn review_warm_resume_guards_workspace_and_spec_hash_and_honors_fresh() {
                 resume_runtime_session_id: None,
                 fresh: true,
             }),
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(r4, WakeOutcome::Started);
@@ -536,6 +550,8 @@ fn review_wakes_honor_hourly_quota_and_person_exemption() {
             enqueued_at_ms: 10,
             attachment_ids: Vec::new(),
             session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(first, WakeOutcome::Started);
@@ -558,6 +574,8 @@ fn review_wakes_honor_hourly_quota_and_person_exemption() {
             enqueued_at_ms: 20,
             attachment_ids: Vec::new(),
             session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(
@@ -584,6 +602,8 @@ fn review_wakes_honor_hourly_quota_and_person_exemption() {
             enqueued_at_ms: 30,
             attachment_ids: Vec::new(),
             session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(person, WakeOutcome::Started);

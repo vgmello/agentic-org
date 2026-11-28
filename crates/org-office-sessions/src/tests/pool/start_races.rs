@@ -78,6 +78,8 @@ pub(super) fn start_params(agent: &str, instruction: &str) -> MemberSessionStart
         workspace: None,
         resume_runtime_session_id: None,
         fresh: false,
+        model: None,
+        effort: None,
     }
 }
 
@@ -293,6 +295,7 @@ fn offboard_during_a_failover_relaunch_leaves_no_live_session_and_no_recovery_wa
                     rate_limit_resets_at: None,
                     stop_epoch: epoch,
                     partition: None,
+                    turn_override: Default::default(),
                 },
             );
         })
@@ -390,6 +393,8 @@ fn pause_during_a_warm_wake_send_keeps_the_durable_wakes_and_charges_no_quota() 
                     attachment_ids: Vec::new(),
                     enqueued_at_ms: now_ms(),
                     session_affinity: None,
+                    model_override: None,
+                    effort_override: None,
                 },
             )
         })
@@ -512,6 +517,8 @@ fn a_drain_during_a_warm_wake_send_sends_no_turn_and_keeps_the_durable_wake() {
                     attachment_ids: Vec::new(),
                     enqueued_at_ms: now_ms(),
                     session_affinity: None,
+                    model_override: None,
+                    effort_override: None,
                 },
             )
         });

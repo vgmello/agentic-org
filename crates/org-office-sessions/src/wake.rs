@@ -143,6 +143,24 @@ pub struct PendingWakeItem {
     /// Optional session resume/fresh directive for review rounds (`TASK-92.1`, ADR-0028).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_affinity: Option<WakeSessionAffinity>,
+    /// Optional per-task / per-turn model override (`TASK-136`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<String>,
+    /// Optional per-task / per-turn reasoning effort override (`TASK-136`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_override: Option<String>,
+}
+
+/// Extracts and validates the atomic per-turn `model`/`effort` override carried by a wake batch
+/// (`TASK-136`); never mixes `model_override` from one item with `effort_override` from another.
+pub fn extract_wake_model_override(
+    items: &[PendingWakeItem],
+) -> Result<crate::router::TurnModelOverride, org_proto::ApiError> {
+    crate::router::select_atomic_turn_override(
+        items
+            .iter()
+            .map(|i| (i.model_override.as_deref(), i.effort_override.as_deref())),
+    )
 }
 
 /// Durable per-agent pending-start queue persisted in `pending-wakes.v1.json` (`LIVE-4`).
@@ -263,11 +281,9 @@ pub struct PendingAskAnswer {
 
 fn collect_unique_attachment_ids<'a>(groups: impl Iterator<Item = &'a [String]>) -> Vec<String> {
     let mut out = Vec::new();
-    for ids in groups {
-        for id in ids {
-            if !id.is_empty() && !out.contains(id) {
-                out.push(id.clone());
-            }
+    for id in groups.flatten().filter(|id| !id.is_empty()) {
+        if !out.contains(id) {
+            out.push(id.clone());
         }
     }
     out
@@ -570,19 +586,13 @@ fn display_source_id(item: &PendingWakeItem) -> String {
 }
 
 fn merge_dedup_reply_summary(existing: &str, incoming: &str) -> String {
-    let mut combined = if existing.is_empty() {
-        incoming.to_owned()
-    } else if incoming.is_empty() {
-        existing.to_owned()
-    } else {
-        format!("{existing}\n---\n{incoming}")
+    let mut combined = match (existing.is_empty(), incoming.is_empty()) {
+        (true, _) => incoming.to_owned(),
+        (_, true) => existing.to_owned(),
+        (false, false) => format!("{existing}\n---\n{incoming}"),
     };
     if combined.len() > MAX_WAKE_ITEM_BODY_BYTES {
-        let mut end = MAX_WAKE_ITEM_BODY_BYTES;
-        while end > 0 && !combined.is_char_boundary(end) {
-            end -= 1;
-        }
-        combined.truncate(end);
+        combined.truncate(combined.floor_char_boundary(MAX_WAKE_ITEM_BODY_BYTES));
     }
     combined
 }

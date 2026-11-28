@@ -1516,6 +1516,8 @@ fn one_step_bind_succeeds_for_non_owner_operators_warm_idle_sessions_and_full_pe
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -2261,4 +2263,124 @@ fn byoa_external_search_query_enforces_private_note_and_private_channel_isolatio
     );
     assert_eq!(code, 0, "{ben_dm}");
     assert_eq!(ben_dm["data"].as_array().unwrap().len(), 1, "{ben_dm}");
+}
+
+#[test]
+fn external_byoa_agent_cannot_set_or_modify_task_routing_labels() {
+    use org_proto::tasks::{
+        TasksCreate, TasksCreateParams, TasksMutationResult, TasksUpdate, TasksUpdateParams,
+    };
+
+    let w = world();
+    let root_team = w.office.org_snapshot().unwrap().teams[0].id.clone();
+    let (_pkcs8, _session_id, token) = signed_in(&w, "@ada");
+    let conn = bound_client(&w, &w.ada, &token);
+
+    // 1. External BYOA agent attempting `tasks.create` with `effort:*` or `model:*` fails closed with NotAuthorized.
+    for bad in [
+        vec!["effort:max".to_owned()],
+        vec!["model:claude-opus-4-6".to_owned()],
+    ] {
+        let err = client::call::<TasksCreate>(
+            &conn,
+            &TasksCreateParams {
+                command_id: w.office.next_uuid_v7(),
+                task_id: w.office.next_uuid_v7(),
+                team_id: Some(root_team.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "BYOA escalated task".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: bad.clone(),
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{bad:?}: {err:?}");
+        assert!(err.message.contains("Only a person"), "{err:?}");
+    }
+
+    // 2. External BYOA agent MAY create a normal task with non-routing labels.
+    let created = client::call::<TasksCreate>(
+        &conn,
+        &TasksCreateParams {
+            command_id: w.office.next_uuid_v7(),
+            task_id: w.office.next_uuid_v7(),
+            team_id: Some(root_team),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: Some("task".into()),
+            work_type: None,
+            title: "BYOA normal task".into(),
+            body_markdown: String::new(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec!["backend".into()],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            attachment_ids: vec![],
+            details: None,
+            dod: None,
+        },
+    )
+    .expect("external BYOA agent can create normal tasks");
+
+    // 3. Owner via verified grant attaches `effort:low`.
+    let owner_patch: TasksUpdateParams = serde_json::from_value(json!({
+        "command_id": w.office.next_uuid_v7(),
+        "task": created.task.key,
+        "expected_revision": created.task.revision,
+        "add_labels": ["effort:low"],
+    }))
+    .unwrap();
+    let owner_updated: TasksMutationResult =
+        serde_json::from_value(ok_value(grant_call::<TasksUpdate>(&w, &owner_patch))).unwrap();
+    assert!(owner_updated.task.labels.contains(&"effort:low".to_owned()));
+
+    // 4. External BYOA agent cannot add, change, or strip routing labels via `tasks.update`.
+    for patch in [
+        json!({ "add_labels": ["model:claude-opus-4-6"] }),
+        json!({ "remove_labels": ["effort:low"] }),
+        json!({ "labels": ["backend"] }),
+    ] {
+        let mut obj = patch.as_object().unwrap().clone();
+        obj.insert("command_id".into(), json!(w.office.next_uuid_v7()));
+        obj.insert("task".into(), json!(owner_updated.task.key));
+        obj.insert(
+            "expected_revision".into(),
+            json!(owner_updated.task.revision),
+        );
+        let params: TasksUpdateParams = serde_json::from_value(Value::Object(obj)).unwrap();
+        let err = client::call::<TasksUpdate>(&conn, &params).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{patch}: {err:?}");
+    }
+
+    // 5. External BYOA agent CAN still add ordinary non-routing labels while preserving `effort:low`.
+    let ok_patch: TasksUpdateParams = serde_json::from_value(json!({
+        "command_id": w.office.next_uuid_v7(),
+        "task": owner_updated.task.key,
+        "expected_revision": owner_updated.task.revision,
+        "add_labels": ["frontend"],
+    }))
+    .unwrap();
+    let byoa_updated = client::call::<TasksUpdate>(&conn, &ok_patch)
+        .expect("BYOA agent may add non-routing labels");
+    assert!(byoa_updated.task.labels.contains(&"frontend".to_owned()));
+    assert!(byoa_updated.task.labels.contains(&"effort:low".to_owned()));
 }

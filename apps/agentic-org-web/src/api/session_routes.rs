@@ -65,6 +65,10 @@ struct StartBody {
     instruction: Option<String>,
     #[serde(default)]
     workspace: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
 }
 
 #[derive(Deserialize)]

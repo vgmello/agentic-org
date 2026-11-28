@@ -182,6 +182,8 @@ impl Fixture {
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
             session_affinity: None,
+            model_override: None,
+            effort_override: None,
         }
     }
 
@@ -252,6 +254,9 @@ fn stub_handle(
         supports_mid_turn: true,
         sandbox_plan: crate::manager::SandboxPlan::host_native(),
         partition,
+        active_model: None,
+        active_effort: None,
+        pinned_override: Default::default(),
     };
     (handle, rx)
 }
@@ -469,6 +474,7 @@ fn a_wake_never_drains_into_or_joins_a_members_live_turn() {
         None,
         crate::manager::SandboxPlan::host_native(),
         true,
+        Default::default(),
     );
     assert!(hers.stage_mid_turn_wakes.is_none() && hers.on_mid_turn_delivered.is_none());
     let others = f.manager.build_pump_hooks(
@@ -477,6 +483,7 @@ fn a_wake_never_drains_into_or_joins_a_members_live_turn() {
         None,
         crate::manager::SandboxPlan::host_native(),
         false,
+        Default::default(),
     );
     assert!(others.stage_mid_turn_wakes.is_some());
 
@@ -508,7 +515,7 @@ fn a_wake_never_drains_into_or_joins_a_members_live_turn() {
         .unwrap()
         .state = SessionState::Idle;
     let acquirer: crate::lifecycle::WarmPermitAcquirer =
-        Arc::new(|_, _, _, _, _, _| panic!("a drain into her process never gets this far"));
+        Arc::new(|_, _, _, _, _, _, _| panic!("a drain into her process never gets this far"));
     crate::lifecycle::drain_into_live_pump_with_acquirer(&f.manager, &f.tess, acquirer);
     assert_eq!(sent_turns(&drained(&rx)), 0);
     assert_eq!(f.queued(), ["w-1"]);
@@ -534,6 +541,7 @@ fn her_turn_end_starts_a_queued_dm_in_its_senders_partition_never_in_the_owners_
         None,
         crate::manager::SandboxPlan::host_native(),
         true,
+        Default::default(),
     );
     (hooks.on_turn_ended.expect("the hook"))(&f.tess);
 
@@ -591,6 +599,7 @@ fn failover(f: &Fixture, partition: Option<PartitionKey>) -> FailoverRequest {
         rate_limit_resets_at: None,
         stop_epoch: 0,
         partition,
+        turn_override: Default::default(),
     }
 }
 
@@ -737,6 +746,8 @@ fn wake_item(
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     }
 }
 

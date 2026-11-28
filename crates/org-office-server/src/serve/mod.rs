@@ -148,8 +148,9 @@ pub type ChatFn = Box<
         + Sync,
 >;
 
-/// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
-pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+/// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`), carrying whether the
+/// caller acted through a verified person/owner grant (`via_grant`, `TASK-136`).
+pub type TasksFn = Box<dyn Fn(Option<&str>, bool, &Request) -> Option<Response> + Send + Sync>;
 
 /// Dispatches the ten chunked `attachment.*` RPCs (`TASK-98.1`, `TASK-98.7`), carrying any active
 /// Chief-of-Staff delegation context into `attachment.render` for caller-scoped buffers and

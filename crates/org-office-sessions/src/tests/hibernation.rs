@@ -347,6 +347,9 @@ fn insert_stub_handle(mgr: &SessionManager, spec: StubSessionSpec<'_>) -> StubSe
             supports_mid_turn: false,
             sandbox_plan: crate::manager::SandboxPlan::host_native(),
             partition: None,
+            active_model: None,
+            active_effort: None,
+            pinned_override: Default::default(),
         },
     );
     mgr.hibernation
@@ -421,6 +424,8 @@ fn task133_ac1_idle_warm_session_hibernates_after_ttl_and_resumes_transparently(
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -454,6 +459,8 @@ fn task133_ac1_idle_warm_session_hibernates_after_ttl_and_resumes_transparently(
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -476,6 +483,8 @@ fn task133_ac1_idle_warm_session_hibernates_after_ttl_and_resumes_transparently(
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -788,6 +797,8 @@ fn task133_ac3_child_build_concurrency_enforcement_and_clamping() {
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -863,6 +874,8 @@ fn task133_pre_launch_sweep_evicts_over_budget_idle_session() {
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -977,6 +990,9 @@ fn task133_hibernation_fails_closed_when_teardown_panics() {
             supports_mid_turn: false,
             sandbox_plan: crate::manager::SandboxPlan::host_native(),
             partition: None,
+            active_model: None,
+            active_effort: None,
+            pinned_override: Default::default(),
         },
     );
     let old = Instant::now() - Duration::from_secs(60);

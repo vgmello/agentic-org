@@ -628,6 +628,14 @@ fn is_descendant_of_walks_live_parent_chain_and_refuses_unrelated_or_invalid_pid
 fn process_tree_rss_bytes_samples_self_and_child_and_rejects_absent_pids() {
     let self_rss = super::process_tree_rss_bytes(std::process::id())
         .expect("current process must report non-zero RSS");
+    let self_single_rss = super::process_rss_bytes(std::process::id())
+        .expect("current process must report non-zero single-process RSS");
+    assert!(
+        self_single_rss > 0,
+        "expected positive single-process RSS, got {self_single_rss}"
+    );
+    assert_eq!(super::process_rss_bytes(0), None);
+    assert_eq!(super::process_rss_bytes(u32::MAX), None);
     assert!(self_rss > 0, "expected positive RSS, got {self_rss}");
     assert_eq!(super::process_tree_rss_bytes(0), None);
     assert_eq!(super::process_tree_rss_bytes(u32::MAX), None);
@@ -638,6 +646,11 @@ fn process_tree_rss_bytes_samples_self_and_child_and_rejects_absent_pids() {
         .expect("spawn short-lived process");
     let gone_pid = short_lived.id();
     let _ = short_lived.wait();
+    assert_eq!(
+        super::process_rss_bytes(gone_pid),
+        None,
+        "reaped PID {gone_pid} must return None for single-process RSS"
+    );
     assert_eq!(
         super::process_tree_rss_bytes(gone_pid),
         None,

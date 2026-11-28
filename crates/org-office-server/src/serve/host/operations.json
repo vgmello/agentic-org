@@ -135,6 +135,7 @@
   {"method":"office.invitation.decline","policy":"serve"},
   {"method":"office.invitation.list","policy":"serve"},
   {"method":"office.list","policy":"refuse"},
+  {"method":"office.metrics","policy":"serve"},
   {"method":"office.remove","policy":"serve"},
   {"method":"office.restart","policy":"refuse"},
   {"method":"office.sync_status","policy":"serve"},

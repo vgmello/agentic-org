@@ -194,6 +194,8 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("session started");
@@ -541,6 +543,8 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -579,6 +583,8 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -621,6 +627,8 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();

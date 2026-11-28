@@ -29,6 +29,8 @@ fn c6_required_ask_suspends_on_turn_end_survives_restart_and_resumes_same_sessio
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -116,6 +118,8 @@ fn c6_grace_period_suspends_and_names_reaped_background_work_on_resume() {
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -197,6 +201,8 @@ fn pass2_grace_period_disarm_prevents_stale_deadline_on_subsequent_ask() {
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();

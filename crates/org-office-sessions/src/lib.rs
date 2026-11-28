@@ -38,6 +38,7 @@ pub mod runtime_registry;
 pub mod stream_hub;
 pub mod subagents;
 pub(crate) use org_subscription_usage as subscription_usage;
+pub mod telemetry;
 pub mod transcript;
 pub(crate) use org_turn_attachments as turn_attachments;
 mod turn_attachments_adapter;
@@ -69,7 +70,11 @@ pub use recovery::{
     SessionAffinityEntry, SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT,
     MAX_CONSECUTIVE_STALLS, MAX_RESUME_ATTEMPTS,
 };
-pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
+pub use router::{
+    is_task_routing_label, parse_task_routing_labels, parse_task_routing_labels_or_default,
+    validate_effort_override, validate_model_override, validate_turn_override, HqPermitAcquireSpec,
+    HqPermitCoordinator, TurnModelOverride,
+};
 pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
 pub use stream_hub::{
     SessionActivity, SessionStreamEvent, SessionStreamFrame, SessionStreamHub, SessionStreamKey,
@@ -78,6 +83,10 @@ pub use stream_hub::{
 pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,
     BackgroundTaskState, BackgroundWake, SubagentDefinition,
+};
+pub use telemetry::{
+    compute_cache_hit_ratio, percentile_u64, AgentTelemetrySnapshot, TelemetryCollector,
+    MAX_RECENT_TURNS_PER_AGENT, MAX_TRACKED_AGENTS,
 };
 pub use turn_attachments::{
     TurnAttachmentResolveError, TurnAttachmentResolver, TurnDeliveryAttachment, TurnDeliveryScope,

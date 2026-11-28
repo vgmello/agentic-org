@@ -333,6 +333,8 @@ pub(super) fn wake_confident_person_matches(
             attachment_ids: msg.attachments.iter().map(|a| a.id.clone()).collect(),
             session_affinity: None,
             enqueued_at_ms: now,
+            model_override: None,
+            effort_override: None,
         };
         if sessions.enqueue_wake(asker_id.as_str(), item) == WakeOutcome::Started {
             woke.push(asker_id.as_str().to_owned());

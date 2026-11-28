@@ -364,6 +364,8 @@ fn start(mgr: &SessionManager, fx: &WakeFixture, instruction: &str) -> SessionVi
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap()
@@ -689,6 +691,8 @@ fn a_staged_wake_is_never_delivered_into_a_turn_being_interrupted() {
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     };
     assert_eq!(
         mgr.enqueue_wake(&fx.agent_a, dm),
@@ -885,6 +889,8 @@ fn a_steer_is_fenced_untrusted_data_that_cannot_break_out_of_its_notice() {
         attachment_ids: Vec::new(),
         enqueued_at_ms: 0,
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     };
     let (notice, turn) = crate::wake::compose_person_steer(&steer);
     for text in [&notice, &turn] {

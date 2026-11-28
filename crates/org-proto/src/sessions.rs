@@ -235,6 +235,13 @@ pub struct MemberSessionStartParams {
     /// resume state (`TASK-92.1`, ADR-0028).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh: bool,
+    /// Optional per-turn model override (`TASK-136`); falls back to the agent profile default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Optional per-turn reasoning effort override (`low|medium|high|xhigh|max`, `TASK-136`);
+    /// falls back to the agent profile default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 impl Call for MemberSessionStart {

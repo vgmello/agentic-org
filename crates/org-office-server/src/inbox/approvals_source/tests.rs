@@ -411,6 +411,8 @@ impl ApprovalInboxFixture {
                     workspace: None,
                     resume_runtime_session_id: None,
                     fresh: false,
+                    model: None,
+                    effort: None,
                 },
             )
             .expect("agent session started");
