@@ -146,43 +146,31 @@ lsof -iTCP:7420 -iTCP:7443 -sTCP:LISTEN
 
 ## Step 2: Install Prebuilt Binaries on Remote Linux Satellites
 
-Run on each remote Linux host (`worker-eu`, `main-eu`, etc.) — **zero local compilation**.
+Run on each remote Linux host (`worker-eu`, `main-eu`, etc.) — **zero local compilation and zero private signing keys on remote hosts**.
 
-### Option A: Install or upgrade from GitHub Releases
+### Option A (Recommended): Cold install from GitHub Releases, then zero-SSH pull-verified updates
 ```bash
-# Cold install (resolves the latest release automatically when --version is omitted;
-# requires out-of-band verification via --sha256 <64-hex|file> or --pubkey <publisher.pub.pem|trust-registry.json>):
+# 1. One-time cold install (verifies archive via out-of-band --sha256 or --pubkey):
 curl -fsSL https://raw.githubusercontent.com/vgmello/agentic-org/v1/scripts/install.sh \
   | bash -s -- --sha256 "<expected-archive-sha256>" --bin-dir "$HOME/.local/bin"
 
-# Upgrade an already-installed host to the latest release (reuses the trusted installed binary):
-curl -fsSL https://raw.githubusercontent.com/vgmello/agentic-org/v1/scripts/install.sh | bash
+# 2. All subsequent upgrades use built-in pull-verified auto-update (no SSH/scp required):
+agentic-org release check --json
+agentic-org release update --json
 ```
 
-### Option B: Install from a locally staged `.tar.gz` + `.sha256` bundle
-Copy the prebuilt bundle and `scripts/install.sh` to the remote host (e.g. via `scp` over Tailscale):
+### Option B (Air-Gapped / Offline Mirror Only): Install from a locally staged `.tar.gz` + `.sha256` bundle
+For air-gapped hosts without outbound HTTPS access to GitHub Releases, transfer the CI-signed release archive and `.sha256` file through your offline artifact channel and run:
 ```bash
-scp dist/agentic-org-0.1.0-v5-linux-x86_64.tar.gz \
-    dist/agentic-org-0.1.0-v5-linux-x86_64.tar.gz.sha256 \
-    scripts/install.sh \
-    agents@apps-main-eu:~/dist/
+export PATH="$HOME/.local/bin:$PATH"
+agentic-org release verify "$HOME/dist/agentic-org-<release-id>-linux-x86_64.tar.gz" --json
+agentic-org release install "$HOME/dist/agentic-org-<release-id>-linux-x86_64.tar.gz" --json
+agentic-org release status --json
+agentic-org --version
+agent-os --version
 ```
 
-Then install on the remote host (cold installs require explicit `--sha256` or `--pubkey`; subsequent upgrades reuse the installed trusted binary):
-```bash
-ssh agents@apps-main-eu '
-  export PATH="$HOME/.local/bin:$PATH"
-  bash "$HOME/dist/install.sh" \
-    --archive "$HOME/dist/agentic-org-0.1.0-v5-linux-x86_64.tar.gz" \
-    --sha256 "$HOME/dist/agentic-org-0.1.0-v5-linux-x86_64.tar.gz.sha256" \
-    --bin-dir "$HOME/.local/bin"
-  agentic-org release status --json
-  agentic-org --version
-  agent-os --version
-'
-```
-
-What `install.sh` does automatically:
+What `install.sh` / `agentic-org release install` does automatically:
 - Verifies the archive SHA-256 against the `.sha256` checksum file.
 - Tightens Ubuntu User-Private-Group directory permissions (`chmod go-w ~/.local ~/.local/share` and `0700 ~/.local/share/agentic-org`) required for the protected release store.
 - Runs `agentic-org release install` to verify the Ed25519 manifest signature, closed inventory, and executable digests, pinning the release atomically into `~/.local/share/agentic-org/release-store`.
@@ -358,23 +346,64 @@ agentic-org task create --project-id "<project_id>" --title "Verify remote CI ch
 
 ---
 
-## Step 6: Rolling Upgrades (Zero Re-Enrollment)
+## Step 6: Zero-SSH Pull-Verified Auto-Updates & Rollback (ADR-0009)
 
-Upgrading a running Linux satellite preserves its enrolled mTLS identity, SQLite database, and hired agents. The installer stops the running service for the install, points its unit's `ExecStart` at the new release and starts it again:
+Tagged releases published by `.github/workflows/release.yml` emit CI-signed per-platform `.tar.gz` bundles alongside a signed `release-pointer.v1.json` + raw 64-byte `release-pointer.v1.sig` manifest. **No private signing keys ever live on HQ or satellite hosts**, and upgrades require **zero SSH/scp pushes**.
+
+### On-demand check, idle-drained update, and rollback (macOS HQ or Linux satellite)
 ```bash
-ssh agents@apps-main-eu '
-  set -euo pipefail
-  export PATH="$HOME/.local/bin:$PATH"
-  bash "$HOME/dist/install.sh" \
-    --archive "$HOME/dist/agentic-org-<new-release-id>-linux-x86_64.tar.gz" \
-    --bin-dir "$HOME/.local/bin"
-  agentic-org release status --json
-  agentic-org service status
-  agentic-org office sync-status --json
-'
+# 1. Check whether a newer signed release is available (read-only, strict HTTPS):
+agentic-org release check --json
+
+# 2. Preview what an update would do without stopping services:
+agentic-org release update --dry-run --json
+
+# 3. Pull-verify, wait for active agent turns to drain, swap services, and verify health:
+agentic-org release update --drain-timeout 180 --health-timeout 60 --json
+
+# 4. Verify active pin and sync convergence:
+agentic-org release status --json
+agentic-org service status
+agentic-org office sync-status --json
+
+# 5. Manually roll back to the previous known-good release if ever needed:
+agentic-org release rollback --quarantine-current --json
 ```
 
-Upgrading from a release whose installed `agentic-org` predates this (its `release install --help` has no `--no-restart`): that CLI cannot install while the service runs, so run `agentic-org service stop --yes` first. `install.sh` then has the newly installed release move the stopped unit to itself, and `agentic-org service start` starts it. Never edit the unit's `ExecStart` by hand: a changed unit is left untouched by every later upgrade.
+How pull-verified auto-update protects running offices:
+- Verifies `release-pointer.v1.json` + `release-pointer.v1.sig` using the build-pinned Ed25519 trust registry (`org-release`), rejecting non-HTTPS URLs, unknown/duplicate JSON keys, sequence downgrades, and platform/architecture mismatches.
+- Downloads and verifies the bundle archive (streaming SHA-256, `<= 2 GiB`, atomic `0700` staging with `O_NOFOLLOW`, full ADR-0009 inner manifest + payload verification, cross-bound to the pointer) **before** touching any running service or active pin.
+- Waits for active managed agent turns to finish cleanly (`--drain-timeout`); if turns are still running at the deadline, exits with `busy_timeout` and **zero disruption** to the running release (use `--force` only when intentionally interrupting work).
+- Persists an atomic pre-swap rollback checkpoint, updates the release pin and `launchd`/`systemd` service unit, and probes post-restart health (`hello` + `instance.status`).
+- If post-restart health fails, **automatically rolls back** the pin and service unit to the previous known-good release, verifies rollback health, and quarantines the broken release ID so subsequent checks do not infinite-loop.
+
+### Scheduled unattended updates on Linux satellites (`systemd --user` timer)
+```ini
+# ~/.config/systemd/user/agentic-org-updater.service
+[Unit]
+Description=Agentic Org pull-verified idle-drained auto-updater
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/agentic-org release update --drain-timeout 300 --health-timeout 60 --json
+
+# ~/.config/systemd/user/agentic-org-updater.timer
+[Unit]
+Description=Check for signed Agentic Org updates every 30 minutes
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=30m
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+Enable with `systemctl --user daemon-reload && systemctl --user enable --now agentic-org-updater.timer`.
+
+Upgrading from a release whose installed `agentic-org` predates `release update` / `--no-restart`: run `agentic-org service stop --yes` once, install the new release via `scripts/install.sh`, and start the service again (`agentic-org service start`). Never edit the unit's `ExecStart` by hand: a changed unit is left untouched by every later upgrade.
 
 ---
 
@@ -390,23 +419,35 @@ Upgrading from a release whose installed `agentic-org` predates this (its `relea
 
 ---
 
-## Appendix: Building a Signed Linux Release Package from Source
+## Appendix: CI/CD Release Signing & Pointer Generation (Never on Worker Hosts)
 
-If you are building your own private signed release bundle (instead of downloading from GitHub Releases), run once on a Linux build host (such as `apps-worker-eu` or CI):
+Official signed releases are built and signed exclusively in `.github/workflows/release.yml` using GitHub Actions secrets (`ORG_RELEASE_SIGNING_KEY_PEM` and `ORG_RELEASE_TRUST_REGISTRY_JSON`, plus Apple Developer ID secrets on macOS). **Never generate or store publisher private keys on satellite worker VMs.**
+
+For private self-hosted release pipelines, run signing strictly on an isolated build/release runner:
 
 ```bash
-# 1. Generate a publisher Ed25519 keypair + trust registry (once)
-python3 scripts/release_tool.py keygen --out-dir "$HOME/.config/agentic-org/publisher"
+# 1. Generate a publisher Ed25519 keypair + public trust registry (once, offline / secret store)
+python3 scripts/release_tool.py keygen --out-dir "$PRIVATE_SIGNING_DIR"
 
-# 2. Build static UI (or supply a prebuilt --ui-dir) and compile/sign/package (.tar.gz + .sha256; --deb is for --profile dev only)
+# 2. Build static UI (or supply a prebuilt --ui-dir) and compile/sign/package each platform bundle
 ./scripts/package-release.sh \
   --profile release \
-  --release-id 0.1.0-v1 \
-  --sequence 1 \
-  --signing-key "$HOME/.config/agentic-org/publisher/publisher.key.pem" \
-  --trust-registry "$HOME/.config/agentic-org/publisher/release-trust-registry.json" \
+  --release-id v0.2.0 \
+  --sequence 2 \
+  --signing-key "$PRIVATE_SIGNING_DIR/publisher.key.pem" \
+  --trust-registry "$PRIVATE_SIGNING_DIR/release-trust-registry.json" \
   --ui-dir /path/to/apps/agentic-org-ui/build \
-  --out-dir "$HOME/dist"
+  --out-dir "$RELEASE_ARTIFACTS_DIR"
+
+# 3. Generate and sign release-pointer.v1.json + release-pointer.v1.sig for pull-verified updates
+./scripts/generate-release-pointer.sh \
+  --artifacts-dir "$RELEASE_ARTIFACTS_DIR" \
+  --out-dir "$RELEASE_ARTIFACTS_DIR" \
+  --release-id v0.2.0 \
+  --sequence 2 \
+  --channel stable \
+  --base-url "https://releases.example.com/v0.2.0" \
+  --signing-key "$PRIVATE_SIGNING_DIR/publisher.key.pem"
 ```
 
-Ship the resulting `dist/agentic-org-<id>-linux-x86_64.tar.gz` and `.sha256` (plus `scripts/install.sh`) to any compiler-free Linux host and follow Step 2.
+Publish the resulting `agentic-org-<id>-<platform>-<arch>.tar.gz`, `.sha256`, `release-pointer.v1.json`, and `release-pointer.v1.sig` to your HTTPS release endpoint so hosts can pull-verify via `agentic-org release update`.

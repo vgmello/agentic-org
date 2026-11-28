@@ -86,10 +86,17 @@ impl ReleaseStore {
             ),
             None => (1, None, 0),
         };
-        if commit.version != 1
-            || commit.ordinal != ordinal
-            || commit.previous != previous
-            || commit.highest_sequence != commit.pin.sequence.max(highest)
+        if commit.version != 1 || commit.ordinal != ordinal || commit.previous != previous {
+            return Err(Error::InvalidRelease);
+        }
+        if commit.rollback {
+            if commit.highest_sequence != highest
+                || commit.pin.sequence > highest
+                || !self.prior_pins.contains(&commit.pin)
+            {
+                return Err(Error::InvalidRelease);
+            }
+        } else if commit.highest_sequence != commit.pin.sequence.max(highest)
             || commit.pin.sequence < highest
         {
             return Err(Error::InvalidRelease);

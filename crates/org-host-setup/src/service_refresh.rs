@@ -74,6 +74,17 @@ pub enum InstallAttempt {
     Failed(String),
 }
 
+/// Snapshot of one managed service inspected before an install or auto-update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedServiceInfo {
+    pub instance: String,
+    pub instance_id: String,
+    pub service_id: String,
+    pub root: PathBuf,
+    pub previous_program: PathBuf,
+    pub was_running: bool,
+}
+
 /// The account's registered services, as an install found them and has changed them.
 #[derive(Debug, Default)]
 pub struct ServiceRefresh {
@@ -83,7 +94,9 @@ pub struct ServiceRefresh {
 #[derive(Debug)]
 struct Entry {
     instance: String,
+    instance_id: String,
     id: String,
+    root: PathBuf,
     found: Found,
 }
 
@@ -142,11 +155,67 @@ impl ServiceRefresh {
             let found = inspect_one(manager, &id, &name, releases.as_deref());
             entries.push(Entry {
                 instance: name,
+                instance_id: instance_id.to_owned(),
                 id,
+                root: record.input.root,
                 found,
             });
         }
         Self { entries }
+    }
+
+    /// Managed registered services found in this store, for idle-drain and rollback coordination.
+    pub fn managed_targets(&self) -> Vec<ManagedServiceInfo> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.found {
+                Found::Managed {
+                    unit, was_running, ..
+                } => Some(ManagedServiceInfo {
+                    instance: entry.instance.clone(),
+                    instance_id: entry.instance_id.clone(),
+                    service_id: entry.id.clone(),
+                    root: entry.root.clone(),
+                    previous_program: unit.program.clone(),
+                    was_running: *was_running,
+                }),
+                Found::Untouched { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Re-points managed services to `program` and restarts every instance named in `should_start`
+    /// (even if its process crashed before rollback began). Used by auto-update rollback.
+    pub(crate) fn rollback_to_program(
+        mut self,
+        manager: &dyn ServiceManager,
+        program: &Path,
+        should_start: &[String],
+        restart: bool,
+    ) -> Vec<ServiceRefreshReport> {
+        for entry in &mut self.entries {
+            if let Found::Managed {
+                was_running,
+                stopped,
+                ..
+            } = &mut entry.found
+            {
+                let want_running = should_start.iter().any(|name| name == &entry.instance);
+                if *was_running && !*stopped {
+                    if stop_and_wait(manager, &entry.id).is_ok() {
+                        *stopped = true;
+                    }
+                } else if want_running {
+                    *was_running = true;
+                    *stopped = true;
+                }
+            }
+        }
+        self.refresh(manager, program, restart)
+    }
+
+    pub(crate) fn account_setup_base() -> Result<Option<PathBuf>, String> {
+        setup_base()
     }
 
     /// What an install would do to each service, for `--dry-run`: `refresh` or the outcome

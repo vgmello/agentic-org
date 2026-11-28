@@ -310,6 +310,15 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org release status [--store <dir>] [--json]`
   Show the active pinned release ID, sequence, manifest SHA-256, and installed executable paths.
   **Use when:** verifying which signed release is currently active on this host.
+- `agentic-org release check [--pointer-url <url>] [--signature-url <url>] [--timeout <secs>] [--allow-quarantined] [--store <dir>] [--state-dir <dir>] [--json]`
+  Fetch and verify a signed release pointer (`release-pointer.v1.json` + raw 64-byte `release-pointer.v1.sig`) over strict HTTPS using the build-pinned Ed25519 trust registry without downloading a bundle or mutating the release store. Reports whether the host is `up_to_date`, has an `update_available`, skipped a `quarantined` release, or rejected a `downgrade_rejected` replay.
+  **Use when:** checking whether a newer signed Agentic Org release is available for this host's platform and architecture before updating.
+- `agentic-org release update [--pointer-url <url>] [--signature-url <url>] [--drain-timeout <secs>] [--health-timeout <secs>] [--fetch-timeout <secs>] [--force] [--no-restart] [--allow-quarantined] [--store <dir>] [--state-dir <dir>] [--dry-run] [--json]`
+  Pull-verify a signed release pointer and bundle over strict HTTPS (bounded <= 2 GiB, streaming SHA-256, ADR-0009 Ed25519 manifest + payload verification, cross-bound to the pointer), wait for active managed agent turns to drain cleanly (refusing cleanly with `busy_timeout` unless `--force`), atomically persist a rollback checkpoint before swapping the release pin and redefining registered services (`launchd` / `systemd`), and probe post-restart health (`hello` + `instance.status`). If post-restart health fails, automatically rolls back the pin and services to the previous known-good release, verifies rollback health, and quarantines the broken release ID so subsequent runs do not infinite-loop.
+  **Use when:** performing zero-SSH pull-verified upgrades on macOS HQ or remote Linux satellites.
+- `agentic-org release rollback [--to <release-id>] [--drain-timeout <secs>] [--health-timeout <secs>] [--force] [--no-restart] [--quarantine-current] [--store <dir>] [--state-dir <dir>] [--dry-run] [--json]`
+  Idle-drain active agent turns and roll back the active release pin and registered services (`launchd` / `systemd`) to the previous committed release (or an explicit previously-committed `--to <release-id>`), keeping the store's monotonic `highest_sequence` watermark intact and verifying post-rollback health. Pass `--quarantine-current` to tombstone the release being rolled back from so automatic updates skip it.
+  **Use when:** reverting a host to a previously pinned known-good release in its local release store.
 - `agentic-org msg send|inbox|read|reply|ask|accept|withdraw|list|wait`
   Send direct messages, channel posts, asks, replies, or handoffs over an approved office channel.
   **Use when:** messaging local or remote office agents from your terminal without running a managed agent session.

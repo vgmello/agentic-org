@@ -45,6 +45,7 @@ pub use org_host::instance::setup::FederationConfig;
 use org_host::instance::setup::{Input, Journal, Paths, Service};
 pub use org_host_control::InvitationTokenSecret;
 
+pub mod auto_update;
 pub mod cli_context;
 pub(crate) mod cli_session;
 pub(crate) mod federation_command;
@@ -100,7 +101,9 @@ pub use org_host_control::organization::{
 };
 pub use org_host_control::OneTimeLinkUrl;
 pub use service_command::{service, ServiceAction, ServiceReport, ServiceState};
-pub use service_refresh::{InstallAttempt, RefreshOutcome, ServiceRefresh, ServiceRefreshReport};
+pub use service_refresh::{
+    InstallAttempt, ManagedServiceInfo, RefreshOutcome, ServiceRefresh, ServiceRefreshReport,
+};
 mod account;
 mod adapters;
 mod address;

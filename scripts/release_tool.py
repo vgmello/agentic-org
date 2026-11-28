@@ -9,6 +9,7 @@ and optional Debian `.deb` development packages when `--signing-key` is omitted.
 from __future__ import annotations
 
 import argparse
+import datetime
 import gzip
 import hashlib
 import io
@@ -30,8 +31,13 @@ MACOS_SIGNING_IDS = {
     "agentic-org-web": "com.vgmello.agentic-org.web",
 }
 RELEASE_FORMAT = "agentic-org-release-v1"
+POINTER_FORMAT = "agentic-org-release-pointer-v1"
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+ARCHIVE_TARGET_RE = re.compile(
+    r"^agentic-org-(?P<release_id>[A-Za-z0-9][A-Za-z0-9._-]{0,95})-(?P<platform>linux|macos)-(?P<arch>x86_64|aarch64)\.tar\.gz$"
+)
 MAX_FILES = 16_384
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
@@ -449,6 +455,238 @@ def cmd_package(args: argparse.Namespace) -> int:
     return 0
 
 
+def verify_ed25519(key_pem: Path, payload: bytes, signature: bytes) -> None:
+    if len(signature) != 64:
+        raise RuntimeError(f"expected 64-byte Ed25519 signature, got {len(signature)}")
+    with tempfile.TemporaryDirectory(prefix="agentic-org-verify-") as td:
+        pub = Path(td) / "pub.pem"
+        msg = Path(td) / "payload.bin"
+        sig = Path(td) / "payload.sig"
+        pub.write_bytes(run_openssl(["pkey", "-in", str(key_pem), "-pubout"]))
+        msg.write_bytes(payload)
+        sig.write_bytes(signature)
+        run_openssl(
+            [
+                "pkeyutl",
+                "-verify",
+                "-pubin",
+                "-inkey",
+                str(pub),
+                "-rawin",
+                "-in",
+                str(msg),
+                "-sigfile",
+                str(sig),
+            ]
+        )
+
+
+def verify_signed_bundle_matches(
+    archive_path: Path,
+    release_id: str,
+    sequence: int,
+    platform: str,
+    arch: str,
+    expected_key_id: str,
+    key_pem: Path,
+) -> None:
+    with tarfile.open(archive_path, mode="r:gz") as tf:
+        try:
+            manifest_member = tf.getmember("release.v1.json")
+            sig_member = tf.getmember("release.v1.sig")
+        except KeyError as exc:
+            raise SystemExit(
+                f"signed archive {archive_path.name} missing required control file: {exc}"
+            ) from exc
+        manifest_fh = tf.extractfile(manifest_member)
+        sig_fh = tf.extractfile(sig_member)
+        if manifest_fh is None or sig_fh is None:
+            raise SystemExit(f"signed archive {archive_path.name} has unreadable control entry")
+        manifest_bytes = manifest_fh.read()
+        sig_bytes = sig_fh.read()
+    verify_ed25519(key_pem, manifest_bytes, sig_bytes)
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    if manifest.get("format") != RELEASE_FORMAT:
+        raise SystemExit(f"{archive_path.name}: unexpected manifest format {manifest.get('format')!r}")
+    if manifest.get("release_id") != release_id:
+        raise SystemExit(
+            f"{archive_path.name}: release_id {manifest.get('release_id')!r} != {release_id!r}"
+        )
+    if manifest.get("sequence") != sequence:
+        raise SystemExit(
+            f"{archive_path.name}: sequence {manifest.get('sequence')!r} != {sequence!r}"
+        )
+    if manifest.get("platform") != platform or manifest.get("architecture") != arch:
+        raise SystemExit(
+            f"{archive_path.name}: target ({manifest.get('platform')}, {manifest.get('architecture')}) "
+            f"!= ({platform}, {arch})"
+        )
+    if manifest.get("key_id") != expected_key_id:
+        raise SystemExit(
+            f"{archive_path.name}: key_id {manifest.get('key_id')!r} != signing key {expected_key_id!r}"
+        )
+
+
+def _validate_pointer_base_url(raw_url: str, allow_local: bool) -> str:
+    base_url = raw_url.rstrip("/")
+    allowed = ("https://",)
+    if allow_local:
+        allowed = (
+            "https://",
+            "http://127.0.0.1",
+            "http://localhost",
+            "http://[::1]",
+            "file:///",
+        )
+    if not any(base_url.startswith(prefix) for prefix in allowed):
+        raise SystemExit(f"--base-url scheme not permitted: `{base_url}`")
+    return base_url
+
+
+def _discover_release_archives(artifacts_dir: Path, release_id: str) -> list[tuple[str, str, Path]]:
+    discovered: list[tuple[str, str, Path]] = []
+    for entry in sorted(artifacts_dir.iterdir()):
+        if not entry.is_file() or entry.is_symlink():
+            continue
+        match = ARCHIVE_TARGET_RE.match(entry.name)
+        if match and match.group("release_id") == release_id:
+            discovered.append((match.group("platform"), match.group("arch"), entry))
+    if not discovered:
+        raise SystemExit(
+            f"no signed release archives matching agentic-org-{release_id}-<platform>-<arch>.tar.gz "
+            f"found in {artifacts_dir}"
+        )
+    return sorted(discovered, key=lambda item: (item[0], item[1]))
+
+
+def _build_pointer_target(
+    artifacts_dir: Path,
+    archive_path: Path,
+    platform: str,
+    arch: str,
+    release_id: str,
+    sequence: int,
+    base_url: str,
+    key_id: str,
+    key_path: Path,
+) -> dict[str, object]:
+    actual_sha = sha256_file(archive_path)
+    sha_file = artifacts_dir / f"{archive_path.name}.sha256"
+    if sha_file.is_file():
+        recorded = sha_file.read_text(encoding="utf-8").strip().split()[0].lower()
+        if recorded != actual_sha:
+            raise SystemExit(
+                f"checksum mismatch for {archive_path.name}: {sha_file.name} has {recorded}, "
+                f"actual is {actual_sha}"
+            )
+    verify_signed_bundle_matches(
+        archive_path, release_id, sequence, platform, arch, key_id, key_path
+    )
+    size = archive_path.stat().st_size
+    if size < 1 or size > MAX_PAYLOAD_BYTES:
+        raise SystemExit(f"archive {archive_path.name} size {size} out of bounds")
+    return {
+        "platform": platform,
+        "architecture": arch,
+        "url": f"{base_url}/{archive_path.name}",
+        "sha256": actual_sha,
+        "size": size,
+    }
+
+
+def _collect_pointer_targets(
+    artifacts_dir: Path,
+    release_id: str,
+    sequence: int,
+    base_url: str,
+    key_id: str,
+    key_path: Path,
+) -> list[dict[str, object]]:
+    targets: list[dict[str, object]] = []
+    seen_targets: set[tuple[str, str]] = set()
+    for platform, arch, archive_path in _discover_release_archives(artifacts_dir, release_id):
+        if (platform, arch) in seen_targets:
+            raise SystemExit(f"duplicate target ({platform}, {arch}) in {artifacts_dir}")
+        seen_targets.add((platform, arch))
+        targets.append(
+            _build_pointer_target(
+                artifacts_dir,
+                archive_path,
+                platform,
+                arch,
+                release_id,
+                sequence,
+                base_url,
+                key_id,
+                key_path,
+            )
+        )
+    return targets
+
+
+def cmd_pointer(args: argparse.Namespace) -> int:
+    if not RELEASE_ID_RE.match(args.release_id):
+        raise SystemExit(f"invalid --release-id `{args.release_id}`")
+    if not CHANNEL_RE.match(args.channel):
+        raise SystemExit(f"invalid --channel `{args.channel}`")
+    if args.sequence < 1:
+        raise SystemExit(f"invalid --sequence {args.sequence}: must be >= 1")
+    base_url = _validate_pointer_base_url(args.base_url, args.allow_local_url)
+    key_path = Path(args.signing_key).resolve()
+    if not key_path.is_file():
+        raise SystemExit(f"missing --signing-key file: {key_path}")
+    key_id = hashlib.sha256(raw_ed25519_pubkey_from_key(key_path)).hexdigest()
+
+    artifacts_dir = Path(args.artifacts_dir).resolve()
+    out_dir = Path(args.out_dir or args.artifacts_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    targets = _collect_pointer_targets(
+        artifacts_dir, args.release_id, args.sequence, base_url, key_id, key_path
+    )
+
+    published_at = args.published_at or datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    pointer = {
+        "format": POINTER_FORMAT,
+        "channel": args.channel,
+        "release_id": args.release_id,
+        "sequence": args.sequence,
+        "installer_contract": 1,
+        "key_id": key_id,
+        "published_at": published_at,
+        "targets": targets,
+    }
+    pointer_bytes = (json.dumps(pointer, indent=2) + "\n").encode("utf-8")
+    sig_bytes = sign_ed25519(key_path, pointer_bytes)
+    verify_ed25519(key_path, pointer_bytes, sig_bytes)
+
+    pointer_path = out_dir / "release-pointer.v1.json"
+    sig_path = out_dir / "release-pointer.v1.sig"
+    sha_path = out_dir / "release-pointer.v1.json.sha256"
+    pointer_path.write_bytes(pointer_bytes)
+    sig_path.write_bytes(sig_bytes)
+    pointer_sha = hashlib.sha256(pointer_bytes).hexdigest()
+    sha_path.write_text(f"{pointer_sha}  release-pointer.v1.json\n", encoding="utf-8")
+
+    print(
+        json.dumps(
+            {
+                "pointer": str(pointer_path),
+                "signature": str(sig_path),
+                "sha256": pointer_sha,
+                "release_id": args.release_id,
+                "sequence": args.sequence,
+                "channel": args.channel,
+                "targets": len(targets),
+                "key_id": key_id,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Agentic Org release signing & packaging tool")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -471,6 +709,21 @@ def main() -> int:
     p_pkg.add_argument("--signing-key", default="")
     p_pkg.add_argument("--deb", action="store_true")
     p_pkg.set_defaults(func=cmd_package)
+
+    p_ptr = sub.add_parser(
+        "pointer",
+        help="Generate and Ed25519-sign release-pointer.v1.json + release-pointer.v1.sig from signed archives",
+    )
+    p_ptr.add_argument("--artifacts-dir", required=True)
+    p_ptr.add_argument("--out-dir", default="")
+    p_ptr.add_argument("--release-id", required=True)
+    p_ptr.add_argument("--sequence", type=int, required=True)
+    p_ptr.add_argument("--channel", default="stable")
+    p_ptr.add_argument("--base-url", required=True)
+    p_ptr.add_argument("--signing-key", required=True)
+    p_ptr.add_argument("--published-at", default="")
+    p_ptr.add_argument("--allow-local-url", action="store_true")
+    p_ptr.set_defaults(func=cmd_pointer)
 
     args = parser.parse_args()
     return args.func(args)

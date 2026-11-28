@@ -17,6 +17,10 @@ Usage:
     [--ui-dir /path/to/built/ui] \
     [--skip-build] \
     [--deb]
+
+After packaging signed per-platform bundles, run `scripts/generate-release-pointer.sh`
+to emit and sign `release-pointer.v1.json` + `release-pointer.v1.sig` for pull-verified
+auto-updates (`agentic-org release check` / `agentic-org release update`).
 EOF
 }
 

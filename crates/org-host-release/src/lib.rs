@@ -5,16 +5,28 @@
 #![forbid(unsafe_code)]
 
 mod archive;
+pub mod fetcher;
 mod files;
 mod ids;
 mod platform;
+pub mod pull;
 mod runtime;
 pub mod signing;
 mod store;
+pub mod update_state;
 
 pub use archive::ArchiveBundle;
+pub use fetcher::{FetchError, HttpsReleaseFetcher, LocalDirectoryFetcher, ReleaseFetcher};
+pub use pull::{
+    check_pointer, check_pointer_with_policy, default_signature_url, stage_verified_pointer,
+    stage_verified_pointer_with_policy, PointerCheck, PointerDecision, PullConfig, PullError,
+    StagedRelease, DEFAULT_BUNDLE_TIMEOUT, DEFAULT_METADATA_TIMEOUT, DEFAULT_POINTER_URL,
+};
 pub use runtime::{Pin, RuntimeRelease};
 pub use store::{ReleasePin, ReleaseStore};
+pub use update_state::{
+    default_update_state_dir, PendingHealthCheck, QuarantinedRelease, UpdateState, UpdateStateStore,
+};
 
 use org_platform::image::{ReleaseArchitecture, ReleasePlatform};
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, VerifiedManifest};

@@ -33,6 +33,10 @@ fn help_subcommand_routes_to_command_help() {
         &["help", "provider", "bind"],
         &["help", "release", "verify"],
         &["help", "release", "install"],
+        &["help", "release", "status"],
+        &["help", "release", "check"],
+        &["help", "release", "update"],
+        &["help", "release", "rollback"],
         &["help", "msg"],
         &["help", "agent", "bind"],
         &["help", "agent", "renew"],
@@ -180,7 +184,9 @@ fn cli_reference_documents_every_top_level_and_office_command() {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org service {sub}"));
     }
     assert_cli_reference_entry_has_use_when("`agentic-org instance rebind");
-    assert_cli_reference_entry_has_use_when("`agentic-org release verify");
+    for sub in ["verify", "install", "status", "check", "update", "rollback"] {
+        assert_cli_reference_entry_has_use_when(&format!("`agentic-org release {sub}"));
+    }
     for sub in ["show", "use", "clear"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org context {sub}"));
     }
