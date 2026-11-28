@@ -178,12 +178,31 @@ const TASK_TRANSITION_INPUT: &[Field] = &[
         "Target status",
     ),
     Field::optional(
+        "reason",
+        Type::String,
+        "Transition reason (required for blocked; optional note for other statuses)",
+    ),
+    Field::optional(
         "blocked_reason",
         Type::String,
-        "Required when transitioning to blocked",
+        "Alias for --reason on blocked transitions only (refused for other statuses)",
+    ),
+    Field::optional(
+        "note",
+        Type::String,
+        "Alias for --reason (optional transition note)",
+    ),
+    Field::optional(
+        "waiting_on",
+        Type::Enum(&["owner", "none"]),
+        "Mark explicit block as waiting on owner (or clear with none; blocked only)",
+    ),
+    Field::optional(
+        "waiting_on_owner",
+        Type::Boolean,
+        "Mark explicit block as waiting on owner action (blocked only)",
     ),
     Field::optional("resolution", Type::String, "Optional closure resolution"),
-    Field::optional("note", Type::String, "Optional transition note"),
 ];
 
 const TASK_ASSIGN_INPUT: &[Field] = &[

@@ -113,7 +113,7 @@ pub struct TasksListParams {
     /// Optional task ref/ID: return only tasks that this task directly depends on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dependent_of: Option<String>,
-    /// Case-insensitive substring filter over key, title, body, labels, or file paths.
+    /// Case-insensitive substring filter over key, title, body, blocked_reason, labels, or file paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
     #[serde(default)]
@@ -142,6 +142,12 @@ pub struct TasksListParams {
     /// is not an RFC 3339 timestamp is refused as `invalid_request`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_since: Option<String>,
+    /// Only ready tasks: open, not explicitly `blocked`, and not dependency-blocked (`TASK-84`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ready: bool,
+    /// Only tasks with at least one unmet direct `depends_on` prerequisite (`TASK-84`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dependency_blocked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -263,8 +269,17 @@ pub struct TasksTransitionParams {
     pub task: String,
     pub expected_revision: u64,
     pub status: TaskStatus,
+    /// Unified transition reason (`TASK-84`): sets `blocked_reason` when transitioning to
+    /// `blocked`, or acts as the optional transition note on other status changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
+    /// Opt-in owner-actionable flag on explicit `blocked` transitions (`TASK-84`).
+    /// Absent defaults to `false` on new blocks and preserves the existing value on in-place
+    /// `blocked -> blocked` updates; refused if `Some(true)` on non-blocked transitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_on_owner: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -403,6 +418,22 @@ pub struct TasksHistory;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasksHistoryParams {
     pub task: String,
+    /// Optional `change.type` filter (e.g. `"status_changed"`, `TASK-84`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    /// Keep only block, blocked-reason edit, and unblock `status_changed` events (`TASK-84`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocks_only: bool,
+}
+
+impl TasksHistoryParams {
+    pub fn new(task: impl Into<String>) -> Self {
+        Self {
+            task: task.into(),
+            event_type: None,
+            blocks_only: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

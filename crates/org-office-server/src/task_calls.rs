@@ -315,7 +315,7 @@ impl TaskService {
         }
         if request.is::<TasksHistory>() {
             return Some(run_call::<TasksHistory>(request, |p| {
-                self.office.task_history(&p.task)
+                self.office.task_history_filtered(p)
             }));
         }
         if request.is::<TasksDependencies>() {

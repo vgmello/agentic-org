@@ -34,7 +34,7 @@ fn fetch<T>(
     values: Vec<Value>,
     read: fn(&Row<'_>) -> rusqlite::Result<T>,
 ) -> Result<Vec<T>, EngineError> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     statements::count();
     all(db, sql, values, read)
 }
@@ -60,7 +60,7 @@ fn id_list(ids: &[Id], values: &mut Vec<Value>) -> String {
 }
 
 /// How many statements this adapter has run on this thread: the cost of a read, for tests.
-#[cfg(test)]
+#[cfg(any(test, feature = "testkit"))]
 pub(crate) mod statements {
     use std::cell::Cell;
 
@@ -72,18 +72,40 @@ pub(crate) mod statements {
         RUN.with(|run| run.set(run.get() + 1));
     }
 
-    pub(crate) fn run() -> u64 {
+    pub fn run() -> u64 {
         RUN.with(Cell::get)
     }
+}
+
+#[cfg(any(test, feature = "testkit"))]
+pub(crate) fn explain_list_plan(
+    db: &Connection,
+    scope: &str,
+    query: &org_office::tasks::query::TaskListQuery,
+) -> Result<String, EngineError> {
+    let clause = list::filter(scope, query)?;
+    let (sql, values) = list::page_statement(clause, query);
+    let mut explain = db
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .map_err(|e| EngineError::new(format!("explain query plan: {e}")))?;
+    let rows = explain
+        .query_map(rusqlite::params_from_iter(values), |row| {
+            row.get::<_, String>(3)
+        })
+        .map_err(|e| EngineError::new(format!("explain query plan: {e}")))?;
+    let lines = rows
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .map_err(|e| EngineError::new(format!("explain query plan: {e}")))?;
+    Ok(lines.join("\n"))
 }
 
 const TASK_COLS: &str = "id, office_code, number, team_id, assigned_team_id, project_id, \
     type, work_type, title, status, assignee_id, body_markdown, feature_id, milestone_id, \
     priority, effort, severity, resolution, blocked_reason, rank_order, final_summary, \
-    final_summary_at, final_summary_by_kind, final_summary_by_id";
+    final_summary_at, final_summary_by_kind, final_summary_by_id, blocked_since, waiting_on_owner";
 
 /// The column `task_row` reads the task's `META` from: right after [`TASK_COLS`].
-const TASK_META_AT: usize = 24;
+const TASK_META_AT: usize = 26;
 
 const DETAIL_COLS: &str = "what_happened, expected, steps, environment, \
     severity_confirmed, reopen_count, duplicate_of_task_id, closed_reason, affects_feature_id, \

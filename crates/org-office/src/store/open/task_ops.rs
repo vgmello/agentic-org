@@ -11,9 +11,9 @@ use org_proto::tasks::{
     TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
     TasksChecklistMoveParams, TasksChecklistRemoveParams, TasksChecklistResult, TasksCommentParams,
     TasksCommentResult, TasksCommentsResult, TasksCreateParams, TasksFinalSummaryParams,
-    TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
-    TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams, TasksUpdateParams,
-    TasksWatchParams,
+    TasksHistoryParams, TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams,
+    TasksListResult, TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams,
+    TasksUpdateParams, TasksWatchParams,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::{
@@ -586,5 +586,5 @@ task_read_op!(TaskListRead { params: TasksListParams } => TasksListResult : |thi
 task_read_op!(TaskInspectRead { task: String, fields: Option<Vec<String>> } => TaskInspectResult : |this, s| features::inspect_task_with_fields(s, &this.task, this.fields.as_deref()));
 task_read_op!(TaskDependenciesRead { task: String } => TaskDependenciesResult : |this, s| features::task_dependencies(s, &this.task));
 task_read_op!(TaskCommentsRead { task: String } => TasksCommentsResult : |this, s| features::list_comments(s, &this.task));
-task_read_op!(TaskHistoryRead { task: String } => TasksHistoryResult : |this, s| features::list_history(s, &this.task));
+task_read_op!(TaskHistoryRead { params: TasksHistoryParams } => TasksHistoryResult : |this, s| features::list_history_filtered(s, &this.params));
 task_read_op!(TaskLabelsRead { params: TasksLabelsParams } => TasksLabelsResult : |this, s| features::list_labels(s, &this.params));

@@ -94,6 +94,8 @@ use connection::{
 pub use projects::delete_project_row_for_drift_test;
 use references::check_references;
 use schema::Schema;
+#[cfg(any(test, feature = "testkit"))]
+pub use tasks::statements::run as task_sql_statement_count;
 
 /// How many read connections stay open between reads.
 const MAX_IDLE_READERS: usize = 4;
@@ -345,6 +347,27 @@ impl SqliteEngine {
     #[cfg(test)]
     pub(crate) fn checkpoint_failures(&self) -> u32 {
         lock(&self.checkpoint_health).consecutive_failures
+    }
+
+    /// Runs `PRAGMA wal_checkpoint(PASSIVE)` and reports `(busy, log_frames, checkpointed_frames)`
+    /// for WAL checkpoint starvation regression tests (`TASK-105` AC #4).
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn wal_checkpoint_passive(&self) -> Result<(i64, i64, i64), EngineError> {
+        self.run_passive_checkpoint()
+    }
+
+    /// Returns SQLite's `EXPLAIN QUERY PLAN` lines for a `tasks.list` query (`TASK-105` AC #4).
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn explain_task_list_plan(
+        &self,
+        query: &org_office::tasks::query::TaskListQuery,
+    ) -> Result<String, EngineError> {
+        let snap = org_store::Engine::snapshot(self)?;
+        let scope = snap
+            .organization
+            .as_ref()
+            .ok_or_else(|| EngineError::new("engine is not scoped to an organization"))?;
+        tasks::explain_list_plan(snap.db(), scope.as_str(), query)
     }
 
     fn transaction(

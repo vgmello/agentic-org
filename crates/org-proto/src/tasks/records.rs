@@ -84,6 +84,20 @@ pub struct TaskRefSummary {
     pub rank_order: Option<u64>,
 }
 
+/// One unmet direct upstream `depends_on` prerequisite blocking a task (`TASK-84`).
+/// Any direct prerequisite whose status is not `done` blocks downstream work until it reaches
+/// `done` or the dependency edge is removed; `cancelled` flags cancelled prerequisites so
+/// callers see immediately that the blocker will not complete on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockingDependencyWire {
+    pub id: String,
+    pub key: String,
+    pub title: String,
+    pub status: TaskStatus,
+    #[serde(default)]
+    pub cancelled: bool,
+}
+
 /// One checklist step attached to a task. `position` is 0-based within its `section`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChecklistStepWire {
@@ -182,6 +196,20 @@ pub struct TaskView {
     pub resolution: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
+    /// RFC 3339 start of the current continuous explicit `blocked` span (`TASK-84`).
+    /// Preserved across in-place `blocked -> blocked` updates; cleared on unblock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_since: Option<String>,
+    /// Opt-in flag marking an explicit `blocked` task as waiting on owner action (`TASK-84`).
+    #[serde(default)]
+    pub waiting_on_owner: bool,
+    /// Derived dependency-block state (`TASK-84`): true when any direct `depends_on` prerequisite
+    /// is not `done`. Auto-clears as soon as all prerequisites reach `done`.
+    #[serde(default)]
+    pub dependency_blocked: bool,
+    /// Unmet direct upstream `depends_on` prerequisites (status != `done`), ordered by key (`TASK-84`).
+    #[serde(default)]
+    pub unmet_blocking_dependencies: Vec<BlockingDependencyWire>,
     /// First-class numeric rank/order index (`TASK-77`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank_order: Option<u64>,

@@ -32,6 +32,8 @@ pub(super) fn sample_task() -> TaskRecord {
         severity: Some("major".into()),
         resolution: None,
         blocked_reason: Some("waiting: on review".into()),
+        blocked_since: Some("2026-11-26T00:30:00.000Z".into()),
+        waiting_on_owner: true,
         rank_order: Some(7),
         labels: vec!["area:api".into(), "backend".into()],
         reference_files: vec!["docs/a.md".into()],
@@ -299,4 +301,45 @@ fn a_final_summary_is_all_four_fields_or_none() {
     );
     assert_ne!(huge_reason, text);
     assert!(decode_task_md(huge_reason.as_bytes()).is_err());
+}
+
+#[test]
+fn blocked_reason_is_trimmed_and_validated_on_decode() {
+    let task = sample_task();
+    let text = String::from_utf8(encode_task_md(&task, &[], &[]).unwrap()).unwrap();
+
+    // Hand-edited leading/trailing whitespace is trimmed on decode (even when raw length > 1000
+    // but trimmed length == 1000) so MemoryEngine and SQLite CHECK never diverge.
+    let padded_short = text.replace(
+        "blocked_reason: \"waiting: on review\"",
+        "blocked_reason: \"  waiting: on review \\t \"",
+    );
+    assert_ne!(padded_short, text);
+    let doc = decode_task_md(padded_short.as_bytes()).expect("padded blocked_reason trims");
+    assert_eq!(
+        doc.task.blocked_reason.as_deref(),
+        Some("waiting: on review")
+    );
+
+    let max_reason = "é".repeat(1000);
+    let padded_max = text.replace(
+        "blocked_reason: \"waiting: on review\"",
+        &format!("blocked_reason: \"  {max_reason}  \""),
+    );
+    let doc_max = decode_task_md(padded_max.as_bytes()).expect("padded 1000-char reason trims");
+    assert_eq!(
+        doc_max.task.blocked_reason.as_deref(),
+        Some(max_reason.as_str())
+    );
+
+    // Whitespace-only, overlong (>1000 after trim), and illegal control chars fail closed.
+    for bad_reason in [
+        "blocked_reason: \"   \\t\\n \"",
+        &format!("blocked_reason: \"{}\"", "a".repeat(1001)),
+        "blocked_reason: \"bad\\u0007bell\"",
+    ] {
+        let broken = text.replace("blocked_reason: \"waiting: on review\"", bad_reason);
+        assert_ne!(broken, text);
+        assert!(decode_task_md(broken.as_bytes()).is_err(), "{bad_reason}");
+    }
 }

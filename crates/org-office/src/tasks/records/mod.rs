@@ -14,8 +14,8 @@ use std::collections::BTreeSet;
 
 use org_proto::tasks::{
     ChecklistSection, TaskDetailsWire, TaskDoneAnywayWire, TaskFinalSummaryWire, TaskPriority,
-    TaskStatus, WorkType, TASK_FILE_PATH_MAX_LEN, TASK_LABEL_MAX_LEN, TASK_MAX_FILES_PER_ROLE,
-    TASK_MAX_LABELS,
+    TaskStatus, WorkType, TASK_BLOCKED_REASON_MAX_CHARS, TASK_FILE_PATH_MAX_LEN,
+    TASK_LABEL_MAX_LEN, TASK_MAX_FILES_PER_ROLE, TASK_MAX_LABELS, TASK_TRANSITION_NOTE_MAX_CHARS,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
@@ -298,6 +298,12 @@ pub struct TaskRecord {
     pub resolution: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
+    /// RFC 3339 start of the current continuous explicit `blocked` span (`TASK-84`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_since: Option<String>,
+    /// Opt-in flag distinguishing owner-actionable blocks from general/agent blocks (`TASK-84`).
+    #[serde(default)]
+    pub waiting_on_owner: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank_order: Option<u64>,
     #[serde(default)]
@@ -503,4 +509,41 @@ pub fn normalize_file_paths(raw: &[String], role: &str) -> Result<Vec<String>, A
         ));
     }
     Ok(set.into_iter().collect())
+}
+
+/// Validates and trims an explicit `blocked_reason` (`TASK-84`): `1..=1000` Unicode scalar
+/// values, plain text with line breaks (`\n`, `\r`, `\t`) allowed, no other control chars.
+pub fn validate_blocked_reason(raw: &str) -> Result<String, ApiError> {
+    validate_plain_reason(raw, "blocked_reason", TASK_BLOCKED_REASON_MAX_CHARS)
+}
+
+/// Validates and trims an optional transition `note` / `reason` (`TASK-84`).
+pub fn validate_transition_note(raw: &str) -> Result<String, ApiError> {
+    validate_plain_reason(raw, "note", TASK_TRANSITION_NOTE_MAX_CHARS)
+}
+
+fn validate_plain_reason(raw: &str, field: &str, max_chars: usize) -> Result<String, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            format!("{field} cannot be empty"),
+        ));
+    }
+    if trimmed
+        .chars()
+        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            format!("{field} cannot contain control characters"),
+        ));
+    }
+    if trimmed.chars().count() > max_chars {
+        return Err(ApiError::new(
+            ErrorCode::TooLarge,
+            format!("{field} exceeds {max_chars} characters"),
+        ));
+    }
+    Ok(trimmed.to_owned())
 }

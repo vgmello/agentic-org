@@ -109,7 +109,16 @@ fn task(n: u64) -> TaskRecord {
         effort: None,
         severity: None,
         resolution: None,
-        blocked_reason: None,
+        blocked_reason: (STATUSES[(n % 5) as usize] == TaskStatus::Blocked).then(|| {
+            if n.is_multiple_of(3) {
+                "Waiting on owner approval for billing rollout".to_owned()
+            } else {
+                format!("Blocked waiting on external dependency #{n}")
+            }
+        }),
+        blocked_since: (STATUSES[(n % 5) as usize] == TaskStatus::Blocked)
+            .then(|| "2026-11-05T08:00:00.000Z".to_owned()),
+        waiting_on_owner: STATUSES[(n % 5) as usize] == TaskStatus::Blocked && n.is_multiple_of(3),
         rank_order: (!n.is_multiple_of(4)).then_some((n * 37) % 11),
         labels,
         reference_files: if n.is_multiple_of(6) {
@@ -331,6 +340,26 @@ fn questions() -> Vec<TasksListParams> {
             ..TasksListParams::default()
         },
         TasksListParams {
+            query: Some("owner approval".into()),
+            ..open()
+        },
+        TasksListParams {
+            ready: true,
+            ..open()
+        },
+        TasksListParams {
+            ready: true,
+            ..TasksListParams::default()
+        },
+        TasksListParams {
+            dependency_blocked: true,
+            ..open()
+        },
+        TasksListParams {
+            dependency_blocked: true,
+            ..TasksListParams::default()
+        },
+        TasksListParams {
             task_type: Some(" bug ".into()),
             ..open()
         },
@@ -389,6 +418,21 @@ fn questions() -> Vec<TasksListParams> {
             depends_on: Some("T-Z1".into()),
             ..TasksListParams::default()
         },
+        TasksListParams {
+            ready: true,
+            dependency_blocked: true,
+            ..open()
+        },
+        TasksListParams {
+            ready: true,
+            status: Some(TaskStatus::Blocked),
+            ..open()
+        },
+        TasksListParams {
+            ready: true,
+            done_since: Some("2026-11-20T00:00:00Z".into()),
+            ..open()
+        },
     ]);
     out
 }
@@ -409,9 +453,9 @@ fn both_engines_answer_every_list_question_alike() {
         assert_eq!(sqlite, memory, "{params:?}");
         answered += usize::from(sqlite.is_ok_and(|page| !page.tasks.is_empty()));
     }
-    // All but the 3 refusals and the 4 pages that are empty by design (an unknown label,
+    // All but the 6 refusals and the 4 pages that are empty by design (an unknown label,
     // `limit = 0`, and two offsets past the end) list tasks.
-    assert_eq!(answered, questions.len() - 7);
+    assert_eq!(answered, questions.len() - 10);
 
     assert_eq!(on_sqlite.tasks().unwrap(), in_memory.tasks().unwrap());
     let ids: Vec<Id> = (0..=245).map(|n| id(1, n)).collect();
@@ -635,21 +679,45 @@ fn open_pages_read_in_order_from_the_open_task_partial_indexes() {
     let (engine, _dir) = sqlite();
     let mut tx = engine.begin().unwrap();
     seed(&mut tx, 1..=300);
-    let open = |project: Option<u64>, team: Option<u64>| TaskListQuery {
-        statuses: TaskStatusSet::OPEN,
-        project_id: project.map(|n| id(3, n).as_str().to_owned()),
-        team_id: team.map(|n| id(2, n).as_str().to_owned()),
-        limit: Some(50),
-        ..TaskListQuery::default()
-    };
-    let by_project = plan(&tx, &open(Some(1), None));
-    eprintln!("TASK-105 open-by-project plan: {by_project}");
-    assert!(by_project.contains("tasks_open_by_project"), "{by_project}");
-    assert!(!by_project.contains("TEMP B-TREE"), "{by_project}");
-    let by_team = plan(&tx, &open(None, Some(2)));
-    eprintln!("TASK-105 open-by-team plan: {by_team}");
-    assert!(by_team.contains("tasks_open_by_team"), "{by_team}");
-    assert!(!by_team.contains("TEMP B-TREE"), "{by_team}");
+    let ready_statuses = TaskStatusSet::OPEN.without(TaskStatus::Blocked);
+    let cases = [
+        ("open", TaskStatusSet::OPEN, None),
+        ("ready", ready_statuses, Some(false)),
+        ("dependency_blocked", TaskStatusSet::OPEN, Some(true)),
+        ("todo", TaskStatusSet::only(TaskStatus::Todo), None),
+        ("blocked", TaskStatusSet::only(TaskStatus::Blocked), None),
+    ];
+    for (label, statuses, dependency_blocked) in cases {
+        let by_project = plan(
+            &tx,
+            &TaskListQuery {
+                statuses,
+                project_id: Some(id(3, 1).as_str().to_owned()),
+                dependency_blocked,
+                limit: Some(50),
+                ..TaskListQuery::default()
+            },
+        );
+        eprintln!("TASK-105 {label}-by-project plan: {by_project}");
+        assert!(
+            by_project.contains("tasks_open_by_project"),
+            "{label}: {by_project}"
+        );
+        assert!(!by_project.contains("TEMP B-TREE"), "{label}: {by_project}");
+        let by_team = plan(
+            &tx,
+            &TaskListQuery {
+                statuses,
+                team_id: Some(id(2, 2).as_str().to_owned()),
+                dependency_blocked,
+                limit: Some(50),
+                ..TaskListQuery::default()
+            },
+        );
+        eprintln!("TASK-105 {label}-by-team plan: {by_team}");
+        assert!(by_team.contains("tasks_open_by_team"), "{label}: {by_team}");
+        assert!(!by_team.contains("TEMP B-TREE"), "{label}: {by_team}");
+    }
 }
 
 #[test]
@@ -737,6 +805,9 @@ fn done_since_reads_updated_at_by_the_reference_rule_on_both_engines() {
     for (n, at) in (1..).zip(times) {
         let mut done = task(n);
         done.status = TaskStatus::Done;
+        done.blocked_reason = None;
+        done.blocked_since = None;
+        done.waiting_on_owner = false;
         done.meta.updated_at = Some(at.to_owned());
         on_sqlite.put_task(&done).expect("a task row");
         in_memory.put_task(&done).expect("a task");
