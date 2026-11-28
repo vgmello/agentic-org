@@ -96,13 +96,24 @@ impl ChatService {
                 params.after_live_seq,
                 head.messages,
             );
-        for seq in org_live_seqs {
-            org_changes.push(org_proto::org::OrgChangedData {
-                position: snapshot.position,
-                command_id: format!("live-org:{seq}"),
-                changes: Vec::new(),
-                actor: None,
-            });
+        if !snapshot_required && !org_live_seqs.is_empty() {
+            let safe_position = org_changes.last().map_or_else(
+                || org_proto::org::Position {
+                    epoch: snapshot.position.epoch,
+                    seq: params.after_org_seq.map_or(snapshot.position.seq, |after| {
+                        after.min(snapshot.position.seq)
+                    }),
+                },
+                |last| last.position,
+            );
+            for seq in org_live_seqs {
+                org_changes.push(org_proto::org::OrgChangedData {
+                    position: safe_position,
+                    command_id: format!("live-org:{seq}"),
+                    changes: Vec::new(),
+                    actor: None,
+                });
+            }
         }
         let presence_changes = params
             .after_presence_seq

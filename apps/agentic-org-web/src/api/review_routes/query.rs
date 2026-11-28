@@ -302,22 +302,33 @@ pub(super) fn filter_inspect_round(val: &mut Value, round: u32) -> Result<(), Ap
     Ok(())
 }
 
-/// Retains only unified-diff hunks whose new-file line range overlaps `[start_line, end_line]`.
+/// Retains only unified-diff hunks whose new-file line range overlaps `[start_line, end_line]`,
+/// pruning `diff.files` to paths that retain at least one matching hunk.
 pub(super) fn filter_diff_by_line_range(
     diff: &mut ReviewDiffResult,
     start_line: Option<u32>,
     end_line: Option<u32>,
 ) {
-    if start_line.is_none() && end_line.is_none() || diff.unified_diff.is_empty() {
+    if start_line.is_none() && end_line.is_none() {
         return;
     }
     let lo = start_line.unwrap_or(1);
     let hi = end_line.unwrap_or(u32::MAX);
     let mut out = String::new();
-    for block in split_diff_blocks(&diff.unified_diff) {
-        append_matching_hunks(&mut out, block, lo, hi);
+    let mut kept_paths = std::collections::BTreeSet::new();
+    if !diff.unified_diff.is_empty() {
+        for block in split_diff_blocks(&diff.unified_diff) {
+            if append_matching_hunks(&mut out, block, lo, hi) {
+                if let Some(path) = extract_diff_block_path(block) {
+                    kept_paths.insert(path);
+                }
+            }
+        }
     }
     diff.unified_diff = out;
+    diff.files.retain(|f| kept_paths.contains(f.path.as_str()));
+    diff.total_files = diff.files.len() as u64;
+    diff.files_truncated = false;
 }
 
 fn split_diff_blocks(unified: &str) -> Vec<&str> {
@@ -340,7 +351,7 @@ fn split_diff_blocks(unified: &str) -> Vec<&str> {
     blocks
 }
 
-fn append_matching_hunks(out: &mut String, block: &str, lo: u32, hi: u32) {
+fn append_matching_hunks(out: &mut String, block: &str, lo: u32, hi: u32) -> bool {
     let mut header = String::new();
     let mut hunks: Vec<(&str, String)> = Vec::new();
     let mut in_hunk = false;
@@ -362,12 +373,100 @@ fn append_matching_hunks(out: &mut String, block: &str, lo: u32, hi: u32) {
         .map(|(_, body)| body.as_str())
         .collect();
     if matching.is_empty() {
-        return;
+        return false;
     }
     out.push_str(&header);
     for hunk in matching {
         out.push_str(hunk);
     }
+    true
+}
+
+fn extract_diff_block_path(block: &str) -> Option<String> {
+    let mut git_line: Option<&str> = None;
+    let mut minus_path: Option<String> = None;
+    for raw_line in block.lines() {
+        if raw_line.starts_with("@@ ") {
+            break;
+        }
+        let line = raw_line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            if let Some(path) = parse_header_path(rest, "b/") {
+                return Some(path);
+            }
+        } else if let Some(rest) = line.strip_prefix("--- ") {
+            if minus_path.is_none() {
+                minus_path = parse_header_path(rest, "a/");
+            }
+        } else if git_line.is_none() && line.starts_with("diff --git ") {
+            git_line = Some(line);
+        }
+    }
+    minus_path.or_else(|| git_line.and_then(parse_diff_git_path))
+}
+
+fn parse_header_path(raw: &str, prefix: &str) -> Option<String> {
+    let trimmed = raw.trim_end_matches('\t');
+    if trimmed == "/dev/null" {
+        return None;
+    }
+    let unquoted = unquote_git_path(trimmed);
+    let stripped = unquoted.strip_prefix(prefix).unwrap_or(&unquoted);
+    (!stripped.is_empty()).then(|| stripped.to_owned())
+}
+
+fn parse_diff_git_path(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("diff --git ")?.trim_end();
+    if rest.len() >= 5 && (rest.len() - 1) % 2 == 0 {
+        let mid = (rest.len() - 1) / 2;
+        if rest.is_char_boundary(mid) && rest.as_bytes().get(mid) == Some(&b' ') {
+            let lhs = unquote_git_path(&rest[..mid]);
+            let rhs = unquote_git_path(&rest[mid + 1..]);
+            if let (Some(a), Some(b)) = (lhs.strip_prefix("a/"), rhs.strip_prefix("b/")) {
+                if a == b && !b.is_empty() {
+                    return Some(b.to_owned());
+                }
+            }
+        }
+    }
+    if let Some((_, rhs)) = rest.rsplit_once(" \"b/") {
+        let quoted = format!("\"b/{rhs}");
+        let unquoted = unquote_git_path(&quoted);
+        if let Some(path) = unquoted.strip_prefix("b/").filter(|p| !p.is_empty()) {
+            return Some(path.to_owned());
+        }
+    }
+    rest.rsplit_once(" b/")
+        .map(|(_, path)| path.trim())
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+}
+
+fn unquote_git_path(raw: &str) -> String {
+    let Some(inner) = raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return raw.to_owned();
+    };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('t') => out.push('\t'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn hunk_overlaps(header_line: &str, lo: u32, hi: u32) -> bool {

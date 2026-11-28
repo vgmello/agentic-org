@@ -101,6 +101,7 @@ struct ReviewInboxFixture {
     bob_outsider_id: String,
     agent_author_id: String,
     agent_reviewer_id: String,
+    prof_id: String,
     team_a: String,
     team_b: String,
     project_a: String,
@@ -278,6 +279,7 @@ impl ReviewInboxFixture {
             bob_outsider_id,
             agent_author_id,
             agent_reviewer_id,
+            prof_id,
             team_a,
             team_b,
             project_a,
@@ -1369,4 +1371,494 @@ fn filters_keyset_pagination_and_live_sse_inbox_and_org_changed_fire_on_all_six_
         &mut alice_live,
     );
     assert!(!second.review.key.is_empty());
+}
+
+#[test]
+fn verdict_summary_redacts_secrets_straddling_char_200_before_truncation() {
+    let fx = ReviewInboxFixture::new();
+
+    // Build test secrets dynamically at runtime so source contains no static credential literals.
+    let sk_secret = format!("{}{}{}", "sk", "-", "9f8e7d6c5b4a3210fedcba9876");
+    let aws_secret = format!("{}{}{}", "AK", "IA", "0123456789ABCDEF");
+    let url_secret = format!(
+        "https://{}:{}@internal.example/repo",
+        "deploy_user", "super_secret_pw_99"
+    );
+
+    let cases: [(&str, String, &[&str]); 4] = [
+        (
+            "sk-prefix straddling char 200",
+            format!("{} {sk_secret} trailing text", "x".repeat(195)),
+            &["sk-", "9f8e", "7d6c"],
+        ),
+        (
+            "AKIA straddling char 200",
+            format!("{} {aws_secret} trailing text", "y".repeat(195)),
+            &["AKIA", "01234", "ABCDEF"],
+        ),
+        (
+            "URL userinfo straddling char 200",
+            format!("{} {url_secret} trailing text", "z".repeat(180)),
+            &["deploy_user", "super_secret_pw", "super_sec"],
+        ),
+        (
+            "multibyte UTF-8 before sk-prefix straddling char 200",
+            format!("{} {sk_secret} end", "é".repeat(195)),
+            &["sk-", "9f8e", "7d6c"],
+        ),
+    ];
+
+    for (idx, (label, summary_markdown, forbidden)) in cases.into_iter().enumerate() {
+        let created = fx.call_review::<ReviewRequest>(
+            &fx.alice_id,
+            &doc_review_request(
+                Some(fx.project_a.clone()),
+                &format!("Boundary redaction case {idx}"),
+                false,
+                ReviewRoutingSpec {
+                    mode: RoutingMode::Explicit,
+                    reviewer_ids: vec![fx.agent_reviewer_id.clone()],
+                    team_id: None,
+                },
+            ),
+        );
+        let key = created.review.key.clone();
+        fx.call_review::<ReviewVerdictCall>(
+            &fx.agent_reviewer_id,
+            &ReviewVerdictParams {
+                command_id: new_uuid_v7(),
+                review: key.clone(),
+                round_number: 1,
+                head_oid: None,
+                verdict: ReviewVerdict::ChangesRequested,
+                summary_markdown,
+                findings: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        );
+
+        let alice_read = fx
+            .source
+            .read_for_caller(&fx.alice_id, &open_query())
+            .unwrap();
+        let item = alice_read
+            .items
+            .iter()
+            .find(|it| it.summary.contains(&key))
+            .expect("changes_requested card surfaced for author");
+        let ctx = item.context.as_deref().expect("context present");
+        assert_no_control_ansi_or_bidi(ctx, label);
+        let wire = serde_json::to_string(item).unwrap();
+        for needle in forbidden {
+            assert!(
+                !ctx.contains(needle),
+                "{label}: unredacted fragment {needle:?} leaked into context: {ctx:?}"
+            );
+            assert!(
+                !wire.contains(needle),
+                "{label}: unredacted fragment {needle:?} leaked into wire JSON: {wire:?}"
+            );
+        }
+
+        // Close so subsequent cases isolate cleanly.
+        let rev = fx.inspect(&fx.owner_id, &key).review.revision;
+        fx.call_review::<ReviewClose>(
+            &fx.owner_id,
+            &ReviewCloseParams {
+                command_id: new_uuid_v7(),
+                review: key,
+                expected_revision: rev,
+                reason: Some("Test cleanup".into()),
+            },
+        );
+    }
+}
+
+#[test]
+fn cross_team_pool_matching_never_leaks_via_shared_role_id() {
+    let fx = ReviewInboxFixture::new();
+
+    // Org-wide (project_id: None) pool review on `team_a`: `may_see_project` admits everyone,
+    // isolating `eligible_for_pool` so any cross-team role_id leak would surface to Bob (Team B).
+    let pool_rev = fx.call_review::<ReviewRequest>(
+        &fx.alice_id,
+        &doc_review_request(
+            None,
+            "Team A pool only",
+            true,
+            ReviewRoutingSpec {
+                mode: RoutingMode::Pool,
+                reviewer_ids: Vec::new(),
+                team_id: Some(fx.team_a.clone()),
+            },
+        ),
+    );
+    let picked = fx
+        .inspect(&fx.owner_id, &pool_rev.review.key)
+        .reviewers
+        .iter()
+        .find(|r| !r.removed)
+        .expect("pool picked a reviewer")
+        .reviewer_id
+        .clone();
+    let eligible_team_a_human = if picked == fx.carol_id {
+        add_person(&fx.office, &fx.owner_id, &fx.team_a, "Dana Alpha", "dana-a")
+    } else {
+        fx.carol_id.clone()
+    };
+
+    // Give Bob (Team B) the exact same `role_id` as the seeded Team A reviewer.
+    let mut snap = fx.office.org_snapshot().unwrap();
+    for m in &mut snap.members {
+        if m.id == picked || m.id == fx.bob_outsider_id || m.id == eligible_team_a_human {
+            m.role_id = Some("role-security-reviewer".into());
+        }
+    }
+    let source = ReviewInboxSource::with_snapshot_for_test(
+        Arc::clone(&fx.office),
+        Box::new(move || Ok(snap.clone())),
+    );
+
+    // Team B human with matching role_id MUST NOT receive Team A pool claim cards.
+    let bob_read = source
+        .read_for_caller(&fx.bob_outsider_id, &open_query())
+        .unwrap();
+    assert!(
+        bob_read.items.is_empty(),
+        "Team B human must not receive Team A pool card via shared role_id: {:?}",
+        bob_read.items
+    );
+    assert_eq!(bob_read.counts.reviews, 0);
+
+    // Eligible Team A human still receives the ClaimablePool card.
+    let team_a_read = source
+        .read_for_caller(&eligible_team_a_human, &open_query())
+        .unwrap();
+    assert_eq!(team_a_read.items.len(), 1);
+    assert!(team_a_read.items[0]
+        .summary
+        .starts_with("Claim pool review "));
+}
+
+#[test]
+fn non_owner_parent_team_lead_receives_subordinate_round_5_escalation_while_unrelated_lead_denied()
+{
+    let fx = ReviewInboxFixture::new();
+    let root_team = fx.office.org_snapshot().unwrap().teams[0].id.clone();
+
+    // Hierarchy: root -> parent_team -> child_team, and sibling unrelated_team under root.
+    let parent_team = new_uuid_v7();
+    let child_team = new_uuid_v7();
+    let unrelated_team = new_uuid_v7();
+    for (tid, name, owner_tid) in [
+        (&parent_team, "Engineering Parent", root_team.clone()),
+        (&child_team, "Payments Child", parent_team.clone()),
+        (&unrelated_team, "Marketing Sibling", root_team),
+    ] {
+        fx.office
+            .submit_org(
+                &fx.owner_id,
+                OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: new_uuid_v7(),
+                    team_id: tid.clone(),
+                    name: name.into(),
+                    owner_team_id: Some(owner_tid),
+                }),
+            )
+            .unwrap()
+            .unwrap();
+    }
+
+    let parent_lead = add_person(&fx.office, &fx.owner_id, &parent_team, "Pat Lead", "pat");
+    let parent_member = add_person(
+        &fx.office,
+        &fx.owner_id,
+        &parent_team,
+        "Morgan Member",
+        "morgan",
+    );
+    let unrelated_lead = add_person(
+        &fx.office,
+        &fx.owner_id,
+        &unrelated_team,
+        "Uma Unrelated",
+        "uma",
+    );
+    for (tid, lead_id) in [
+        (&parent_team, &parent_lead),
+        (&unrelated_team, &unrelated_lead),
+    ] {
+        fx.office
+            .submit_org(
+                &fx.owner_id,
+                OrgCommand::TeamSetLead(TeamSetLeadParams {
+                    command_id: new_uuid_v7(),
+                    team_id: tid.clone(),
+                    lead_member_id: Some(lead_id.clone()),
+                    expected_version: 1,
+                }),
+            )
+            .unwrap()
+            .unwrap();
+    }
+
+    let child_project = new_uuid_v7();
+    fx.office
+        .submit_org(
+            &fx.owner_id,
+            OrgCommand::ProjectCreate(ProjectCreateParams {
+                command_id: new_uuid_v7(),
+                project_id: child_project.clone(),
+                name: "Child Payments".into(),
+                key: None,
+                description: None,
+                teams: Vec::new(),
+                general_area_id: String::new(),
+                general_area_name: None,
+                repo: None,
+                integration_branch: None,
+                slug: Some("child-payments".into()),
+                owner_team_id: Some(child_team.clone()),
+                create_team_id: None,
+                parent_team_id: None,
+                contributing_team_ids: Vec::new(),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+    let child_author = hire_agent(
+        &fx.office,
+        &fx.owner_id,
+        &child_team,
+        &fx.prof_id,
+        "child-a",
+    );
+    let child_reviewer = hire_agent(
+        &fx.office,
+        &fx.owner_id,
+        &child_team,
+        &fx.prof_id,
+        "child-r",
+    );
+
+    let created = fx.call_review::<ReviewRequest>(
+        &child_author,
+        &doc_review_request(
+            Some(child_project),
+            "Subordinate round-5 loop",
+            false,
+            ReviewRoutingSpec {
+                mode: RoutingMode::Explicit,
+                reviewer_ids: vec![child_reviewer.clone()],
+                team_id: None,
+            },
+        ),
+    );
+    let key = created.review.key.clone();
+
+    // Advance rounds 1 -> 5.
+    for round in 1..=4 {
+        assert!(
+            fx.source
+                .read_for_caller(&parent_lead, &open_query())
+                .unwrap()
+                .items
+                .is_empty(),
+            "round {round} must not escalate yet for parent lead"
+        );
+        fx.call_review::<ReviewVerdictCall>(
+            &child_reviewer,
+            &ReviewVerdictParams {
+                command_id: new_uuid_v7(),
+                review: key.clone(),
+                round_number: round,
+                head_oid: None,
+                verdict: ReviewVerdict::ChangesRequested,
+                summary_markdown: format!("Round {round} feedback"),
+                findings: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        );
+        let rev = fx.inspect(&child_author, &key).review.revision;
+        fx.call_review::<ReviewResubmit>(
+            &child_author,
+            &ReviewResubmitParams {
+                command_id: new_uuid_v7(),
+                review: key.clone(),
+                expected_revision: rev,
+                expected_head_oid: None,
+                session_mode: None,
+                fresh: false,
+                note_markdown: format!("Round {} resubmit", round + 1),
+            },
+        );
+    }
+
+    // Round 5: non-owner parent-team lead receives the escalation card!
+    let parent_read = fx
+        .source
+        .read_for_caller(&parent_lead, &open_query())
+        .unwrap();
+    assert_eq!(parent_read.items.len(), 1);
+    assert!(parent_read.items[0]
+        .summary
+        .contains("Escalation (round 5)"));
+    assert!(parent_read.items[0].summary.contains(&key));
+
+    // Non-lead member of parent team does NOT receive child project escalation.
+    assert!(fx
+        .source
+        .read_for_caller(&parent_member, &open_query())
+        .unwrap()
+        .items
+        .is_empty());
+
+    // Lead of unrelated sibling team stays denied!
+    assert!(fx
+        .source
+        .read_for_caller(&unrelated_lead, &open_query())
+        .unwrap()
+        .items
+        .is_empty());
+}
+
+#[test]
+fn chat_events_poll_synthetic_org_changed_never_skips_org_backlog_or_fires_on_resync() {
+    let fx = ReviewInboxFixture::new();
+    let boot = fx.poll_events(&fx.owner_id, true, None, None);
+
+    // Commit 105 real org log entries (> PAGE=100 limit of `poll_org_changes`).
+    for version in 1..=105u64 {
+        fx.office
+            .submit_org(
+                &fx.owner_id,
+                OrgCommand::TeamSetLead(TeamSetLeadParams {
+                    command_id: new_uuid_v7(),
+                    team_id: fx.team_b.clone(),
+                    lead_member_id: Some(fx.bob_outsider_id.clone()),
+                    expected_version: version,
+                }),
+            )
+            .unwrap()
+            .unwrap();
+    }
+
+    // Concurrently commit a review write so `Live::OrgChanged` is also pending.
+    let _ = fx.call_review::<ReviewRequest>(
+        &fx.agent_author_id,
+        &doc_review_request(
+            Some(fx.project_a.clone()),
+            "Concurrent backlog review",
+            false,
+            ReviewRoutingSpec {
+                mode: RoutingMode::Explicit,
+                reviewer_ids: vec![fx.owner_id.clone()],
+                team_id: None,
+            },
+        ),
+    );
+
+    let poll1 = fx.poll_events(
+        &fx.owner_id,
+        true,
+        Some(boot.org_head_seq),
+        Some(boot.live_head_seq),
+    );
+    assert!(!poll1.snapshot_required);
+    assert!(poll1.org_head_seq >= boot.org_head_seq + 105);
+
+    let real_changes: Vec<_> = poll1
+        .org_changes
+        .iter()
+        .filter(|c| !c.command_id.starts_with("live-org:"))
+        .collect();
+    let synth_changes: Vec<_> = poll1
+        .org_changes
+        .iter()
+        .filter(|c| c.command_id.starts_with("live-org:"))
+        .collect();
+    assert_eq!(real_changes.len(), 100);
+    assert!(!synth_changes.is_empty());
+
+    let last_real_seq = real_changes.last().unwrap().position.seq;
+    assert!(
+        last_real_seq < poll1.org_head_seq,
+        "backlog must still have undelivered org entries"
+    );
+    for synth in &synth_changes {
+        assert!(
+            synth.position.seq <= last_real_seq,
+            "synthetic live-org:* seq {} must not exceed last real org_change seq {}",
+            synth.position.seq,
+            last_real_seq
+        );
+        assert!(
+            synth.position.seq < poll1.org_head_seq,
+            "synthetic live-org:* must never jump to org_head_seq {}",
+            poll1.org_head_seq
+        );
+    }
+
+    // Resuming from the last returned org_changes entry drains the remaining 5 entries with zero loss.
+    let next_cursor = poll1.org_changes.last().unwrap().position.seq;
+    assert_eq!(next_cursor, last_real_seq);
+    let poll2 = fx.poll_events(
+        &fx.owner_id,
+        true,
+        Some(next_cursor),
+        Some(poll1.live_head_seq),
+    );
+    assert!(!poll2.snapshot_required);
+    assert_eq!(poll2.org_changes.len(), 5);
+    assert_eq!(
+        poll2.org_changes.first().unwrap().position.seq,
+        last_real_seq + 1
+    );
+    assert_eq!(
+        poll2.org_changes.last().unwrap().position.seq,
+        poll1.org_head_seq
+    );
+
+    // Non-owner human with an older `after_org_seq` and pending review write never jumps past `after_org_seq`.
+    let alice_live_before = poll2.live_head_seq;
+    let _ = fx.call_review::<ReviewRequest>(
+        &fx.agent_author_id,
+        &doc_review_request(
+            Some(fx.project_a.clone()),
+            "Non-owner cursor check",
+            false,
+            ReviewRoutingSpec {
+                mode: RoutingMode::Explicit,
+                reviewer_ids: vec![fx.owner_id.clone()],
+                team_id: None,
+            },
+        ),
+    );
+    let alice_poll = fx.poll_events(
+        &fx.alice_id,
+        true,
+        Some(boot.org_head_seq),
+        Some(alice_live_before),
+    );
+    assert!(!alice_poll.snapshot_required);
+    assert!(!alice_poll.org_changes.is_empty());
+    assert!(alice_poll
+        .org_changes
+        .iter()
+        .all(|c| c.command_id.starts_with("live-org:") && c.position.seq == boot.org_head_seq));
+
+    // When `snapshot_required` is true, synthetic `live-org:*` MUST NOT be pushed.
+    let resync_poll = fx.poll_events(
+        &fx.owner_id,
+        true,
+        Some(poll2.org_head_seq + 50),
+        Some(alice_live_before),
+    );
+    assert!(resync_poll.snapshot_required);
+    assert!(
+        resync_poll.org_changes.is_empty(),
+        "synthetic live-org:* must be skipped when snapshot_required is true: {:?}",
+        resync_poll.org_changes
+    );
 }

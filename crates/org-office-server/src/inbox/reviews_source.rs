@@ -5,7 +5,7 @@
 //! task notes or raw secrets:
 //! 1. Assigned open reviews needing the caller's verdict on the current round;
 //! 2. `changes_requested` feedback for human authors or current-round submitters;
-//! 3. Claimable team/role pool reviews where the caller is eligible (and never barred by
+//! 3. Claimable team pool reviews where the caller is eligible (and never barred by
 //!    `independent = true` author/submitter rules);
 //! 4. Advisory `>= 5`-round escalations for leads, owner, and human stakeholders.
 
@@ -156,7 +156,6 @@ struct CallerOrgContext<'a> {
     caller: &'a Member,
     members_by_id: HashMap<&'a str, &'a Member>,
     team_parents: HashMap<&'a str, Option<&'a str>>,
-    team_leads: HashMap<&'a str, Option<&'a str>>,
     projects: &'a HashMap<String, ProjectRecord>,
     caller_team_chain: BTreeSet<&'a str>,
     caller_led_teams: BTreeSet<&'a str>,
@@ -178,11 +177,6 @@ impl<'a> CallerOrgContext<'a> {
             .iter()
             .map(|t| (t.id.as_str(), t.owner_team_id.as_deref()))
             .collect();
-        let team_leads: HashMap<&str, Option<&str>> = snapshot
-            .teams
-            .iter()
-            .map(|t| (t.id.as_str(), t.lead_member_id.as_deref()))
-            .collect();
         let caller_led_teams: BTreeSet<&str> = snapshot
             .teams
             .iter()
@@ -202,7 +196,6 @@ impl<'a> CallerOrgContext<'a> {
             caller,
             members_by_id,
             team_parents,
-            team_leads,
             projects,
             caller_team_chain,
             caller_led_teams,
@@ -224,6 +217,7 @@ impl<'a> CallerOrgContext<'a> {
                 .contributing_team_ids
                 .iter()
                 .any(|tid| self.caller_team_chain.contains(tid.as_str()))
+            || self.leads_project_team_or_ancestor(proj)
     }
 
     fn eligible_for_pool(&self, reviewer: &ReviewReviewerView) -> Option<String> {
@@ -231,45 +225,42 @@ impl<'a> CallerOrgContext<'a> {
         if self.caller.home_team_id.as_deref() == Some(pool_team_id)
             || self.caller_led_teams.contains(pool_team_id)
         {
-            return Some(pool_team_id.to_owned());
+            Some(pool_team_id.to_owned())
+        } else {
+            None
         }
-        if let Some(caller_role) = self.caller.role_id.as_deref() {
-            let matches_role = self
-                .members_by_id
-                .get(reviewer.reviewer_id.as_str())
-                .and_then(|m| m.role_id.as_deref())
-                == Some(caller_role);
-            if matches_role {
-                return Some(pool_team_id.to_owned());
-            }
+    }
+
+    fn leads_team_or_ancestor(&self, team_id: &str) -> bool {
+        if self.caller_led_teams.is_empty() {
+            return false;
         }
-        None
+        let mut ancestors = BTreeSet::new();
+        collect_ancestors(&self.team_parents, team_id, &mut ancestors);
+        ancestors
+            .into_iter()
+            .any(|tid| self.caller_led_teams.contains(tid))
+    }
+
+    fn leads_project_team_or_ancestor(&self, proj: &ProjectRecord) -> bool {
+        self.leads_team_or_ancestor(proj.owner_team_id.as_str())
+            || proj
+                .contributing_team_ids
+                .iter()
+                .any(|tid| self.leads_team_or_ancestor(tid.as_str()))
     }
 
     fn is_accountable_team_lead(&self, review: &ReviewView) -> bool {
-        let mut root_teams: Vec<&str> = Vec::new();
         if let Some(pid) = review.project_id.as_deref() {
-            if let Some(proj) = self.projects.get(pid) {
-                root_teams.push(proj.owner_team_id.as_str());
-                for tid in &proj.contributing_team_ids {
-                    root_teams.push(tid.as_str());
-                }
-            }
-        } else if let Some(home) = self
-            .members_by_id
+            let Some(proj) = self.projects.get(pid) else {
+                return false;
+            };
+            return self.leads_project_team_or_ancestor(proj);
+        }
+        self.members_by_id
             .get(review.created_by.as_str())
             .and_then(|m| m.home_team_id.as_deref())
-        {
-            root_teams.push(home);
-        }
-
-        let mut ancestors = BTreeSet::new();
-        for tid in root_teams {
-            collect_ancestors(&self.team_parents, tid, &mut ancestors);
-        }
-        ancestors
-            .into_iter()
-            .any(|tid| self.team_leads.get(tid).copied().flatten() == Some(self.caller.id.as_str()))
+            .is_some_and(|home| self.leads_team_or_ancestor(home))
     }
 
     fn is_manager_of(&self, member_id: &str) -> bool {
@@ -655,13 +646,10 @@ fn build_context(
         ReviewReason::ChangesRequested => {
             if let Some(verdict) = latest_changes_requested_verdict(current_round) {
                 let reviewer_name = ctx.display_name(&verdict.reviewer_id);
-                let snippet: String = verdict
-                    .summary_markdown
-                    .trim()
-                    .chars()
-                    .take(VERDICT_SNIPPET_MAX_CHARS)
-                    .collect();
-                let safe_snippet = sanitize_display(&snippet);
+                let safe_full = sanitize_display(&verdict.summary_markdown);
+                let safe_snippet: String =
+                    safe_full.chars().take(VERDICT_SNIPPET_MAX_CHARS).collect();
+                let safe_snippet = safe_snippet.trim();
                 if safe_snippet.is_empty() {
                     parts.push(format!("requested by {reviewer_name}"));
                 } else {

@@ -408,12 +408,76 @@ struct NestedFindingBody {
     op: FindingOpBody,
 }
 
+struct NoDuplicateKeys;
+
+impl<'de> Deserialize<'de> for NoDuplicateKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = NoDuplicateKeys;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("valid JSON with unique object keys")
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(NoDuplicateKeys)
+            }
+
+            fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(NoDuplicateKeys)
+            }
+
+            fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(NoDuplicateKeys)
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(NoDuplicateKeys)
+            }
+
+            fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(NoDuplicateKeys)
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(NoDuplicateKeys)
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<NoDuplicateKeys>()?.is_some() {}
+                Ok(NoDuplicateKeys)
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut seen = std::collections::HashSet::new();
+                while let Some((key, _)) = map.next_entry::<String, NoDuplicateKeys>()? {
+                    if !seen.insert(key) {
+                        return Err(serde::de::Error::custom("duplicate JSON key"));
+                    }
+                }
+                Ok(NoDuplicateKeys)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 /// Decodes either `{ "command_id", "op": { "action": ... } }` or flat
-/// `{ "command_id", "action": ... }` while strictly rejecting unknown fields in both forms.
+/// `{ "command_id", "action": ... }` while strictly rejecting duplicate and unknown fields.
 pub(super) fn decode_finding_body(
     review: String,
     bytes: &[u8],
 ) -> Result<ReviewFindingParams, ApiReply> {
+    serde_json::from_slice::<NoDuplicateKeys>(bytes).map_err(|_| invalid())?;
     let raw: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
     let serde_json::Value::Object(mut map) = raw else {
         return Err(invalid());

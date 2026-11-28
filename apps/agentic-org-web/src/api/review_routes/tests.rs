@@ -718,6 +718,161 @@ fn unit_body_decoders_enforce_deny_unknown_fields_and_finding_actions() {
     let bad_close =
         format!(r#"{{"command_id":"{CMD_ID}","expected_revision":1,"reason":"ok","extra":1}}"#);
     assert!(decode_close_body("RV-A1".into(), bad_close.as_bytes()).is_err());
+
+    // Duplicate JSON keys (flat, nested, unicode-escaped, nested anchor) and unknown "review" rejected.
+    let dup_flat_cmd = format!(
+        r#"{{"command_id":"{CMD_ID}","command_id":"{CMD_ID}","action":"resolve","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), dup_flat_cmd.as_bytes()).is_err());
+    let dup_nested_cmd = format!(
+        r#"{{"command_id":"{CMD_ID}","command_id":"{CMD_ID}","op":{{"action":"resolve","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), dup_nested_cmd.as_bytes()).is_err());
+    let dup_flat_action = format!(
+        r#"{{"command_id":"{CMD_ID}","action":"resolve","action":"reopen","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), dup_flat_action.as_bytes()).is_err());
+    let dup_nested_action = format!(
+        r#"{{"command_id":"{CMD_ID}","op":{{"action":"resolve","action":"reopen","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), dup_nested_action.as_bytes()).is_err());
+    let dup_escaped_cmd = format!(
+        r#"{{"command_id":"{CMD_ID}","command\u005fid":"{CMD_ID}","action":"resolve","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), dup_escaped_cmd.as_bytes()).is_err());
+    let dup_anchor_key = format!(
+        r#"{{"command_id":"{CMD_ID}","action":"add","finding_id":"{FINDING_ID}","severity":"major","anchor":{{"kind":"general","kind":"general"}},"body_markdown":"Check"}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), dup_anchor_key.as_bytes()).is_err());
+    let flat_with_review = format!(
+        r#"{{"command_id":"{CMD_ID}","review":"RV-OTHER","action":"resolve","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), flat_with_review.as_bytes()).is_err());
+    let nested_with_review = format!(
+        r#"{{"command_id":"{CMD_ID}","review":"RV-OTHER","op":{{"action":"resolve","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), nested_with_review.as_bytes()).is_err());
+
+    // Valid body with explicit JSON `null` optional field still decodes cleanly.
+    let reply_with_null = format!(
+        r#"{{"command_id":"{CMD_ID}","action":"reply","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}","body_markdown":"Clarified","set_status":null}}"#
+    );
+    assert!(decode_finding_body("RV-A1".into(), reply_with_null.as_bytes()).is_ok());
+}
+
+#[test]
+fn unit_filter_diff_by_line_range_prunes_non_overlapping_files_metadata() {
+    let unified = concat!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n",
+        "--- a/src/lib.rs\n",
+        "+++ b/src/lib.rs\n",
+        "@@ -1,3 +1,4 @@\n",
+        " fn a() {}\n",
+        "+fn b() {}\n",
+        "@@ -50,2 +51,3 @@\n",
+        " fn far() {}\n",
+        "+fn very_far() {}\n",
+        "diff --git a/src/other.rs b/src/other.rs\n",
+        "--- a/src/other.rs\n",
+        "+++ b/src/other.rs\n",
+        "@@ -10,2 +10,3 @@\n",
+        " fn middle() {}\n",
+        "+fn middle_two() {}\n",
+        "diff --git a/src/spaced file.rs b/src/spaced file.rs\n",
+        "--- a/src/spaced file.rs\n",
+        "+++ b/src/spaced file.rs\n",
+        "@@ -52,1 +52,2 @@\n",
+        " fn spaced() {}\n",
+        "+fn spaced_two() {}\n",
+    );
+    let make_diff = || ReviewDiffResult {
+        review_id: REVIEW_ID.into(),
+        round_number: 2,
+        since_round: Some(1),
+        base_oid: "1111111111111111111111111111111111111111".into(),
+        head_oid: "2222222222222222222222222222222222222222".into(),
+        files: vec![
+            ReviewDiffFile {
+                path: "src/lib.rs".into(),
+                status: ReviewDiffFileStatus::Modified,
+                added: 2,
+                deleted: 0,
+                binary: false,
+            },
+            ReviewDiffFile {
+                path: "src/other.rs".into(),
+                status: ReviewDiffFileStatus::Modified,
+                added: 1,
+                deleted: 0,
+                binary: false,
+            },
+            ReviewDiffFile {
+                path: "src/spaced file.rs".into(),
+                status: ReviewDiffFileStatus::Added,
+                added: 1,
+                deleted: 0,
+                binary: false,
+            },
+        ],
+        total_files: 3,
+        files_truncated: false,
+        unified_diff: unified.into(),
+        truncated: false,
+    };
+
+    // Range [50, 55] matches `src/lib.rs` (hunk 2) and `src/spaced file.rs`, omitting `src/other.rs`.
+    let mut filtered = make_diff();
+    filter_diff_by_line_range(&mut filtered, Some(50), Some(55));
+    let paths: Vec<&str> = filtered.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, vec!["src/lib.rs", "src/spaced file.rs"]);
+    assert_eq!(filtered.total_files, 2);
+    assert!(!filtered.files_truncated);
+    assert!(filtered.unified_diff.contains("very_far"));
+    assert!(filtered.unified_diff.contains("spaced_two"));
+    assert!(!filtered.unified_diff.contains("src/other.rs"));
+    assert!(!filtered.unified_diff.contains("fn b()"));
+
+    // Range [10, 12] matches ONLY `src/other.rs`.
+    let mut only_other = make_diff();
+    filter_diff_by_line_range(&mut only_other, Some(10), Some(12));
+    let paths: Vec<&str> = only_other.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, vec!["src/other.rs"]);
+    assert_eq!(only_other.total_files, 1);
+
+    // Non-overlapping range [500, 510] empties both unified_diff and files.
+    let mut none = make_diff();
+    filter_diff_by_line_range(&mut none, Some(500), Some(510));
+    assert!(none.unified_diff.is_empty());
+    assert!(none.files.is_empty());
+    assert_eq!(none.total_files, 0);
+
+    // Header fallback without `+++` line still extracts path from `diff --git`.
+    let mut git_header_only = ReviewDiffResult {
+        files: vec![
+            ReviewDiffFile {
+                path: "src/header_only.rs".into(),
+                status: ReviewDiffFileStatus::Modified,
+                added: 1,
+                deleted: 0,
+                binary: false,
+            },
+            ReviewDiffFile {
+                path: "src/unmatched.rs".into(),
+                status: ReviewDiffFileStatus::Modified,
+                added: 1,
+                deleted: 0,
+                binary: false,
+            },
+        ],
+        total_files: 2,
+        unified_diff: "diff --git a/src/header_only.rs b/src/header_only.rs\n@@ -1,1 +1,2 @@\n+x\n"
+            .into(),
+        ..make_diff()
+    };
+    filter_diff_by_line_range(&mut git_header_only, Some(1), Some(2));
+    assert_eq!(git_header_only.files.len(), 1);
+    assert_eq!(git_header_only.files[0].path, "src/header_only.rs");
+    assert_eq!(git_header_only.total_files, 1);
 }
 
 #[test]
@@ -955,6 +1110,29 @@ fn ingress_enforces_host_origin_csrf_json_and_body_bounds_on_review_routes() {
             ))
             .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // Duplicate JSON keys on /findings -> 400 before touching office.
+        let findings_path = format!("/api/v1/organizations/{ORG_ID}/reviews/RV-A1/findings");
+        for dup_body in [
+            format!(
+                r#"{{"command_id":"{CMD_ID}","command_id":"{CMD_ID}","action":"resolve","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}"#
+            ),
+            format!(
+                r#"{{"command_id":"{CMD_ID}","action":"resolve","action":"reopen","finding_id":"{FINDING_ID}","reply_id":"{REPLY_ID}"}}"#
+            ),
+        ] {
+            let resp = gw
+                .respond(make_request(
+                    Method::POST,
+                    &findings_path,
+                    creds,
+                    Some(&dup_body),
+                    Some(ORIGIN),
+                    &[("sec-fetch-site", "same-origin")],
+                ))
+                .await;
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
 
         assert!(office.recorded().is_empty());
     });
