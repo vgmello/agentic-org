@@ -69,6 +69,17 @@ impl Connection {
     }
 }
 
+/// Status of a channel descriptor receipt witness on a control connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChannelReceipt {
+    /// Channel has never been acknowledged on this connection (or was already pruned).
+    Missing,
+    /// Channel was acknowledged on this connection and its office slot is still live.
+    Live,
+    /// Channel was acknowledged on this connection, and its office slot is now closed.
+    Closed,
+}
+
 /// Capacity is a definite pre-enqueue refusal; all other delivery failures stay fatal.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum DescriptorError {
@@ -280,6 +291,13 @@ impl Connection {
         lock(&self.received_channels)
             .get(channel)
             .is_some_and(|witness| witness.is_live())
+    }
+    pub(crate) fn channel_receipt(&self, channel: &str) -> ChannelReceipt {
+        match lock(&self.received_channels).get(channel) {
+            Some(witness) if witness.is_live() => ChannelReceipt::Live,
+            Some(_) => ChannelReceipt::Closed,
+            None => ChannelReceipt::Missing,
+        }
     }
 
     /// Queues an event. Never blocks, like [`Connection::send_response`].

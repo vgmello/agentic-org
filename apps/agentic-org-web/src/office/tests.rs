@@ -72,6 +72,7 @@ fn a_cancelled_or_failed_round_trip_removes_its_pending_entry() {
             channel_id: "ch-1".into(),
             writer: writer.clone(),
             pending: Arc::clone(&pending),
+            closed: Arc::new(AtomicBool::new(false)),
         };
         // Nobody drains the queue: fill every slot.
         for _ in 0..CHANNEL_WRITE_QUEUE {
@@ -127,6 +128,7 @@ fn a_completed_round_trip_returns_its_reply_and_leaves_no_entry() {
             channel_id: "ch-1".into(),
             writer,
             pending: Arc::clone(&pending),
+            closed: Arc::new(AtomicBool::new(false)),
         });
         let answering = Arc::clone(&pending);
         let responder = tokio::spawn(async move {
@@ -450,5 +452,364 @@ fn webhook_channel_pool_reuses_single_channel_bounds_concurrency_and_reconnects_
             .unwrap_err();
         assert!(matches!(missing, OfficeFailure::BeforeDispatch(Failure::NotFound)));
         assert!(!pool.channels.lock().unwrap().contains_key("org-missing"));
+    });
+}
+
+fn spawn_echo_webhook_channel(
+    org_id: &str,
+    channel_id: String,
+    seq: usize,
+    cache: ChannelMap,
+    bus: Arc<dyn EventBus>,
+) -> (Arc<MultiplexedChannel>, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let (client, server) = tokio::io::duplex(16 * 1024);
+    let (client_read, client_write) = tokio::io::split(client);
+    let (server_read, mut server_write) = tokio::io::split(server);
+    let channel = MultiplexedChannel::from_async_halves(
+        org_id.to_owned(),
+        "office-hq".into(),
+        channel_id,
+        client_read,
+        client_write,
+        cache,
+        bus,
+        None,
+    );
+    let handle = tokio::spawn(async move {
+        let mut reader = BufReader::new(server_read);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let Ok(n) = reader.read_line(&mut line).await else {
+                break;
+            };
+            if n == 0 {
+                break;
+            }
+            let req: Value = serde_json::from_str(&line).unwrap();
+            let id = req["id"].as_u64().unwrap();
+            let reply = serde_json::json!({ "id": id, "result": { "seq": seq, "id": id } });
+            let _ = server_write
+                .write_all(format!("{reply}\n").as_bytes())
+                .await;
+            let _ = server_write.flush().await;
+        }
+    });
+    (channel, handle)
+}
+
+#[test]
+fn webhook_channel_pool_evicts_and_reconnects_once_on_denied_grant_and_fails_closed_if_fresh_denied(
+) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let pool = Arc::new(WebhookChannelPool::new(4));
+        let open_count = Arc::new(AtomicUsize::new(0));
+        let grant_calls = Arc::new(AtomicUsize::new(0));
+        let bus: Arc<dyn EventBus> = Arc::new(InMemoryEventBus::default());
+        let server_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
+            Arc::new(Mutex::new(Vec::new()));
+
+        let make_opener =
+            |open_count: Arc<AtomicUsize>,
+             bus: Arc<dyn EventBus>,
+             server_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>| {
+                move |cache: ChannelMap| {
+                    let open_count = Arc::clone(&open_count);
+                    let bus = Arc::clone(&bus);
+                    let server_tasks = Arc::clone(&server_tasks);
+                    async move {
+                        let seq = open_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        let (ch, handle) = spawn_echo_webhook_channel(
+                            "org-1",
+                            format!("wh-ch-{seq}"),
+                            seq,
+                            cache,
+                            bus,
+                        );
+                        server_tasks.lock().unwrap().push(handle);
+                        Ok(ch)
+                    }
+                }
+            };
+
+        // Warm pool with wh-ch-1.
+        let first = pool
+            .dispatch(
+                "org-1",
+                10,
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                make_opener(
+                    Arc::clone(&open_count),
+                    Arc::clone(&bus),
+                    Arc::clone(&server_tasks),
+                ),
+                |office, ch| async move { Ok(synthetic_webhook_principal("org-1", &office, &ch)) },
+            )
+            .await
+            .expect("initial webhook dispatch succeeds");
+        assert_eq!(first["seq"], 1);
+        assert_eq!(open_count.load(Ordering::SeqCst), 1);
+
+        // Stale cached wh-ch-1 returns Failure::Denied -> evicts wh-ch-1, opens wh-ch-2 once, and
+        // succeeds on the fresh channel.
+        let gc = Arc::clone(&grant_calls);
+        let recovered = pool
+            .dispatch(
+                "org-1",
+                11,
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                make_opener(
+                    Arc::clone(&open_count),
+                    Arc::clone(&bus),
+                    Arc::clone(&server_tasks),
+                ),
+                move |office, ch| {
+                    let gc = Arc::clone(&gc);
+                    async move {
+                        gc.fetch_add(1, Ordering::SeqCst);
+                        if ch == "wh-ch-1" {
+                            Err(Failure::Denied)
+                        } else {
+                            Ok(synthetic_webhook_principal("org-1", &office, &ch))
+                        }
+                    }
+                },
+            )
+            .await
+            .expect("stale Denied channel must reconnect once and succeed");
+        assert_eq!(recovered["seq"], 2);
+        assert_eq!(open_count.load(Ordering::SeqCst), 2);
+        assert_eq!(grant_calls.load(Ordering::SeqCst), 2);
+
+        // `evict_if_same` compares Arc::ptr_eq so a stale reference (even with the same channel_id)
+        // cannot evict a concurrently opened replacement channel.
+        let live_ch2 = Arc::clone(pool.channels.lock().unwrap().get("org-1").unwrap());
+        let (writer, _rx) = tokio::sync::mpsc::channel(1);
+        let imposter_same_id = Arc::new(MultiplexedChannel {
+            office_id: live_ch2.office_id.clone(),
+            channel_id: live_ch2.channel_id.clone(),
+            writer,
+            pending: Arc::new(Mutex::new(BTreeMap::new())),
+            closed: Arc::new(AtomicBool::new(false)),
+        });
+        pool.evict_if_same("org-1", &imposter_same_id);
+        assert!(Arc::ptr_eq(
+            pool.channels.lock().unwrap().get("org-1").unwrap(),
+            &live_ch2
+        ));
+
+        // If BOTH cached channel and fresh replacement return Failure::Denied, fail closed after
+        // exactly 1 retry (no infinite loop) and leave no rejected channel pinned in the pool.
+        grant_calls.store(0, Ordering::SeqCst);
+        let gc = Arc::clone(&grant_calls);
+        let err = pool
+            .dispatch(
+                "org-1",
+                12,
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                make_opener(
+                    Arc::clone(&open_count),
+                    Arc::clone(&bus),
+                    Arc::clone(&server_tasks),
+                ),
+                move |_office, _ch| {
+                    let gc = Arc::clone(&gc);
+                    async move {
+                        gc.fetch_add(1, Ordering::SeqCst);
+                        Err(Failure::Denied)
+                    }
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            OfficeFailure::BeforeDispatch(Failure::Denied)
+        ));
+        assert_eq!(
+            grant_calls.load(Ordering::SeqCst),
+            2,
+            "must retry Denied at most once"
+        );
+        assert_eq!(open_count.load(Ordering::SeqCst), 3);
+        assert!(
+            !pool.channels.lock().unwrap().contains_key("org-1"),
+            "rejected fresh channel must not stay cached"
+        );
+
+        for handle in server_tasks.lock().unwrap().drain(..) {
+            handle.abort();
+        }
+    });
+}
+
+#[test]
+fn webhook_channel_pool_never_pins_channel_whose_read_loop_exited_before_insert() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let pool = Arc::new(WebhookChannelPool::new(4));
+        let open_count = Arc::new(AtomicUsize::new(0));
+        let bus: Arc<dyn EventBus> = Arc::new(InMemoryEventBus::default());
+        let server_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
+            Arc::new(Mutex::new(Vec::new()));
+
+        // Opener #1 returns a channel whose peer already closed AND whose read_loop has ALREADY
+        // exited BEFORE `get_or_open` acquires `pool.channels` to insert it.
+        let oc = Arc::clone(&open_count);
+        let bus_1 = Arc::clone(&bus);
+        let first_err = tokio::time::timeout(
+            Duration::from_secs(2),
+            pool.dispatch(
+                "org-1",
+                20,
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                move |cache: ChannelMap| {
+                    let oc = Arc::clone(&oc);
+                    let bus = Arc::clone(&bus_1);
+                    async move {
+                        let seq = oc.fetch_add(1, Ordering::SeqCst) + 1;
+                        let (client, server) = tokio::io::duplex(4096);
+                        let (client_read, client_write) = tokio::io::split(client);
+                        drop(server);
+                        let ch = MultiplexedChannel::from_async_halves(
+                            "org-1".into(),
+                            "office-hq".into(),
+                            format!("wh-dead-{seq}"),
+                            client_read,
+                            client_write,
+                            cache,
+                            bus,
+                            None,
+                        );
+                        // Wait until read_loop has observed EOF and run its exit/evict path
+                        // before returning `ch` to `get_or_open`.
+                        for _ in 0..100 {
+                            if ch.is_closed() {
+                                break;
+                            }
+                            tokio::task::yield_now().await;
+                        }
+                        assert!(ch.is_closed(), "read_loop must exit before insert");
+                        Ok(ch)
+                    }
+                },
+                |office, ch| async move { Ok(synthetic_webhook_principal("org-1", &office, &ch)) },
+            ),
+        )
+        .await
+        .expect("closed channel roundtrip must fail fast without hanging")
+        .unwrap_err();
+        assert!(matches!(first_err, OfficeFailure::Transport));
+        assert!(
+            pool.channels.lock().unwrap().is_empty(),
+            "dead channel must never be pinned in pool.channels"
+        );
+        assert_eq!(open_count.load(Ordering::SeqCst), 1);
+
+        // Next call opens a fresh healthy channel #2, caches it, and succeeds.
+        let oc = Arc::clone(&open_count);
+        let bus_2 = Arc::clone(&bus);
+        let tasks_2 = Arc::clone(&server_tasks);
+        let ok = pool
+            .dispatch(
+                "org-1",
+                21,
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                move |cache: ChannelMap| {
+                    let oc = Arc::clone(&oc);
+                    let bus = Arc::clone(&bus_2);
+                    let tasks = Arc::clone(&tasks_2);
+                    async move {
+                        let seq = oc.fetch_add(1, Ordering::SeqCst) + 1;
+                        let (ch, handle) = spawn_echo_webhook_channel(
+                            "org-1",
+                            format!("wh-live-{seq}"),
+                            seq,
+                            cache,
+                            bus,
+                        );
+                        tasks.lock().unwrap().push(handle);
+                        Ok(ch)
+                    }
+                },
+                |office, ch| async move { Ok(synthetic_webhook_principal("org-1", &office, &ch)) },
+            )
+            .await
+            .expect("next call after dead open must open fresh channel and succeed");
+        assert_eq!(ok["seq"], 2);
+        assert_eq!(open_count.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            pool.channels
+                .lock()
+                .unwrap()
+                .get("org-1")
+                .expect("fresh channel cached")
+                .channel_id,
+            "wh-live-2"
+        );
+
+        // Cache-read liveness guard: if a cached channel flips to closed before eviction runs,
+        // `get_or_open` evicts it on read and opens a fresh replacement.
+        pool.channels
+            .lock()
+            .unwrap()
+            .get("org-1")
+            .unwrap()
+            .closed
+            .store(true, Ordering::Release);
+        let oc = Arc::clone(&open_count);
+        let bus_3 = Arc::clone(&bus);
+        let tasks_3 = Arc::clone(&server_tasks);
+        let refreshed = pool
+            .dispatch(
+                "org-1",
+                22,
+                "github.webhook.ingest",
+                serde_json::json!({}),
+                move |cache: ChannelMap| {
+                    let oc = Arc::clone(&oc);
+                    let bus = Arc::clone(&bus_3);
+                    let tasks = Arc::clone(&tasks_3);
+                    async move {
+                        let seq = oc.fetch_add(1, Ordering::SeqCst) + 1;
+                        let (ch, handle) = spawn_echo_webhook_channel(
+                            "org-1",
+                            format!("wh-live-{seq}"),
+                            seq,
+                            cache,
+                            bus,
+                        );
+                        tasks.lock().unwrap().push(handle);
+                        Ok(ch)
+                    }
+                },
+                |office, ch| async move { Ok(synthetic_webhook_principal("org-1", &office, &ch)) },
+            )
+            .await
+            .expect("closed cached entry must be evicted on read and replaced");
+        assert_eq!(refreshed["seq"], 3);
+        assert_eq!(open_count.load(Ordering::SeqCst), 3);
+
+        for handle in server_tasks.lock().unwrap().drain(..) {
+            handle.abort();
+        }
     });
 }

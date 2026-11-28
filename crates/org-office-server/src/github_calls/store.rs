@@ -387,6 +387,17 @@ fn pretty_json_len<T: Serialize>(value: &T) -> Result<usize, ApiError> {
     Ok(counter.0.saturating_add(1))
 }
 
+pub(super) fn compact_json_len<T: Serialize>(value: &T) -> Result<usize, ApiError> {
+    let mut counter = ByteCounter(0);
+    serde_json::to_writer(&mut counter, value).map_err(|_| {
+        ApiError::new(
+            ErrorCode::StorageError,
+            "could not encode office github-context JSON",
+        )
+    })?;
+    Ok(counter.0)
+}
+
 fn write_json_atomic<T: Serialize>(
     office: &Office,
     dir: &Path,
@@ -415,7 +426,7 @@ fn write_json_atomic<T: Serialize>(
             )
         },
     )?;
-    if let Ok(file) = fs::File::open(canon_dir.join(file_name)) {
+    if let Ok(file) = org_platform::fs::open_nofollow_ro(&canon_dir.join(file_name)) {
         let _ = org_platform::fs::full_sync(&file);
     }
     Ok(())

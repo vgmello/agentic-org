@@ -926,3 +926,159 @@ fn browser_webhook_channels_are_bounded_per_org_and_isolated_from_session_grants
         .open_webhook_channel(&connection, Arc::clone(&worker.endpoint), "org")
         .is_ok());
 }
+
+#[test]
+fn grant_webhook_returns_unavailable_on_dead_slot_or_endpoint_and_denies_unauthorized() {
+    use crate::control_listener::ChannelReceipt;
+    use crate::supervisor::channels::tests::{await_closed, in_memory_endpoint_fixture};
+    use org_host_control::browser::BrowserWebhookGrantParams;
+
+    let (_root, auth, connection) = fixture();
+    let signed_in = login(&auth, &connection);
+    link_owner(&auth, &connection, &signed_in.session);
+    let worker_1 = in_memory_endpoint_fixture();
+
+    let (wh_id_1, wh_stream_1, wh_slot_1) = auth
+        .open_webhook_channel(&connection, Arc::clone(&worker_1.endpoint), "org")
+        .expect("1st webhook channel opens");
+
+    // Unacknowledged live webhook channel is denied fail-closed.
+    assert_eq!(
+        auth.grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "office".into(),
+                channel_id: wh_id_1.clone(),
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotAuthorized
+    );
+
+    connection.record_received_slot_for_test(&wh_id_1, wh_slot_1.clone());
+    assert!(auth
+        .grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "office".into(),
+                channel_id: wh_id_1.clone(),
+            },
+        )
+        .is_ok());
+
+    // Unknown channel, wrong org, wrong office, and wrong connection all return NotAuthorized.
+    let other_conn = Connection::for_test();
+    other_conn.record_received_slot_for_test(&wh_id_1, wh_slot_1.clone());
+    for (conn, org, office, ch) in [
+        (&connection, "org", "office", "unknown-channel"),
+        (&connection, "wrong-org", "office", wh_id_1.as_str()),
+        (&connection, "org", "wrong-office", wh_id_1.as_str()),
+        (&other_conn, "org", "office", wh_id_1.as_str()),
+    ] {
+        assert_eq!(
+            auth.grant_webhook(
+                conn,
+                &BrowserWebhookGrantParams {
+                    org_id: org.into(),
+                    office_id: office.into(),
+                    channel_id: ch.into(),
+                },
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::NotAuthorized,
+            "expected NotAuthorized for ({org}, {office}, {ch})"
+        );
+    }
+
+    // Closing the known webhook channel's slot yields Unavailable (not NotAuthorized), while
+    // preserving non-webhook `channel_received() == false` and still denying mismatched callers.
+    drop(wh_stream_1);
+    await_closed(&wh_slot_1);
+    assert!(!connection.channel_received(&wh_id_1));
+    assert_eq!(connection.channel_receipt(&wh_id_1), ChannelReceipt::Closed);
+    assert_eq!(
+        auth.grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "office".into(),
+                channel_id: wh_id_1.clone(),
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::Unavailable
+    );
+    for (conn, org, office) in [
+        (&connection, "wrong-org", "office"),
+        (&connection, "org", "wrong-office"),
+        (&other_conn, "org", "office"),
+    ] {
+        assert_eq!(
+            auth.grant_webhook(
+                conn,
+                &BrowserWebhookGrantParams {
+                    org_id: org.into(),
+                    office_id: office.into(),
+                    channel_id: wh_id_1.clone(),
+                },
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::NotAuthorized
+        );
+    }
+
+    // Failing or dropping the endpoint itself also yields Unavailable for the matching webhook
+    // channel while still returning NotAuthorized for a mismatched office_id.
+    let worker_2 = in_memory_endpoint_fixture();
+    let (wh_id_2, _wh_stream_2, wh_slot_2) = auth
+        .open_webhook_channel(&connection, Arc::clone(&worker_2.endpoint), "org")
+        .expect("2nd webhook channel opens");
+    connection.record_received_slot_for_test(&wh_id_2, wh_slot_2);
+    worker_2.endpoint.fail();
+    assert_eq!(
+        auth.grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "office".into(),
+                channel_id: wh_id_2.clone(),
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::Unavailable
+    );
+    drop(worker_2);
+    assert_eq!(
+        auth.grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "office".into(),
+                channel_id: wh_id_2.clone(),
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(
+        auth.grant_webhook(
+            &connection,
+            &BrowserWebhookGrantParams {
+                org_id: "org".into(),
+                office_id: "wrong-office".into(),
+                channel_id: wh_id_2,
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotAuthorized
+    );
+}

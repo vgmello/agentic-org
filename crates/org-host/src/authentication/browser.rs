@@ -28,7 +28,7 @@ use super::{
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::accounts::rules::{check_new_password, PasswordRule, Username};
 use crate::accounts::store::{AccountStore, Attempt, ClientAddress, NewAccount, ThrottleKey};
-use crate::control_listener::Connection;
+use crate::control_listener::{ChannelReceipt, Connection};
 use crate::links::LinkKind;
 use crate::sessions::{
     Admission, BrowserSessions, Ended, NewSession, Origin, Scheme, SessionDigest, IDLE_MS,
@@ -474,6 +474,7 @@ impl Authentication {
             WebChannel {
                 endpoint: Arc::downgrade(&endpoint),
                 organization: organization.into(),
+                office: endpoint.office.clone(),
                 connection: alive,
                 webhook_only: false,
                 _slot: slot.clone(),
@@ -596,6 +597,7 @@ impl Authentication {
             WebChannel {
                 endpoint: Arc::downgrade(&endpoint),
                 organization: organization.into(),
+                office: endpoint.office.clone(),
                 connection: alive,
                 webhook_only: true,
                 _slot: slot.clone(),
@@ -612,21 +614,28 @@ impl Authentication {
         params: &BrowserWebhookGrantParams,
     ) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {
         const WEBHOOK_SESSION_ID: &str = "01000000000000000000000001";
-        if !connection.channel_received(&params.channel_id) {
-            return Err(denied());
-        }
+        let receipt = connection.channel_receipt(&params.channel_id);
         let endpoint = {
             let channels = self.web_channels.lock().map_err(|_| unavailable())?;
             let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
             if !bound.webhook_only
                 || !bound.connection.ptr_eq(&connection.liveness())
-                || !bound._slot.is_live()
                 || bound.organization != params.org_id
+                || bound.office != params.office_id
             {
                 return Err(denied());
             }
+            if matches!(receipt, ChannelReceipt::Closed) || !bound._slot.is_live() {
+                return Err(unavailable());
+            }
             let endpoint = bound.endpoint.upgrade().ok_or_else(unavailable)?;
-            if endpoint.office != params.office_id || !endpoint.is_live() {
+            if endpoint.office != params.office_id {
+                return Err(denied());
+            }
+            if !endpoint.is_live() {
+                return Err(unavailable());
+            }
+            if receipt != ChannelReceipt::Live {
                 return Err(denied());
             }
             endpoint

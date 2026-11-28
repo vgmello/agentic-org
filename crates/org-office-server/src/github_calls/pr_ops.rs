@@ -13,7 +13,8 @@ use org_office::Office;
 use org_proto::github::{
     GitHubCheckConclusion, GitHubFailureSummaryView, GitHubPrChecksParams, GitHubPrChecksResult,
     GitHubPrDetailView, GitHubPrInspectParams, GitHubPrListParams, GitHubPrListResult,
-    GitHubPrSyncParams, GitHubPrSyncResult, GITHUB_PR_LIST_MAX_LIMIT,
+    GitHubPrSyncParams, GitHubPrSyncResult, GITHUB_PR_LIST_BODY_EXCERPT_MAX_BYTES,
+    GITHUB_PR_LIST_MAX_LIMIT, GITHUB_PR_LIST_MAX_RESPONSE_BYTES,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -22,9 +23,10 @@ use crate::live::LiveEvents;
 use super::linking::{resolve_pr_links, ProjectReviewLinkCache};
 use super::scope::resolve_authorized_project_repos;
 use super::store::{
-    list_prs_for_repo, load_bindings, load_pr, save_pr, StoredPrRecord, MAX_PR_RECORD_BYTES,
+    compact_json_len, list_prs_for_repo, load_bindings, load_pr, save_pr, StoredPrRecord,
+    MAX_PR_RECORD_BYTES,
 };
-use super::vault::{load_github_app_private_key, now_rfc3339};
+use super::vault::{load_github_app_meta, load_github_app_private_key, now_rfc3339};
 
 pub(super) fn handle_pr_list(
     office: &Office,
@@ -56,6 +58,7 @@ pub(super) fn handle_pr_list(
                 return Ok(GitHubPrListResult {
                     project_id: auth.project_id,
                     pull_requests: Vec::new(),
+                    has_more: false,
                 });
             }
         },
@@ -95,11 +98,57 @@ pub(super) fn handle_pr_list(
             .cmp(&a.updated_at)
             .then_with(|| b.pr_number.cmp(&a.pr_number))
     });
+    let mut has_more = summaries.len() > limit;
     summaries.truncate(limit);
+
+    let base_bytes = compact_json_len(&GitHubPrListResult {
+        project_id: auth.project_id.clone(),
+        pull_requests: Vec::new(),
+        has_more: true,
+    })?;
+    let mut used_bytes = base_bytes;
+    let mut bounded = Vec::with_capacity(summaries.len());
+    for mut summary in summaries {
+        if let Some(excerpt) = summary.body_excerpt.as_deref() {
+            if excerpt.len() > GITHUB_PR_LIST_BODY_EXCERPT_MAX_BYTES {
+                summary.body_excerpt = Some(truncate_utf8_bytes(
+                    excerpt,
+                    GITHUB_PR_LIST_BODY_EXCERPT_MAX_BYTES,
+                ));
+            }
+        }
+        let item_bytes = compact_json_len(&summary)?;
+        let sep = usize::from(!bounded.is_empty());
+        let next_bytes = used_bytes.saturating_add(sep).saturating_add(item_bytes);
+        if next_bytes > GITHUB_PR_LIST_MAX_RESPONSE_BYTES {
+            has_more = true;
+            break;
+        }
+        used_bytes = next_bytes;
+        bounded.push(summary);
+    }
+
     Ok(GitHubPrListResult {
         project_id: auth.project_id,
-        pull_requests: summaries,
+        pull_requests: bounded,
+        has_more,
     })
+}
+
+fn truncate_utf8_bytes(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_owned();
+    }
+    const SUFFIX: &str = "…";
+    if max_bytes <= SUFFIX.len() {
+        let cut = input.floor_char_boundary(max_bytes);
+        return input[..cut].to_owned();
+    }
+    let cut = input.floor_char_boundary(max_bytes - SUFFIX.len());
+    let mut out = String::with_capacity(cut + SUFFIX.len());
+    out.push_str(&input[..cut]);
+    out.push_str(SUFFIX);
+    out
 }
 
 pub(super) fn handle_pr_inspect(
@@ -263,6 +312,25 @@ pub(super) fn handle_pr_sync(
     let mut synced_prs = Vec::with_capacity(synced.len());
     {
         let _guard = store_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // Re-verify App custody and repository binding after releasing `store_lock` across network
+        // I/O so concurrent revocation or unbinding never persists stale PR snapshots.
+        if !load_github_app_meta(office)?.is_some_and(|meta| meta.app_id == config.app_id) {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "GitHub App configuration was revoked or changed during sync",
+            ));
+        }
+        let still_bound = load_bindings(office)?.iter().any(|b| {
+            b.repository_id == repo_id
+                && b.full_name.eq_ignore_ascii_case(&binding.full_name)
+                && b.installation_id == binding.installation_id
+        });
+        if !still_bound {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "repository GitHub binding was removed or changed during sync",
+            ));
+        }
         for item in synced {
             let pr_num = item.pr.pr_number;
             let mut record = match load_pr(office, &repo_id, pr_num)? {

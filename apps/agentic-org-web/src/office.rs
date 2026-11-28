@@ -10,7 +10,7 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -58,6 +58,7 @@ struct MultiplexedChannel {
     channel_id: String,
     writer: mpsc::Sender<Vec<u8>>,
     pending: PendingMap,
+    closed: Arc<AtomicBool>,
 }
 
 /// Pooled, multiplexed per-organization webhook channel cache with dedicated bounded concurrency.
@@ -86,8 +87,15 @@ impl WebhookChannelPool {
         &self.open_locks[(hash as usize) % WEBHOOK_OPEN_LOCK_STRIPES]
     }
 
-    fn evict(&self, org_id: &str, channel_id: &str) {
-        evict_channel(&self.channels, org_id, channel_id);
+    fn evict_if_same(&self, org_id: &str, channel: &Arc<MultiplexedChannel>) {
+        if let Ok(mut map) = self.channels.lock() {
+            if map
+                .get(org_id)
+                .is_some_and(|existing| Arc::ptr_eq(existing, channel))
+            {
+                map.remove(org_id);
+            }
+        }
     }
 
     async fn get_or_open<Open, OpenFut>(
@@ -99,20 +107,28 @@ impl WebhookChannelPool {
         Open: FnMut(ChannelMap) -> OpenFut,
         OpenFut: std::future::Future<Output = Result<Arc<MultiplexedChannel>, OfficeFailure>>,
     {
-        if let Ok(channels) = self.channels.lock() {
+        if let Ok(mut channels) = self.channels.lock() {
             if let Some(existing) = channels.get(org_id) {
-                return Ok(Arc::clone(existing));
+                if !existing.is_closed() {
+                    return Ok(Arc::clone(existing));
+                }
+                channels.remove(org_id);
             }
         }
         let _guard = self.open_lock_for(org_id).lock().await;
-        if let Ok(channels) = self.channels.lock() {
+        if let Ok(mut channels) = self.channels.lock() {
             if let Some(existing) = channels.get(org_id) {
-                return Ok(Arc::clone(existing));
+                if !existing.is_closed() {
+                    return Ok(Arc::clone(existing));
+                }
+                channels.remove(org_id);
             }
         }
         let channel = open(Arc::clone(&self.channels)).await?;
         if let Ok(mut channels) = self.channels.lock() {
-            channels.insert(org_id.to_owned(), Arc::clone(&channel));
+            if !channel.is_closed() {
+                channels.insert(org_id.to_owned(), Arc::clone(&channel));
+            }
         }
         Ok(channel)
     }
@@ -142,12 +158,19 @@ impl WebhookChannelPool {
         let (channel, principal) =
             match grant(channel.office_id.clone(), channel.channel_id.clone()).await {
                 Ok(principal) => (channel, principal),
-                Err(Failure::Unavailable) => {
-                    self.evict(org_id, &channel.channel_id);
+                Err(Failure::Unavailable | Failure::Denied) => {
+                    self.evict_if_same(org_id, &channel);
                     let fresh = self.get_or_open(org_id, &mut open).await?;
-                    let principal = grant(fresh.office_id.clone(), fresh.channel_id.clone())
-                        .await
-                        .map_err(OfficeFailure::BeforeDispatch)?;
+                    let principal =
+                        match grant(fresh.office_id.clone(), fresh.channel_id.clone()).await {
+                            Ok(principal) => principal,
+                            Err(error) => {
+                                if matches!(error, Failure::Unavailable | Failure::Denied) {
+                                    self.evict_if_same(org_id, &fresh);
+                                }
+                                return Err(OfficeFailure::BeforeDispatch(error));
+                            }
+                        };
                     (fresh, principal)
                 }
                 Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
@@ -156,7 +179,7 @@ impl WebhookChannelPool {
         let raw = match channel.roundtrip_raw(&request, rpc_id).await {
             Ok(raw) => raw,
             Err(_) => {
-                self.evict(org_id, &channel.channel_id);
+                self.evict_if_same(org_id, &channel);
                 return Err(OfficeFailure::Transport);
             }
         };
@@ -207,17 +230,23 @@ impl OfficeBridge {
         auth: &BrowserAuth,
         office_id: &str,
     ) -> Result<Arc<MultiplexedChannel>, OfficeFailure> {
-        if let Ok(channels) = self.channels.lock() {
+        if let Ok(mut channels) = self.channels.lock() {
             if let Some(existing) = channels.get(office_id) {
-                return Ok(Arc::clone(existing));
+                if !existing.is_closed() {
+                    return Ok(Arc::clone(existing));
+                }
+                channels.remove(office_id);
             }
         }
         // Coalesce concurrent cold channel opens per office so parallel callers share one Web slot.
         let office_lock = self.open_lock_for(office_id);
         let _guard = office_lock.lock().await;
-        if let Ok(channels) = self.channels.lock() {
+        if let Ok(mut channels) = self.channels.lock() {
             if let Some(existing) = channels.get(office_id) {
-                return Ok(Arc::clone(existing));
+                if !existing.is_closed() {
+                    return Ok(Arc::clone(existing));
+                }
+                channels.remove(office_id);
             }
         }
         let (channel_id, stream) = self
@@ -237,7 +266,9 @@ impl OfficeBridge {
             return Err(OfficeFailure::BeforeDispatch(Failure::Unavailable));
         }
         if let Ok(mut channels) = self.channels.lock() {
-            channels.insert(office_id.to_owned(), Arc::clone(&channel));
+            if !channel.is_closed() {
+                channels.insert(office_id.to_owned(), Arc::clone(&channel));
+            }
         }
         Ok(channel)
     }

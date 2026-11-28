@@ -117,17 +117,41 @@ fn ensure_owner_only_app_dir(office: &Office) -> Result<PathBuf, ApiError> {
     })
 }
 
-fn sync_path(path: &Path) -> Result<(), ApiError> {
-    let file = fs::File::open(path).map_err(|_| {
+fn sync_regular_file(path: &Path) -> Result<(), ApiError> {
+    let file = org_platform::fs::open_nofollow_ro(path).map_err(|_| {
         ApiError::new(
             ErrorCode::StorageError,
-            "could not open office github-app path for sync",
+            "could not open office github-app file for sync",
         )
     })?;
     org_platform::fs::full_sync(&file).map_err(|_| {
         ApiError::new(
             ErrorCode::StorageError,
             "could not flush office github-app credential to disk",
+        )
+    })
+}
+
+fn sync_dir(dir: &Path) -> Result<(), ApiError> {
+    let handle = fs::File::open(dir).map_err(|_| {
+        ApiError::new(
+            ErrorCode::StorageError,
+            "could not open office github-app directory for sync",
+        )
+    })?;
+    if !handle
+        .metadata()
+        .is_ok_and(|meta| meta.file_type().is_dir())
+    {
+        return Err(ApiError::new(
+            ErrorCode::StorageError,
+            "office github-app sync target is not a directory",
+        ));
+    }
+    org_platform::fs::full_sync(&handle).map_err(|_| {
+        ApiError::new(
+            ErrorCode::StorageError,
+            "could not flush office github-app directory to disk",
         )
     })
 }
@@ -326,8 +350,8 @@ pub(super) fn store_github_app(
             )
         },
     )?;
-    sync_path(&dir.join(APP_FILE_NAME))?;
-    sync_path(&dir)?;
+    sync_regular_file(&dir.join(APP_FILE_NAME))?;
+    sync_dir(&dir)?;
 
     Ok(StoredGitHubAppMeta {
         app_id: config.app_id,
@@ -489,7 +513,7 @@ pub(super) fn revoke_github_app(office: &Office) -> Result<(), ApiError> {
                     "could not remove office GitHub App credential",
                 )
             })?;
-            sync_path(&dir)?;
+            sync_dir(&dir)?;
         }
         Ok(_) => {
             return Err(ApiError::new(

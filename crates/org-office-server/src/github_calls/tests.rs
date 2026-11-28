@@ -1346,3 +1346,394 @@ fn p2_3_oversized_pr_record_is_trimmed_within_store_and_frame_caps() {
         checks_wire.len()
     );
 }
+
+#[test]
+fn p2_1_pr_list_caps_body_excerpt_and_frame_size_for_200_max_prs() {
+    use org_proto::github::{
+        GitHubPrListResult, GITHUB_PR_LIST_BODY_EXCERPT_MAX_BYTES, GITHUB_PR_LIST_MAX_LIMIT,
+        GITHUB_PR_LIST_MAX_RESPONSE_BYTES,
+    };
+
+    let fx = setup_fixture();
+    // Multibyte UTF-8 characters placed right across the 509..512 byte boundary inside a 4 KiB body.
+    let multibyte_body = format!("{}🦀é{}", "a".repeat(507), "b".repeat(3500));
+    assert!(multibyte_body.len() > 4000);
+    let task_refs: Vec<String> = (1..=16).map(|i| format!("T-AA{i}")).collect();
+
+    for pr_num in 1..=u64::from(GITHUB_PR_LIST_MAX_LIMIT) {
+        let mut rec = StoredPrRecord {
+            repository_id: fx.repo_a.clone(),
+            repo_full_name: format!("acme/{}", "r".repeat(90)),
+            pr_number: pr_num,
+            state: GitHubPrState::Open,
+            draft: false,
+            title: format!("PR #{pr_num:03} {}", "T".repeat(240)),
+            body_excerpt: Some(multibyte_body.clone()),
+            html_url: format!("https://github.com/acme/backend/pull/{pr_num}"),
+            diff_url: format!("https://github.com/acme/backend/pull/{pr_num}.diff"),
+            head_ref: format!("feat/{}", "h".repeat(155)),
+            head_sha: format!("{pr_num:040x}"),
+            base_ref: format!("base/{}", "b".repeat(155)),
+            base_sha: Some("00112233445566778899aabbccddeeff00112233".into()),
+            author_login: "u".repeat(64),
+            linked_task_refs: task_refs.clone(),
+            updated_at: format!(
+                "2026-11-27T12:{:02}:{:02}Z",
+                (pr_num / 60) % 60,
+                pr_num % 60
+            ),
+            reviews: vec![],
+            review_comments: vec![],
+            check_runs: vec![],
+        };
+        save_pr(&fx.office, &mut rec).unwrap();
+    }
+
+    let req = Request::new::<GitHubPrList>(
+        10,
+        &GitHubPrListParams {
+            project: fx.project_a.clone(),
+            repository: None,
+            task: None,
+            state: None,
+            limit: Some(GITHUB_PR_LIST_MAX_LIMIT),
+        },
+    )
+    .unwrap();
+    let resp = fx
+        .svc
+        .dispatch(Some(&fx.team_a_agent), false, &req)
+        .unwrap();
+    let wire = serde_json::to_vec(&resp).unwrap();
+    assert!(
+        wire.len() < MAX_FRAME_BYTES,
+        "200 max-sized PRs wire frame {} >= MAX_FRAME_BYTES {}",
+        wire.len(),
+        MAX_FRAME_BYTES
+    );
+    assert!(
+        wire.len() <= GITHUB_PR_LIST_MAX_RESPONSE_BYTES + 256,
+        "200 max-sized PRs wire frame {} exceeded byte budget",
+        wire.len()
+    );
+    let listed: GitHubPrListResult = match resp.outcome {
+        Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        Outcome::Error(e) => panic!("expected ok, got {e:?}"),
+    };
+    assert_eq!(
+        listed.pull_requests.len(),
+        GITHUB_PR_LIST_MAX_LIMIT as usize
+    );
+    assert!(!listed.has_more);
+    for pr in &listed.pull_requests {
+        let excerpt = pr
+            .body_excerpt
+            .as_deref()
+            .expect("list summary preserves truncated excerpt");
+        assert!(
+            excerpt.len() <= GITHUB_PR_LIST_BODY_EXCERPT_MAX_BYTES,
+            "excerpt len {} > {}",
+            excerpt.len(),
+            GITHUB_PR_LIST_BODY_EXCERPT_MAX_BYTES
+        );
+        assert!(excerpt.ends_with('…'));
+    }
+
+    // `github.pr.inspect` still exposes the full stored body_excerpt.
+    let detail = call_ok::<GitHubPrInspect>(
+        &fx.svc,
+        &fx.team_a_agent,
+        false,
+        &GitHubPrInspectParams {
+            project: fx.project_a.clone(),
+            repository: Some("backend".into()),
+            pr_number: 200,
+        },
+    );
+    assert_eq!(
+        detail.pr.body_excerpt.as_deref(),
+        Some(multibyte_body.as_str())
+    );
+
+    // Adding a 201st PR marks `has_more = true` at limit = 200.
+    let mut pr201 = StoredPrRecord {
+        repository_id: fx.repo_a.clone(),
+        repo_full_name: "acme/backend".into(),
+        pr_number: 201,
+        state: GitHubPrState::Open,
+        draft: false,
+        title: "Overflow PR".into(),
+        body_excerpt: Some("short".into()),
+        html_url: "https://github.com/acme/backend/pull/201".into(),
+        diff_url: "https://github.com/acme/backend/pull/201.diff".into(),
+        head_ref: "feat/201".into(),
+        head_sha: format!("{:040x}", 201u64),
+        base_ref: "main".into(),
+        base_sha: None,
+        author_login: "alice".into(),
+        linked_task_refs: vec![],
+        updated_at: "2026-11-28T00:00:00Z".into(),
+        reviews: vec![],
+        review_comments: vec![],
+        check_runs: vec![],
+    };
+    save_pr(&fx.office, &mut pr201).unwrap();
+    let listed_201 = call_ok::<GitHubPrList>(
+        &fx.svc,
+        &fx.team_a_agent,
+        false,
+        &GitHubPrListParams {
+            project: fx.project_a.clone(),
+            limit: Some(GITHUB_PR_LIST_MAX_LIMIT),
+            ..Default::default()
+        },
+    );
+    assert_eq!(listed_201.pull_requests.len(), 200);
+    assert!(listed_201.has_more);
+
+    // Pathological worst-case JSON expansion (200 PRs with huge escaped fields exceeding 768 KiB)
+    // is truncated strictly within GITHUB_PR_LIST_MAX_RESPONSE_BYTES with `has_more = true`.
+    let fx2 = setup_fixture();
+    let huge_url = format!("https://github.com/acme/backend/pull/{}", "x".repeat(2000));
+    let escaped_body = "\"".repeat(512);
+    for pr_num in 1..=u64::from(GITHUB_PR_LIST_MAX_LIMIT) {
+        let mut rec = StoredPrRecord {
+            repository_id: fx2.repo_a.clone(),
+            repo_full_name: "acme/backend".into(),
+            pr_number: pr_num,
+            state: GitHubPrState::Open,
+            draft: false,
+            title: "\"".repeat(256),
+            body_excerpt: Some(escaped_body.clone()),
+            html_url: huge_url.clone(),
+            diff_url: huge_url.clone(),
+            head_ref: "h".repeat(160),
+            head_sha: format!("{pr_num:040x}"),
+            base_ref: "b".repeat(160),
+            base_sha: Some("00112233445566778899aabbccddeeff00112233".into()),
+            author_login: "u".repeat(64),
+            linked_task_refs: task_refs.clone(),
+            updated_at: format!(
+                "2026-11-27T12:{:02}:{:02}Z",
+                (pr_num / 60) % 60,
+                pr_num % 60
+            ),
+            reviews: vec![],
+            review_comments: vec![],
+            check_runs: vec![],
+        };
+        save_pr(&fx2.office, &mut rec).unwrap();
+    }
+    let big_req = Request::new::<GitHubPrList>(
+        11,
+        &GitHubPrListParams {
+            project: fx2.project_a.clone(),
+            limit: Some(GITHUB_PR_LIST_MAX_LIMIT),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let big_resp = fx2
+        .svc
+        .dispatch(Some(&fx2.team_a_agent), false, &big_req)
+        .unwrap();
+    let big_wire = serde_json::to_vec(&big_resp).unwrap();
+    assert!(
+        big_wire.len() < MAX_FRAME_BYTES,
+        "pathological list wire frame {} >= MAX_FRAME_BYTES",
+        big_wire.len()
+    );
+    let big_listed: GitHubPrListResult = match big_resp.outcome {
+        Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        Outcome::Error(e) => panic!("expected ok, got {e:?}"),
+    };
+    let result_bytes = serde_json::to_vec(&big_listed).unwrap().len();
+    assert!(
+        result_bytes <= GITHUB_PR_LIST_MAX_RESPONSE_BYTES,
+        "result bytes {result_bytes} > {GITHUB_PR_LIST_MAX_RESPONSE_BYTES}"
+    );
+    assert!(big_listed.has_more);
+    assert!(big_listed.pull_requests.len() < GITHUB_PR_LIST_MAX_LIMIT as usize);
+    assert!(!big_listed.pull_requests.is_empty());
+}
+
+struct HookedGitHubHttpClient {
+    inner: Arc<FakeGitHubHttpClient>,
+    on_pull_get: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl org_github::GitHubHttpClient for HookedGitHubHttpClient {
+    fn send(
+        &self,
+        req: &org_github::GitHubHttpRequest,
+    ) -> Result<org_github::GitHubHttpResponse, org_github::GitHubError> {
+        if req.method == HttpMethod::Get && req.url.contains("/pulls/") {
+            let hook = self
+                .on_pull_get
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+            if let Some(cb) = hook {
+                cb();
+            }
+        }
+        self.inner.send(req)
+    }
+}
+
+#[test]
+fn p2_2_pr_sync_aborts_with_conflict_on_concurrent_revoke_or_unbind() {
+    let fx = setup_fixture();
+    let http_inner = Arc::new(FakeGitHubHttpClient::new());
+    let hooked = Arc::new(HookedGitHubHttpClient {
+        inner: Arc::clone(&http_inner),
+        on_pull_get: std::sync::Mutex::new(None),
+    });
+    let svc = Arc::new(GitHubService::with_http_client(
+        Arc::clone(&fx.office),
+        Arc::clone(&fx.live),
+        Arc::clone(&hooked) as Arc<dyn org_github::GitHubHttpClient>,
+    ));
+
+    let keys = test_rsa_keypair_pem();
+    let configure_and_bind = |svc: &GitHubService| {
+        call_ok::<GitHubAppConfigure>(
+            svc,
+            &fx.owner,
+            true,
+            &GitHubAppConfigureParams {
+                app_id: 777,
+                installation_id: 888,
+                api_base_url: None,
+                private_key_pem: SecretText::new(keys.pkcs8_pem.as_str()),
+                webhook_secret: None,
+                account_hint: Some("acme".into()),
+            },
+        );
+        call_ok::<GitHubRepoBind>(
+            svc,
+            &fx.owner,
+            true,
+            &GitHubRepoBindParams {
+                repository: fx.repo_a.clone(),
+                owner: "acme".into(),
+                repo: "backend".into(),
+                installation_id: None,
+            },
+        );
+    };
+    let stub_pr = |pr_num: u64| {
+        http_inner.on_json(
+            HttpMethod::Post,
+            "/app/installations/888/access_tokens",
+            201,
+            json!({
+                "token": "ghs_ephemeral_toctou_token",
+                "expires_at": "2099-01-01T00:00:00Z"
+            })
+            .to_string(),
+        );
+        http_inner.on_json(
+            HttpMethod::Get,
+            format!("/repos/acme/backend/pulls/{pr_num}"),
+            200,
+            json!({
+                "number": pr_num,
+                "state": "open",
+                "draft": false,
+                "title": format!("Concurrent PR #{pr_num}"),
+                "body": "should not persist",
+                "html_url": format!("https://github.com/acme/backend/pull/{pr_num}"),
+                "diff_url": format!("https://github.com/acme/backend/pull/{pr_num}.diff"),
+                "head": { "ref": "feat/toctou", "sha": "112233445566" },
+                "base": { "ref": "main", "sha": "001122334455" },
+                "user": { "login": "dave" },
+                "updated_at": "2026-11-28T00:00:00Z"
+            })
+            .to_string(),
+        );
+        http_inner.on_json(
+            HttpMethod::Get,
+            format!("/repos/acme/backend/pulls/{pr_num}/reviews"),
+            200,
+            "[]",
+        );
+        http_inner.on_json(
+            HttpMethod::Get,
+            format!("/repos/acme/backend/pulls/{pr_num}/comments"),
+            200,
+            "[]",
+        );
+        http_inner.on_json(
+            HttpMethod::Get,
+            "/repos/acme/backend/commits/112233445566/check-runs",
+            200,
+            json!({ "check_runs": [] }).to_string(),
+        );
+    };
+
+    // Case 1: GitHub App revoked concurrently while PR sync network call is in flight.
+    configure_and_bind(&svc);
+    stub_pr(99);
+    {
+        let svc_for_hook = Arc::clone(&svc);
+        let owner = fx.owner.clone();
+        *hooked.on_pull_get.lock().unwrap() = Some(Box::new(move || {
+            call_ok::<GitHubAppRevoke>(&svc_for_hook, &owner, true, &Empty {});
+        }));
+    }
+    let live_before = fx.live.org_change_head();
+    assert_eq!(
+        call_err::<GitHubPrSync>(
+            &svc,
+            &fx.team_a_agent,
+            false,
+            &GitHubPrSyncParams {
+                project: fx.project_a.clone(),
+                repository: "backend".into(),
+                pr_number: Some(99),
+            },
+        ),
+        ErrorCode::Conflict
+    );
+    assert!(
+        load_pr(&fx.office, &fx.repo_a, 99).unwrap().is_none(),
+        "stale PR file must not be written after concurrent revoke"
+    );
+    assert_eq!(fx.live.org_change_head(), live_before);
+
+    // Case 2: Repository unbound concurrently while PR sync network call is in flight.
+    configure_and_bind(&svc);
+    stub_pr(100);
+    {
+        let svc_for_hook = Arc::clone(&svc);
+        let owner = fx.owner.clone();
+        let repo_a = fx.repo_a.clone();
+        *hooked.on_pull_get.lock().unwrap() = Some(Box::new(move || {
+            call_ok::<GitHubRepoUnbind>(
+                &svc_for_hook,
+                &owner,
+                true,
+                &GitHubRepoUnbindParams { repository: repo_a },
+            );
+        }));
+    }
+    assert_eq!(
+        call_err::<GitHubPrSync>(
+            &svc,
+            &fx.team_a_agent,
+            false,
+            &GitHubPrSyncParams {
+                project: fx.project_a.clone(),
+                repository: "backend".into(),
+                pr_number: Some(100),
+            },
+        ),
+        ErrorCode::Conflict
+    );
+    assert!(
+        load_pr(&fx.office, &fx.repo_a, 100).unwrap().is_none(),
+        "stale PR file must not be written after concurrent unbind"
+    );
+    assert_eq!(fx.live.org_change_head(), live_before);
+}

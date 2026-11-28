@@ -231,6 +231,7 @@ fn make_fake_office() -> Arc<FakeOffice> {
             "github.pr.list" => Ok(serde_json::to_value(GitHubPrListResult {
                 project_id: "proj-1".into(),
                 pull_requests: vec![],
+                has_more: false,
             })
             .unwrap()),
             "github.pr.checks" => Ok(serde_json::to_value(GitHubPrChecksResult {

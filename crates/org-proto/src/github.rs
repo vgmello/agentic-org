@@ -40,6 +40,17 @@ const _: () = assert!(
 /// Maximum limit for `github.pr.list`.
 pub const GITHUB_PR_LIST_MAX_LIMIT: u32 = 200;
 
+/// Maximum UTF-8 bytes retained for `body_excerpt` in `github.pr.list` summary items.
+///
+/// Full sanitized excerpts remain available via `github.pr.inspect`.
+pub const GITHUB_PR_LIST_BODY_EXCERPT_MAX_BYTES: usize = 512;
+
+/// Serialized JSON byte ceiling for `GitHubPrListResult` payloads (768 KiB), keeping every
+/// `github.pr.list` RPC response frame strictly below [`crate::MAX_FRAME_BYTES`].
+pub const GITHUB_PR_LIST_MAX_RESPONSE_BYTES: usize = 768 * 1024;
+
+const _: () = assert!(GITHUB_PR_LIST_MAX_RESPONSE_BYTES < crate::MAX_FRAME_BYTES);
+
 /// Every GitHub App integration RPC method served by an office.
 pub const GITHUB_METHODS: [&str; 10] = [
     GitHubAppConfigure::METHOD,
@@ -472,6 +483,8 @@ pub struct GitHubPrListParams {
 pub struct GitHubPrListResult {
     pub project_id: String,
     pub pull_requests: Vec<GitHubPrSummaryView>,
+    #[serde(default)]
+    pub has_more: bool,
 }
 
 impl Call for GitHubPrList {
