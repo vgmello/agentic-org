@@ -17,6 +17,8 @@ use crate::{Error, ReleasePin};
 const STATE_FILE_NAME: &str = "update-state.v1.json";
 const MAX_STATE_BYTES: u64 = 64 * 1024;
 const MAX_QUARANTINE_ENTRIES: usize = 64;
+const MAX_EXPECTED_INSTANCES: usize = 64;
+const MAX_INSTANCE_NAME_BYTES: usize = 128;
 const MAX_REASON_BYTES: usize = 512;
 
 /// Atomic checkpoint recorded BEFORE swapping the active release pin and restarting services.
@@ -28,6 +30,11 @@ pub struct PendingHealthCheck {
     pub started_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pointer_url: Option<String>,
+    /// Managed instance names that were running before the swap began. `None` indicates a
+    /// checkpoint created without an explicit list (recovery treats all managed instances in
+    /// the store as required when restarting).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_running_instances: Option<Vec<String>>,
 }
 
 /// Tombstone preventing the auto-updater from infinite-looping on a release that failed health checks.
@@ -73,25 +80,50 @@ impl UpdateState {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 1 || self.quarantined.len() > MAX_QUARANTINE_ENTRIES {
+        if self.version != 1 {
             return Err(Error::InvalidRelease);
         }
         if let Some(pin) = &self.confirmed {
             pin.validate()?;
         }
         if let Some(pending) = &self.pending_health_check {
-            pending.target_pin.validate()?;
-            if let Some(prev) = &pending.previous_pin {
-                prev.validate()?;
-            }
+            validate_pending(pending)?;
         }
-        for entry in &self.quarantined {
-            if !org_release::valid_release_id(&entry.release_id) || entry.sequence == 0 {
+        validate_quarantined(&self.quarantined)
+    }
+}
+
+fn validate_pending(pending: &PendingHealthCheck) -> Result<(), Error> {
+    pending.target_pin.validate()?;
+    if let Some(prev) = &pending.previous_pin {
+        prev.validate()?;
+    }
+    if let Some(instances) = &pending.expected_running_instances {
+        if instances.len() > MAX_EXPECTED_INSTANCES {
+            return Err(Error::InvalidRelease);
+        }
+        for name in instances {
+            if name.is_empty()
+                || name.len() > MAX_INSTANCE_NAME_BYTES
+                || name.chars().any(char::is_control)
+            {
                 return Err(Error::InvalidRelease);
             }
         }
-        Ok(())
     }
+    Ok(())
+}
+
+fn validate_quarantined(entries: &[QuarantinedRelease]) -> Result<(), Error> {
+    if entries.len() > MAX_QUARANTINE_ENTRIES {
+        return Err(Error::InvalidRelease);
+    }
+    for entry in entries {
+        if !org_release::valid_release_id(&entry.release_id) || entry.sequence == 0 {
+            return Err(Error::InvalidRelease);
+        }
+    }
+    Ok(())
 }
 
 /// Computes the default dedicated `0700` update-state directory sibling to `store_dir`.
@@ -177,9 +209,6 @@ impl UpdateStateStore {
         }
         org_platform::fs::write_regular_beneath(&self.dir, Path::new(STATE_FILE_NAME), &bytes)
             .map_err(|_| Error::UnsafeInput)?;
-        let file = org_platform::fs::open_regular_beneath(&self.dir, Path::new(STATE_FILE_NAME))
-            .map_err(|_| Error::UnsafeInput)?;
-        org_platform::fs::full_sync(&file)?;
         Ok(())
     }
 
@@ -190,12 +219,40 @@ impl UpdateStateStore {
         target_pin: ReleasePin,
         pointer_url: Option<String>,
     ) -> Result<UpdateState, Error> {
+        self.record_pending_inner(previous_pin, target_pin, pointer_url, None)
+    }
+
+    /// Persists the pre-swap rollback checkpoint alongside the exact managed instances that were
+    /// running before the swap began, so crash recovery verifies and restores every one of them.
+    pub fn record_pending_with_services(
+        &self,
+        previous_pin: Option<ReleasePin>,
+        target_pin: ReleasePin,
+        pointer_url: Option<String>,
+        expected_running_instances: Vec<String>,
+    ) -> Result<UpdateState, Error> {
+        self.record_pending_inner(
+            previous_pin,
+            target_pin,
+            pointer_url,
+            Some(expected_running_instances),
+        )
+    }
+
+    fn record_pending_inner(
+        &self,
+        previous_pin: Option<ReleasePin>,
+        target_pin: ReleasePin,
+        pointer_url: Option<String>,
+        expected_running_instances: Option<Vec<String>>,
+    ) -> Result<UpdateState, Error> {
         let mut state = self.load()?;
         state.pending_health_check = Some(PendingHealthCheck {
             previous_pin,
             target_pin,
             started_at_ms: now_ms(),
             pointer_url: pointer_url.map(|u| org_redact::redact_text(&u, &[])),
+            expected_running_instances,
         });
         self.save(&state)?;
         Ok(state)

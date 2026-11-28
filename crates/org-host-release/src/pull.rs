@@ -215,42 +215,32 @@ impl StagedRelease {
     }
 }
 
+/// Host release state compared against an authenticated release pointer.
+#[derive(Debug, Clone, Copy)]
+pub struct PointerCheckState<'a> {
+    pub current_pin: Option<&'a ReleasePin>,
+    pub highest_sequence: u64,
+    pub update_state: &'a UpdateState,
+    pub allow_quarantined: bool,
+}
+
 /// Fetch and verify a signed release pointer using the build-embedded trust registry and floor.
 pub fn check_pointer(
     fetcher: &dyn ReleaseFetcher,
     config: &PullConfig,
-    current_pin: Option<&ReleasePin>,
-    highest_sequence: u64,
-    update_state: &UpdateState,
-    allow_quarantined: bool,
+    state: &PointerCheckState<'_>,
 ) -> Result<PointerCheck, PullError> {
     let (policy, keys) = crate::policy()?;
-    check_pointer_with_policy(
-        fetcher,
-        config,
-        &policy,
-        &keys,
-        current_pin,
-        highest_sequence,
-        update_state,
-        allow_quarantined,
-    )
+    check_pointer_with_policy(fetcher, config, &policy, &keys, state)
 }
 
 /// Fetch and verify a signed release pointer against explicit policy and keys.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "pull verification takes explicit injected fetcher, config, policy, keys, active pin, watermark, state, and override flag"
-)]
 pub fn check_pointer_with_policy(
     fetcher: &dyn ReleaseFetcher,
     config: &PullConfig,
     policy: &TrustedPolicy,
     keys: &TrustedKeys,
-    current_pin: Option<&ReleasePin>,
-    highest_sequence: u64,
-    update_state: &UpdateState,
-    allow_quarantined: bool,
+    state: &PointerCheckState<'_>,
 ) -> Result<PointerCheck, PullError> {
     validate_pointer_url(&config.pointer_url, config.url_policy)?;
     validate_pointer_url(&config.signature_url, config.url_policy)?;
@@ -262,30 +252,21 @@ pub fn check_pointer_with_policy(
     )?;
     let sig_bytes = fetcher.fetch_bytes(&config.signature_url, 64, config.metadata_timeout)?;
     let verified = verify_pointer(&pointer_bytes, &sig_bytes, policy, keys, config.url_policy)?;
-    let decision = evaluate_pointer_decision(
-        &verified,
-        current_pin,
-        highest_sequence,
-        update_state,
-        allow_quarantined,
-    );
+    let decision = evaluate_pointer_decision(&verified, state);
     Ok(PointerCheck {
         verified,
         decision,
-        current_pin: current_pin.cloned(),
-        highest_sequence,
+        current_pin: state.current_pin.cloned(),
+        highest_sequence: state.highest_sequence,
     })
 }
 
 fn evaluate_pointer_decision(
     verified: &VerifiedPointer,
-    current_pin: Option<&ReleasePin>,
-    highest_sequence: u64,
-    update_state: &UpdateState,
-    allow_quarantined: bool,
+    state: &PointerCheckState<'_>,
 ) -> PointerDecision {
     let ptr = verified.pointer();
-    if let Some(active) = current_pin {
+    if let Some(active) = state.current_pin {
         if ptr.sequence() < active.sequence {
             return PointerDecision::DowngradeRejected {
                 current_sequence: active.sequence,
@@ -303,16 +284,16 @@ fn evaluate_pointer_decision(
             };
         }
     }
-    if !allow_quarantined {
-        if let Some(q) = update_state.quarantined_entry(ptr.release_id()) {
+    if !state.allow_quarantined {
+        if let Some(q) = state.update_state.quarantined_entry(ptr.release_id()) {
             return PointerDecision::Quarantined {
                 reason: q.reason.clone(),
             };
         }
     }
-    if ptr.sequence() < highest_sequence {
+    if ptr.sequence() < state.highest_sequence {
         return PointerDecision::DowngradeRejected {
-            current_sequence: highest_sequence,
+            current_sequence: state.highest_sequence,
             pointer_sequence: ptr.sequence(),
         };
     }

@@ -10,6 +10,7 @@ Usage:
   scripts/package-release.sh \
     --release-id v0.1.0 \
     --sequence 1 \
+    [--min-sequence 1] \
     --out-dir dist \
     [--profile release|dev] \
     [--signing-key /path/to/publisher.key.pem] \
@@ -34,6 +35,7 @@ require_arg() {
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_ID=""
 SEQUENCE="1"
+MIN_SEQUENCE="${ORG_RELEASE_MIN_SEQUENCE:-1}"
 OUT_DIR="$ROOT_DIR/dist"
 PROFILE="release"
 SIGNING_KEY=""
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --release-id) require_arg "$@"; RELEASE_ID="$2"; shift 2 ;;
     --sequence) require_arg "$@"; SEQUENCE="$2"; shift 2 ;;
+    --min-sequence) require_arg "$@"; MIN_SEQUENCE="$2"; shift 2 ;;
     --out-dir) require_arg "$@"; OUT_DIR="$2"; shift 2 ;;
     --profile) require_arg "$@"; PROFILE="$2"; shift 2 ;;
     --signing-key) require_arg "$@"; SIGNING_KEY="$2"; shift 2 ;;
@@ -99,6 +102,15 @@ if [[ ! -f "$UI_DIR/index.html" ]]; then
   (cd "$ROOT_DIR/apps/agentic-org-ui" && bun install --frozen-lockfile && bun run build)
 fi
 
+if [[ ! "$SEQUENCE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "package-release.sh: --sequence must be a positive integer (got '$SEQUENCE')" >&2
+  exit 2
+fi
+if [[ ! "$MIN_SEQUENCE" =~ ^[1-9][0-9]*$ ]] || (( MIN_SEQUENCE > SEQUENCE )); then
+  echo "package-release.sh: --min-sequence must be an integer in 1..=$SEQUENCE (got '$MIN_SEQUENCE')" >&2
+  exit 2
+fi
+
 if [[ "$PROFILE" == "release" ]]; then
   if [[ -z "$SIGNING_KEY" || -z "$TRUST_REGISTRY" ]]; then
     echo "package-release.sh: --profile release requires both --signing-key and --trust-registry" >&2
@@ -106,9 +118,9 @@ if [[ "$PROFILE" == "release" ]]; then
   fi
   BIN_DIR="$ROOT_DIR/target/release"
   if [[ "$SKIP_BUILD" -eq 0 ]]; then
-    echo "Building release binaries with embedded trust registry ..." >&2
+    echo "Building release binaries with embedded trust registry (min_sequence=$MIN_SEQUENCE) ..." >&2
     ORG_RELEASE_TRUST_REGISTRY="$(cd "$(dirname "$TRUST_REGISTRY")" && pwd)/$(basename "$TRUST_REGISTRY")" \
-    ORG_RELEASE_MIN_SEQUENCE="$SEQUENCE" \
+    ORG_RELEASE_MIN_SEQUENCE="$MIN_SEQUENCE" \
       cargo build --locked --manifest-path "$ROOT_DIR/Cargo.toml" --release \
       -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
   fi

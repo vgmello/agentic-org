@@ -165,17 +165,15 @@ fn stages_valid_signed_pointer_and_bundle_and_cleans_up_on_drop() {
     let (bundle_path, sha, size) = fx.write_signed_bundle("v0.2.0", 2, "v0.2.0.tar.gz");
     let cfg = fx.write_signed_pointer("v0.2.0", 2, &bundle_path, &sha, size);
     let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
-    let check = check_pointer_with_policy(
-        &fetcher,
-        &cfg,
-        &fx.policy,
-        &fx.keys,
-        None,
-        0,
-        &UpdateState::default(),
-        false,
-    )
-    .unwrap();
+    let state = UpdateState::default();
+    let check_state = PointerCheckState {
+        current_pin: None,
+        highest_sequence: 0,
+        update_state: &state,
+        allow_quarantined: false,
+    };
+    let check =
+        check_pointer_with_policy(&fetcher, &cfg, &fx.policy, &fx.keys, &check_state).unwrap();
     assert_eq!(check.decision, PointerDecision::UpdateAvailable);
 
     let staged = stage_verified_pointer_with_policy(
@@ -200,18 +198,17 @@ fn rejects_tampered_bundle_hash_and_cross_binding_mismatch() {
     let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
 
     // 1. Cross-binding attack: signed pointer says v0.2.0 seq 2, but points to legitimately signed v0.1.0 seq 1 bundle.
+    let state = UpdateState::default();
+    let check_state = PointerCheckState {
+        current_pin: None,
+        highest_sequence: 0,
+        update_state: &state,
+        allow_quarantined: false,
+    };
     let cfg_mismatch = fx.write_signed_pointer("v0.2.0", 2, &bundle_v1, &sha_v1, size_v1);
-    let check = check_pointer_with_policy(
-        &fetcher,
-        &cfg_mismatch,
-        &fx.policy,
-        &fx.keys,
-        None,
-        0,
-        &UpdateState::default(),
-        false,
-    )
-    .unwrap();
+    let check =
+        check_pointer_with_policy(&fetcher, &cfg_mismatch, &fx.policy, &fx.keys, &check_state)
+            .unwrap();
     let err = stage_verified_pointer_with_policy(
         &fetcher,
         &cfg_mismatch,
@@ -230,17 +227,9 @@ fn rejects_tampered_bundle_hash_and_cross_binding_mismatch() {
     let tampered_path = fx.mirror.join("tampered.tar.gz");
     fs::write(&tampered_path, &tampered).unwrap();
     let cfg_tampered = fx.write_signed_pointer("v0.1.0", 1, &tampered_path, &sha_v1, size_v1);
-    let check = check_pointer_with_policy(
-        &fetcher,
-        &cfg_tampered,
-        &fx.policy,
-        &fx.keys,
-        None,
-        0,
-        &UpdateState::default(),
-        false,
-    )
-    .unwrap();
+    let check =
+        check_pointer_with_policy(&fetcher, &cfg_tampered, &fx.policy, &fx.keys, &check_state)
+            .unwrap();
     let err = stage_verified_pointer_with_policy(
         &fetcher,
         &cfg_tampered,

@@ -200,6 +200,7 @@ pub(super) fn stage_and_publish_at(
         return Err(io::Error::last_os_error());
     }
     tmp_file.write_all(bytes)?;
+    super::full_sync(&tmp_file)?;
     drop(tmp_file);
 
     if replacing {
@@ -231,6 +232,7 @@ pub(super) fn stage_and_publish_at(
         super::rename_noreplace_at(dir, &tmp_name, dir, leaf)?;
     }
     guard.disarm();
+    super::full_sync(dir)?;
     Ok(())
 }
 

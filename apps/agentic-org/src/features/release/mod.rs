@@ -144,6 +144,9 @@ enum ReleaseCommand {
         /// Retry a release previously quarantined after a failed health check
         #[arg(long)]
         allow_quarantined: bool,
+        /// Operate in foreground mode (only permitted when zero registered system services exist)
+        #[arg(long)]
+        foreground: bool,
         #[command(flatten)]
         store: StoreArgs,
         #[command(flatten)]
@@ -171,6 +174,9 @@ enum ReleaseCommand {
         /// Quarantine the current release so subsequent auto-updates skip it
         #[arg(long)]
         quarantine_current: bool,
+        /// Operate in foreground mode (only permitted when zero registered system services exist)
+        #[arg(long)]
+        foreground: bool,
         #[command(flatten)]
         store: StoreArgs,
         #[command(flatten)]
@@ -230,6 +236,7 @@ pub(crate) fn run(args: ReleaseArgs, ctx: &mut ExecutionContext) -> Result<(), C
             force,
             no_restart,
             allow_quarantined,
+            foreground,
             store,
             state,
         } => update::run(
@@ -244,6 +251,7 @@ pub(crate) fn run(args: ReleaseArgs, ctx: &mut ExecutionContext) -> Result<(), C
                 force,
                 restart: !no_restart,
                 allow_quarantined,
+                foreground,
             },
             ctx,
         ),
@@ -254,6 +262,7 @@ pub(crate) fn run(args: ReleaseArgs, ctx: &mut ExecutionContext) -> Result<(), C
             force,
             no_restart,
             quarantine_current,
+            foreground,
             store,
             state,
         } => rollback::run(
@@ -266,6 +275,7 @@ pub(crate) fn run(args: ReleaseArgs, ctx: &mut ExecutionContext) -> Result<(), C
                 force,
                 restart: !no_restart,
                 quarantine_current,
+                foreground,
             },
             ctx,
         ),
@@ -305,6 +315,59 @@ fn state_dir_for(
         None => default_update_state_dir(store, explicit_store)
             .map_err(|e| CliError::from(format!("resolving update state directory: {e}"))),
     }
+}
+
+pub(super) struct ResolvedReleaseServices {
+    pub(super) manager: Box<dyn org_platform::service::ServiceManager>,
+    pub(super) drain_targets: Vec<(String, PathBuf)>,
+}
+
+/// Composes the service manager and inspects registered services fail-closed for `release update`
+/// and `release rollback` (P1-3).
+///
+/// Never maps arbitrary `host::service_manager()` errors (such as `refuse_development_service()`
+/// or an unavailable `systemd --user` bus) to `ServiceMode::Foreground`, and never swallows
+/// `ServiceRefresh::inspect` or per-service inspection errors. Foreground mode is entered ONLY
+/// when explicitly opted into via `--foreground` AND zero registered system services exist.
+pub(super) fn resolve_release_services(
+    store: &Path,
+    setup_base: Option<&Path>,
+    foreground: bool,
+) -> Result<ResolvedReleaseServices, CliError> {
+    let manager = if foreground {
+        let registered = org_host_setup::ServiceRefresh::registered_setup_instances(setup_base);
+        if !registered.is_empty() {
+            return Err(CliError::from(format!(
+                "refusing `--foreground`: registered system service(s) exist ({}) — omit `--foreground` so they are drained, redefined, and health-checked",
+                registered.join(", ")
+            )));
+        }
+        crate::host::foreground_service_manager()?
+    } else {
+        crate::host::service_manager()?
+    };
+
+    let inspected = org_host_setup::ServiceRefresh::inspect(&*manager, store)?;
+    let failures = inspected.inspection_failures();
+    if !failures.is_empty() {
+        let detail = failures
+            .into_iter()
+            .map(|(instance, why)| format!("{instance}: {why}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(CliError::from(format!(
+            "cannot inspect registered services for release operation ({detail})"
+        )));
+    }
+    let drain_targets = inspected
+        .managed_targets()
+        .into_iter()
+        .map(|t| (t.instance, t.root))
+        .collect();
+    Ok(ResolvedReleaseServices {
+        manager,
+        drain_targets,
+    })
 }
 
 /// A pinned release, as `--json` prints it (the keys and their order are a contract).

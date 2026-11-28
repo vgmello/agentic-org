@@ -187,6 +187,15 @@ pub(crate) fn service_manager() -> Result<Box<dyn org_platform::service::Service
     org_host_setup::service_manager(false)
 }
 
+/// Foreground-only service manager (explicitly opted into via `--foreground` on hosts with zero
+/// registered services). Still refuses development service variables in builds without adapters.
+pub(crate) fn foreground_service_manager(
+) -> Result<Box<dyn org_platform::service::ServiceManager>, String> {
+    #[cfg(not(all(debug_assertions, feature = "test-support")))]
+    refuse_development_service()?;
+    org_host_setup::service_manager(true)
+}
+
 /// A build without the development adapters refuses the variables that name one.
 #[cfg(not(all(debug_assertions, feature = "test-support")))]
 fn refuse_development_service() -> Result<(), String> {

@@ -75,6 +75,52 @@ fn https_fetcher_enforces_byte_cap_timeout_and_redacts_stderr() {
 }
 
 #[test]
+fn https_fetcher_passes_q_first_and_globoff_before_double_dash() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let dump_args = write_script(&root, "dump-args.sh", "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
+    let fetcher = HttpsReleaseFetcher::with_program(dump_args);
+    let url = "https://releases.example.com/v1/release-pointer.v1.json";
+    let out = fetcher
+        .fetch_bytes(url, 4096, Duration::from_secs(5))
+        .unwrap();
+    let args: Vec<&str> = std::str::from_utf8(&out).unwrap().lines().collect();
+    assert_eq!(
+        args.first().copied(),
+        Some("-q"),
+        "curl requires -q as the very first arg to disable ~/.curlrc: {args:?}"
+    );
+    let globoff_pos = args
+        .iter()
+        .position(|a| *a == "--globoff")
+        .expect("curl invocation must include --globoff");
+    let dd_pos = args
+        .iter()
+        .position(|a| *a == "--")
+        .expect("curl invocation must include --");
+    assert!(globoff_pos < dd_pos, "--globoff must precede --: {args:?}");
+    assert_eq!(args.get(dd_pos + 1).copied(), Some(url));
+}
+
+#[test]
+fn child_reap_guard_kills_and_reaps_child_on_drop() {
+    let child = Command::new("/bin/sh")
+        .args(["-c", "sleep 30"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let guard = ChildReapGuard::new(child);
+    let slot = Arc::clone(guard.slot());
+    drop(guard);
+    assert!(
+        slot.lock().unwrap().is_none(),
+        "dropping ChildReapGuard must kill and reap the spawned child"
+    );
+}
+
+#[test]
 fn local_directory_fetcher_refuses_symlinks_traversal_and_oversized_files() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();

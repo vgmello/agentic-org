@@ -7,11 +7,12 @@
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
 };
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use org_release::{validate_pointer_url, UrlPolicy, MAX_PAYLOAD_BYTES};
@@ -142,27 +143,26 @@ impl HttpsReleaseFetcher {
         })
     }
 
-    fn run_curl(
+    fn build_curl_command(
         &self,
+        program: &Path,
         url: &str,
-        max_bytes: u64,
-        timeout: Duration,
-        sink: &mut dyn Write,
-    ) -> Result<u64, FetchError> {
-        validate_pointer_url(url, UrlPolicy::HttpsOnly).map_err(|_| FetchError::InvalidUrl)?;
-        let effective_limit = max_bytes.min(MAX_PAYLOAD_BYTES);
-        let program = self.resolve_curl()?;
-        let total_secs = timeout.as_secs().max(1);
+        effective_limit: u64,
+        total_secs: u64,
+    ) -> Command {
         let connect_secs = self.connect_timeout.as_secs().max(1).min(total_secs);
-
-        let mut cmd = Command::new(&program);
+        let mut cmd = Command::new(program);
         cmd.env_clear();
         for var in ["HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy"] {
             if let Some(val) = std::env::var_os(var) {
                 cmd.env(var, val);
             }
         }
+        // `-q` MUST be the very first argument so curl disables `~/.curlrc` even when it falls
+        // back to `getpwuid` after `env_clear()`; `--globoff` prevents `[]`/`{}` URL globbing.
         cmd.args([
+            "-q",
+            "--globoff",
             "--proto",
             "=https",
             "--proto-redir",
@@ -186,49 +186,32 @@ impl HttpsReleaseFetcher {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+        cmd
+    }
 
-        let mut child = cmd.spawn().map_err(|e| {
+    fn run_curl(
+        &self,
+        url: &str,
+        max_bytes: u64,
+        timeout: Duration,
+        sink: &mut dyn Write,
+    ) -> Result<u64, FetchError> {
+        validate_pointer_url(url, UrlPolicy::HttpsOnly).map_err(|_| FetchError::InvalidUrl)?;
+        let effective_limit = max_bytes.min(MAX_PAYLOAD_BYTES);
+        let program = self.resolve_curl()?;
+        let total_secs = timeout.as_secs().max(1);
+        let mut cmd = self.build_curl_command(&program, url, effective_limit, total_secs);
+
+        let child = cmd.spawn().map_err(|e| {
             FetchError::Unavailable(format!("spawning HTTPS fetcher: {}", e.kind()))
         })?;
-        let mut stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| FetchError::Io("missing stdout pipe from HTTPS fetcher".into()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| FetchError::Io("missing stderr pipe from HTTPS fetcher".into()))?;
+        let child_guard = ChildReapGuard::new(child);
+        let (mut stdout, stderr) = child_guard.take_pipes()?;
+        let stderr_thread = spawn_stderr_reader(stderr)?;
 
-        let stderr_thread = std::thread::Builder::new()
-            .name("release-fetch-stderr".into())
-            .spawn(move || {
-                let mut buf = Vec::new();
-                let _ = stderr.take(MAX_STDERR_BYTES).read_to_end(&mut buf);
-                buf
-            })
-            .map_err(|e| FetchError::Io(format!("spawning stderr reader: {}", e.kind())))?;
-
-        let child_slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(Some(child)));
         let timed_out = Arc::new(AtomicBool::new(false));
-        let (done_tx, done_rx) = mpsc::channel::<()>();
-        let watchdog_child = Arc::clone(&child_slot);
-        let watchdog_flag = Arc::clone(&timed_out);
-        let watchdog = std::thread::Builder::new()
-            .name("release-fetch-timeout".into())
-            .spawn(move || {
-                if matches!(
-                    done_rx.recv_timeout(timeout),
-                    Err(mpsc::RecvTimeoutError::Timeout)
-                ) {
-                    watchdog_flag.store(true, Ordering::Release);
-                    if let Ok(mut guard) = watchdog_child.lock() {
-                        if let Some(ref mut proc_handle) = *guard {
-                            let _ = proc_handle.kill();
-                        }
-                    }
-                }
-            })
-            .map_err(|e| FetchError::Io(format!("spawning timeout watchdog: {}", e.kind())))?;
+        let (done_tx, watchdog) =
+            spawn_timeout_watchdog(child_guard.slot(), Arc::clone(&timed_out), timeout)?;
 
         let deadline = Instant::now() + timeout;
         let stream_result = copy_bounded_streaming(
@@ -237,44 +220,135 @@ impl HttpsReleaseFetcher {
             effective_limit,
             deadline,
             &timed_out,
-            &child_slot,
+            child_guard.slot(),
         );
         drop(stdout);
         let _ = done_tx.send(());
 
-        let status = {
-            let mut guard = child_slot
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            match guard.take() {
-                Some(mut proc_handle) => {
-                    if stream_result.is_err() {
-                        let _ = proc_handle.kill();
-                    }
-                    proc_handle.wait().ok()
-                }
-                None => None,
-            }
-        };
+        let status = child_guard.reap(stream_result.is_err());
         let _ = watchdog.join();
         let raw_stderr = stderr_thread.join().unwrap_or_default();
 
-        if timed_out.load(Ordering::Acquire) {
-            return Err(FetchError::TimedOut {
-                timeout_secs: total_secs,
-            });
+        interpret_curl_result(
+            stream_result,
+            status,
+            &raw_stderr,
+            timed_out.load(Ordering::Acquire),
+            total_secs,
+        )
+    }
+}
+
+/// RAII drop guard ensuring a spawned `curl` child is ALWAYS killed and reaped on early errors
+/// (such as watchdog thread spawn failure) or panics, preventing leaked processes or zombies.
+struct ChildReapGuard {
+    slot: Arc<Mutex<Option<Child>>>,
+}
+
+impl ChildReapGuard {
+    fn new(child: Child) -> Self {
+        Self {
+            slot: Arc::new(Mutex::new(Some(child))),
         }
-        let copied = stream_result?;
-        match status {
-            Some(exit) if exit.success() => Ok(copied),
-            Some(exit) => Err(FetchError::Transport(sanitize_stderr(
-                &raw_stderr,
-                exit.code(),
-            ))),
-            None => Err(FetchError::Transport(
-                "HTTPS fetcher exited unexpectedly".into(),
-            )),
+    }
+
+    fn slot(&self) -> &Arc<Mutex<Option<Child>>> {
+        &self.slot
+    }
+
+    fn take_pipes(&self) -> Result<(ChildStdout, ChildStderr), FetchError> {
+        let mut guard = self
+            .slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let child = guard
+            .as_mut()
+            .ok_or_else(|| FetchError::Io("HTTPS fetcher handle unavailable".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| FetchError::Io("missing stdout pipe from HTTPS fetcher".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| FetchError::Io("missing stderr pipe from HTTPS fetcher".into()))?;
+        Ok((stdout, stderr))
+    }
+
+    fn reap(&self, kill_first: bool) -> Option<ExitStatus> {
+        let mut guard = self
+            .slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut proc_handle = guard.take()?;
+        if kill_first {
+            let _ = proc_handle.kill();
         }
+        proc_handle.wait().ok()
+    }
+}
+
+impl Drop for ChildReapGuard {
+    fn drop(&mut self) {
+        let _ = self.reap(true);
+    }
+}
+
+fn spawn_stderr_reader(stderr: ChildStderr) -> Result<JoinHandle<Vec<u8>>, FetchError> {
+    std::thread::Builder::new()
+        .name("release-fetch-stderr".into())
+        .spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr.take(MAX_STDERR_BYTES).read_to_end(&mut buf);
+            buf
+        })
+        .map_err(|e| FetchError::Io(format!("spawning stderr reader: {}", e.kind())))
+}
+
+fn spawn_timeout_watchdog(
+    child_slot: &Arc<Mutex<Option<Child>>>,
+    timed_out: Arc<AtomicBool>,
+    timeout: Duration,
+) -> Result<(mpsc::Sender<()>, JoinHandle<()>), FetchError> {
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    let watchdog_child = Arc::clone(child_slot);
+    let handle = std::thread::Builder::new()
+        .name("release-fetch-timeout".into())
+        .spawn(move || {
+            if matches!(
+                done_rx.recv_timeout(timeout),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
+                timed_out.store(true, Ordering::Release);
+                kill_child(&watchdog_child);
+            }
+        })
+        .map_err(|e| FetchError::Io(format!("spawning timeout watchdog: {}", e.kind())))?;
+    Ok((done_tx, handle))
+}
+
+fn interpret_curl_result(
+    stream_result: Result<u64, FetchError>,
+    status: Option<ExitStatus>,
+    raw_stderr: &[u8],
+    did_timeout: bool,
+    total_secs: u64,
+) -> Result<u64, FetchError> {
+    if did_timeout {
+        return Err(FetchError::TimedOut {
+            timeout_secs: total_secs,
+        });
+    }
+    let copied = stream_result?;
+    match status {
+        Some(exit) if exit.success() => Ok(copied),
+        Some(exit) => Err(FetchError::Transport(sanitize_stderr(
+            raw_stderr,
+            exit.code(),
+        ))),
+        None => Err(FetchError::Transport(
+            "HTTPS fetcher exited unexpectedly".into(),
+        )),
     }
 }
 

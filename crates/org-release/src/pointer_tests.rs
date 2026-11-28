@@ -273,6 +273,61 @@ fn enforces_strict_https_in_production_and_rejects_malformed_urls() {
 }
 
 #[test]
+fn https_only_refuses_loopback_private_link_local_ula_metadata_and_obfuscated_ips() {
+    for bad_url in [
+        // Loopback
+        "https://127.0.0.1/release-pointer.v1.json",
+        "https://127.255.255.1:8443/release-pointer.v1.json",
+        "https://[::1]/release-pointer.v1.json",
+        "https://localhost/release-pointer.v1.json",
+        "https://api.localhost/release-pointer.v1.json",
+        // RFC 1918 private networks
+        "https://10.0.0.1/release-pointer.v1.json",
+        "https://172.16.0.1/release-pointer.v1.json",
+        "https://172.31.255.254/release-pointer.v1.json",
+        "https://192.168.1.10/release-pointer.v1.json",
+        // Link-local & cloud metadata
+        "https://169.254.169.254/latest/meta-data/",
+        "https://[fe80::1]/release-pointer.v1.json",
+        "https://metadata.google.internal/computeMetadata/v1/",
+        // CGNAT / shared metadata (100.64.0.0/10) & unspecified
+        "https://100.100.100.200/latest/meta-data/",
+        "https://0.0.0.0/release-pointer.v1.json",
+        // IPv6 ULA & AWS IPv6 metadata & IPv4-mapped IPv6
+        "https://[fc00::1]/release-pointer.v1.json",
+        "https://[fd00:ec2::254]/latest/meta-data/",
+        "https://[::ffff:127.0.0.1]/release-pointer.v1.json",
+        "https://[::ffff:169.254.169.254]/latest/meta-data/",
+        "https://[::ffff:7f00:1]/release-pointer.v1.json",
+        "https://[::ffff:a9fe:a9fe]/release-pointer.v1.json",
+        "https://[::]/release-pointer.v1.json",
+        // Obfuscated decimal / hex / octal / short IPv4
+        "https://2130706433/release-pointer.v1.json",
+        "https://0x7f000001/release-pointer.v1.json",
+        "https://0177.0.0.1/release-pointer.v1.json",
+        "https://127.1/release-pointer.v1.json",
+    ] {
+        assert_eq!(
+            validate_pointer_url(bad_url, UrlPolicy::HttpsOnly),
+            Err(Error::InvalidUrl),
+            "HttpsOnly must refuse private/loopback/metadata URL `{bad_url}`"
+        );
+    }
+
+    // Legitimate public HTTPS hosts & public IPv4/IPv6 literals remain accepted.
+    for ok_url in [
+        "https://github.com/vgmello/agentic-org/releases/latest/download/release-pointer.v1.json",
+        "https://1.1.1.1/release-pointer.v1.json",
+        "https://[2606:4700:4700::1111]/release-pointer.v1.json",
+    ] {
+        assert!(
+            validate_pointer_url(ok_url, UrlPolicy::HttpsOnly).is_ok(),
+            "HttpsOnly must accept public URL `{ok_url}`"
+        );
+    }
+}
+
+#[test]
 fn rejects_missing_platform_duplicate_target_and_oversized_bundle() {
     let fx = PointerFixture::new(Platform::Linux, Architecture::Aarch64, 1);
     let (bytes, sig) = fx.sign_json(&fx.valid_pointer_value(5));

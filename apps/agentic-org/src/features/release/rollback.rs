@@ -9,12 +9,9 @@ use org_host_setup::auto_update::{
     account_setup_base, drain::DrainConfig, run_manual_rollback, DiskActiveTurnDrainProbe,
     HostSocketHealthProbe, RollbackConfig, RollbackPorts, RollbackReceipt, RollbackStatus,
 };
-use org_host_setup::ServiceRefresh;
-use org_platform::service::{ServiceManager, ServiceMode};
 
-use super::{state_dir_for, store_dir};
+use super::{resolve_release_services, state_dir_for, store_dir};
 use crate::error::CliError;
-use crate::host;
 
 pub(super) struct RollbackArgs<'a> {
     pub(super) to: Option<&'a str>,
@@ -25,24 +22,16 @@ pub(super) struct RollbackArgs<'a> {
     pub(super) force: bool,
     pub(super) restart: bool,
     pub(super) quarantine_current: bool,
+    pub(super) foreground: bool,
 }
 
 pub(super) fn run(args: RollbackArgs<'_>, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let store = store_dir(args.store)?;
     let state_dir = state_dir_for(&store, args.store.is_some(), args.state_dir)?;
     let setup_base = account_setup_base()?;
-    let manager = resolve_service_manager()?;
-    let drain_targets: Vec<(String, std::path::PathBuf)> =
-        ServiceRefresh::inspect(&*manager, &store)
-            .map(|sr| {
-                sr.managed_targets()
-                    .into_iter()
-                    .map(|t| (t.instance, t.root))
-                    .collect()
-            })
-            .unwrap_or_default();
+    let resolved = resolve_release_services(&store, setup_base.as_deref(), args.foreground)?;
 
-    let drain_probe = DiskActiveTurnDrainProbe::new(drain_targets);
+    let drain_probe = DiskActiveTurnDrainProbe::new(resolved.drain_targets);
     let health_probe = HostSocketHealthProbe;
     let config = RollbackConfig {
         store_dir: store,
@@ -60,7 +49,7 @@ pub(super) fn run(args: RollbackArgs<'_>, ctx: &mut ExecutionContext) -> Result<
         quarantine_current: args.quarantine_current,
     };
     let ports = RollbackPorts {
-        manager: &*manager,
+        manager: &*resolved.manager,
         drain: &drain_probe,
         health: &health_probe,
     };
@@ -75,16 +64,6 @@ pub(super) fn run(args: RollbackArgs<'_>, ctx: &mut ExecutionContext) -> Result<
         return Err(CliError::Exited(1));
     }
     Ok(())
-}
-
-fn resolve_service_manager() -> Result<Box<dyn ServiceManager>, CliError> {
-    match host::service_manager() {
-        Ok(mgr) => Ok(mgr),
-        Err(_) => {
-            org_platform::service::service(ServiceMode::Foreground, std::path::Path::new("/"))
-                .map_err(|e| CliError::from(e.to_string()))
-        }
-    }
 }
 
 fn render_receipt(receipt: &RollbackReceipt, ctx: &mut ExecutionContext) -> Result<(), CliError> {

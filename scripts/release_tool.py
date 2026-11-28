@@ -38,6 +38,12 @@ CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 ARCHIVE_TARGET_RE = re.compile(
     r"^agentic-org-(?P<release_id>[A-Za-z0-9][A-Za-z0-9._-]{0,95})-(?P<platform>linux|macos)-(?P<arch>x86_64|aarch64)\.tar\.gz$"
 )
+SHA256_LINE_RE = re.compile(r"^(?P<digest>[0-9a-fA-F]{64})[ \t]+\*?(?P<name>[^\r\n]+)$")
+PUBLISHED_AT_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$"
+)
+MAX_SHA256_FILE_BYTES = 4096
+MAX_REGISTRY_BYTES = 256 * 1024
 MAX_FILES = 16_384
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
@@ -481,15 +487,7 @@ def verify_ed25519(key_pem: Path, payload: bytes, signature: bytes) -> None:
         )
 
 
-def verify_signed_bundle_matches(
-    archive_path: Path,
-    release_id: str,
-    sequence: int,
-    platform: str,
-    arch: str,
-    expected_key_id: str,
-    key_pem: Path,
-) -> None:
+def _extract_archive_control_files(archive_path: Path) -> tuple[bytes, bytes]:
     with tarfile.open(archive_path, mode="r:gz") as tf:
         try:
             manifest_member = tf.getmember("release.v1.json")
@@ -502,29 +500,151 @@ def verify_signed_bundle_matches(
         sig_fh = tf.extractfile(sig_member)
         if manifest_fh is None or sig_fh is None:
             raise SystemExit(f"signed archive {archive_path.name} has unreadable control entry")
-        manifest_bytes = manifest_fh.read()
-        sig_bytes = sig_fh.read()
+        return manifest_fh.read(), sig_fh.read()
+
+
+def _validate_exact_int(value: object, expected: int, archive_name: str, field: str) -> None:
+    if type(value) is not int or value != expected:
+        raise SystemExit(f"{archive_name}: {field} {value!r} != {expected!r}")
+
+
+def verify_signed_bundle_matches(
+    archive_path: Path,
+    release_id: str,
+    sequence: int,
+    platform: str,
+    arch: str,
+    expected_key_id: str,
+    key_pem: Path,
+) -> None:
+    manifest_bytes, sig_bytes = _extract_archive_control_files(archive_path)
     verify_ed25519(key_pem, manifest_bytes, sig_bytes)
     manifest = json.loads(manifest_bytes.decode("utf-8"))
-    if manifest.get("format") != RELEASE_FORMAT:
-        raise SystemExit(f"{archive_path.name}: unexpected manifest format {manifest.get('format')!r}")
-    if manifest.get("release_id") != release_id:
+    expected_strings = (
+        ("format", RELEASE_FORMAT),
+        ("release_id", release_id),
+        ("platform", platform),
+        ("architecture", arch),
+        ("key_id", expected_key_id),
+    )
+    for field, expected in expected_strings:
+        if manifest.get(field) != expected:
+            raise SystemExit(
+                f"{archive_path.name}: {field} {manifest.get(field)!r} != {expected!r}"
+            )
+    _validate_exact_int(manifest.get("sequence"), sequence, archive_path.name, "sequence")
+    _validate_exact_int(
+        manifest.get("installer_contract"), 1, archive_path.name, "installer_contract"
+    )
+
+
+def _read_regular_file_bounded(path: Path, max_bytes: int, label: str) -> bytes:
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise SystemExit(f"missing or unreadable {label} `{path}`: {exc}") from exc
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        raise SystemExit(f"refusing symlink or non-regular {label} `{path}`")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise SystemExit(f"refusing unsafe {label} `{path}`: {exc}") from exc
+    with os.fdopen(fd, "rb") as fh:
+        opened_st = os.fstat(fh.fileno())
+        if not stat.S_ISREG(opened_st.st_mode):
+            raise SystemExit(f"refusing non-regular {label} `{path}`")
+        data = fh.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise SystemExit(f"{label} `{path}` exceeds {max_bytes}-byte limit")
+    return data
+
+
+def _verify_archive_sha256_file(sha_file: Path, archive_name: str, actual_sha: str) -> None:
+    raw = _read_regular_file_bounded(sha_file, MAX_SHA256_FILE_BYTES, "checksum file")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(f"checksum file `{sha_file.name}` is not valid UTF-8") from exc
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) != 1:
         raise SystemExit(
-            f"{archive_path.name}: release_id {manifest.get('release_id')!r} != {release_id!r}"
+            f"checksum file `{sha_file.name}` must contain exactly one non-empty line (got {len(lines)})"
         )
-    if manifest.get("sequence") != sequence:
+    match = SHA256_LINE_RE.match(lines[0].strip())
+    if not match:
+        raise SystemExit(f"checksum file `{sha_file.name}` is malformed")
+    recorded = match.group("digest").lower()
+    recorded_name = match.group("name").strip()
+    if recorded_name != archive_name:
         raise SystemExit(
-            f"{archive_path.name}: sequence {manifest.get('sequence')!r} != {sequence!r}"
+            f"checksum file `{sha_file.name}` names `{recorded_name}`, expected `{archive_name}`"
         )
-    if manifest.get("platform") != platform or manifest.get("architecture") != arch:
+    if recorded != actual_sha:
         raise SystemExit(
-            f"{archive_path.name}: target ({manifest.get('platform')}, {manifest.get('architecture')}) "
-            f"!= ({platform}, {arch})"
+            f"checksum mismatch for {archive_name}: {sha_file.name} has {recorded}, "
+            f"actual is {actual_sha}"
         )
-    if manifest.get("key_id") != expected_key_id:
+
+
+def _validate_published_at(raw: str) -> str:
+    if not (20 <= len(raw) <= 32) or not PUBLISHED_AT_RE.match(raw):
         raise SystemExit(
-            f"{archive_path.name}: key_id {manifest.get('key_id')!r} != signing key {expected_key_id!r}"
+            f"invalid --published-at `{raw}`: expected RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"
         )
+    try:
+        datetime.datetime.fromisoformat(raw[:-1] + "+00:00")
+    except ValueError as exc:
+        raise SystemExit(f"invalid --published-at calendar value `{raw}`: {exc}") from exc
+    return raw
+
+
+def _load_trust_registry_keys(registry_path: Path) -> list[dict[str, object]]:
+    raw = _read_regular_file_bounded(registry_path, MAX_REGISTRY_BYTES, "trust registry")
+    try:
+        reg = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"malformed trust registry `{registry_path}`: {exc}") from exc
+    if not isinstance(reg, dict) or type(reg.get("version")) is not int or reg.get("version") != 1:
+        raise SystemExit(f"unsupported trust registry version in `{registry_path}`")
+    keys = reg.get("keys")
+    if not isinstance(keys, list) or not keys:
+        raise SystemExit(f"trust registry `{registry_path}` contains no keys")
+    return [entry for entry in keys if isinstance(entry, dict)]
+
+
+def _verify_registry_sequence_window(entry: dict[str, object], key_id: str, sequence: int) -> None:
+    min_seq = entry.get("min_sequence")
+    max_seq = entry.get("max_sequence")
+    if type(min_seq) is not int or min_seq < 1:
+        raise SystemExit(f"trust registry entry for `{key_id}` has invalid min_sequence")
+    if sequence < min_seq:
+        raise SystemExit(
+            f"release sequence {sequence} is below trust registry min_sequence {min_seq} for `{key_id}`"
+        )
+    if max_seq is None:
+        return
+    if type(max_seq) is not int or max_seq < min_seq:
+        raise SystemExit(f"trust registry entry for `{key_id}` has invalid max_sequence")
+    if sequence > max_seq:
+        raise SystemExit(
+            f"release sequence {sequence} exceeds trust registry max_sequence {max_seq} for `{key_id}`"
+        )
+
+
+def _verify_trust_registry(
+    registry_path: Path, key_id: str, pub_raw: bytes, sequence: int
+) -> None:
+    keys = _load_trust_registry_keys(registry_path)
+    matched = [k for k in keys if k.get("key_id") == key_id]
+    if len(matched) != 1:
+        raise SystemExit(
+            f"signing key `{key_id}` is not uniquely authorized in trust registry `{registry_path}`"
+        )
+    entry = matched[0]
+    if str(entry.get("public_key_hex", "")).lower() != pub_raw.hex():
+        raise SystemExit(f"trust registry public_key_hex mismatch for `{key_id}`")
+    _verify_registry_sequence_window(entry, key_id, sequence)
 
 
 def _validate_pointer_base_url(raw_url: str, allow_local: bool) -> str:
@@ -572,13 +692,7 @@ def _build_pointer_target(
 ) -> dict[str, object]:
     actual_sha = sha256_file(archive_path)
     sha_file = artifacts_dir / f"{archive_path.name}.sha256"
-    if sha_file.is_file():
-        recorded = sha_file.read_text(encoding="utf-8").strip().split()[0].lower()
-        if recorded != actual_sha:
-            raise SystemExit(
-                f"checksum mismatch for {archive_path.name}: {sha_file.name} has {recorded}, "
-                f"actual is {actual_sha}"
-            )
+    _verify_archive_sha256_file(sha_file, archive_path.name, actual_sha)
     verify_signed_bundle_matches(
         archive_path, release_id, sequence, platform, arch, key_id, key_path
     )
@@ -635,7 +749,10 @@ def cmd_pointer(args: argparse.Namespace) -> int:
     key_path = Path(args.signing_key).resolve()
     if not key_path.is_file():
         raise SystemExit(f"missing --signing-key file: {key_path}")
-    key_id = hashlib.sha256(raw_ed25519_pubkey_from_key(key_path)).hexdigest()
+    pub_raw = raw_ed25519_pubkey_from_key(key_path)
+    key_id = hashlib.sha256(pub_raw).hexdigest()
+    if args.trust_registry:
+        _verify_trust_registry(Path(args.trust_registry), key_id, pub_raw, args.sequence)
 
     artifacts_dir = Path(args.artifacts_dir).resolve()
     out_dir = Path(args.out_dir or args.artifacts_dir).resolve()
@@ -644,8 +761,10 @@ def cmd_pointer(args: argparse.Namespace) -> int:
         artifacts_dir, args.release_id, args.sequence, base_url, key_id, key_path
     )
 
-    published_at = args.published_at or datetime.datetime.now(datetime.timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
+    published_at = (
+        _validate_published_at(args.published_at)
+        if args.published_at
+        else datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     )
     pointer = {
         "format": POINTER_FORMAT,
@@ -721,6 +840,7 @@ def main() -> int:
     p_ptr.add_argument("--channel", default="stable")
     p_ptr.add_argument("--base-url", required=True)
     p_ptr.add_argument("--signing-key", required=True)
+    p_ptr.add_argument("--trust-registry", default="")
     p_ptr.add_argument("--published-at", default="")
     p_ptr.add_argument("--allow-local-url", action="store_true")
     p_ptr.set_defaults(func=cmd_pointer)

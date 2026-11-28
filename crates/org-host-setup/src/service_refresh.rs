@@ -184,8 +184,48 @@ impl ServiceRefresh {
             .collect()
     }
 
+    /// Registered services whose definition or status could not be read from the service manager
+    /// (for example when `systemd --user` is unavailable).
+    pub fn inspection_failures(&self) -> Vec<(String, String)> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.found {
+                Found::Untouched {
+                    outcome: RefreshOutcome::Failed,
+                    why,
+                    ..
+                } => Some((entry.instance.clone(), why.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Names of account instances recorded with a registered system service (`Service::Registered`
+    /// and `service_registered == true`), read without invoking any service manager.
+    pub fn registered_setup_instances(base: Option<&Path>) -> Vec<String> {
+        let Some(base) = base else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = std::fs::read_dir(base.join("setup"))
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        names
+            .into_iter()
+            .filter(|name| {
+                Journal::snapshot(base, Some(name)).is_ok_and(|record| {
+                    record.instance_id.is_some()
+                        && record.input.service == Service::Registered
+                        && record.service_registered
+                })
+            })
+            .collect()
+    }
+
     /// Re-points managed services to `program` and restarts every instance named in `should_start`
-    /// (even if its process crashed before rollback began). Used by auto-update rollback.
+    /// (even if its process crashed or entered a `systemd` `activating` crash-loop before rollback).
     pub(crate) fn rollback_to_program(
         mut self,
         manager: &dyn ServiceManager,
@@ -194,22 +234,8 @@ impl ServiceRefresh {
         restart: bool,
     ) -> Vec<ServiceRefreshReport> {
         for entry in &mut self.entries {
-            if let Found::Managed {
-                was_running,
-                stopped,
-                ..
-            } = &mut entry.found
-            {
-                let want_running = should_start.iter().any(|name| name == &entry.instance);
-                if *was_running && !*stopped {
-                    if stop_and_wait(manager, &entry.id).is_ok() {
-                        *stopped = true;
-                    }
-                } else if want_running {
-                    *was_running = true;
-                    *stopped = true;
-                }
-            }
+            let want_running = should_start.iter().any(|name| name == &entry.instance);
+            entry.prepare_for_rollback(manager, want_running);
         }
         self.refresh(manager, program, restart)
     }
@@ -364,6 +390,38 @@ impl ServiceRefresh {
 }
 
 impl Entry {
+    /// Stops any running or crash-looping service (`want_running || *was_running`) BEFORE setting
+    /// `*stopped = true`, cancelling `systemd` `ActiveState=activating` restarts and macOS
+    /// `launchd` `KeepAlive` loops so `manager.redefine` never fails with `ServiceError::Conflict`.
+    fn prepare_for_rollback(&mut self, manager: &dyn ServiceManager, want_running: bool) {
+        let Found::Managed {
+            unit,
+            was_running,
+            stopped,
+        } = &mut self.found
+        else {
+            return;
+        };
+        if (want_running || *was_running) && !*stopped {
+            match stop_and_wait(manager, &self.id) {
+                Ok(()) => *stopped = true,
+                Err(err) => {
+                    let program = Some(unit.program.clone());
+                    self.found = Found::Untouched {
+                        outcome: RefreshOutcome::Failed,
+                        why: format!("it could not be stopped before rollback: {err}"),
+                        program,
+                        running: false,
+                    };
+                    return;
+                }
+            }
+        }
+        if want_running {
+            *was_running = true;
+        }
+    }
+
     fn refresh(
         self,
         manager: &dyn ServiceManager,

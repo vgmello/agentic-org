@@ -10,12 +10,9 @@ use org_host_setup::auto_update::{
     account_setup_base, drain::DrainConfig, run_auto_update, AutoUpdateConfig, AutoUpdatePorts,
     AutoUpdateReceipt, AutoUpdateStatus, DiskActiveTurnDrainProbe, HostSocketHealthProbe,
 };
-use org_host_setup::ServiceRefresh;
-use org_platform::service::{ServiceManager, ServiceMode};
 
-use super::{state_dir_for, store_dir};
+use super::{resolve_release_services, state_dir_for, store_dir};
 use crate::error::CliError;
-use crate::host;
 
 pub(super) struct UpdateArgs<'a> {
     pub(super) pointer_url: &'a str,
@@ -28,6 +25,7 @@ pub(super) struct UpdateArgs<'a> {
     pub(super) force: bool,
     pub(super) restart: bool,
     pub(super) allow_quarantined: bool,
+    pub(super) foreground: bool,
 }
 
 pub(super) fn run(args: UpdateArgs<'_>, ctx: &mut ExecutionContext) -> Result<(), CliError> {
@@ -38,19 +36,10 @@ pub(super) fn run(args: UpdateArgs<'_>, ctx: &mut ExecutionContext) -> Result<()
     let mut pull = PullConfig::https(args.pointer_url, args.signature_url.map(str::to_owned));
     pull.bundle_timeout = Duration::from_secs(args.fetch_timeout_secs.max(1));
 
-    let manager = resolve_service_manager()?;
-    let drain_targets: Vec<(String, std::path::PathBuf)> =
-        ServiceRefresh::inspect(&*manager, &store)
-            .map(|sr| {
-                sr.managed_targets()
-                    .into_iter()
-                    .map(|t| (t.instance, t.root))
-                    .collect()
-            })
-            .unwrap_or_default();
+    let resolved = resolve_release_services(&store, setup_base.as_deref(), args.foreground)?;
 
     let fetcher = HttpsReleaseFetcher::new();
-    let drain_probe = DiskActiveTurnDrainProbe::new(drain_targets);
+    let drain_probe = DiskActiveTurnDrainProbe::new(resolved.drain_targets);
     let health_probe = HostSocketHealthProbe;
 
     let config = AutoUpdateConfig {
@@ -71,7 +60,7 @@ pub(super) fn run(args: UpdateArgs<'_>, ctx: &mut ExecutionContext) -> Result<()
     };
     let ports = AutoUpdatePorts {
         fetcher: &fetcher,
-        manager: &*manager,
+        manager: &*resolved.manager,
         drain: &drain_probe,
         health: &health_probe,
     };
@@ -89,16 +78,6 @@ pub(super) fn run(args: UpdateArgs<'_>, ctx: &mut ExecutionContext) -> Result<()
         return Err(CliError::Exited(1));
     }
     Ok(())
-}
-
-fn resolve_service_manager() -> Result<Box<dyn ServiceManager>, CliError> {
-    match host::service_manager() {
-        Ok(mgr) => Ok(mgr),
-        Err(_) => {
-            org_platform::service::service(ServiceMode::Foreground, std::path::Path::new("/"))
-                .map_err(|e| CliError::from(e.to_string()))
-        }
-    }
 }
 
 fn render_receipt(receipt: &AutoUpdateReceipt, ctx: &mut ExecutionContext) -> Result<(), CliError> {

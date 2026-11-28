@@ -89,16 +89,19 @@ impl ReleaseStore {
         if commit.version != 1 || commit.ordinal != ordinal || commit.previous != previous {
             return Err(Error::InvalidRelease);
         }
-        if commit.rollback {
-            if commit.highest_sequence != highest
-                || commit.pin.sequence > highest
-                || !self.prior_pins.contains(&commit.pin)
-            {
-                return Err(Error::InvalidRelease);
-            }
-        } else if commit.highest_sequence != commit.pin.sequence.max(highest)
-            || commit.pin.sequence < highest
-        {
+        self.validate_commit_sequence(commit, highest)
+    }
+
+    fn validate_commit_sequence(&self, commit: &Commit, highest: u64) -> Result<(), Error> {
+        let valid = if commit.rollback {
+            commit.highest_sequence == highest
+                && commit.pin.sequence <= highest
+                && self.prior_pins.contains(&commit.pin)
+        } else {
+            commit.highest_sequence == commit.pin.sequence.max(highest)
+                && commit.pin.sequence >= highest
+        };
+        if !valid {
             return Err(Error::InvalidRelease);
         }
         Ok(())

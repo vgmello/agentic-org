@@ -460,3 +460,135 @@ fn no_account_records_means_nothing_is_asked() {
         .is_empty());
     assert!(manager.calls().is_empty());
 }
+
+/// P1-1: On Linux `systemd`, a crash-looping unit reports `ActiveState=activating` with no
+/// running PID (`ServiceStatus::Unloaded`, so `was_running == false`), and `redefine` rejects it
+/// with `ServiceError::Conflict` unless `stop` is called first. `rollback_to_program` must always
+/// call `stop_and_wait` whenever `want_running || was_running` and `!stopped`.
+#[test]
+fn rollback_to_program_stops_activating_crash_loop_before_redefine() {
+    use std::sync::Mutex;
+
+    struct ActivatingCrashLoopManager {
+        state: Mutex<ActivatingState>,
+    }
+
+    struct ActivatingState {
+        unit: Unit,
+        activating: bool,
+        running: bool,
+        events: Vec<String>,
+    }
+
+    impl ServiceManager for ActivatingCrashLoopManager {
+        fn register(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            st.unit = unit.clone();
+            st.events.push("register".into());
+            Ok(Registration::Loaded)
+        }
+
+        fn start(&self, id: &str) -> Result<(), ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            assert_eq!(st.unit.instance_id, id);
+            st.activating = false;
+            st.running = true;
+            st.events.push("start".into());
+            Ok(())
+        }
+
+        fn stop(&self, id: &str) -> Result<(), ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            assert_eq!(st.unit.instance_id, id);
+            st.activating = false;
+            st.running = false;
+            st.events.push("stop".into());
+            Ok(())
+        }
+
+        fn status(&self, id: &str) -> Result<ServiceStatus, ServiceError> {
+            let st = self.state.lock().unwrap();
+            if st.unit.instance_id != id {
+                return Ok(ServiceStatus::NotRegistered);
+            }
+            if st.running {
+                Ok(ServiceStatus::Running { pid: 99 })
+            } else if st.activating {
+                // Mirrors `systemd.rs:429-430`: `shown.running() == None && !shown.settled()`.
+                Ok(ServiceStatus::Unloaded)
+            } else {
+                Ok(ServiceStatus::Stopped)
+            }
+        }
+
+        fn unregister(&self, _id: &str) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
+        fn definition(&self, id: &str) -> Result<Option<Unit>, ServiceError> {
+            let st = self.state.lock().unwrap();
+            Ok((st.unit.instance_id == id).then(|| st.unit.clone()))
+        }
+
+        fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+            let mut st = self.state.lock().unwrap();
+            if st.activating || st.running {
+                return Err(ServiceError::Conflict(
+                    "unit is activating; stop it before its definition is replaced".into(),
+                ));
+            }
+            st.unit = unit.clone();
+            st.events
+                .push(format!("redefine:{}", unit.program.display()));
+            Ok(Registration::Loaded)
+        }
+    }
+
+    let account = Account::new();
+    account.set_up("default", DEFAULT_ID, Service::Registered, 7420);
+    let mgr = ActivatingCrashLoopManager {
+        state: Mutex::new(ActivatingState {
+            unit: Account::unit("default", DEFAULT_ID, &account.program("r2")),
+            activating: true,
+            running: false,
+            events: Vec::new(),
+        }),
+    };
+
+    let refresh = ServiceRefresh::inspect_at(&mgr, &account.base, &account.store);
+    let managed = refresh.managed_targets();
+    assert_eq!(managed.len(), 1);
+    assert!(
+        !managed[0].was_running,
+        "activating crash-loop inspects as not running"
+    );
+
+    let reports =
+        refresh.rollback_to_program(&mgr, &account.program("r1"), &["default".into()], true);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].outcome, RefreshOutcome::Refreshed, "{reports:?}");
+    assert!(reports[0].running, "{reports:?}");
+    let st = mgr.state.lock().unwrap();
+    assert_eq!(st.unit.program, account.program("r1"));
+    assert!(st.running);
+    let stop_pos = st
+        .events
+        .iter()
+        .position(|e| e == "stop")
+        .expect("rollback must call stop before redefine");
+    let redefine_pos = st
+        .events
+        .iter()
+        .position(|e| e.starts_with("redefine:"))
+        .expect("rollback must redefine to previous program");
+    let start_pos = st
+        .events
+        .iter()
+        .position(|e| e == "start")
+        .expect("rollback must restart service");
+    assert!(
+        stop_pos < redefine_pos && redefine_pos < start_pos,
+        "{:?}",
+        st.events
+    );
+}

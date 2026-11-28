@@ -13,6 +13,7 @@ Usage:
     --sequence 1 \
     --base-url https://github.com/vgmello/agentic-org/releases/download/v0.1.0 \
     --signing-key /path/to/publisher.key.pem \
+    [--trust-registry /path/to/release-trust-registry.json] \
     [--channel stable] \
     [--out-dir artifacts] \
     [--published-at 2026-11-27T23:00:00Z] \
@@ -36,6 +37,7 @@ CHANNEL="stable"
 BASE_URL=""
 PUBLISHED_AT=""
 KEY_FILE=""
+TRUST_REGISTRY=""
 ALLOW_LOCAL_URL=0
 
 while [[ $# -gt 0 ]]; do
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
     --channel) require_arg "$@"; CHANNEL="$2"; shift 2 ;;
     --base-url) require_arg "$@"; BASE_URL="$2"; shift 2 ;;
     --signing-key) require_arg "$@"; KEY_FILE="$2"; shift 2 ;;
+    --trust-registry) require_arg "$@"; TRUST_REGISTRY="$2"; shift 2 ;;
     --published-at) require_arg "$@"; PUBLISHED_AT="$2"; shift 2 ;;
     --allow-local-url) ALLOW_LOCAL_URL=1; shift ;;
     -h|--help)
@@ -66,6 +69,9 @@ fi
 EXTRA_ARGS=()
 if [[ -n "$OUT_DIR" ]]; then
   EXTRA_ARGS+=(--out-dir "$OUT_DIR")
+fi
+if [[ -n "$TRUST_REGISTRY" ]]; then
+  EXTRA_ARGS+=(--trust-registry "$TRUST_REGISTRY")
 fi
 if [[ -n "$PUBLISHED_AT" ]]; then
   EXTRA_ARGS+=(--published-at "$PUBLISHED_AT")

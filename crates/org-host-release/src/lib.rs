@@ -19,8 +19,9 @@ pub use archive::ArchiveBundle;
 pub use fetcher::{FetchError, HttpsReleaseFetcher, LocalDirectoryFetcher, ReleaseFetcher};
 pub use pull::{
     check_pointer, check_pointer_with_policy, default_signature_url, stage_verified_pointer,
-    stage_verified_pointer_with_policy, PointerCheck, PointerDecision, PullConfig, PullError,
-    StagedRelease, DEFAULT_BUNDLE_TIMEOUT, DEFAULT_METADATA_TIMEOUT, DEFAULT_POINTER_URL,
+    stage_verified_pointer_with_policy, PointerCheck, PointerCheckState, PointerDecision,
+    PullConfig, PullError, StagedRelease, DEFAULT_BUNDLE_TIMEOUT, DEFAULT_METADATA_TIMEOUT,
+    DEFAULT_POINTER_URL,
 };
 pub use runtime::{Pin, RuntimeRelease};
 pub use store::{ReleasePin, ReleaseStore};

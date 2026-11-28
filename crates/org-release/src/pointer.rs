@@ -7,6 +7,7 @@
 //! its own: the referenced bundle must still pass full `verify_manifest` + payload checks.
 
 use std::collections::BTreeSet;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use ring::signature::{UnparsedPublicKey, ED25519};
 use sha2::{Digest, Sha256};
@@ -208,7 +209,12 @@ fn validate_pointer_policy(
     policy: &TrustedPolicy,
     key: &TrustedKey,
 ) -> Result<(), Error> {
-    if raw.format != POINTER_FORMAT {
+    validate_pointer_identity(raw)?;
+    validate_pointer_sequence(raw.sequence, policy, key)
+}
+
+fn validate_pointer_identity(raw: &decode::Pointer) -> Result<(), Error> {
+    if raw.format != POINTER_FORMAT || !valid_published_at(&raw.published_at) {
         return Err(Error::InvalidPointer);
     }
     if !valid_channel(&raw.channel) {
@@ -217,23 +223,24 @@ fn validate_pointer_policy(
     if !valid_release_id(&raw.release_id) {
         return Err(Error::InvalidReleaseId);
     }
-    if raw.sequence == 0 {
-        return Err(Error::InvalidSequence);
-    }
     if raw.installer_contract != 1 {
         return Err(Error::InstallerContractMismatch);
     }
-    if !valid_published_at(&raw.published_at) {
-        return Err(Error::InvalidPointer);
+    Ok(())
+}
+
+fn validate_pointer_sequence(
+    sequence: u64,
+    policy: &TrustedPolicy,
+    key: &TrustedKey,
+) -> Result<(), Error> {
+    if sequence == 0 {
+        return Err(Error::InvalidSequence);
     }
-    if raw.sequence < policy.minimum_sequence {
+    if sequence < policy.minimum_sequence {
         return Err(Error::ReleaseBelowMinimum);
     }
-    if raw.sequence < key.min_sequence
-        || key
-            .max_sequence
-            .is_some_and(|maximum| raw.sequence > maximum)
-    {
+    if sequence < key.min_sequence || key.max_sequence.is_some_and(|maximum| sequence > maximum) {
         return Err(Error::KeySequenceOutOfRange);
     }
     Ok(())
@@ -334,18 +341,30 @@ fn valid_utc_calendar_fields(bytes: &[u8]) -> bool {
 ///
 /// Always rejects empty/oversized URLs, whitespace, control characters, backslashes, `#`
 /// fragments, userinfo (`user:pass@`), and path traversal segments (`..` or percent-encoded
-/// `%2e`). Under [`UrlPolicy::HttpsOnly`], ONLY `https://` with a valid host is accepted.
+/// `%2e`). Under [`UrlPolicy::HttpsOnly`], ONLY `https://` with a public host (refusing
+/// loopback, link-local, RFC 1918, ULA, CGNAT, and metadata IP literals) is accepted.
 pub fn validate_pointer_url(url: &str, policy: UrlPolicy) -> Result<(), Error> {
     if has_forbidden_url_syntax(url) || has_forbidden_percent_escape(url) {
         return Err(Error::InvalidUrl);
     }
     if let Some(rest) = url.strip_prefix("https://") {
-        return validate_http_authority_and_path(rest, false);
+        let constraint = match policy {
+            UrlPolicy::HttpsOnly => HostConstraint::PublicOnly,
+            UrlPolicy::AllowLocalForTesting => HostConstraint::AnyValid,
+        };
+        return validate_http_authority_and_path(rest, constraint);
     }
     if policy == UrlPolicy::AllowLocalForTesting {
         return validate_local_testing_url(url);
     }
     Err(Error::InvalidUrl)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HostConstraint {
+    PublicOnly,
+    LoopbackOnly,
+    AnyValid,
 }
 
 fn has_forbidden_url_syntax(url: &str) -> bool {
@@ -364,7 +383,7 @@ fn has_forbidden_percent_escape(url: &str) -> bool {
 
 fn validate_local_testing_url(url: &str) -> Result<(), Error> {
     if let Some(rest) = url.strip_prefix("http://") {
-        return validate_http_authority_and_path(rest, true);
+        return validate_http_authority_and_path(rest, HostConstraint::LoopbackOnly);
     }
     if let Some(path) = url.strip_prefix("file:///") {
         return validate_file_url_path(path);
@@ -372,7 +391,7 @@ fn validate_local_testing_url(url: &str) -> Result<(), Error> {
     Err(Error::InvalidUrl)
 }
 
-fn validate_http_authority_and_path(rest: &str, loopback_only: bool) -> Result<(), Error> {
+fn validate_http_authority_and_path(rest: &str, constraint: HostConstraint) -> Result<(), Error> {
     let (authority, path_and_query) = match rest.find('/') {
         Some(idx) => (&rest[..idx], &rest[idx..]),
         None => return Err(Error::InvalidUrl),
@@ -381,40 +400,150 @@ fn validate_http_authority_and_path(rest: &str, loopback_only: bool) -> Result<(
         return Err(Error::InvalidUrl);
     }
     let host = extract_host(authority)?;
-    if loopback_only && !is_loopback_host(host) {
-        return Err(Error::InvalidUrl);
-    }
+    enforce_host_constraint(host, constraint)?;
     let path = path_and_query.split('?').next().unwrap_or("");
     validate_url_path_segments(path)
 }
 
 fn extract_host(authority: &str) -> Result<&str, Error> {
     if let Some(bracketed) = authority.strip_prefix('[') {
-        let end = bracketed.find(']').ok_or(Error::InvalidUrl)?;
-        let host = &bracketed[..end];
-        let after = &bracketed[end + 1..];
-        if host.is_empty() || !host.bytes().all(|b| b.is_ascii_hexdigit() || b == b':') {
-            return Err(Error::InvalidUrl);
-        }
-        validate_optional_port(after)?;
-        return Ok(host);
+        return extract_bracketed_host(bracketed);
     }
+    extract_unbracketed_host(authority)
+}
+
+fn extract_bracketed_host(bracketed: &str) -> Result<&str, Error> {
+    let end = bracketed.find(']').ok_or(Error::InvalidUrl)?;
+    let host = &bracketed[..end];
+    let after = &bracketed[end + 1..];
+    validate_optional_port(after)?;
+    host.parse::<Ipv6Addr>().map_err(|_| Error::InvalidUrl)?;
+    Ok(host)
+}
+
+fn extract_unbracketed_host(authority: &str) -> Result<&str, Error> {
     let (host, after) = match authority.find(':') {
         Some(colon) => (&authority[..colon], &authority[colon..]),
         None => (authority, ""),
     };
     validate_optional_port(after)?;
-    if host.is_empty()
-        || host.starts_with('.')
-        || host.ends_with('.')
-        || host.contains("..")
-        || !host
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
-    {
+    if !is_valid_unbracketed_host(host) {
         return Err(Error::InvalidUrl);
     }
     Ok(host)
+}
+
+fn is_valid_unbracketed_host(host: &str) -> bool {
+    !host.is_empty()
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.contains("..")
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
+}
+
+fn enforce_host_constraint(host: &str, constraint: HostConstraint) -> Result<(), Error> {
+    match constraint {
+        HostConstraint::AnyValid => Ok(()),
+        HostConstraint::LoopbackOnly => {
+            if is_loopback_host(host) {
+                Ok(())
+            } else {
+                Err(Error::InvalidUrl)
+            }
+        }
+        HostConstraint::PublicOnly => {
+            if is_disallowed_public_host(host) {
+                Err(Error::InvalidUrl)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn is_disallowed_public_host(host: &str) -> bool {
+    let lower = host.to_ascii_lowercase();
+    if lower == "localhost" || lower.ends_with(".localhost") || lower == "metadata.google.internal"
+    {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return match ip {
+            IpAddr::V4(v4) => is_disallowed_public_ipv4(v4),
+            IpAddr::V6(v6) => is_disallowed_public_ipv6(v6),
+        };
+    }
+    // Reject non-canonical numeric/hex/octal/short-form IPv4 literals (e.g. `2130706433`,
+    // `0x7f000001`, `0177.0.0.1`, `127.1`), since valid DNS TLDs cannot be numeric.
+    looks_like_numeric_ipv4_literal(&lower)
+}
+
+fn is_disallowed_public_ipv4(ip: Ipv4Addr) -> bool {
+    is_std_non_public_ipv4(ip) || is_reserved_ipv4_block(ip.octets())
+}
+
+fn is_std_non_public_ipv4(ip: Ipv4Addr) -> bool {
+    [
+        ip.is_loopback(),
+        ip.is_private(),
+        ip.is_link_local(),
+        ip.is_broadcast(),
+        ip.is_multicast(),
+        ip.is_documentation(),
+    ]
+    .into_iter()
+    .any(|flag| flag)
+}
+
+fn is_reserved_ipv4_block(octets: [u8; 4]) -> bool {
+    let checks = [
+        octets[0] == 0,
+        octets[0] == 100 && (octets[1] & 0xc0) == 64,
+        octets[0] == 192 && octets[1] == 0 && octets[2] == 0,
+        octets[0] == 198 && (octets[1] & 0xfe) == 18,
+        octets[0] >= 240,
+    ];
+    checks.into_iter().any(|flag| flag)
+}
+
+fn is_disallowed_public_ipv6(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = embedded_ipv4(ip) {
+        return is_disallowed_public_ipv4(v4);
+    }
+    let segs = ip.segments();
+    let checks = [
+        ip.is_loopback(),
+        ip.is_unspecified(),
+        ip.is_multicast(),
+        (segs[0] & 0xfe00) == 0xfc00,
+        (segs[0] & 0xffc0) == 0xfe80,
+        (segs[0] & 0xffc0) == 0xfec0,
+        segs[0] == 0x2001 && segs[1] == 0x0db8,
+    ];
+    checks.into_iter().any(|flag| flag)
+}
+
+fn embedded_ipv4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return Some(v4);
+    }
+    let segs = ip.segments();
+    let is_ipv4_compatible = segs[..6] == [0; 6] && (segs[6] != 0 || segs[7] > 1);
+    is_ipv4_compatible.then(|| Ipv4Addr::from(((u32::from(segs[6])) << 16) | u32::from(segs[7])))
+}
+
+fn looks_like_numeric_ipv4_literal(lower_host: &str) -> bool {
+    let last = lower_host.rsplit('.').next().unwrap_or("");
+    if last.is_empty() {
+        return true;
+    }
+    let is_decimal = last.bytes().all(|b| b.is_ascii_digit());
+    let is_hex = last
+        .strip_prefix("0x")
+        .is_some_and(|hex| !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()));
+    is_decimal || is_hex
 }
 
 fn validate_optional_port(after: &str) -> Result<(), Error> {

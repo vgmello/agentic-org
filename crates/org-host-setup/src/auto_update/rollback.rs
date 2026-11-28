@@ -1,6 +1,6 @@
 //! Automatic post-health-check rollback & operator-initiated rollback for pull-verified releases.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use org_host::release::{ReleasePin, UpdateStateStore};
@@ -10,10 +10,11 @@ use org_release::{TrustedKeys, TrustedPolicy};
 use serde::Serialize;
 
 use super::drain::{wait_for_idle_drain, DrainConfig, DrainPhase, DrainProbe, DrainReceipt};
-use super::health::{probe_instances, HealthProbe, InstanceHealthReport};
-use super::{
-    health_targets_for, inspect_services, open_store, read_store_head_readonly, release_program,
-    AutoUpdateConfig, AutoUpdatePorts, AutoUpdateReceipt, AutoUpdateStatus, PolicyMode,
+use super::health::{evaluate_post_restart_health, HealthProbe, InstanceHealthReport};
+use super::support::{
+    ensure_no_inspection_failures, inspect_services, open_store, read_store_head_readonly,
+    release_program, AutoUpdateConfig, AutoUpdatePorts, AutoUpdateReceipt, AutoUpdateStatus,
+    PolicyMode,
 };
 use crate::service_refresh::{InstallAttempt, ManagedServiceInfo, ServiceRefreshReport};
 
@@ -68,7 +69,7 @@ pub(super) struct AutoRollbackContext {
     pub previous_pin: Option<ReleasePin>,
     pub failed_pin: ReleasePin,
     pub channel: String,
-    pub drain_receipt: DrainReceipt,
+    pub drain_receipt: Option<DrainReceipt>,
     pub managed_before: Vec<ManagedServiceInfo>,
     pub forward_services: Vec<ServiceRefreshReport>,
     pub forward_health: Vec<InstanceHealthReport>,
@@ -82,99 +83,119 @@ pub(super) fn execute_automatic_rollback(
     state_store: &UpdateStateStore,
     ctx: AutoRollbackContext,
 ) -> Result<AutoUpdateReceipt, String> {
-    let AutoRollbackContext {
-        previous_pin,
-        failed_pin,
-        channel,
-        drain_receipt,
-        managed_before,
-        forward_services,
-        forward_health,
-        failure_summary,
-    } = ctx;
-
-    let Some(prev_pin) = previous_pin else {
-        let _ = state_store.record_rollback_and_quarantine(&failed_pin, None, &failure_summary);
-        return Ok(AutoUpdateReceipt {
-            status: AutoUpdateStatus::RollbackFailed,
-            store: config.store_dir.display().to_string(),
-            state_dir: config.state_dir.display().to_string(),
-            channel,
-            pointer_release_id: failed_pin.release_id.clone(),
-            pointer_sequence: failed_pin.sequence,
-            previous_pin: None,
-            active_pin: Some(failed_pin.clone()),
-            drain: Some(drain_receipt),
-            services: forward_services,
-            health_checks: forward_health,
-            rollback_services: Vec::new(),
-            rollback_health_checks: Vec::new(),
-            quarantined_release_id: Some(failed_pin.release_id),
-            note: format!(
-                "post-restart health check failed ({failure_summary}); no previous pinned release exists to roll back to"
-            ),
-        });
+    let Some(prev_pin) = ctx.previous_pin.clone() else {
+        state_store
+            .record_rollback_and_quarantine(&ctx.failed_pin, None, &ctx.failure_summary)
+            .map_err(|e| {
+                format!(
+                    "post-restart health check failed ({}) and persisting quarantine for `{}` failed: {e}",
+                    ctx.failure_summary, ctx.failed_pin.release_id
+                )
+            })?;
+        let note = format!(
+            "post-restart health check failed ({}); no previous pinned release exists to roll back to",
+            ctx.failure_summary
+        );
+        return Ok(aborted_rollback_receipt(config, ctx, None, note));
     };
-
-    let should_restart: Vec<String> = managed_before
-        .iter()
-        .filter(|m| m.was_running)
-        .map(|m| m.instance.clone())
-        .collect();
 
     let mut rb_services = inspect_services(
         ports.manager,
         config.setup_base.as_deref(),
         &config.store_dir,
     )?;
-    let rollback_pin_res = rb_services.install(ports.manager, || {
+    let restored_pin = match rb_services.install(ports.manager, || {
         rollback_store_once(&config.store_dir, &prev_pin, mode)
-    });
-    let restored_pin = match rollback_pin_res {
+    }) {
         Ok(pin) => pin,
         Err(rb_err) => {
-            let _ = state_store.record_rollback_and_quarantine(&failed_pin, None, &failure_summary);
-            return Ok(AutoUpdateReceipt {
-                status: AutoUpdateStatus::RollbackFailed,
-                store: config.store_dir.display().to_string(),
-                state_dir: config.state_dir.display().to_string(),
-                channel,
-                pointer_release_id: failed_pin.release_id.clone(),
-                pointer_sequence: failed_pin.sequence,
-                previous_pin: Some(prev_pin),
-                active_pin: Some(failed_pin.clone()),
-                drain: Some(drain_receipt),
-                services: forward_services,
-                health_checks: forward_health,
-                rollback_services: Vec::new(),
-                rollback_health_checks: Vec::new(),
-                quarantined_release_id: Some(failed_pin.release_id),
-                note: format!(
-                    "post-restart health check failed ({failure_summary}); automatic rollback failed to restore pin: {rb_err}"
-                ),
-            });
+            state_store
+                .record_rollback_and_quarantine(&ctx.failed_pin, None, &ctx.failure_summary)
+                .map_err(|e| {
+                    format!(
+                        "automatic rollback failed ({rb_err}) and persisting quarantine for `{}` failed: {e}",
+                        ctx.failed_pin.release_id
+                    )
+                })?;
+            let note = format!(
+                "post-restart health check failed ({}); automatic rollback failed to restore pin: {rb_err}",
+                ctx.failure_summary
+            );
+            return Ok(aborted_rollback_receipt(config, ctx, Some(prev_pin), note));
         }
     };
 
     let prev_program = release_program(&config.store_dir, &restored_pin.release_id)?;
+    let should_restart = running_instance_names(&ctx.managed_before);
     let rollback_reports = rb_services.rollback_to_program(
         ports.manager,
         &prev_program,
         &should_restart,
         config.restart,
     );
-    let rollback_targets = health_targets_for(&managed_before, &rollback_reports, config.restart);
-    let (rb_healthy, rb_health_reports) = if rollback_targets.is_empty() {
-        (true, Vec::new())
-    } else {
-        probe_instances(ports.health, &rollback_targets, config.health_timeout)
-    };
-
-    let _ = state_store.record_rollback_and_quarantine(
-        &failed_pin,
-        rb_healthy.then_some(&restored_pin),
-        &failure_summary,
+    let (rb_healthy, rb_health_reports) = evaluate_post_restart_health(
+        ports.health,
+        &ctx.managed_before,
+        &rollback_reports,
+        config.restart,
+        config.health_timeout,
     );
+
+    state_store
+        .record_rollback_and_quarantine(
+            &ctx.failed_pin,
+            rb_healthy.then_some(&restored_pin),
+            &ctx.failure_summary,
+        )
+        .map_err(|e| {
+            format!(
+                "persisting rollback and quarantine state for `{}`: {e}",
+                ctx.failed_pin.release_id
+            )
+        })?;
+    Ok(completed_auto_rollback_receipt(
+        config,
+        ctx,
+        restored_pin,
+        rb_healthy,
+        rollback_reports,
+        rb_health_reports,
+    ))
+}
+
+fn aborted_rollback_receipt(
+    config: &AutoUpdateConfig,
+    ctx: AutoRollbackContext,
+    previous_pin: Option<ReleasePin>,
+    note: String,
+) -> AutoUpdateReceipt {
+    AutoUpdateReceipt {
+        status: AutoUpdateStatus::RollbackFailed,
+        store: config.store_dir.display().to_string(),
+        state_dir: config.state_dir.display().to_string(),
+        channel: ctx.channel,
+        pointer_release_id: ctx.failed_pin.release_id.clone(),
+        pointer_sequence: ctx.failed_pin.sequence,
+        previous_pin,
+        active_pin: Some(ctx.failed_pin.clone()),
+        drain: ctx.drain_receipt,
+        services: ctx.forward_services,
+        health_checks: ctx.forward_health,
+        rollback_services: Vec::new(),
+        rollback_health_checks: Vec::new(),
+        quarantined_release_id: Some(ctx.failed_pin.release_id),
+        note,
+    }
+}
+
+fn completed_auto_rollback_receipt(
+    config: &AutoUpdateConfig,
+    ctx: AutoRollbackContext,
+    restored_pin: ReleasePin,
+    rb_healthy: bool,
+    rollback_reports: Vec<ServiceRefreshReport>,
+    rb_health_reports: Vec<InstanceHealthReport>,
+) -> AutoUpdateReceipt {
     let status = if rb_healthy {
         AutoUpdateStatus::RolledBack
     } else {
@@ -182,35 +203,39 @@ pub(super) fn execute_automatic_rollback(
     };
     let note = if rb_healthy {
         format!(
-            "post-restart health check failed for `{}` ({failure_summary}); automatically rolled back to `{}` (sequence {}), verified rollback health, and quarantined `{}`",
-            failed_pin.release_id,
+            "post-restart health check failed for `{}` ({}); automatically rolled back to `{}` (sequence {}), verified rollback health, and quarantined `{}`",
+            ctx.failed_pin.release_id,
+            ctx.failure_summary,
             restored_pin.release_id,
             restored_pin.sequence,
-            failed_pin.release_id
+            ctx.failed_pin.release_id
         )
     } else {
         format!(
-            "post-restart health check failed for `{}` ({failure_summary}); rolled back pin to `{}`, but rollback health check failed; quarantined `{}`",
-            failed_pin.release_id, restored_pin.release_id, failed_pin.release_id
+            "post-restart health check failed for `{}` ({}); rolled back pin to `{}`, but rollback service refresh or health check failed; quarantined `{}`",
+            ctx.failed_pin.release_id,
+            ctx.failure_summary,
+            restored_pin.release_id,
+            ctx.failed_pin.release_id
         )
     };
-    Ok(AutoUpdateReceipt {
+    AutoUpdateReceipt {
         status,
         store: config.store_dir.display().to_string(),
         state_dir: config.state_dir.display().to_string(),
-        channel,
-        pointer_release_id: failed_pin.release_id.clone(),
-        pointer_sequence: failed_pin.sequence,
+        channel: ctx.channel,
+        pointer_release_id: ctx.failed_pin.release_id.clone(),
+        pointer_sequence: ctx.failed_pin.sequence,
         previous_pin: Some(restored_pin.clone()),
         active_pin: Some(restored_pin),
-        drain: Some(drain_receipt),
-        services: forward_services,
-        health_checks: forward_health,
+        drain: ctx.drain_receipt,
+        services: ctx.forward_services,
+        health_checks: ctx.forward_health,
         rollback_services: rollback_reports,
         rollback_health_checks: rb_health_reports,
-        quarantined_release_id: Some(failed_pin.release_id),
+        quarantined_release_id: Some(ctx.failed_pin.release_id),
         note,
-    })
+    }
 }
 
 /// Manually roll back to the previous committed pin (or an explicit previously-pinned `release_id`).
@@ -246,37 +271,8 @@ fn run_manual_rollback_inner(
     let Some(current) = current_pin else {
         return Err("no active pinned release found in release store".into());
     };
-    if let Some(target_id) = &config.target_release_id {
-        if target_id == &current.release_id {
-            return Ok(RollbackReceipt {
-                status: RollbackStatus::AlreadyActive,
-                store: config.store_dir.display().to_string(),
-                state_dir: config.state_dir.display().to_string(),
-                previous_pin: Some(current.clone()),
-                active_pin: Some(current.clone()),
-                drain: None,
-                services: Vec::new(),
-                health_checks: Vec::new(),
-                note: format!("release `{}` is already active", current.release_id),
-            });
-        }
-    }
-    if config.dry_run {
-        let target_label = config
-            .target_release_id
-            .as_deref()
-            .unwrap_or("previous committed release");
-        return Ok(RollbackReceipt {
-            status: RollbackStatus::DryRun,
-            store: config.store_dir.display().to_string(),
-            state_dir: config.state_dir.display().to_string(),
-            previous_pin: Some(current.clone()),
-            active_pin: Some(current),
-            drain: None,
-            services: Vec::new(),
-            health_checks: Vec::new(),
-            note: format!("would idle-drain and roll back to {target_label}"),
-        });
+    if let Some(early) = manual_rollback_preflight(config, &current) {
+        return Ok(early);
     }
 
     let mut services = inspect_services(
@@ -284,25 +280,31 @@ fn run_manual_rollback_inner(
         config.setup_base.as_deref(),
         &config.store_dir,
     )?;
+    ensure_no_inspection_failures(&services)?;
     let managed_before = services.managed_targets();
+
     let drain_receipt = wait_for_idle_drain(ports.drain, config.drain)?;
     if drain_receipt.phase == DrainPhase::BusyTimeout {
-        return Ok(RollbackReceipt {
-            status: RollbackStatus::BusyTimeout,
-            store: config.store_dir.display().to_string(),
-            state_dir: config.state_dir.display().to_string(),
-            previous_pin: Some(current.clone()),
-            active_pin: Some(current),
-            drain: Some(drain_receipt),
-            services: Vec::new(),
-            health_checks: Vec::new(),
-            note: format!(
+        let mut receipt = base_manual_rollback_receipt(
+            config,
+            RollbackStatus::BusyTimeout,
+            current.clone(),
+            current,
+            format!(
                 "rollback deferred: active agent turns did not finish within {}s",
                 config.drain.timeout.as_secs()
             ),
-        });
+        );
+        receipt.drain = Some(drain_receipt);
+        return Ok(receipt);
     }
 
+    let state_store = UpdateStateStore::open(&config.state_dir).map_err(|e| {
+        format!(
+            "opening update state store ({}): {e}",
+            config.state_dir.display()
+        )
+    })?;
     let target_pin = services.install(ports.manager, || {
         manual_rollback_store_once(
             &config.store_dir,
@@ -311,77 +313,157 @@ fn run_manual_rollback_inner(
         )
     })?;
     let target_program = release_program(&config.store_dir, &target_pin.release_id)?;
-    let should_restart: Vec<String> = managed_before
-        .iter()
-        .filter(|m| m.was_running)
-        .map(|m| m.instance.clone())
-        .collect();
+    let should_restart = running_instance_names(&managed_before);
     let refresh_reports = services.rollback_to_program(
         ports.manager,
         &target_program,
         &should_restart,
         config.restart,
     );
-    let targets = health_targets_for(&managed_before, &refresh_reports, config.restart);
-    let (healthy, health_reports) = if targets.is_empty() {
-        (true, Vec::new())
-    } else {
-        probe_instances(ports.health, &targets, config.health_timeout)
-    };
+    let (healthy, health_reports) = evaluate_post_restart_health(
+        ports.health,
+        &managed_before,
+        &refresh_reports,
+        config.restart,
+        config.health_timeout,
+    );
+    persist_manual_rollback_state(
+        &state_store,
+        &current,
+        &target_pin,
+        healthy,
+        config.quarantine_current,
+    )?;
 
-    if let Ok(state_store) = UpdateStateStore::open(&config.state_dir) {
-        if config.quarantine_current {
-            let _ = state_store.record_rollback_and_quarantine(
-                &current,
-                healthy.then_some(&target_pin),
-                "operator manual rollback",
-            );
-        } else if healthy {
-            let _ = state_store.confirm_healthy(&target_pin);
-        }
+    let (status, note) = manual_rollback_outcome(&current, &target_pin, healthy);
+    let mut receipt = base_manual_rollback_receipt(config, status, current, target_pin, note);
+    receipt.drain = Some(drain_receipt);
+    receipt.services = refresh_reports;
+    receipt.health_checks = health_reports;
+    Ok(receipt)
+}
+
+fn manual_rollback_preflight(
+    config: &RollbackConfig,
+    current: &ReleasePin,
+) -> Option<RollbackReceipt> {
+    if config.target_release_id.as_deref() == Some(current.release_id.as_str()) {
+        return Some(base_manual_rollback_receipt(
+            config,
+            RollbackStatus::AlreadyActive,
+            current.clone(),
+            current.clone(),
+            format!("release `{}` is already active", current.release_id),
+        ));
     }
+    if config.dry_run {
+        let target_label = config
+            .target_release_id
+            .as_deref()
+            .unwrap_or("previous committed release");
+        return Some(base_manual_rollback_receipt(
+            config,
+            RollbackStatus::DryRun,
+            current.clone(),
+            current.clone(),
+            format!("would idle-drain and roll back to {target_label}"),
+        ));
+    }
+    None
+}
 
-    let status = if healthy {
-        RollbackStatus::RolledBack
-    } else {
-        RollbackStatus::UnhealthyAfterRollback
-    };
-    let note = if healthy {
-        format!(
-            "rolled back from `{}` to `{}` (sequence {}) and verified health",
-            current.release_id, target_pin.release_id, target_pin.sequence
+fn persist_manual_rollback_state(
+    state_store: &UpdateStateStore,
+    current: &ReleasePin,
+    target_pin: &ReleasePin,
+    healthy: bool,
+    quarantine_current: bool,
+) -> Result<(), String> {
+    if quarantine_current {
+        state_store
+            .record_rollback_and_quarantine(
+                current,
+                healthy.then_some(target_pin),
+                "operator manual rollback",
+            )
+            .map_err(|e| {
+                format!(
+                    "persisting manual rollback quarantine state for `{}`: {e}",
+                    current.release_id
+                )
+            })?;
+    } else if healthy {
+        state_store
+            .confirm_healthy(target_pin)
+            .map_err(|e| format!("persisting confirmed healthy rollback state: {e}"))?;
+    }
+    Ok(())
+}
+
+fn manual_rollback_outcome(
+    current: &ReleasePin,
+    target_pin: &ReleasePin,
+    healthy: bool,
+) -> (RollbackStatus, String) {
+    if healthy {
+        (
+            RollbackStatus::RolledBack,
+            format!(
+                "rolled back from `{}` to `{}` (sequence {}) and verified health",
+                current.release_id, target_pin.release_id, target_pin.sequence
+            ),
         )
     } else {
-        format!(
-            "rolled back pin from `{}` to `{}` (sequence {}), but health check failed",
-            current.release_id, target_pin.release_id, target_pin.sequence
+        (
+            RollbackStatus::UnhealthyAfterRollback,
+            format!(
+                "rolled back pin from `{}` to `{}` (sequence {}), but service refresh or health check failed",
+                current.release_id, target_pin.release_id, target_pin.sequence
+            ),
         )
-    };
-    Ok(RollbackReceipt {
+    }
+}
+
+fn base_manual_rollback_receipt(
+    config: &RollbackConfig,
+    status: RollbackStatus,
+    previous_pin: ReleasePin,
+    active_pin: ReleasePin,
+    note: String,
+) -> RollbackReceipt {
+    RollbackReceipt {
         status,
         store: config.store_dir.display().to_string(),
         state_dir: config.state_dir.display().to_string(),
-        previous_pin: Some(current),
-        active_pin: Some(target_pin),
-        drain: Some(drain_receipt),
-        services: refresh_reports,
-        health_checks: health_reports,
+        previous_pin: Some(previous_pin),
+        active_pin: Some(active_pin),
+        drain: None,
+        services: Vec::new(),
+        health_checks: Vec::new(),
         note,
-    })
+    }
+}
+
+fn running_instance_names(managed: &[ManagedServiceInfo]) -> Vec<String> {
+    managed
+        .iter()
+        .filter(|m| m.was_running)
+        .map(|m| m.instance.clone())
+        .collect()
 }
 
 fn rollback_store_once(
-    store_dir: &std::path::Path,
+    store_dir: &Path,
     target: &ReleasePin,
     mode: &PolicyMode<'_>,
 ) -> Result<ReleasePin, InstallAttempt> {
     let mut store = open_store(store_dir, mode)?;
-    let res = mode.rollback_store(&mut store, target);
-    res.map_err(|e| InstallAttempt::Failed(format!("rolling back release store pin: {e}")))
+    mode.rollback_store(&mut store, target)
+        .map_err(|e| InstallAttempt::Failed(format!("rolling back release store pin: {e}")))
 }
 
 fn manual_rollback_store_once(
-    store_dir: &std::path::Path,
+    store_dir: &Path,
     target_release_id: Option<&str>,
     mode: &PolicyMode<'_>,
 ) -> Result<ReleasePin, InstallAttempt> {

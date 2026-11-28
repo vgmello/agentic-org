@@ -1222,6 +1222,13 @@ fn python_release_tool_pointer_output_verifies_strictly_with_rust_org_release() 
     );
 
     // Verify CI-generated pointer bytes & 64-byte signature directly with Rust `org-release`!
+    verify_generated_pointer(&keys_dir, &out_dir, "v0.9.0", 7);
+
+    // P2-1 negative checks on `scripts/release_tool.py pointer`:
+    verify_pointer_tool_fail_closed(&tool, &keys_dir, &out_dir, &root);
+}
+
+fn verify_generated_pointer(keys_dir: &Path, out_dir: &Path, release_id: &str, sequence: u64) {
     let reg_bytes = fs::read(keys_dir.join("release-trust-registry.json")).unwrap();
     let ptr_bytes = fs::read(out_dir.join("release-pointer.v1.json")).unwrap();
     let sig_bytes = fs::read(out_dir.join("release-pointer.v1.sig")).unwrap();
@@ -1237,14 +1244,735 @@ fn python_release_tool_pointer_output_verifies_strictly_with_rust_org_release() 
             UrlPolicy::HttpsOnly,
         )
         .unwrap();
-        assert_eq!(verified.pointer().release_id(), "v0.9.0");
-        assert_eq!(verified.pointer().sequence(), 7);
+        assert_eq!(verified.pointer().release_id(), release_id);
+        assert_eq!(verified.pointer().sequence(), sequence);
         assert_eq!(verified.pointer().channel(), "stable");
         assert_eq!(verified.pointer().target().architecture(), arch);
-        assert!(verified
-            .pointer()
-            .target()
-            .url()
-            .starts_with("https://github.com/vgmello/agentic-org/releases/download/v0.9.0/"));
+        assert!(verified.pointer().target().url().starts_with(&format!(
+            "https://github.com/vgmello/agentic-org/releases/download/{release_id}/"
+        )));
+    }
+}
+
+fn verify_pointer_tool_fail_closed(tool: &Path, keys_dir: &Path, out_dir: &Path, root: &Path) {
+    let key_file = keys_dir.join("publisher.key.pem");
+    let reg_file = keys_dir.join("release-trust-registry.json");
+    let run_ptr = |extra: &[&str]| {
+        Command::new("python3")
+            .arg(tool)
+            .args([
+                "pointer",
+                "--artifacts-dir",
+                out_dir.to_str().unwrap(),
+                "--out-dir",
+                out_dir.to_str().unwrap(),
+                "--release-id",
+                "v0.9.0",
+                "--sequence",
+                "7",
+                "--channel",
+                "stable",
+                "--base-url",
+                "https://github.com/vgmello/agentic-org/releases/download/v0.9.0",
+                "--signing-key",
+                key_file.to_str().unwrap(),
+            ])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    // Valid `--trust-registry` and valid `--published-at` succeed.
+    assert!(run_ptr(&[
+        "--trust-registry",
+        reg_file.to_str().unwrap(),
+        "--published-at",
+        "2026-11-28T01:00:00Z",
+    ])
+    .status
+    .success());
+
+    // Invalid `--published-at` fails closed.
+    assert!(!run_ptr(&["--published-at", "not-a-timestamp"])
+        .status
+        .success());
+    assert!(!run_ptr(&["--published-at", "2026-02-31T01:00:00Z"])
+        .status
+        .success());
+
+    // Out-of-window trust registry fails closed.
+    let bad_reg = root.join("narrow-reg.json");
+    let mut reg_json: Value = serde_json::from_slice(&fs::read(&reg_file).unwrap()).unwrap();
+    reg_json["keys"][0]["max_sequence"] = Value::from(6u64);
+    fs::write(&bad_reg, serde_json::to_vec(&reg_json).unwrap()).unwrap();
+    assert!(!run_ptr(&["--trust-registry", bad_reg.to_str().unwrap()])
+        .status
+        .success());
+
+    // Missing, empty, malformed, or symlinked `.sha256` file fails closed.
+    let sha_file = out_dir.join("agentic-org-v0.9.0-linux-x86_64.tar.gz.sha256");
+    let orig_sha = fs::read_to_string(&sha_file).unwrap();
+    fs::write(&sha_file, "").unwrap();
+    assert!(
+        !run_ptr(&[]).status.success(),
+        "empty .sha256 must fail closed"
+    );
+    fs::write(&sha_file, "not-a-digest  wrong-name\n").unwrap();
+    assert!(
+        !run_ptr(&[]).status.success(),
+        "malformed .sha256 must fail closed"
+    );
+    fs::remove_file(&sha_file).unwrap();
+    assert!(
+        !run_ptr(&[]).status.success(),
+        "missing .sha256 must fail closed"
+    );
+    let outside_sha = root.join("outside.sha256");
+    fs::write(&outside_sha, &orig_sha).unwrap();
+    symlink(&outside_sha, &sha_file).unwrap();
+    assert!(
+        !run_ptr(&[]).status.success(),
+        "symlinked .sha256 must fail closed"
+    );
+    fs::remove_file(&sha_file).unwrap();
+    fs::write(&sha_file, &orig_sha).unwrap();
+}
+
+/// Multi-instance fake service manager supporting per-instance redefine/start fault injection for
+/// P0-2 rollback negative tests.
+struct MultiFakeServiceManager {
+    units: Mutex<std::collections::BTreeMap<String, (Unit, ServiceStatus)>>,
+    fail_redefine_ids: Mutex<std::collections::BTreeSet<String>>,
+    fail_start_ids: Mutex<std::collections::BTreeSet<String>>,
+}
+
+impl MultiFakeServiceManager {
+    fn new(entries: Vec<(String, String, PathBuf, bool)>) -> Self {
+        let mut units = std::collections::BTreeMap::new();
+        for (id, name, program, running) in entries {
+            let status = if running {
+                ServiceStatus::Running { pid: 4100 }
+            } else {
+                ServiceStatus::Stopped
+            };
+            units.insert(
+                id.clone(),
+                (
+                    Unit {
+                        instance_id: id,
+                        program,
+                        args: vec![
+                            OsString::from("serve"),
+                            OsString::from("--name"),
+                            OsString::from(name),
+                        ],
+                        env: vec![(OsString::from("HOME"), OsString::from("/home/agents"))],
+                    },
+                    status,
+                ),
+            );
+        }
+        Self {
+            units: Mutex::new(units),
+            fail_redefine_ids: Mutex::new(std::collections::BTreeSet::new()),
+            fail_start_ids: Mutex::new(std::collections::BTreeSet::new()),
+        }
+    }
+
+    fn set_fail_redefine(&self, ids: &[&str]) {
+        let mut set = self.fail_redefine_ids.lock().unwrap();
+        set.clear();
+        set.extend(ids.iter().map(|s| (*s).to_owned()));
+    }
+
+    fn set_fail_start(&self, ids: &[&str]) {
+        let mut set = self.fail_start_ids.lock().unwrap();
+        set.clear();
+        set.extend(ids.iter().map(|s| (*s).to_owned()));
+    }
+}
+
+impl ServiceManager for MultiFakeServiceManager {
+    fn register(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        let mut units = self.units.lock().unwrap();
+        let entry = units
+            .get_mut(&unit.instance_id)
+            .ok_or(ServiceError::Invalid("unknown service"))?;
+        entry.0 = unit.clone();
+        if entry.1 == ServiceStatus::Unloaded {
+            entry.1 = ServiceStatus::Stopped;
+        }
+        Ok(Registration::Loaded)
+    }
+
+    fn start(&self, id: &str) -> Result<(), ServiceError> {
+        if self.fail_start_ids.lock().unwrap().contains(id) {
+            return Err(ServiceError::System(format!(
+                "injected start failure for `{id}`"
+            )));
+        }
+        let mut units = self.units.lock().unwrap();
+        let entry = units
+            .get_mut(id)
+            .ok_or(ServiceError::Invalid("unknown service"))?;
+        entry.1 = ServiceStatus::Running { pid: 5100 };
+        Ok(())
+    }
+
+    fn stop(&self, id: &str) -> Result<(), ServiceError> {
+        let mut units = self.units.lock().unwrap();
+        if let Some(entry) = units.get_mut(id) {
+            entry.1 = ServiceStatus::Stopped;
+        }
+        Ok(())
+    }
+
+    fn status(&self, id: &str) -> Result<ServiceStatus, ServiceError> {
+        Ok(self
+            .units
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|(_, st)| *st)
+            .unwrap_or(ServiceStatus::NotRegistered))
+    }
+
+    fn unregister(&self, id: &str) -> Result<(), ServiceError> {
+        self.units.lock().unwrap().remove(id);
+        Ok(())
+    }
+
+    fn definition(&self, id: &str) -> Result<Option<Unit>, ServiceError> {
+        Ok(self.units.lock().unwrap().get(id).map(|(u, _)| u.clone()))
+    }
+
+    fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        if self
+            .fail_redefine_ids
+            .lock()
+            .unwrap()
+            .contains(&unit.instance_id)
+        {
+            return Err(ServiceError::System(format!(
+                "injected redefine failure for `{}`",
+                unit.instance_id
+            )));
+        }
+        let mut units = self.units.lock().unwrap();
+        let entry = units
+            .get_mut(&unit.instance_id)
+            .ok_or(ServiceError::Invalid("unknown service"))?;
+        if matches!(entry.1, ServiceStatus::Running { .. }) {
+            return Err(ServiceError::Conflict("service still running".into()));
+        }
+        entry.0 = unit.clone();
+        entry.1 = ServiceStatus::Stopped;
+        Ok(Registration::Loaded)
+    }
+}
+
+fn register_second_instance(fx: &E2eHarness, name: &str) -> String {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let _acct = registered_account(&fx.base, Some(name), port).unwrap();
+    seed_administrator(&fx.base, Some(name), &fx.keys_dir).unwrap();
+    let setup_record = fx.base.join(format!("setup/{name}/setup.v1.json"));
+    let mut rec: Value = serde_json::from_slice(&fs::read(&setup_record).unwrap()).unwrap();
+    let instance_id = rec["instance_id"].as_str().unwrap().to_owned();
+    rec["input"]["service"] = Value::String("registered".to_owned());
+    rec["service_registered"] = Value::Bool(true);
+    fs::write(&setup_record, serde_json::to_vec(&rec).unwrap()).unwrap();
+    instance_id.to_ascii_lowercase()
+}
+
+fn pin_release_into_store(
+    fx: &E2eHarness,
+    release_id: &str,
+    sequence: u64,
+) -> (ReleasePin, PathBuf) {
+    let (bundle_path, sha, size) = fx.write_signed_bundle(release_id, sequence);
+    let pull = fx.write_signed_pointer(
+        release_id,
+        sequence,
+        &format!("file://{}", bundle_path.display()),
+        &sha,
+        size,
+    );
+    let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
+    let mgr = FakePlatformServiceManager::new(
+        ManagerFlavor::LinuxSystemd,
+        "unused-seed",
+        "unused",
+        PathBuf::from("/unused"),
+        false,
+    );
+    let drain = SequenceDrainProbe::new(0);
+    let health = ScriptedHealthProbe::always_ok();
+    let receipt = run_auto_update_with_policy(
+        &fx.update_config(pull, Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: &mgr,
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(receipt.status, AutoUpdateStatus::Updated, "{receipt:?}");
+    let pin = receipt.active_pin.unwrap();
+    let bin = fx
+        .store
+        .join(format!("releases/{release_id}/agentic-org"))
+        .canonicalize()
+        .unwrap();
+    (pin, bin)
+}
+
+#[test]
+fn p0_1_crash_recovery_reconciles_healthy_v2_and_confirms_it() {
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let (v1_pin, _v1_bin) = fx.seed_initial_v1(false);
+    let (v2_pin, v2_bin) = pin_release_into_store(&fx, "v0.2.0", 2);
+    let (v2_bundle, v2_sha, v2_size) = fx.write_signed_bundle("v0.2.0", 2);
+    let pull_v2 = fx.write_signed_pointer(
+        "v0.2.0",
+        2,
+        &format!("file://{}", v2_bundle.display()),
+        &v2_sha,
+        v2_size,
+    );
+
+    // Simulate crash right after pinning & starting v2, leaving pending_health_check unresolved.
+    let state_store = UpdateStateStore::open(&fx.state_dir).unwrap();
+    state_store.confirm_healthy(&v1_pin).unwrap();
+    state_store
+        .record_pending_with_services(
+            Some(v1_pin.clone()),
+            v2_pin.clone(),
+            Some(pull_v2.pointer_url.clone()),
+            vec!["prod".into()],
+        )
+        .unwrap();
+
+    let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
+    let mgr = FakePlatformServiceManager::new(
+        ManagerFlavor::LinuxSystemd,
+        &fx.service_id,
+        "prod",
+        v2_bin,
+        true,
+    );
+    let drain = SequenceDrainProbe::new(0);
+    let health = ScriptedHealthProbe::always_ok();
+
+    // Dry-run must NEVER claim UpToDate while pending_health_check is unresolved.
+    let mut dry_cfg = fx.update_config(pull_v2.clone(), Duration::from_secs(2), false);
+    dry_cfg.dry_run = true;
+    let dry = run_auto_update_with_policy(
+        &dry_cfg,
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: &mgr,
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(dry.status, AutoUpdateStatus::DryRun, "{dry:?}");
+    assert!(UpdateStateStore::read_readonly(&fx.state_dir)
+        .unwrap()
+        .pending_health_check
+        .is_some());
+
+    // Live run reconciles healthy v2, confirms it, clears pending_health_check, and reports it.
+    let receipt = run_auto_update_with_policy(
+        &fx.update_config(pull_v2, Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: &mgr,
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(receipt.status, AutoUpdateStatus::UpToDate, "{receipt:?}");
+    assert!(
+        receipt.note.contains("reconciled interrupted update"),
+        "{}",
+        receipt.note
+    );
+    assert_eq!(receipt.health_checks.len(), 1);
+    assert!(receipt.health_checks[0].healthy);
+    let state = UpdateStateStore::read_readonly(&fx.state_dir).unwrap();
+    assert!(state.pending_health_check.is_none());
+    assert_eq!(state.confirmed, Some(v2_pin));
+}
+
+#[test]
+fn p0_1_crash_recovery_rolls_back_stopped_v2_and_preserves_v1_when_pointer_advances_to_v3() {
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let (v1_pin, v1_bin) = fx.seed_initial_v1(false);
+    let (v2_pin, v2_bin) = pin_release_into_store(&fx, "v0.2.0", 2);
+
+    // Simulate crash during v1 -> v2 where v2 crashed/stopped and pending_health_check remains.
+    let state_store = UpdateStateStore::open(&fx.state_dir).unwrap();
+    state_store.confirm_healthy(&v1_pin).unwrap();
+    state_store
+        .record_pending_with_services(
+            Some(v1_pin.clone()),
+            v2_pin.clone(),
+            None,
+            vec!["prod".into()],
+        )
+        .unwrap();
+
+    // Pointer advances to v3 BEFORE crash recovery runs!
+    let (v3_bundle, v3_sha, v3_size) = fx.write_signed_bundle("v0.3.0", 3);
+    let pull_v3 = fx.write_signed_pointer(
+        "v0.3.0",
+        3,
+        &format!("file://{}", v3_bundle.display()),
+        &v3_sha,
+        v3_size,
+    );
+
+    let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
+    // Service points to v2 and is STOPPED (crashed during interrupted update).
+    let mgr = std::sync::Arc::new(FakePlatformServiceManager::new(
+        ManagerFlavor::LinuxSystemd,
+        &fx.service_id,
+        "prod",
+        v2_bin,
+        false,
+    ));
+    let drain = SequenceDrainProbe::new(0);
+    let health = ScriptedHealthProbe::always_ok();
+
+    // First run MUST reconcile pending v1 -> v2 BEFORE touching v3: rolls back to v1 & quarantines v2!
+    let rec = run_auto_update_with_policy(
+        &fx.update_config(pull_v3.clone(), Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(rec.status, AutoUpdateStatus::RolledBack, "{rec:?}");
+    assert_eq!(rec.active_pin, Some(v1_pin.clone()));
+    assert_eq!(rec.quarantined_release_id.as_deref(), Some("v0.2.0"));
+    assert_eq!(mgr.program(), v1_bin);
+    assert!(mgr.is_running());
+
+    let state = UpdateStateStore::read_readonly(&fx.state_dir).unwrap();
+    assert!(state.pending_health_check.is_none());
+    assert_eq!(state.confirmed, Some(v1_pin.clone()));
+    assert!(state.quarantined_entry("v0.2.0").is_some());
+
+    // Subsequent run seeing v3 starts from confirmed v1 (NEVER unverified v2); if v3 fails health,
+    // automatic rollback returns cleanly to v1!
+    struct FailOnV3Probe(std::sync::Arc<FakePlatformServiceManager>);
+    impl HealthProbe for FailOnV3Probe {
+        fn check_healthy(
+            &self,
+            _target: &HealthTarget,
+            _timeout: Duration,
+        ) -> Result<String, String> {
+            if self.0.program().to_string_lossy().contains("v0.3.0") {
+                Err("v0.3.0 unhealthy".into())
+            } else {
+                Ok("healthy".into())
+            }
+        }
+    }
+    let fail_v3 = FailOnV3Probe(std::sync::Arc::clone(&mgr));
+    let v3_rb = run_auto_update_with_policy(
+        &fx.update_config(pull_v3, Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: mgr.as_ref(),
+            drain: &drain,
+            health: &fail_v3,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(v3_rb.status, AutoUpdateStatus::RolledBack, "{v3_rb:?}");
+    assert_eq!(
+        v3_rb.active_pin,
+        Some(v1_pin),
+        "pointer advancing to v3 must preserve confirmed v1 rollback target"
+    );
+    assert_eq!(mgr.program(), v1_bin);
+    assert!(mgr.is_running());
+}
+
+#[test]
+fn p0_2_rollback_fails_closed_when_redefine_or_start_fails_for_partial_or_all_services() {
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let aux_id = register_second_instance(&fx, "aux");
+    let (v1_pin, v1_bin) = fx.seed_initial_v1(false);
+    let (v2_pin, v2_bin) = pin_release_into_store(&fx, "v0.2.0", 2);
+
+    let drain = SequenceDrainProbe::new(0);
+    let health = ScriptedHealthProbe::always_ok();
+
+    // Case 1: Manual rollback where `redefine` fails for 1 of 2 services -> UnhealthyAfterRollback!
+    let mgr_partial_redef = MultiFakeServiceManager::new(vec![
+        (fx.service_id.clone(), "prod".into(), v2_bin.clone(), true),
+        (aux_id.clone(), "aux".into(), v2_bin.clone(), true),
+    ]);
+    mgr_partial_redef.set_fail_redefine(&[&aux_id]);
+    let rb_partial = run_manual_rollback_with_policy(
+        &RollbackConfig {
+            store_dir: fx.store.clone(),
+            state_dir: fx.state_dir.clone(),
+            setup_base: Some(fx.base.clone()),
+            target_release_id: Some("v0.1.0".into()),
+            drain: DrainConfig {
+                timeout: Duration::from_secs(2),
+                poll_interval: Duration::from_millis(10),
+                force: false,
+            },
+            health_timeout: Duration::from_secs(2),
+            restart: true,
+            dry_run: false,
+            quarantine_current: false,
+        },
+        &RollbackPorts {
+            manager: &mgr_partial_redef,
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        rb_partial.status,
+        RollbackStatus::UnhealthyAfterRollback,
+        "partial redefine failure must fail closed: {rb_partial:?}"
+    );
+    assert!(rb_partial
+        .health_checks
+        .iter()
+        .any(|h| h.instance == "aux" && !h.healthy));
+    // Must NOT mark v1 confirmed healthy when rollback failed.
+    assert_ne!(
+        UpdateStateStore::read_readonly(&fx.state_dir)
+            .unwrap()
+            .confirmed,
+        Some(v1_pin.clone())
+    );
+
+    // Case 2: Manual rollback where `start` fails for ALL services -> UnhealthyAfterRollback
+    // (never treating empty health_targets_for as healthy!).
+    let _ = pin_release_into_store(&fx, "v0.3.0", 3);
+    let v3_bin = fx
+        .store
+        .join("releases/v0.3.0/agentic-org")
+        .canonicalize()
+        .unwrap();
+    let mgr_all_start_fail = MultiFakeServiceManager::new(vec![
+        (fx.service_id.clone(), "prod".into(), v3_bin.clone(), true),
+        (aux_id.clone(), "aux".into(), v3_bin, true),
+    ]);
+    mgr_all_start_fail.set_fail_start(&[&fx.service_id, &aux_id]);
+    let rb_all = run_manual_rollback_with_policy(
+        &RollbackConfig {
+            store_dir: fx.store.clone(),
+            state_dir: fx.state_dir.clone(),
+            setup_base: Some(fx.base.clone()),
+            target_release_id: Some("v0.1.0".into()),
+            drain: DrainConfig {
+                timeout: Duration::from_secs(2),
+                poll_interval: Duration::from_millis(10),
+                force: false,
+            },
+            health_timeout: Duration::from_secs(2),
+            restart: true,
+            dry_run: false,
+            quarantine_current: false,
+        },
+        &RollbackPorts {
+            manager: &mgr_all_start_fail,
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        rb_all.status,
+        RollbackStatus::UnhealthyAfterRollback,
+        "all-service start failure must never report RolledBack: {rb_all:?}"
+    );
+    assert_eq!(rb_all.health_checks.len(), 2);
+    assert!(rb_all.health_checks.iter().all(|h| !h.healthy));
+
+    // Case 3: Automatic rollback where `start` fails on 1 of 2 services during recovery -> RollbackFailed!
+    let _ = v2_pin;
+    let state_store = UpdateStateStore::open(&fx.state_dir).unwrap();
+    state_store.confirm_healthy(&v1_pin).unwrap();
+    let (v4_bundle, v4_sha, v4_size) = fx.write_signed_bundle("v0.4.0", 4);
+    let pull_v4 = fx.write_signed_pointer(
+        "v0.4.0",
+        4,
+        &format!("file://{}", v4_bundle.display()),
+        &v4_sha,
+        v4_size,
+    );
+    let fetcher = LocalDirectoryFetcher::new(&fx.mirror).unwrap();
+    let mgr_auto = MultiFakeServiceManager::new(vec![
+        (fx.service_id.clone(), "prod".into(), v1_bin.clone(), true),
+        (aux_id.clone(), "aux".into(), v1_bin, true),
+    ]);
+    // Both fail start (forward v4 fails start -> triggers automatic rollback -> rollback also fails start on aux!).
+    mgr_auto.set_fail_start(&[&aux_id]);
+    let auto_rb = run_auto_update_with_policy(
+        &fx.update_config(pull_v4, Duration::from_secs(2), false),
+        &AutoUpdatePorts {
+            fetcher: &fetcher,
+            manager: &mgr_auto,
+            drain: &drain,
+            health: &health,
+        },
+        &fx.policy,
+        &fx.keys,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        auto_rb.status,
+        AutoUpdateStatus::RollbackFailed,
+        "automatic rollback must report RollbackFailed when 1 of 2 services fails start: {auto_rb:?}"
+    );
+    assert_eq!(auto_rb.quarantined_release_id.as_deref(), Some("v0.4.0"));
+}
+
+fn release_update_and_rollback_dry_run_args(fx: &E2eHarness, foreground: bool) -> [Vec<String>; 2] {
+    let store = fx.store.to_str().unwrap().to_owned();
+    let state = fx.state_dir.to_str().unwrap().to_owned();
+    let mut upd = vec![
+        "release".into(),
+        "update".into(),
+        "--pointer-url".into(),
+        "https://releases.example.com/release-pointer.v1.json".into(),
+        "--store".into(),
+        store.clone(),
+        "--state-dir".into(),
+        state.clone(),
+        "--dry-run".into(),
+    ];
+    let mut rb = vec![
+        "release".into(),
+        "rollback".into(),
+        "--store".into(),
+        store,
+        "--state-dir".into(),
+        state,
+        "--dry-run".into(),
+    ];
+    if foreground {
+        upd.push("--foreground".into());
+        rb.push("--foreground".into());
+    }
+    [upd, rb]
+}
+
+#[test]
+fn p1_3_cli_update_and_rollback_fail_closed_without_home_or_on_foreground_conflict() {
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let _ = fx.seed_initial_v1(false);
+
+    // 1. Missing HOME causes `host::service_manager()` to fail -> CLI must fail closed (never Foreground fallback).
+    for sub in release_update_and_rollback_dry_run_args(&fx, false) {
+        let out = Command::new(BIN)
+            .args(&sub)
+            .env_clear()
+            .env("ORG_DEV_ACCOUNT_BASE", &fx.base)
+            .env("AGENTIC_ORG_CACHE_DIR", fx.root.join("cache"))
+            .env("AGENTIC_ORG_CONFIG_DIR", fx.root.join("config"))
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .current_dir(fx.root.join("work"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "`{sub:?}` must fail closed when service_manager() fails without HOME"
+        );
+    }
+
+    // 2. Passing `--foreground` when registered system service `prod` exists must fail closed!
+    for sub in release_update_and_rollback_dry_run_args(&fx, true) {
+        let refs: Vec<&str> = sub.iter().map(String::as_str).collect();
+        let out = fx.run_cli(&refs);
+        assert!(
+            !out.status.success(),
+            "`{sub:?}` must refuse `--foreground` when registered services exist"
+        );
+    }
+}
+
+#[test]
+fn p1_3_cli_update_and_rollback_fail_closed_on_service_inspection_failure() {
+    let fx = E2eHarness::new(Platform::Linux, Architecture::X86_64);
+    let _ = fx.seed_initial_v1(false);
+
+    // Failing `systemctl` stand-in (`ORG_DEV_SERVICE_PROGRAMS`) simulating unavailable
+    // `systemd --user` bus causes `ServiceRefresh::inspect` failure -> CLI fails closed!
+    let bad_progs = fx.root.join("bad-service-progs");
+    fs::create_dir_all(&bad_progs).unwrap();
+    for prog in ["systemctl", "loginctl"] {
+        let script = bad_progs.join(prog);
+        fs::write(
+            &script,
+            "#!/bin/sh\necho 'Failed to connect to bus' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    for sub in release_update_and_rollback_dry_run_args(&fx, false) {
+        let out = Command::new(BIN)
+            .args(&sub)
+            .env_clear()
+            .env("HOME", fx.root.join("home"))
+            .env("ORG_DEV_ACCOUNT_BASE", &fx.base)
+            .env("ORG_DEV_SERVICE_PROGRAMS", &bad_progs)
+            .env("AGENTIC_ORG_CACHE_DIR", fx.root.join("cache"))
+            .env("AGENTIC_ORG_CONFIG_DIR", fx.root.join("config"))
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .current_dir(fx.root.join("work"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "`{sub:?}` must fail closed when registered service inspection fails\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
     }
 }

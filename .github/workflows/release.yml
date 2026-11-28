@@ -13,6 +13,10 @@ on:
         description: "Monotonic release sequence (>= 1)"
         required: true
         default: "1"
+      min_sequence:
+        description: "Explicit security revocation floor (1 <= min_sequence <= sequence; defaults to ORG_RELEASE_MIN_SEQUENCE var or 1)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -122,6 +126,9 @@ jobs:
           RELEASE_ID: ${{ github.event.inputs.release_id || github.ref_name }}
           # Strictly monotonic across tagged release workflow runs; manual dispatch may override explicitly.
           SEQUENCE: ${{ github.event.inputs.sequence || github.run_number }}
+          # Explicit security revocation floor decoupled from monotonic SEQUENCE so manual rollback
+          # from v(N) to v(N-1) is never blocked unless an older sequence was explicitly revoked.
+          MIN_SEQUENCE: ${{ github.event.inputs.min_sequence || vars.ORG_RELEASE_MIN_SEQUENCE || '1' }}
           SIGNED: ${{ steps.signing.outputs.signed }}
           PLATFORM: ${{ matrix.platform }}
           ORG_APP_TEAM_ID: ${{ secrets.ORG_APP_TEAM_ID }}
@@ -132,11 +139,15 @@ jobs:
             echo "Release sequence must be a positive integer (got '$SEQUENCE')" >&2
             exit 1
           fi
+          if [[ ! "$MIN_SEQUENCE" =~ ^[1-9][0-9]*$ ]] || (( MIN_SEQUENCE > SEQUENCE )); then
+            echo "Release minimum sequence must be an integer in 1..=$SEQUENCE (got '$MIN_SEQUENCE')" >&2
+            exit 1
+          fi
           if [[ "$SIGNED" == "true" && "$PLATFORM" == "macos" ]]; then
             # Build with embedded trust registry and host keychain group, sign with exact identifiers
             # (keychain-access-groups entitlement on `agentic-org` only), then package.
             ORG_RELEASE_TRUST_REGISTRY="$RUNNER_TEMP/release-keys/release-trust-registry.json" \
-            ORG_RELEASE_MIN_SEQUENCE="$SEQUENCE" \
+            ORG_RELEASE_MIN_SEQUENCE="$MIN_SEQUENCE" \
             ORG_APP_TEAM_ID="$ORG_APP_TEAM_ID" \
             ORG_HOST_KEYCHAIN_GROUP="$ORG_HOST_KEYCHAIN_GROUP" \
               cargo build --locked --release -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
@@ -164,10 +175,11 @@ jobs:
               --sign "$MACOS_IDENTITY" "target/release/agentic-org-web"
             codesign --force --options runtime --timestamp \
               --identifier com.vgmello.agentic-org.agent-os \
-              --sign "$MACOS_IDENTITY" "target/release/agent-os"
+              --sign "$MACOS_IDENTITY" "target/release/agentic-org-agent-os"
             bash scripts/package-release.sh \
               --release-id "$RELEASE_ID" \
               --sequence "$SEQUENCE" \
+              --min-sequence "$MIN_SEQUENCE" \
               --out-dir dist \
               --profile release \
               --skip-build \
@@ -177,6 +189,7 @@ jobs:
             bash scripts/package-release.sh \
               --release-id "$RELEASE_ID" \
               --sequence "$SEQUENCE" \
+              --min-sequence "$MIN_SEQUENCE" \
               --out-dir dist \
               --profile release \
               --signing-key "$RUNNER_TEMP/release-keys/publisher.key.pem" \
@@ -195,7 +208,7 @@ jobs:
           if-no-files-found: error
       - name: Clean temporary signing material
         if: always()
-        run: rm -rf "$RUNNER_TEMP/release-keys" "$RUNNER_TEMP/release-signing.keychain-db" "$RUNNER_TEMP/host-entitlements.plist"
+        run: rm -rf "$RUNNER_TEMP/release-keys" "$RUNNER_TEMP/release-signing.keychain-db" "$RUNNER_TEMP/host-entitlements.plist" "$RUNNER_TEMP/dev-id.p12"
 
   publish:
     needs: package
@@ -234,6 +247,8 @@ jobs:
           trap 'rm -rf "$KEY_DIR"' EXIT
           printf '%s\n' "$SIGNING_KEY_PEM" > "$KEY_DIR/publisher.key.pem"
           chmod 0600 "$KEY_DIR/publisher.key.pem"
+          printf '%s\n' "$TRUST_REGISTRY_JSON" > "$KEY_DIR/release-trust-registry.json"
+          chmod 0600 "$KEY_DIR/release-trust-registry.json"
           bash scripts/generate-release-pointer.sh \
             --artifacts-dir artifacts \
             --out-dir artifacts \
@@ -241,7 +256,8 @@ jobs:
             --sequence "$SEQUENCE" \
             --channel stable \
             --base-url "https://github.com/${REPO}/releases/download/${RELEASE_ID}" \
-            --signing-key "$KEY_DIR/publisher.key.pem"
+            --signing-key "$KEY_DIR/publisher.key.pem" \
+            --trust-registry "$KEY_DIR/release-trust-registry.json"
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
