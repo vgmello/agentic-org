@@ -91,7 +91,7 @@ impl TransitionTask {
         }
         let to = self.params.status;
         let (next_blocked_reason, transition_note) = self.resolve_reason_and_note(to)?;
-        if to != TaskStatus::Blocked && self.params.waiting_on_owner == Some(true) {
+        if to != TaskStatus::Blocked && self.params.waiting_on_owner.is_some() {
             return Err(refuse(
                 ErrorCode::InvalidRequest,
                 "`waiting_on_owner` applies only when transitioning to `blocked`",
@@ -218,72 +218,89 @@ impl TransitionTask {
     }
 
     /// Resolves `blocked_reason`, `reason`, and `note` under `TASK-84` rules:
-    /// - On `blocked`: requires a valid `1..=1000`-char reason (via `blocked_reason` or `reason`,
-    ///   never both) and accepts an optional supplementary `note`.
+    /// - On `blocked`: requires a valid `1..=1000`-char reason (via `blocked_reason`, `reason`,
+    ///   or `note` alone — never both `reason` and `blocked_reason`) and accepts an optional
+    ///   supplementary `note` when `blocked_reason` or `reason` is given.
     /// - On any non-blocked status: refuses `blocked_reason` with an actionable hint instead of
-    ///   silently dropping it, refuses passing both `reason` and `note`, and accepts an optional
-    ///   transition note via `reason` or `note`.
+    ///   silently dropping it, refuses passing both `reason` and `note`, fails closed on
+    ///   whitespace-only `reason`, and accepts an optional transition note via `reason` or `note`.
     fn resolve_reason_and_note(
         &self,
         to: TaskStatus,
     ) -> Result<(Option<String>, Option<String>), Refusal> {
-        let map_api = |e: org_proto::ApiError| refuse(e.code, e.message);
         if to == TaskStatus::Blocked {
-            if self.params.reason.is_some() && self.params.blocked_reason.is_some() {
-                return Err(refuse(
-                    ErrorCode::InvalidRequest,
-                    "cannot pass both `reason` and `blocked_reason`",
-                ));
-            }
-            let raw_blocked = self
-                .params
-                .blocked_reason
-                .as_deref()
-                .or(self.params.reason.as_deref())
-                .ok_or_else(|| {
-                    refuse(
-                        ErrorCode::InvalidRequest,
-                        "transitioning to `blocked` requires a non-empty `blocked_reason`",
-                    )
-                })?;
-            let blocked_reason = validate_blocked_reason(raw_blocked).map_err(map_api)?;
-            let note = self
-                .params
-                .note
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| validate_transition_note(s).map_err(map_api))
-                .transpose()?;
-            Ok((Some(blocked_reason), note))
+            self.resolve_blocked_reason_and_note()
         } else {
-            if self.params.blocked_reason.is_some() {
-                return Err(refuse(
-                    ErrorCode::InvalidRequest,
-                    format!(
-                        "`blocked_reason` applies only when transitioning to `blocked`, not `{}`; use `reason` or `note` for other status changes",
-                        to.as_str()
-                    ),
-                ));
-            }
-            if self.params.reason.is_some() && self.params.note.is_some() {
-                return Err(refuse(
-                    ErrorCode::InvalidRequest,
-                    "cannot pass both `reason` and `note`",
-                ));
-            }
-            let note = match (self.params.reason.as_deref(), self.params.note.as_deref()) {
-                (Some(raw), None) => Some(validate_transition_note(raw).map_err(map_api)?),
-                (None, Some(raw)) => {
-                    if raw.trim().is_empty() {
-                        None
-                    } else {
-                        Some(validate_transition_note(raw).map_err(map_api)?)
-                    }
-                }
-                _ => None,
-            };
-            Ok((None, note))
+            self.resolve_non_blocked_note(to)
         }
+    }
+
+    fn resolve_blocked_reason_and_note(&self) -> Result<(Option<String>, Option<String>), Refusal> {
+        let map_api = |e: org_proto::ApiError| refuse(e.code, e.message);
+        if self.params.reason.is_some() && self.params.blocked_reason.is_some() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                "cannot pass both `reason` and `blocked_reason`",
+            ));
+        }
+        let (raw_blocked, extra_note) = match (
+            self.params.blocked_reason.as_deref(),
+            self.params.reason.as_deref(),
+            self.params.note.as_deref(),
+        ) {
+            (Some(b), None, n) => (b, n),
+            (None, Some(r), n) => (r, n),
+            // `note` alone is accepted as an alias for `blocked_reason` on `blocked` transitions
+            // so CLI, Tess, and direct RPC stay aligned.
+            (None, None, Some(n)) => (n, None),
+            (None, None, None) => {
+                return Err(refuse(
+                    ErrorCode::InvalidRequest,
+                    "transitioning to `blocked` requires a non-empty `blocked_reason`",
+                ));
+            }
+            (Some(_), Some(_), _) => unreachable!("rejected above"),
+        };
+        let blocked_reason = validate_blocked_reason(raw_blocked).map_err(map_api)?;
+        let note = extra_note
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| validate_transition_note(s).map_err(map_api))
+            .transpose()?;
+        Ok((Some(blocked_reason), note))
+    }
+
+    fn resolve_non_blocked_note(
+        &self,
+        to: TaskStatus,
+    ) -> Result<(Option<String>, Option<String>), Refusal> {
+        let map_api = |e: org_proto::ApiError| refuse(e.code, e.message);
+        if self.params.blocked_reason.is_some() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "`blocked_reason` applies only when transitioning to `blocked`, not `{}`; use `reason` or `note` for other status changes",
+                    to.as_str()
+                ),
+            ));
+        }
+        if self.params.reason.is_some() && self.params.note.is_some() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                "cannot pass both `reason` and `note`",
+            ));
+        }
+        let note = match (self.params.reason.as_deref(), self.params.note.as_deref()) {
+            (Some(raw), None) => Some(validate_transition_note(raw).map_err(map_api)?),
+            (None, Some(raw)) => {
+                if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(validate_transition_note(raw).map_err(map_api)?)
+                }
+            }
+            _ => None,
+        };
+        Ok((None, note))
     }
 
     /// The closing summary given, trimmed: only a transition to `done` or `cancelled` sets one.

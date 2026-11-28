@@ -158,6 +158,7 @@ fn parse_blocking_filters(
     i: &Map<String, Value>,
     status: Option<TaskStatus>,
     status_scope: Option<TaskStatusScope>,
+    has_done_since: bool,
 ) -> Result<(bool, bool), Refusal> {
     let ready = is_set(i, "ready");
     let dependency_blocked = is_set(i, "dependency_blocked");
@@ -165,6 +166,12 @@ fn parse_blocking_filters(
         return Err(invalid(
             "--ready and --dependency-blocked cannot be given together.",
             "Use --ready for actionable tasks, or --dependency-blocked for tasks waiting on prerequisites.",
+        ));
+    }
+    if ready && has_done_since {
+        return Err(invalid(
+            "--ready cannot be combined with --done-since.",
+            "Omit --done-since when listing --ready tasks (ready tasks are never done).",
         ));
     }
     if ready && status_scope == Some(TaskStatusScope::Closed) {
@@ -193,7 +200,8 @@ fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refu
         status_scope,
         done_since,
     } = parse_status_and_scope(i)?;
-    let (ready, dependency_blocked) = parse_blocking_filters(i, status, status_scope)?;
+    let (ready, dependency_blocked) =
+        parse_blocking_filters(i, status, status_scope, done_since.is_some())?;
     let unassigned = is_set(i, "unassigned");
     if unassigned && i.contains_key("assignee_id") {
         return Err(invalid(

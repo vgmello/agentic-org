@@ -54,6 +54,9 @@ fn apply_blocking_filters(
         ));
     }
     if params.ready {
+        if params.done_since.is_some() {
+            return Err(invalid("`ready` cannot be combined with `done_since`"));
+        }
         if params.status_scope == Some(TaskStatusScope::Closed) {
             return Err(invalid(
                 "`ready` cannot be combined with `status_scope` closed",

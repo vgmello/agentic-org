@@ -181,6 +181,23 @@ fn list_query_refuses_conflicts_and_unknown_dependency_references() {
         }),
         ErrorCode::InvalidRequest
     );
+    assert_eq!(
+        refused(TasksListParams {
+            ready: true,
+            done_since: SINCE.map(str::to_owned),
+            ..TasksListParams::default()
+        }),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        refused(TasksListParams {
+            ready: true,
+            status_scope: Some(TaskStatusScope::Open),
+            done_since: SINCE.map(str::to_owned),
+            ..TasksListParams::default()
+        }),
+        ErrorCode::InvalidRequest
+    );
 
     let ready_q = list_query(
         &view,

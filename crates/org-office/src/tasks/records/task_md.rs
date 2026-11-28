@@ -462,7 +462,7 @@ fn read_blocking_fields(
     Ok((blocked_reason, blocked_since, waiting_on_owner))
 }
 
-fn validate_blocking_invariants(task: &TaskRecord) -> Result<(), RecordError> {
+fn validate_blocking_invariants(task: &mut TaskRecord) -> Result<(), RecordError> {
     if task.status != TaskStatus::Blocked {
         if task.blocked_reason.is_some() {
             return Err(RecordError::new(
@@ -484,10 +484,10 @@ fn validate_blocking_invariants(task: &TaskRecord) -> Result<(), RecordError> {
         }
         return Ok(());
     }
-    if let Some(ref reason) = task.blocked_reason {
-        if let Err(err) = validate_blocked_reason(reason) {
-            return Err(RecordError::new("blocked_reason", err.message));
-        }
+    if let Some(reason) = task.blocked_reason.take() {
+        let trimmed = validate_blocked_reason(&reason)
+            .map_err(|err| RecordError::new("blocked_reason", err.message))?;
+        task.blocked_reason = Some(trimmed);
     }
     Ok(())
 }
@@ -521,7 +521,7 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
     let reference_files = r.strings("reference_files")?;
     let modified_files = r.strings("modified_files")?;
     let (blocked_reason, blocked_since, waiting_on_owner) = read_blocking_fields(&mut r)?;
-    let task = TaskRecord {
+    let mut task = TaskRecord {
         team_id: stable(&mut r, "team_id")?,
         assigned_team_id: optional_stable(&mut r, "assigned_team_id")?,
         project_id: optional_stable(&mut r, "project_id")?,
@@ -562,7 +562,7 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
         let reason = "a projectless task has no feature or milestone";
         return Err(RecordError::new("project_id", reason));
     }
-    validate_blocking_invariants(&task)?;
+    validate_blocking_invariants(&mut task)?;
     let links = read_links(&mut r, &task.id)?;
     let attachments = read_attachments(
         &mut r,

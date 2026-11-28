@@ -179,10 +179,18 @@ pub(super) fn filter(scope: &str, query: &TaskListQuery) -> Result<Clause, Engin
 /// closed enum's own, never caller text.
 fn statuses(clause: &mut Clause, query: &TaskListQuery) -> Result<(), EngineError> {
     let set = query.statuses;
-    if set == TaskStatusSet::OPEN {
-        clause.and(OPEN);
-    } else if set.is_empty() {
+    if set.is_empty() {
         clause.and("0");
+    } else if !set.contains(TaskStatus::Done) && !set.contains(TaskStatus::Cancelled) {
+        // Any non-empty subset of open statuses emits the partial-index predicate verbatim
+        // (`status NOT IN ('done', 'cancelled')`), so SQLite uses `tasks_open_by_project` /
+        // `tasks_open_by_team` with zero `TEMP B-TREE` for `ready = true`,
+        // `dependency_blocked = true`, and narrow open status subsets.
+        clause.and(OPEN);
+        if set != TaskStatusSet::OPEN {
+            let names: Vec<String> = set.iter().map(|s| format!("'{}'", s.as_str())).collect();
+            clause.and(&format!("t.status IN ({})", names.join(", ")));
+        }
     } else if set != TaskStatusSet::ALL {
         let names: Vec<String> = set.iter().map(|s| format!("'{}'", s.as_str())).collect();
         clause.and(&format!("t.status IN ({})", names.join(", ")));

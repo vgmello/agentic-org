@@ -145,11 +145,20 @@ fn parse_bool_query(raw: &str) -> Result<bool, ApiReply> {
     }
 }
 
+fn claim_scalar<'a>(seen: &mut Vec<&'a str>, key: &'a str) -> Result<(), ApiReply> {
+    if seen.contains(&key) {
+        return Err(invalid());
+    }
+    seen.push(key);
+    Ok(())
+}
+
 fn parse_history_query(task: &str, query: Option<&str>) -> Result<TasksHistoryParams, ApiReply> {
     let mut params = TasksHistoryParams::new(task);
     let Some(q) = query.filter(|s| !s.is_empty()) else {
         return Ok(params);
     };
+    let mut seen = Vec::new();
     for pair in q.split('&') {
         let Some((k, raw_v)) = pair.split_once('=') else {
             return Err(invalid());
@@ -157,13 +166,17 @@ fn parse_history_query(task: &str, query: Option<&str>) -> Result<TasksHistoryPa
         let v = decode_query_value(raw_v)?;
         match k {
             "event_type" => {
+                claim_scalar(&mut seen, "event_type")?;
                 let trimmed = v.trim();
                 if trimmed.is_empty() {
                     return Err(invalid());
                 }
                 params.event_type = Some(trimmed.to_owned());
             }
-            "blocks_only" => params.blocks_only = parse_bool_query(&v)?,
+            "blocks_only" => {
+                claim_scalar(&mut seen, "blocks_only")?;
+                params.blocks_only = parse_bool_query(&v)?;
+            }
             _ => return Err(invalid()),
         }
     }
@@ -178,67 +191,121 @@ fn parse_history_query(task: &str, query: Option<&str>) -> Result<TasksHistoryPa
     Ok(params)
 }
 
+fn apply_list_query_param(
+    params: &mut TasksListParams,
+    seen: &mut Vec<&'static str>,
+    key: &str,
+    v: String,
+) -> Result<(), ApiReply> {
+    match key {
+        "label" => params.labels.push(v),
+        "labels" => {
+            for item in v.split(',').filter(|s| !s.trim().is_empty()) {
+                params.labels.push(item.trim().to_owned());
+            }
+        }
+        "type" => {
+            claim_scalar(seen, "type")?;
+            params.task_type = Some(v);
+        }
+        "status" => {
+            claim_scalar(seen, "status")?;
+            params.status = Some(TaskStatus::parse(&v).ok_or_else(invalid)?);
+        }
+        "team_id" => {
+            claim_scalar(seen, "team_id")?;
+            params.team_id = Some(v);
+        }
+        "assigned_team_id" => {
+            claim_scalar(seen, "assigned_team_id")?;
+            params.assigned_team_id = Some(v);
+        }
+        "assignee_id" => {
+            claim_scalar(seen, "assignee_id")?;
+            params.assignee_id = Some(v);
+        }
+        "project_id" => {
+            claim_scalar(seen, "project_id")?;
+            params.project_id = Some(v);
+        }
+        "label_match" => {
+            claim_scalar(seen, "label_match")?;
+            params.label_match = match v.as_str() {
+                "all" | "and" => LabelMatchMode::All,
+                "any" | "or" => LabelMatchMode::Any,
+                _ => return Err(invalid()),
+            };
+        }
+        "depends_on" => {
+            claim_scalar(seen, "depends_on")?;
+            params.depends_on = Some(v);
+        }
+        "dependent_of" => {
+            claim_scalar(seen, "dependent_of")?;
+            params.dependent_of = Some(v);
+        }
+        "q" | "query" => {
+            claim_scalar(seen, "query")?;
+            params.query = Some(v);
+        }
+        "sort" => {
+            claim_scalar(seen, "sort")?;
+            params.sort = match v.as_str() {
+                "order" => TaskSortMode::Order,
+                "number" => TaskSortMode::Number,
+                "updated_desc" => TaskSortMode::UpdatedDesc,
+                _ => return Err(invalid()),
+            };
+        }
+        "limit" => {
+            claim_scalar(seen, "limit")?;
+            params.limit = Some(v.parse::<u32>().map_err(|_| invalid())?);
+        }
+        "offset" => {
+            claim_scalar(seen, "offset")?;
+            params.offset = Some(v.parse::<u64>().map_err(|_| invalid())?);
+        }
+        // `TASK-105`: strict RFC 3339 validation matching `org-office`.
+        "status_scope" => {
+            claim_scalar(seen, "status_scope")?;
+            params.status_scope = Some(TaskStatusScope::parse(&v).ok_or_else(invalid)?);
+        }
+        "done_since" => {
+            claim_scalar(seen, "done_since")?;
+            let trimmed = v.trim();
+            if org_proto::parse_rfc3339_ms(trimmed).is_none() {
+                return Err(invalid());
+            }
+            params.done_since = Some(trimmed.to_owned());
+        }
+        // `TASK-84`: two-kind blocking filters (`ready` and `dependency_blocked`).
+        "ready" => {
+            claim_scalar(seen, "ready")?;
+            params.ready = parse_bool_query(&v)?;
+        }
+        "dependency_blocked" => {
+            claim_scalar(seen, "dependency_blocked")?;
+            params.dependency_blocked = parse_bool_query(&v)?;
+        }
+        _ => return Err(invalid()),
+    }
+    Ok(())
+}
+
 fn parse_list_query(query: Option<&str>) -> Result<TasksListParams, ApiReply> {
     let mut params = TasksListParams::default();
     let Some(q) = query.filter(|s| !s.is_empty()) else {
         return Ok(params);
     };
+    let mut seen = Vec::new();
     for pair in q.split('&') {
         let Some((k, raw_v)) = pair.split_once('=') else {
             return Err(invalid());
         };
         let v = decode_query_value(raw_v)?;
-        match k {
-            "type" => params.task_type = Some(v),
-            "status" => params.status = Some(TaskStatus::parse(&v).ok_or_else(invalid)?),
-            "team_id" => params.team_id = Some(v),
-            "assigned_team_id" => params.assigned_team_id = Some(v),
-            "assignee_id" => params.assignee_id = Some(v),
-            "project_id" => params.project_id = Some(v),
-            "label" => params.labels.push(v),
-            "labels" => {
-                for item in v.split(',').filter(|s| !s.trim().is_empty()) {
-                    params.labels.push(item.trim().to_owned());
-                }
-            }
-            "label_match" => {
-                params.label_match = match v.as_str() {
-                    "all" | "and" => LabelMatchMode::All,
-                    "any" | "or" => LabelMatchMode::Any,
-                    _ => return Err(invalid()),
-                };
-            }
-            "depends_on" => params.depends_on = Some(v),
-            "dependent_of" => params.dependent_of = Some(v),
-            "q" | "query" => params.query = Some(v),
-            "sort" => {
-                params.sort = match v.as_str() {
-                    "order" => TaskSortMode::Order,
-                    "number" => TaskSortMode::Number,
-                    "updated_desc" => TaskSortMode::UpdatedDesc,
-                    _ => return Err(invalid()),
-                };
-            }
-            "limit" => params.limit = Some(v.parse::<u32>().map_err(|_| invalid())?),
-            "offset" => params.offset = Some(v.parse::<u64>().map_err(|_| invalid())?),
-            // `TASK-105`: strict RFC 3339 validation matching `org-office`.
-            "status_scope" => {
-                params.status_scope = Some(TaskStatusScope::parse(&v).ok_or_else(invalid)?);
-            }
-            "done_since" => {
-                let trimmed = v.trim();
-                if org_proto::parse_rfc3339_ms(trimmed).is_none() {
-                    return Err(invalid());
-                }
-                params.done_since = Some(trimmed.to_owned());
-            }
-            // `TASK-84`: two-kind blocking filters (`ready` and `dependency_blocked`).
-            "ready" => params.ready = parse_bool_query(&v)?,
-            "dependency_blocked" => params.dependency_blocked = parse_bool_query(&v)?,
-            _ => return Err(invalid()),
-        }
+        apply_list_query_param(&mut params, &mut seen, k, v)?;
     }
-    if params.ready && params.dependency_blocked {
+    if params.ready && (params.dependency_blocked || params.done_since.is_some()) {
         return Err(invalid());
     }
     Ok(params)
@@ -249,11 +316,13 @@ fn parse_labels_query(query: Option<&str>) -> Result<TasksLabelsParams, ApiReply
     let Some(q) = query.filter(|s| !s.is_empty()) else {
         return Ok(params);
     };
+    let mut seen = Vec::new();
     for pair in q.split('&') {
         let Some((k, raw_v)) = pair.split_once('=') else {
             return Err(invalid());
         };
         if matches!(k, "q" | "query") {
+            claim_scalar(&mut seen, "query")?;
             params.query = Some(decode_query_value(raw_v)?);
         } else {
             return Err(invalid());

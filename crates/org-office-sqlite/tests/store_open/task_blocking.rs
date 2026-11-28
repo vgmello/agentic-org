@@ -366,7 +366,16 @@ fn task_84_two_kind_blocking_dual_engine_and_delete_rebuild() {
             ErrorCode::TooLarge
         );
 
-        // Refuses `blocked_reason` and `waiting_on_owner: Some(true)` on non-blocked transitions.
+        // Refuses `blocked_reason`, `waiting_on_owner: Some(true|false)`, whitespace-only `reason`
+        // on non-blocked transitions, and whitespace-only `note` used alone as blocked reason.
+        let mut p_empty_note_block =
+            h.tr_params(&t2.key, t2_unblocked.revision, TaskStatus::Blocked);
+        p_empty_note_block.note = Some("  \t\n ".into());
+        assert_eq!(
+            h.transition(p_empty_note_block).unwrap_err().code,
+            ErrorCode::InvalidRequest
+        );
+
         let mut p_bad_nonblock =
             h.tr_params(&t2.key, t2_unblocked.revision, TaskStatus::InProgress);
         p_bad_nonblock.blocked_reason = Some("wrong status".into());
@@ -375,10 +384,22 @@ fn task_84_two_kind_blocking_dual_engine_and_delete_rebuild() {
             ErrorCode::InvalidRequest
         );
 
-        let mut p_bad_wait = h.tr_params(&t2.key, t2_unblocked.revision, TaskStatus::InProgress);
-        p_bad_wait.waiting_on_owner = Some(true);
+        for bad_wait in [true, false] {
+            let mut p_bad_wait =
+                h.tr_params(&t2.key, t2_unblocked.revision, TaskStatus::InProgress);
+            p_bad_wait.waiting_on_owner = Some(bad_wait);
+            assert_eq!(
+                h.transition(p_bad_wait).unwrap_err().code,
+                ErrorCode::InvalidRequest,
+                "waiting_on_owner={bad_wait} must fail closed on non-blocked ({engine:?})"
+            );
+        }
+
+        let mut p_blank_reason =
+            h.tr_params(&t2.key, t2_unblocked.revision, TaskStatus::InProgress);
+        p_blank_reason.reason = Some("   \t ".into());
         assert_eq!(
-            h.transition(p_bad_wait).unwrap_err().code,
+            h.transition(p_blank_reason).unwrap_err().code,
             ErrorCode::InvalidRequest
         );
 
@@ -547,13 +568,17 @@ fn task_84_two_kind_blocking_dual_engine_and_delete_rebuild() {
         });
         assert_eq!(status_only.len(), 4, "{engine:?}");
 
-        // Re-blocking starts a fresh `blocked_since` at `t4` (`t4 != t0`).
+        // Re-blocking via `note` alias starts a fresh `blocked_since` at `t4` (`t4 != t0`).
         let t4_ms = h.clock.advance_ms(300_000);
         let t4_iso = format_rfc3339_ms(t4_ms).expect("rfc3339");
         assert_ne!(t4_iso, t0_iso);
         let mut p_reblock = h.tr_params(&t2.key, unblocked.revision, TaskStatus::Blocked);
-        p_reblock.reason = Some("New external dependency".into());
-        let reblocked = h.transition(p_reblock).expect("reblock");
+        p_reblock.note = Some("  New external dependency  ".into());
+        let reblocked = h.transition(p_reblock).expect("reblock via note alias");
+        assert_eq!(
+            reblocked.blocked_reason.as_deref(),
+            Some("New external dependency")
+        );
         assert_eq!(reblocked.blocked_since.as_deref(), Some(t4_iso.as_str()));
         assert!(!reblocked.waiting_on_owner);
     }

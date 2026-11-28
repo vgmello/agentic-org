@@ -264,22 +264,9 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
     ))
 }
 
-pub(super) fn write_task_transition<T: OfficeTransport + ?Sized>(
-    transport: &mut T,
-    request: &Request,
-) -> Result<Answer, Refusal> {
-    let i = &request.input;
-    let status_str = require_str(i, "status")?;
-    let status = TaskStatus::parse(status_str).ok_or_else(|| {
-        Refusal::new(
-            ErrorCode::InvalidRequest,
-            format!("invalid status `{status_str}`"),
-            "Use todo, in_progress, blocked, cancelled, or done.",
-        )
-    })?;
-    let reason_flag = opt_string(i, "reason");
-    let blocked_reason_flag = opt_string(i, "blocked_reason");
-    let note_flag = opt_string(i, "note");
+fn parse_waiting_on(
+    i: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<bool>, Refusal> {
     let waiting_on_enum = opt_string(i, "waiting_on");
     let waiting_on_bool = i
         .get("waiting_on_owner")
@@ -289,19 +276,28 @@ pub(super) fn write_task_transition<T: OfficeTransport + ?Sized>(
         "--waiting-on",
         "--waiting-on-owner",
     )?;
-    let waiting_on_owner = match waiting_on_enum.as_deref() {
-        Some("owner") => Some(true),
-        Some("none") => Some(false),
-        Some(other) => {
-            return Err(Refusal::new(
-                ErrorCode::InvalidRequest,
-                format!("invalid --waiting-on `{other}`"),
-                "Use `--waiting-on owner` or `--waiting-on none`.",
-            ));
-        }
-        None => waiting_on_bool,
-    };
-    let (blocked_reason, note) = if status == TaskStatus::Blocked {
+    match waiting_on_enum.as_deref() {
+        Some("owner") => Ok(Some(true)),
+        Some("none") => Ok(Some(false)),
+        Some(other) => Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("invalid --waiting-on `{other}`"),
+            "Use `--waiting-on owner` or `--waiting-on none`.",
+        )),
+        None => Ok(waiting_on_bool),
+    }
+}
+
+fn resolve_transition_reasons(
+    status: TaskStatus,
+    status_str: &str,
+    i: &serde_json::Map<String, serde_json::Value>,
+    waiting_on_owner: Option<bool>,
+) -> Result<(Option<String>, Option<String>), Refusal> {
+    let reason_flag = opt_string(i, "reason");
+    let blocked_reason_flag = opt_string(i, "blocked_reason");
+    let note_flag = opt_string(i, "note");
+    if status == TaskStatus::Blocked {
         reject_pair(
             reason_flag.is_some() && blocked_reason_flag.is_some(),
             "--reason",
@@ -326,33 +322,57 @@ pub(super) fn write_task_transition<T: OfficeTransport + ?Sized>(
                 "Pass `--reason <text>` (1..=1000 chars) explaining what blocks this task.",
             ));
         }
-        (effective_blocked, extra_note)
-    } else {
-        if blocked_reason_flag.is_some() {
-            return Err(Refusal::new(
-                ErrorCode::InvalidRequest,
-                format!(
-                    "`--blocked-reason` is only allowed when transitioning to `blocked`, not `{status_str}`."
-                ),
-                "Use `--reason <text>` (or `--note <text>`) for an optional note on non-blocked transitions.",
-            ));
-        }
-        if waiting_on_owner.is_some() {
-            return Err(Refusal::new(
-                ErrorCode::InvalidRequest,
-                format!(
-                    "`--waiting-on` / `--waiting-on-owner` is only allowed when transitioning to `blocked`, not `{status_str}`."
-                ),
-                "Omit `--waiting-on` / `--waiting-on-owner` when leaving `blocked` (it clears automatically).",
-            ));
-        }
-        reject_pair(
-            reason_flag.is_some() && note_flag.is_some(),
-            "--reason",
-            "--note",
-        )?;
-        (None, reason_flag.or(note_flag))
-    };
+        return Ok((effective_blocked, extra_note));
+    }
+    if blocked_reason_flag.is_some() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "`--blocked-reason` is only allowed when transitioning to `blocked`, not `{status_str}`."
+            ),
+            "Use `--reason <text>` (or `--note <text>`) for an optional note on non-blocked transitions.",
+        ));
+    }
+    if waiting_on_owner.is_some() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "`--waiting-on` / `--waiting-on-owner` is only allowed when transitioning to `blocked`, not `{status_str}`."
+            ),
+            "Omit `--waiting-on` / `--waiting-on-owner` when leaving `blocked` (it clears automatically).",
+        ));
+    }
+    reject_pair(
+        reason_flag.is_some() && note_flag.is_some(),
+        "--reason",
+        "--note",
+    )?;
+    if reason_flag.as_deref().is_some_and(|s| s.trim().is_empty()) {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`--reason` cannot be empty.",
+            "Pass a non-empty reason or omit `--reason` on non-blocked transitions.",
+        ));
+    }
+    Ok((None, reason_flag.or(note_flag)))
+}
+
+pub(super) fn write_task_transition<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let i = &request.input;
+    let status_str = require_str(i, "status")?;
+    let status = TaskStatus::parse(status_str).ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("invalid status `{status_str}`"),
+            "Use todo, in_progress, blocked, cancelled, or done.",
+        )
+    })?;
+    let waiting_on_owner = parse_waiting_on(i)?;
+    let (blocked_reason, note) =
+        resolve_transition_reasons(status, status_str, i, waiting_on_owner)?;
     let params = TasksTransitionParams {
         command_id: cmd_id(request)?,
         task: require_str(i, "task")?.to_owned(),

@@ -382,6 +382,25 @@ fn task_105_ac4_constant_bounded_sql_statement_count_across_10_100_500_tasks() {
     );
 }
 
+fn assert_partial_open_plan(
+    engine: &SqliteEngine,
+    label: &str,
+    expected_index: &str,
+    query: &TaskListQuery,
+) {
+    let plan = engine
+        .explain_task_list_plan(query)
+        .unwrap_or_else(|e| panic!("explain {label}: {e:?}"));
+    assert!(
+        plan.contains(expected_index),
+        "{label}: expected {expected_index} partial index, got: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE"),
+        "{label}: unexpected TEMP B-TREE in plan: {plan}"
+    );
+}
+
 #[test]
 fn task_105_ac4_sub_5ms_filtered_latency_at_2200_tasks_partial_index_and_wal_checkpoint() {
     let (engine, _dir) = open_bench_sqlite();
@@ -389,40 +408,43 @@ fn task_105_ac4_sub_5ms_filtered_latency_at_2200_tasks_partial_index_and_wal_che
     // (~40 open tasks per project, ~50 open tasks per team).
     seed_realistic_org(&engine, 2_200, 200);
 
-    // 1. Verify partial open-task indexes are used with zero TEMP B-TREE.
-    let proj_plan = engine
-        .explain_task_list_plan(&TaskListQuery {
-            statuses: TaskStatusSet::OPEN,
-            project_id: Some(bench_id(3, 1).as_str().to_owned()),
-            limit: Some(25),
-            ..TaskListQuery::default()
-        })
-        .expect("explain project plan");
-    assert!(
-        proj_plan.contains("tasks_open_by_project"),
-        "expected tasks_open_by_project partial index: {proj_plan}"
-    );
-    assert!(
-        !proj_plan.contains("TEMP B-TREE"),
-        "unexpected TEMP B-TREE in project plan: {proj_plan}"
-    );
-
-    let team_plan = engine
-        .explain_task_list_plan(&TaskListQuery {
-            statuses: TaskStatusSet::OPEN,
-            team_id: Some(bench_id(2, 1).as_str().to_owned()),
-            limit: Some(25),
-            ..TaskListQuery::default()
-        })
-        .expect("explain team plan");
-    assert!(
-        team_plan.contains("tasks_open_by_team"),
-        "expected tasks_open_by_team partial index: {team_plan}"
-    );
-    assert!(
-        !team_plan.contains("TEMP B-TREE"),
-        "unexpected TEMP B-TREE in team plan: {team_plan}"
-    );
+    // 1. Verify partial open-task indexes are used with zero TEMP B-TREE for open, ready,
+    //    dependency_blocked, and single open-status subsets across BOTH project and team scopes.
+    let project_id = bench_id(3, 1).as_str().to_owned();
+    let team_id = bench_id(2, 1).as_str().to_owned();
+    let ready_statuses = TaskStatusSet::OPEN.without(TaskStatus::Blocked);
+    let plan_cases = [
+        ("open", TaskStatusSet::OPEN, None),
+        ("ready", ready_statuses, Some(false)),
+        ("dependency_blocked", TaskStatusSet::OPEN, Some(true)),
+        ("todo subset", TaskStatusSet::only(TaskStatus::Todo), None),
+    ];
+    for (name, statuses, dependency_blocked) in plan_cases {
+        assert_partial_open_plan(
+            &engine,
+            &format!("project {name}"),
+            "tasks_open_by_project",
+            &TaskListQuery {
+                statuses,
+                project_id: Some(project_id.clone()),
+                dependency_blocked,
+                limit: Some(25),
+                ..TaskListQuery::default()
+            },
+        );
+        assert_partial_open_plan(
+            &engine,
+            &format!("team {name}"),
+            "tasks_open_by_team",
+            &TaskListQuery {
+                statuses,
+                team_id: Some(team_id.clone()),
+                dependency_blocked,
+                limit: Some(25),
+                ..TaskListQuery::default()
+            },
+        );
+    }
 
     // 2. Measure warm filtered `tasks.list` latency across 25 runs via fresh WAL snapshots.
     let cases = [

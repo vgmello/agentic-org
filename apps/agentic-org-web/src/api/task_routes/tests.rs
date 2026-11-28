@@ -85,6 +85,63 @@ fn task_list_query_parses_multi_labels_sort_and_rejects_unknown_params() {
     assert!(!is_reserved_task_action("T-A1"));
 }
 
+#[test]
+fn task_query_rejects_duplicate_scalars_and_ready_with_done_since() {
+    // Repeatable label filters remain repeatable.
+    let multi_label = parse_list_query(Some("label=a&label=b&labels=c,d&labels=e"))
+        .ok()
+        .expect("repeatable labels allowed");
+    assert_eq!(multi_label.labels, vec!["a", "b", "c", "d", "e"]);
+
+    // Duplicate scalar query parameters fail closed with 400.
+    for dup in [
+        "ready=true&ready=false",
+        "dependency_blocked=true&dependency_blocked=false",
+        "done_since=2026-11-20T00%3A00%3A00Z&done_since=2026-11-21T00%3A00%3A00Z",
+        "status=todo&status=blocked",
+        "status_scope=open&status_scope=all",
+        "sort=order&sort=number",
+        "limit=10&limit=20",
+        "offset=0&offset=5",
+        "type=bug&type=task",
+        "project_id=p1&project_id=p2",
+        "team_id=t1&team_id=t2",
+        "assignee_id=a1&assignee_id=a2",
+        "label_match=all&label_match=any",
+        "q=foo&q=bar",
+        "query=foo&query=bar",
+        "q=foo&query=bar",
+        "waiting_on_owner=true&waiting_on_owner=false",
+        "cursor=1&cursor=2",
+    ] {
+        let err = parse_list_query(Some(dup)).expect_err(dup);
+        assert_eq!(status_of(&err), StatusCode::BAD_REQUEST, "{dup}");
+    }
+
+    // Contradictory `ready=true` with `done_since` fails closed with 400; `ready=false` is fine.
+    let conflict = parse_list_query(Some("ready=true&done_since=2026-11-20T00%3A00%3A00Z"))
+        .expect_err("ready=true + done_since refused");
+    assert_eq!(status_of(&conflict), StatusCode::BAD_REQUEST);
+    let ok = parse_list_query(Some("ready=false&done_since=2026-11-20T00%3A00%3A00Z"))
+        .ok()
+        .expect("ready=false + done_since allowed");
+    assert!(!ok.ready);
+    assert_eq!(ok.done_since.as_deref(), Some("2026-11-20T00:00:00Z"));
+
+    // Duplicate scalars on history and labels routes also fail closed with 400.
+    for dup in [
+        "event_type=created&event_type=status_changed",
+        "blocks_only=true&blocks_only=false",
+    ] {
+        let err = parse_history_query("T-A1", Some(dup)).expect_err(dup);
+        assert_eq!(status_of(&err), StatusCode::BAD_REQUEST, "{dup}");
+    }
+    for dup in ["q=a&q=b", "query=a&query=b", "q=a&query=b"] {
+        let err = parse_labels_query(Some(dup)).expect_err(dup);
+        assert_eq!(status_of(&err), StatusCode::BAD_REQUEST, "{dup}");
+    }
+}
+
 fn org() -> String {
     "0193a5c0-0000-7000-8000-000000000001".to_owned()
 }
