@@ -11,11 +11,10 @@ use org_docs::delivery::records::{
     MilestoneRecord, NumberCounterRecord, ReleaseRecord, ScopedChangelogRecord,
 };
 use org_proto::tasks::TaskStatus;
-use org_proto::{ApiError, ErrorCode};
-use org_store::{Ack, Change, DurablePath, EngineError, Id, Refusal, Sha256, Timestamp};
+use org_store::{Ack, Change, DurablePath, EngineError, Id, Sha256, Timestamp};
 
 use crate::delivery::ports::DeliveryRead;
-use crate::organization::records::time_text;
+use crate::organization::records::{time_text, EmployeeStatus};
 use crate::project_docs::access::{authorize, Denied, DocsAccess};
 
 /// Adapts any [`DeliveryRead`] snapshot/tx to `org_docs::delivery::ops::DeliveryStoreView`.
@@ -29,66 +28,31 @@ fn map_err(e: EngineError) -> String {
     e.to_string()
 }
 
+macro_rules! fwd_id_read {
+    ($($method:ident -> $ret:ty;)*) => {$(
+        fn $method(&self, id: &str) -> Result<$ret, String> {
+            self.0.$method(&parse_id(id)?).map_err(map_err)
+        }
+    )*};
+}
+
 impl<R: DeliveryRead> DeliveryStoreView for StoreViewAdapter<'_, R> {
-    fn project_features(&self, project_id: &str) -> Result<Vec<FeatureRecord>, String> {
-        self.0
-            .project_features(&parse_id(project_id)?)
-            .map_err(map_err)
-    }
-    fn feature(&self, id: &str) -> Result<Option<FeatureRecord>, String> {
-        self.0.feature(&parse_id(id)?).map_err(map_err)
-    }
-    fn project_releases(&self, project_id: &str) -> Result<Vec<ReleaseRecord>, String> {
-        self.0
-            .project_releases(&parse_id(project_id)?)
-            .map_err(map_err)
-    }
-    fn release(&self, id: &str) -> Result<Option<ReleaseRecord>, String> {
-        self.0.release(&parse_id(id)?).map_err(map_err)
-    }
-    fn release_milestones(&self, release_id: &str) -> Result<Vec<MilestoneRecord>, String> {
-        self.0
-            .release_milestones(&parse_id(release_id)?)
-            .map_err(map_err)
-    }
-    fn milestone(&self, id: &str) -> Result<Option<MilestoneRecord>, String> {
-        self.0.milestone(&parse_id(id)?).map_err(map_err)
-    }
-    fn project_deployments(&self, project_id: &str) -> Result<Vec<DeploymentRecord>, String> {
-        self.0
-            .project_deployments(&parse_id(project_id)?)
-            .map_err(map_err)
-    }
-    fn deployment(&self, id: &str) -> Result<Option<DeploymentRecord>, String> {
-        self.0.deployment(&parse_id(id)?).map_err(map_err)
-    }
-    fn project_flags(&self, project_id: &str) -> Result<Vec<FeatureFlagRecord>, String> {
-        self.0
-            .project_flags(&parse_id(project_id)?)
-            .map_err(map_err)
-    }
-    fn used_flag_ids(&self, project_id: &str) -> Result<BTreeSet<String>, String> {
-        self.0
-            .used_flag_ids(&parse_id(project_id)?)
-            .map_err(map_err)
-    }
-    fn release_changelog(&self, release_id: &str) -> Result<Option<ScopedChangelogRecord>, String> {
-        self.0
-            .release_changelog(&parse_id(release_id)?)
-            .map_err(map_err)
-    }
-    fn deployment_changelog(
-        &self,
-        deployment_id: &str,
-    ) -> Result<Option<ScopedChangelogRecord>, String> {
-        self.0
-            .deployment_changelog(&parse_id(deployment_id)?)
-            .map_err(map_err)
-    }
-    fn project_links(&self, project_id: &str) -> Result<Vec<EntityLinkRecord>, String> {
-        self.0
-            .project_links(&parse_id(project_id)?)
-            .map_err(map_err)
+    fwd_id_read! {
+        project_features -> Vec<FeatureRecord>;
+        feature -> Option<FeatureRecord>;
+        project_releases -> Vec<ReleaseRecord>;
+        release -> Option<ReleaseRecord>;
+        release_milestones -> Vec<MilestoneRecord>;
+        project_milestones -> Vec<MilestoneRecord>;
+        milestone -> Option<MilestoneRecord>;
+        project_deployments -> Vec<DeploymentRecord>;
+        deployment -> Option<DeploymentRecord>;
+        project_flags -> Vec<FeatureFlagRecord>;
+        used_flag_ids -> BTreeSet<String>;
+        release_changelog -> Option<ScopedChangelogRecord>;
+        deployment_changelog -> Option<ScopedChangelogRecord>;
+        project_changelogs -> Vec<ScopedChangelogRecord>;
+        project_links -> Vec<EntityLinkRecord>;
     }
     fn counter(
         &self,
@@ -103,13 +67,20 @@ impl<R: DeliveryRead> DeliveryStoreView for StoreViewAdapter<'_, R> {
     fn employee_exists(&self, id: &str) -> Result<bool, String> {
         Ok(self.0.employee(&parse_id(id)?).map_err(map_err)?.is_some())
     }
+    fn employee_is_active(&self, id: &str) -> Result<bool, String> {
+        Ok(self
+            .0
+            .employee(&parse_id(id)?)
+            .map_err(map_err)?
+            .is_some_and(|e| e.status == EmployeeStatus::Active))
+    }
     fn repository_exists(&self, id: &str) -> Result<bool, String> {
         let rid = parse_id(id)?;
         Ok(self
             .0
             .repositories()
             .map_err(map_err)?
-            .into_iter()
+            .iter()
             .any(|r| r.id == rid))
     }
     fn project_tasks(&self, project_id: &str) -> Result<Vec<TaskSummary>, String> {
@@ -139,8 +110,7 @@ impl<R: DeliveryRead> DeliveryStoreView for StoreViewAdapter<'_, R> {
         kind: LinkEntityKind,
         id: &str,
     ) -> Result<bool, String> {
-        let pid = parse_id(project_id)?;
-        let eid = parse_id(id)?;
+        let (pid, eid) = (parse_id(project_id)?, parse_id(id)?);
         Ok(match kind {
             LinkEntityKind::Project => eid == pid,
             LinkEntityKind::Feature => self
@@ -169,40 +139,16 @@ impl<R: DeliveryRead> DeliveryStoreView for StoreViewAdapter<'_, R> {
                 .map_err(map_err)?
                 .is_some_and(|t| t.project_id.as_ref() == Some(&pid)),
             LinkEntityKind::Document => {
-                if self
-                    .0
+                self.0
                     .project_doc(&eid)
                     .map_err(map_err)?
                     .is_some_and(|d| d.project_id == pid)
-                {
-                    true
-                } else {
-                    let rel_hit = self
+                    || self
                         .0
-                        .project_releases(&pid)
+                        .project_changelogs(&pid)
                         .map_err(map_err)?
-                        .into_iter()
-                        .any(|r| {
-                            Id::parse(&r.id)
-                                .ok()
-                                .and_then(|rid| self.0.release_changelog(&rid).ok().flatten())
-                                .is_some_and(|c| c.id == id)
-                        });
-                    rel_hit
-                        || self
-                            .0
-                            .project_deployments(&pid)
-                            .map_err(map_err)?
-                            .into_iter()
-                            .any(|d| {
-                                Id::parse(&d.id)
-                                    .ok()
-                                    .and_then(|did| {
-                                        self.0.deployment_changelog(&did).ok().flatten()
-                                    })
-                                    .is_some_and(|c| c.id == id)
-                            })
-                }
+                        .iter()
+                        .any(|c| c.id == id)
             }
             LinkEntityKind::DevelopmentProcess => self
                 .0
@@ -284,30 +230,20 @@ pub fn run_write<R: DeliveryRead>(
     let mutation = f(&StoreViewAdapter(view), &ctx).map_err(map_op_err)?;
     let mut change = Change::new(Ack::Durable);
     for (p, bytes) in mutation.puts {
-        let dp = DurablePath::parse(&p).expect("validated delivery durable path");
+        let dp = DurablePath::parse(&p).map_err(|e| {
+            Denied::Storage(EngineError::new(format!(
+                "invalid delivery durable path `{p}`: {e}"
+            )))
+        })?;
         change = change.put(dp, bytes);
     }
     for p in mutation.removes {
-        let dp = DurablePath::parse(&p).expect("validated delivery durable path");
+        let dp = DurablePath::parse(&p).map_err(|e| {
+            Denied::Storage(EngineError::new(format!(
+                "invalid delivery durable path `{p}`: {e}"
+            )))
+        })?;
         change = change.remove(dp);
     }
     Ok(change.reply(mutation.reply))
-}
-
-/// Converts a [`Denied`] into an `org_store::Refusal`.
-pub fn refusal(denied: Denied) -> Refusal {
-    match denied {
-        Denied::Refused(error) => Refusal::rejected(serde_json::to_vec(&error).unwrap_or_default()),
-        Denied::Storage(error) => Refusal::from(error),
-    }
-}
-
-/// Decodes a rejected delivery receipt reply back into [`ApiError`].
-pub fn decode_rejection(bytes: &[u8]) -> ApiError {
-    serde_json::from_slice(bytes).unwrap_or_else(|_| {
-        ApiError::new(
-            ErrorCode::StorageError,
-            "delivery write was rejected without detail",
-        )
-    })
 }

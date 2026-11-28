@@ -11,6 +11,7 @@ use org_proto::delivery::{
 
 const CMD: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607109";
 const ID_A: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607101";
+const ID_B: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607102";
 
 #[test]
 fn query_parsers_validate_known_filters_and_reject_unknown_or_duplicate_keys() {
@@ -93,6 +94,29 @@ fn path_ids_win_over_body_and_command_id_is_required_uuid_v7() {
     assert_eq!(params.project, "core");
     assert_eq!(params.release_id, ID_A);
 
+    // Path release_id AND milestone_id win over body on PATCH .../releases/{rid}/milestones/{mid}.
+    let call = to_call(
+        DeliveryRoute::MilestonesUpdate(
+            pair,
+            "org".into(),
+            "core".into(),
+            ID_A.into(),
+            ID_B.into(),
+        ),
+        format!(
+            r#"{{"command_id":"{CMD}","project":"evil","release_id":"{ID_B}","milestone_id":"{ID_A}","expected_revision":1,"title":"Updated"}}"#
+        )
+        .as_bytes(),
+    )
+    .ok()
+    .unwrap();
+    let DeliveryCall::MilestonesUpdate(_, _, params) = call else {
+        panic!("expected MilestonesUpdate");
+    };
+    assert_eq!(params.project, "core");
+    assert_eq!(params.release_id.as_deref(), Some(ID_A));
+    assert_eq!(params.milestone_id, ID_B);
+
     // Invalid command_id and unknown fields are rejected before any office call.
     assert!(to_call(
         DeliveryRoute::FeaturesCreate(pair, "org".into(), "core".into()),
@@ -131,4 +155,48 @@ fn segment_validators_block_traversal_and_non_uuid_ids() {
     }
     assert!(valid_uuid(ID_A).is_ok());
     assert!(valid_uuid("F-1").is_err());
+}
+
+#[test]
+fn patch_milestone_route_binds_path_release_id_and_maps_office_not_found_to_404() {
+    use crate::api::doc_routes::map_office_failure;
+    use crate::ports::OfficeFailure;
+    use hyper::StatusCode;
+    use org_proto::{ApiError, ErrorCode};
+
+    let pair = CallerAuth::LocalAuthless;
+    let route = route_releases(
+        &[ID_A, "milestones", ID_B],
+        false,
+        false,
+        true,
+        false,
+        &|make| Ok(Route::Delivery(make(pair, "org".into(), "core".into())?)),
+    )
+    .ok()
+    .unwrap();
+    let Route::Delivery(route) = route else {
+        panic!("expected DeliveryRoute");
+    };
+    let call = to_call(
+        route,
+        format!(
+            r#"{{"command_id":"{CMD}","project":"evil","release_id":"{ID_B}","milestone_id":"{ID_A}","expected_revision":1,"title":"New"}}"#
+        )
+        .as_bytes(),
+    )
+    .ok()
+    .unwrap();
+    let DeliveryCall::MilestonesUpdate(_, _, params) = call else {
+        panic!("expected MilestonesUpdate");
+    };
+    assert_eq!(params.project, "core");
+    assert_eq!(params.release_id.as_deref(), Some(ID_A));
+    assert_eq!(params.milestone_id, ID_B);
+
+    let reply = map_office_failure(OfficeFailure::Refused(ApiError::new(
+        ErrorCode::NotFound,
+        "milestone not found",
+    )));
+    assert_eq!(reply.status(), StatusCode::NOT_FOUND);
 }

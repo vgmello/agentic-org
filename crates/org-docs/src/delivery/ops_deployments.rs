@@ -4,13 +4,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_proto::delivery::*;
-use org_proto::{parse_rfc3339_ms, ErrorCode};
+use org_proto::ErrorCode;
 
 use super::codecs::{encode_changelog, encode_deployment, encode_flag};
 use super::ops::{
     check_deployment_parent, check_revision, invalid, new_meta, parse_uuid, refused, reply,
-    rule_err, stor, touch_meta, validate_commits, validate_owner, CallerContext, DeliveryMutation,
-    DeliveryOpError, DeliveryStoreView,
+    resolve_changelog_owner, rule_err, stor, touch_meta, validate_commits, validate_owner,
+    CallerContext, DeliveryMutation, DeliveryOpError, DeliveryStoreView,
 };
 use super::paths::{deployment_changelog_path, deployment_path, flag_path};
 use super::records::{
@@ -18,9 +18,9 @@ use super::records::{
     FeatureFlagRecord, FlagStatus, ScopedChangelogRecord,
 };
 use super::rules::{
-    check_deployment_rollback_acyclic, check_used_flag_identity_unchanged,
-    validate_changelog_invariants, validate_deployment_record, validate_flag_record,
-    validate_flag_value, validate_rollout_rules,
+    canonicalize_opt_timestamp, check_deployment_rollback_acyclic,
+    check_used_flag_identity_unchanged, validate_changelog_invariants, validate_deployment_record,
+    validate_flag_record, validate_flag_value, validate_rollout_rules,
 };
 use super::wire::{
     changelog_wire, deployment_op_from_wire, deployment_status_from_wire, deployment_summary_wire,
@@ -82,6 +82,10 @@ pub fn decide_create_deployment<V: DeliveryStoreView>(
         &target,
     )?;
     let repository_commits = validate_commits(view, &params.repository_commits)?;
+    let started_at =
+        canonicalize_opt_timestamp("started_at", params.started_at.as_deref()).map_err(rule_err)?;
+    let finished_at = canonicalize_opt_timestamp("finished_at", params.finished_at.as_deref())
+        .map_err(rule_err)?;
     let rec = DeploymentRecord {
         id: view.derive_uuid_v7("delivery-deployment", &params.command_id, ctx.now_ms),
         project_id: ctx.project_id.to_owned(),
@@ -92,8 +96,8 @@ pub fn decide_create_deployment<V: DeliveryStoreView>(
         rollback_of_id,
         baseline_deployment_id,
         status,
-        started_at: params.started_at.clone(),
-        finished_at: params.finished_at.clone(),
+        started_at,
+        finished_at,
         external_url: params
             .external_url
             .as_deref()
@@ -138,10 +142,10 @@ pub fn decide_update_deployment<V: DeliveryStoreView>(
         rec.status = deployment_status_from_wire(s).map_err(rule_err)?;
     }
     if let Some(ref ts) = params.started_at {
-        rec.started_at = (!ts.trim().is_empty()).then(|| ts.trim().to_owned());
+        rec.started_at = canonicalize_opt_timestamp("started_at", Some(ts)).map_err(rule_err)?;
     }
     if let Some(ref ts) = params.finished_at {
-        rec.finished_at = (!ts.trim().is_empty()).then(|| ts.trim().to_owned());
+        rec.finished_at = canonicalize_opt_timestamp("finished_at", Some(ts)).map_err(rule_err)?;
     }
     if let Some(ref u) = params.external_url {
         rec.external_url = (!u.trim().is_empty()).then(|| u.trim().to_owned());
@@ -215,13 +219,15 @@ pub fn decide_set_deployment_changelog<V: DeliveryStoreView>(
         Some(s) => doc_status_from_wire(s).map_err(rule_err)?,
         None => existing.as_ref().map_or(DocStatus::Draft, |c| c.status),
     };
-    let mut owner_employee_id = match params.owner_employee_id.as_deref() {
-        Some(raw) => validate_owner(view, Some(raw))?,
-        None => existing.as_ref().and_then(|c| c.owner_employee_id.clone()),
-    };
-    if status == DocStatus::Current && owner_employee_id.is_none() {
-        owner_employee_id = Some(ctx.caller_id.to_owned());
-    }
+    let owner_employee_id = resolve_changelog_owner(
+        view,
+        ctx,
+        status,
+        params.owner_employee_id.as_deref(),
+        existing
+            .as_ref()
+            .and_then(|c| c.owner_employee_id.as_deref()),
+    )?;
     let title = params.title.trim().to_owned();
     validate_changelog_invariants(
         &title,
@@ -444,23 +450,20 @@ pub fn decide_set_deployment_flag_settings<V: DeliveryStoreView>(
         }
         validate_flag_value(flag.value_type, &item.value).map_err(rule_err)?;
         validate_rollout_rules(item.rollout_rules.as_ref()).map_err(rule_err)?;
-        if let Some(ref ts) = item.applied_at {
-            if parse_rfc3339_ms(ts).is_none() {
-                return Err(invalid("applied_at", "must be an RFC 3339 instant"));
-            }
-        }
+        let applied_at = canonicalize_opt_timestamp("applied_at", item.applied_at.as_deref())
+            .map_err(rule_err)?;
         wire_settings.push(DeploymentFlagSettingWire {
             flag_id: fid.clone(),
             flag_key: flag.key.clone(),
             value: item.value.clone(),
             rollout_rules: item.rollout_rules.clone(),
-            applied_at: item.applied_at.clone(),
+            applied_at: applied_at.clone(),
         });
         next_settings.push(DeploymentFlagSettingRecord {
             flag_id: fid,
             value: item.value.clone(),
             rollout_rules: item.rollout_rules.clone(),
-            applied_at: item.applied_at.clone(),
+            applied_at,
         });
     }
     dep.flag_settings = next_settings;

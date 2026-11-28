@@ -284,6 +284,8 @@ pub struct MilestonesUpdateParams {
     pub command_id: String,
     #[serde(default)]
     pub project: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
     #[serde(default)]
     pub milestone_id: String,
     pub expected_revision: u64,

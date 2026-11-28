@@ -209,6 +209,7 @@ fwd_read!(ProjectDocsRead for BoxedTx, BoxedSnapshot {
     project_doc(id: &Id) -> Option<ProjectDoc>;
     project_doc_media(project: &Id) -> Vec<DocMedia>;
     projects_with_docs() -> Vec<Id>;
+    document_link_ids(doc_id: &Id) -> Vec<String>;
 });
 
 fwd_read!(DeliveryRead for BoxedTx, BoxedSnapshot {
@@ -218,6 +219,7 @@ fwd_read!(DeliveryRead for BoxedTx, BoxedSnapshot {
     project_releases(project: &Id) -> Vec<ReleaseRecord>;
     release(id: &Id) -> Option<ReleaseRecord>;
     release_milestones(release: &Id) -> Vec<MilestoneRecord>;
+    project_milestones(project: &Id) -> Vec<MilestoneRecord>;
     milestone(id: &Id) -> Option<MilestoneRecord>;
     project_deployments(project: &Id) -> Vec<DeploymentRecord>;
     deployment(id: &Id) -> Option<DeploymentRecord>;
@@ -226,6 +228,7 @@ fwd_read!(DeliveryRead for BoxedTx, BoxedSnapshot {
     used_flag_ids(project: &Id) -> BTreeSet<String>;
     release_changelog(release: &Id) -> Option<ScopedChangelogRecord>;
     deployment_changelog(deployment: &Id) -> Option<ScopedChangelogRecord>;
+    project_changelogs(project: &Id) -> Vec<ScopedChangelogRecord>;
     project_links(project: &Id) -> Vec<EntityLinkRecord>;
     delivery_counter(scope_kind: &str, scope_id: &Id, entity_kind: &str) -> Option<NumberCounterRecord>;
     projects_with_delivery() -> Vec<Id>;

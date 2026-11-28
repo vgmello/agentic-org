@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use org_proto::{is_uuid_v7, parse_rfc3339_ms};
+use org_proto::{format_rfc3339_ms, is_uuid_v7, parse_rfc3339_ms};
 use serde_json::Value;
 
 use super::records::{
@@ -134,6 +134,25 @@ pub fn is_valid_detail_text(text: &str) -> bool {
         && !text
             .chars()
             .any(|c| c.is_control() || is_invisible_or_break(c))
+}
+
+/// Parses an RFC 3339 timestamp and canonicalizes it to UTC millisecond precision
+/// (`YYYY-MM-DDTHH:MM:SS.mmmZ`) so SQLite lexicographic CHECKs and UTC epoch-ms comparisons agree.
+pub fn canonicalize_timestamp(field: &str, raw: &str) -> Result<String, RuleError> {
+    let ms = parse_rfc3339_ms(raw.trim())
+        .ok_or_else(|| RuleError::new(field, "must be an RFC 3339 instant"))?;
+    format_rfc3339_ms(ms).ok_or_else(|| RuleError::new(field, "timestamp out of supported range"))
+}
+
+/// Canonicalizes an optional RFC 3339 timestamp (`None` or blank clears to `None`).
+pub fn canonicalize_opt_timestamp(
+    field: &str,
+    raw: Option<&str>,
+) -> Result<Option<String>, RuleError> {
+    let Some(trimmed) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    canonicalize_timestamp(field, trimmed).map(Some)
 }
 
 /// Validates a JSON value against a feature flag's `value_type` (`schema.sql` CHECK & triggers).
@@ -308,20 +327,22 @@ fn validate_deployment_timestamps(dep: &DeploymentRecord) -> Result<(), RuleErro
     let parse_opt = |ts: &Option<String>, field: &'static str| {
         ts.as_deref()
             .map(|s| {
-                parse_rfc3339_ms(s)
-                    .ok_or_else(|| RuleError::new(field, "must be an RFC 3339 instant"))
+                let canonical = canonicalize_timestamp(field, s)?;
+                let ms = parse_rfc3339_ms(&canonical)
+                    .ok_or_else(|| RuleError::new(field, "must be an RFC 3339 instant"))?;
+                Ok::<(u64, String), RuleError>((ms, canonical))
             })
             .transpose()
     };
-    let started_ms = parse_opt(&dep.started_at, "started_at")?;
-    let finished_ms = parse_opt(&dep.finished_at, "finished_at")?;
+    let started = parse_opt(&dep.started_at, "started_at")?;
+    let finished = parse_opt(&dep.finished_at, "finished_at")?;
     let timestamps_ok = match dep.status {
-        DeploymentStatus::Queued => started_ms.is_none() && finished_ms.is_none(),
-        DeploymentStatus::Running => started_ms.is_some() && finished_ms.is_none(),
+        DeploymentStatus::Queued => started.is_none() && finished.is_none(),
+        DeploymentStatus::Running => started.is_some() && finished.is_none(),
         DeploymentStatus::Succeeded | DeploymentStatus::Failed => {
-            started_ms.is_some() && finished_ms.is_some()
+            started.is_some() && finished.is_some()
         }
-        DeploymentStatus::Cancelled => finished_ms.is_some(),
+        DeploymentStatus::Cancelled => finished.is_some(),
     };
     if !timestamps_ok {
         return Err(RuleError::new(
@@ -329,8 +350,8 @@ fn validate_deployment_timestamps(dep: &DeploymentRecord) -> Result<(), RuleErro
             "started_at/finished_at do not match deployment status requirements",
         ));
     }
-    if let (Some(start), Some(finish)) = (started_ms, finished_ms) {
-        if finish < start {
+    if let (Some((start_ms, start_utc)), Some((finish_ms, finish_utc))) = (&started, &finished) {
+        if finish_ms < start_ms || finish_utc < start_utc {
             return Err(RuleError::new(
                 "finished_at",
                 "finished_at must not be earlier than started_at",

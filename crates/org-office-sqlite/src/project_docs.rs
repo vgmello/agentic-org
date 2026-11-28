@@ -126,6 +126,18 @@ macro_rules! sqlite_read {
                            WHERE organization_id = ?1 ORDER BY 1";
                 all(db, sql, vec![text(scope)], |row| id(row, 0))
             }
+
+            fn document_link_ids(&self, doc_id: &Id) -> Result<Vec<String>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = "SELECT id FROM links \
+                           WHERE organization_id = ?1 \
+                             AND ((source_kind = 'document' AND source_id = ?2) \
+                                  OR (target_kind = 'document' AND target_id = ?2)) \
+                           ORDER BY id";
+                all(db, sql, vec![text(scope), text(doc_id.as_str())], |row| {
+                    row.get(0)
+                })
+            }
         }
     )+};
 }

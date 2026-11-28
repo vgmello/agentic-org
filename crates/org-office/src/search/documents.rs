@@ -403,11 +403,13 @@ pub fn shared_doc<R: DeliveryRead>(
         SearchEntityType::Document => read.project_doc(&id)?.as_ref().map(project_doc),
         SearchEntityType::Feature => match read.feature(&id)? {
             Some(record) => {
-                let slug = Id::parse(&record.project_id)
-                    .ok()
-                    .and_then(|pid| read.project(&pid).ok().flatten())
-                    .map(|p| p.slug)
-                    .unwrap_or_default();
+                let pid = Id::parse(&record.project_id).map_err(|_| {
+                    EngineError::new(format!(
+                        "invalid feature project_id `{}`",
+                        record.project_id
+                    ))
+                })?;
+                let slug = read.project(&pid)?.map(|p| p.slug).unwrap_or_default();
                 Some(feature(&record, &slug))
             }
             None => None,

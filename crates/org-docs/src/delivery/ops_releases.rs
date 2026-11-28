@@ -8,8 +8,8 @@ use org_proto::ErrorCode;
 use super::codecs::{encode_changelog, encode_counter, encode_milestone, encode_release};
 use super::ops::{
     allocate_number, check_revision, invalid, milestone_progress_for, new_meta, parse_uuid,
-    refused, release_progress_for, reply, rule_err, stor, touch_meta, validate_commits,
-    validate_owner, CallerContext, DeliveryMutation, DeliveryOpError, DeliveryStoreView,
+    refused, release_progress_for, reply, resolve_changelog_owner, rule_err, stor, touch_meta,
+    validate_commits, CallerContext, DeliveryMutation, DeliveryOpError, DeliveryStoreView,
 };
 use super::paths::{
     milestone_counter_path, milestone_path, release_changelog_path, release_counter_path,
@@ -108,7 +108,14 @@ pub fn decide_create_release<V: DeliveryStoreView>(
     let repository_commits = validate_commits(view, &params.repository_commits)?;
     let feature_ids = validate_release_features(view, ctx.project_id, &params.feature_ids)?;
     let task_ids = validate_release_tasks(view, ctx.project_id, &params.task_ids)?;
-    let (number, counter) = allocate_number(view, "project", ctx.project_id, "release", &id)?;
+    let (number, counter) = allocate_number(
+        view,
+        "project",
+        ctx.project_id,
+        "release",
+        &id,
+        ctx.now_rfc3339,
+    )?;
     let rec = ReleaseRecord {
         id,
         project_id: ctx.project_id.to_owned(),
@@ -221,13 +228,15 @@ pub fn decide_set_release_changelog<V: DeliveryStoreView>(
         Some(s) => doc_status_from_wire(s).map_err(rule_err)?,
         None => existing.as_ref().map_or(DocStatus::Draft, |c| c.status),
     };
-    let mut owner_employee_id = match params.owner_employee_id.as_deref() {
-        Some(raw) => validate_owner(view, Some(raw))?,
-        None => existing.as_ref().and_then(|c| c.owner_employee_id.clone()),
-    };
-    if status == DocStatus::Current && owner_employee_id.is_none() {
-        owner_employee_id = Some(ctx.caller_id.to_owned());
-    }
+    let owner_employee_id = resolve_changelog_owner(
+        view,
+        ctx,
+        status,
+        params.owner_employee_id.as_deref(),
+        existing
+            .as_ref()
+            .and_then(|c| c.owner_employee_id.as_deref()),
+    )?;
     let title = params.title.trim().to_owned();
     validate_changelog_invariants(
         &title,
@@ -308,7 +317,8 @@ pub fn decide_create_milestone<V: DeliveryStoreView>(
         return Err(invalid("body_markdown", "invalid markdown body"));
     }
     let id = view.derive_uuid_v7("delivery-milestone", &params.command_id, ctx.now_ms);
-    let (number, counter) = allocate_number(view, "release", &rid, "milestone", &id)?;
+    let (number, counter) =
+        allocate_number(view, "release", &rid, "milestone", &id, ctx.now_rfc3339)?;
     let rec = MilestoneRecord {
         id,
         project_id: ctx.project_id.to_owned(),
@@ -345,10 +355,20 @@ pub fn decide_update_milestone<V: DeliveryStoreView>(
     params: &MilestonesUpdateParams,
 ) -> Result<DeliveryMutation, DeliveryOpError> {
     let mid = parse_uuid("milestone_id", &params.milestone_id)?;
+    let expected_rid = params
+        .release_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| parse_uuid("release_id", s))
+        .transpose()?;
     let Some(before) = stor(view.milestone(&mid))? else {
         return Err(refused(ErrorCode::NotFound, "milestone not found"));
     };
-    if before.project_id != ctx.project_id {
+    if before.project_id != ctx.project_id
+        || expected_rid
+            .as_deref()
+            .is_some_and(|rid| before.release_id != rid)
+    {
         return Err(refused(ErrorCode::NotFound, "milestone not found"));
     }
     check_revision(before.meta.revision, params.expected_revision)?;

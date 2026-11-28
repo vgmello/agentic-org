@@ -441,6 +441,17 @@ impl DeliveryWrite for SqliteTx {
                 whole(counter.next_number.saturating_sub(1))?,
             ],
         )?;
+        run(
+            db,
+            "DELETE FROM reference_allocations \
+             WHERE organization_id = ?1 AND scope_kind = ?2 AND scope_id = ?3 AND entity_kind = ?4",
+            vec![
+                text(scope),
+                text(scope_kind),
+                text(scope_id.as_str()),
+                text(entity_kind),
+            ],
+        )?;
         for a in &counter.allocations {
             put(
                 db,
@@ -454,7 +465,7 @@ impl DeliveryWrite for SqliteTx {
                     text(entity_kind),
                     whole(a.number)?,
                     text(&a.entity_id),
-                    text("1970-01-01T00:00:00Z"),
+                    text(&a.allocated_at),
                 ],
             )?;
         }

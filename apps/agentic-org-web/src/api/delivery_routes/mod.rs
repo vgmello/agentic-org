@@ -56,7 +56,7 @@ pub enum DeliveryRoute {
     ReleasesSetChangelog(CallerAuth, String, String, String),
     ReleasesSetFlagSettings(CallerAuth, String, String, String),
     MilestonesCreate(CallerAuth, String, String, String),
-    MilestonesUpdate(CallerAuth, String, String, String),
+    MilestonesUpdate(CallerAuth, String, String, String, String),
     DeploymentsList(CallerAuth, String, DeploymentsListParams),
     DeploymentsInspect(CallerAuth, String, String, String),
     DeploymentsCreate(CallerAuth, String, String),
@@ -190,8 +190,13 @@ fn route_releases(
             route(&|p, o, pr| Ok(DeliveryRoute::MilestonesCreate(p, o, pr, valid_uuid(id)?)))
         }
         [rid, "milestones", mid] if patch => route(&|p, o, pr| {
-            valid_uuid(rid)?;
-            Ok(DeliveryRoute::MilestonesUpdate(p, o, pr, valid_uuid(mid)?))
+            Ok(DeliveryRoute::MilestonesUpdate(
+                p,
+                o,
+                pr,
+                valid_uuid(rid)?,
+                valid_uuid(mid)?,
+            ))
         }),
         [] | [_] | [_, "changelog" | "flag-settings" | "milestones"] | [_, "milestones", _] => {
             Err(invalid())
@@ -391,10 +396,12 @@ fn to_call(route: DeliveryRoute, bytes: &[u8]) -> Result<DeliveryCall, ApiReply>
             (params.project, params.release_id) = (project, release_id);
             DeliveryCall::MilestonesCreate(p, o, params)
         }
-        DeliveryRoute::MilestonesUpdate(p, o, project, milestone_id) => {
+        DeliveryRoute::MilestonesUpdate(p, o, project, release_id, milestone_id) => {
             let mut params: MilestonesUpdateParams = decode_body(bytes)?;
             valid_command_id(&params.command_id)?;
-            (params.project, params.milestone_id) = (project, milestone_id);
+            params.project = project;
+            params.release_id = Some(release_id);
+            params.milestone_id = milestone_id;
             DeliveryCall::MilestonesUpdate(p, o, params)
         }
         DeliveryRoute::DeploymentsList(p, o, params) => {

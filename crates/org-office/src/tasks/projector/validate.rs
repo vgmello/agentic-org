@@ -138,6 +138,7 @@ pub(super) fn validate_tasks<Tx: TasksWrite>(tx: &Tx) -> Result<(), ProjectionEr
                 ));
             }
         }
+        validate_task_delivery_refs(tx, t, &path)?;
         let mut seen_repos = BTreeSet::new();
         for tr in &t.repositories {
             if !seen_repos.insert(&tr.repository_id) {
@@ -157,6 +158,47 @@ pub(super) fn validate_tasks<Tx: TasksWrite>(tx: &Tx) -> Result<(), ProjectionEr
     }
     validate_placement(tx, &folder_files, &folders)?;
     validate_dependency_dag(tx, &folders)
+}
+
+/// Validates task delivery references (`feature_id`, `milestone_id`, `details.affects_feature_id`)
+/// belong to the task's project and are absent on projectless team tasks.
+fn validate_task_delivery_refs<Tx: TasksWrite>(
+    tx: &Tx,
+    t: &TaskRecord,
+    path: &DurablePath,
+) -> Result<(), ProjectionError> {
+    let affects = t
+        .details
+        .as_ref()
+        .and_then(|d| d.affects_feature_id.as_ref());
+    let Some(proj_id) = &t.project_id else {
+        if t.feature_id.is_some() || t.milestone_id.is_some() || affects.is_some() {
+            return Err(refuse(
+                path,
+                "team task cannot set feature_id, milestone_id, or affects_feature_id without project_id",
+            ));
+        }
+        return Ok(());
+    };
+    if let Some(fid) = &t.feature_id {
+        if !tx.feature_in_project(proj_id, fid)? {
+            return Err(refuse(path, "task feature_id does not exist in project"));
+        }
+    }
+    if let Some(mid) = &t.milestone_id {
+        if !tx.milestone_in_project(proj_id, mid)? {
+            return Err(refuse(path, "task milestone_id does not exist in project"));
+        }
+    }
+    if let Some(afid) = affects {
+        if !tx.feature_in_project(proj_id, afid)? {
+            return Err(refuse(
+                path,
+                "task details.affects_feature_id does not exist in project",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Every task folder file (`folder_files`: the sources under [`TASK_FOLDER_ROOTS`]) is in

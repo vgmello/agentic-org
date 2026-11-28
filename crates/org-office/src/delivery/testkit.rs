@@ -127,6 +127,20 @@ macro_rules! memory_delivery_read {
                     out
                 })
             }
+            fn project_milestones(&self, project: &Id) -> Result<Vec<MilestoneRecord>, EngineError> {
+                read(self.table(), |t| {
+                    let mut out: Vec<_> = t.milestones.values()
+                        .filter(|m| m.project_id == project.as_str())
+                        .cloned().collect();
+                    out.sort_by(|a, b| {
+                        a.release_id
+                            .cmp(&b.release_id)
+                            .then(a.number.cmp(&b.number))
+                            .then(a.id.cmp(&b.id))
+                    });
+                    out
+                })
+            }
             fn milestone(&self, id: &Id) -> Result<Option<MilestoneRecord>, EngineError> {
                 read(self.table(), |t| t.milestones.get(id.as_str()).cloned())
             }
@@ -176,6 +190,17 @@ macro_rules! memory_delivery_read {
             fn deployment_changelog(&self, deployment: &Id) -> Result<Option<ScopedChangelogRecord>, EngineError> {
                 read(self.table(), |t| t.deployment_changelogs.get(deployment.as_str()).cloned())
             }
+            fn project_changelogs(&self, project: &Id) -> Result<Vec<ScopedChangelogRecord>, EngineError> {
+                read(self.table(), |t| {
+                    let mut out: Vec<_> = t.release_changelogs.values()
+                        .chain(t.deployment_changelogs.values())
+                        .filter(|c| c.project_id == project.as_str())
+                        .cloned()
+                        .collect();
+                    out.sort_by(|a, b| a.id.cmp(&b.id));
+                    out
+                })
+            }
             fn project_links(&self, project: &Id) -> Result<Vec<EntityLinkRecord>, EngineError> {
                 read(self.table(), |t| {
                     let mut out: Vec<_> = t.links.values()
@@ -200,8 +225,11 @@ macro_rules! memory_delivery_read {
                     let mut ids = BTreeSet::new();
                     for p in t.features.values().map(|x| &x.project_id)
                         .chain(t.releases.values().map(|x| &x.project_id))
+                        .chain(t.milestones.values().map(|x| &x.project_id))
                         .chain(t.deployments.values().map(|x| &x.project_id))
                         .chain(t.flags.values().map(|x| &x.project_id))
+                        .chain(t.release_changelogs.values().map(|x| &x.project_id))
+                        .chain(t.deployment_changelogs.values().map(|x| &x.project_id))
                         .chain(t.links.values().map(|x| &x.project_id))
                     {
                         if let Ok(id) = Id::parse(p) {

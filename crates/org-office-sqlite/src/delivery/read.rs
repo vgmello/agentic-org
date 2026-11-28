@@ -310,6 +310,14 @@ macro_rules! sqlite_delivery_read {
                 );
                 all(db, &sql, vec![text(scope), text(release.as_str())], milestone_row)
             }
+            fn project_milestones(&self, project: &Id) -> Result<Vec<MilestoneRecord>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = format!(
+                    "SELECT {MILESTONE_COLS}, {META} FROM milestones \
+                     WHERE organization_id = ?1 AND project_id = ?2 ORDER BY release_id, number, id"
+                );
+                all(db, &sql, vec![text(scope), text(project.as_str())], milestone_row)
+            }
             fn milestone(&self, mid: &Id) -> Result<Option<MilestoneRecord>, EngineError> {
                 let (db, scope) = self.view()?;
                 let sql = format!(
@@ -381,6 +389,16 @@ macro_rules! sqlite_delivery_read {
                 );
                 one(db, &sql, vec![text(scope), text(deployment.as_str())], changelog_row)
             }
+            fn project_changelogs(&self, project: &Id) -> Result<Vec<ScopedChangelogRecord>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = format!(
+                    "SELECT {CHANGELOG_COLS}, {META} FROM documents \
+                     WHERE organization_id = ?1 AND project_id = ?2 AND kind = 'changelog' \
+                       AND (release_id IS NOT NULL OR deployment_id IS NOT NULL) \
+                     ORDER BY id"
+                );
+                all(db, &sql, vec![text(scope), text(project.as_str())], changelog_row)
+            }
             fn project_links(&self, project: &Id) -> Result<Vec<EntityLinkRecord>, EngineError> {
                 let (db, scope) = self.view()?;
                 let p = project.as_str();
@@ -414,11 +432,17 @@ macro_rules! sqlite_delivery_read {
                 };
                 let allocations = all(
                     db,
-                    "SELECT number, entity_id FROM reference_allocations \
+                    "SELECT number, entity_id, allocated_at FROM reference_allocations \
                      WHERE organization_id = ?1 AND scope_kind = ?2 AND scope_id = ?3 AND entity_kind = ?4 \
                      ORDER BY number",
                     vec![text(scope), text(scope_kind), text(scope_id.as_str()), text(entity_kind)],
-                    |r| Ok(NumberAllocation { number: number(r, 0)?, entity_id: r.get(1)? }),
+                    |r| {
+                        Ok(NumberAllocation {
+                            number: number(r, 0)?,
+                            entity_id: r.get(1)?,
+                            allocated_at: r.get(2)?,
+                        })
+                    },
                 )?;
                 Ok(Some(NumberCounterRecord {
                     next_number: last_number.saturating_add(1),
@@ -431,8 +455,24 @@ macro_rules! sqlite_delivery_read {
                     db,
                     "SELECT project_id FROM features WHERE organization_id = ?1 \
                      UNION SELECT project_id FROM releases WHERE organization_id = ?1 \
+                     UNION SELECT project_id FROM milestones WHERE organization_id = ?1 \
                      UNION SELECT project_id FROM deployments WHERE organization_id = ?1 \
                      UNION SELECT project_id FROM feature_flags WHERE organization_id = ?1 \
+                     UNION SELECT project_id FROM documents \
+                           WHERE organization_id = ?1 AND kind = 'changelog' \
+                             AND (release_id IS NOT NULL OR deployment_id IS NOT NULL) \
+                     UNION SELECT l.source_id FROM links l \
+                           WHERE l.organization_id = ?1 AND l.kind <> 'depends_on' AND l.source_kind = 'project' \
+                     UNION SELECT f.project_id FROM links l JOIN features f \
+                           ON f.organization_id = l.organization_id AND f.id = l.source_id \
+                           WHERE l.organization_id = ?1 AND l.kind <> 'depends_on' AND l.source_kind = 'feature' \
+                     UNION SELECT t.project_id FROM links l JOIN tasks t \
+                           ON t.organization_id = l.organization_id AND t.id = l.source_id \
+                           WHERE l.organization_id = ?1 AND l.kind <> 'depends_on' AND l.source_kind = 'task' \
+                             AND t.project_id IS NOT NULL \
+                     UNION SELECT d.project_id FROM links l JOIN documents d \
+                           ON d.organization_id = l.organization_id AND d.id = l.source_id \
+                           WHERE l.organization_id = ?1 AND l.kind <> 'depends_on' AND l.source_kind = 'document' \
                      ORDER BY 1",
                     vec![text(scope)],
                     |r| id(r, 0),

@@ -12,8 +12,10 @@ use super::records::{
     ReleaseProgress, ReleaseRecord, RepoCommitRecord, ScopedChangelogRecord,
 };
 use super::rules::{
-    compute_milestone_progress, compute_release_progress, is_valid_commit_sha, RuleError,
+    canonicalize_timestamp, compute_milestone_progress, compute_release_progress,
+    is_valid_commit_sha, RuleError,
 };
+use crate::project_tree::DocStatus;
 
 /// Result of a pure delivery write decision, ready to commit into any store journal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +87,8 @@ pub trait DeliveryStoreView {
     fn release(&self, id: &str) -> Result<Option<ReleaseRecord>, String>;
     /// All milestones belonging to `release_id`.
     fn release_milestones(&self, release_id: &str) -> Result<Vec<MilestoneRecord>, String>;
+    /// All milestones belonging to `project_id` (including orphans for rebuild checks).
+    fn project_milestones(&self, project_id: &str) -> Result<Vec<MilestoneRecord>, String>;
     /// One milestone by UUIDv7.
     fn milestone(&self, id: &str) -> Result<Option<MilestoneRecord>, String>;
     /// All deployments in `project_id`.
@@ -102,6 +106,8 @@ pub trait DeliveryStoreView {
         &self,
         deployment_id: &str,
     ) -> Result<Option<ScopedChangelogRecord>, String>;
+    /// All scoped release/deployment changelogs in `project_id` (including orphans).
+    fn project_changelogs(&self, project_id: &str) -> Result<Vec<ScopedChangelogRecord>, String>;
     /// All Why links in `project_id`.
     fn project_links(&self, project_id: &str) -> Result<Vec<EntityLinkRecord>, String>;
     /// Scoped monotonic counter for `(scope_kind, scope_id, entity_kind)`.
@@ -111,8 +117,10 @@ pub trait DeliveryStoreView {
         scope_id: &str,
         entity_kind: &str,
     ) -> Result<Option<NumberCounterRecord>, String>;
-    /// Whether employee `id` exists.
+    /// Whether employee `id` exists (for historical attribution during rebuild).
     fn employee_exists(&self, id: &str) -> Result<bool, String>;
+    /// Whether employee `id` exists and has `active` status (for assigning new owners).
+    fn employee_is_active(&self, id: &str) -> Result<bool, String>;
     /// Whether repository `id` exists.
     fn repository_exists(&self, id: &str) -> Result<bool, String>;
     /// All tasks belonging to `project_id`.
@@ -205,7 +213,9 @@ pub fn allocate_number<V: DeliveryStoreView>(
     scope_id: &str,
     entity_kind: &str,
     entity_id: &str,
+    allocated_at: &str,
 ) -> Result<(u64, NumberCounterRecord), DeliveryOpError> {
+    let allocated_at = canonicalize_timestamp("allocated_at", allocated_at).map_err(rule_err)?;
     let mut counter =
         stor(view.counter(scope_kind, scope_id, entity_kind))?.unwrap_or(NumberCounterRecord {
             next_number: 1,
@@ -218,11 +228,12 @@ pub fn allocate_number<V: DeliveryStoreView>(
     counter.allocations.push(NumberAllocation {
         number: num,
         entity_id: entity_id.to_owned(),
+        allocated_at,
     });
     Ok((num, counter))
 }
 
-/// Validates an optional owner employee ID (empty clears).
+/// Validates an optional owner employee ID (empty clears; non-empty requires an active employee).
 pub fn validate_owner<V: DeliveryStoreView>(
     view: &V,
     raw: Option<&str>,
@@ -235,10 +246,41 @@ pub fn validate_owner<V: DeliveryStoreView>(
         return Ok(None);
     }
     let id = parse_uuid("owner_employee_id", trimmed)?;
-    if !stor(view.employee_exists(&id))? {
-        return Err(refused(ErrorCode::NotFound, "owner employee not found"));
+    if !stor(view.employee_is_active(&id))? {
+        return Err(invalid(
+            "owner_employee_id",
+            "must be an active employee of the organization",
+        ));
     }
     Ok(Some(id))
+}
+
+/// Resolves changelog owner: clearing `owner_employee_id` (`""`) on a `Current` changelog is
+/// refused (matching `docs.update`), while an omitted owner defaults to the caller on `Current`.
+pub fn resolve_changelog_owner<V: DeliveryStoreView>(
+    view: &V,
+    ctx: &CallerContext<'_>,
+    status: DocStatus,
+    param_owner: Option<&str>,
+    existing_owner: Option<&str>,
+) -> Result<Option<String>, DeliveryOpError> {
+    let mut owner = match param_owner {
+        Some(raw) => {
+            let parsed = validate_owner(view, Some(raw))?;
+            if parsed.is_none() && status == DocStatus::Current {
+                return Err(invalid(
+                    "owner_employee_id",
+                    "a current changelog keeps an owner: name another, or change its status first",
+                ));
+            }
+            parsed
+        }
+        None => existing_owner.map(str::to_owned),
+    };
+    if status == DocStatus::Current && owner.is_none() {
+        owner = Some(ctx.caller_id.to_owned());
+    }
+    Ok(owner)
 }
 
 /// Validates and deduplicates pinned repository commits.

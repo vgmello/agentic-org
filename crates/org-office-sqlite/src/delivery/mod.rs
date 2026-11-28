@@ -6,6 +6,8 @@
 //! `reference_allocations`, and `record_refs`).
 
 mod read;
+#[cfg(test)]
+mod tests;
 mod write;
 
 use org_docs::delivery::records::{ActorRef, RecordMeta};

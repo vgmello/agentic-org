@@ -1,9 +1,5 @@
-//! The office's `docs.*` calls (`TASK-55`, `L11`, `FC-180`): the project documentation tree
-//! read on one snapshot or written as one operation, each authorized for `caller` by the tree's
-//! own choke-point (`crate::project_docs::access`).
-//!
-//! HQ owns the tree: a satellite reads its replicated copy, and refuses every write with
-//! `unavailable` before anything is decided, so it never forks the tree it replicates.
+//! The office's `docs.*` calls (`TASK-55`, `L11`, `FC-180`): HQ owns writes; satellites serve
+//! reads from their replicated copy.
 
 use org_proto::docs::{
     DocsCreateParams, DocsDeleteParams, DocsDeleteResult, DocsIndexParams, DocsIndexResult,
@@ -23,7 +19,6 @@ use super::{storage, Office};
 
 type Answer<T> = Result<Result<T, ApiError>, OfficeError>;
 
-/// A documentation write on a satellite: HQ owns the tree, so it is edited there.
 fn hq_only() -> ApiError {
     ApiError::new(
         ErrorCode::Unavailable,
@@ -31,109 +26,37 @@ fn hq_only() -> ApiError {
     )
 }
 
+macro_rules! office_docs_reads {
+    ($($fn_name:ident($params:ty) -> $res:ty => $op:ident;)*) => {$(
+        pub fn $fn_name(&self, caller: &str, params: $params) -> Answer<$res> {
+            Ok(self.store.read($op { caller: caller.to_owned(), params }).map_err(storage)?.0)
+        }
+    )*};
+}
+
+macro_rules! office_docs_writes {
+    ($($fn_name:ident($params:ty) -> $res:ty => $op:ident;)*) => {$(
+        pub fn $fn_name(&self, caller: &str, params: $params) -> Answer<$res> {
+            if self.info.role == OfficeRole::Satellite {
+                return Ok(Err(hq_only()));
+            }
+            self.store.run($op { caller: caller.to_owned(), params }).map_err(storage)
+        }
+    )*};
+}
+
 impl Office {
-    /// A write's refusal on a satellite office.
-    fn docs_write_refusal(&self) -> Option<ApiError> {
-        (self.info.role == OfficeRole::Satellite).then(hq_only)
+    office_docs_reads! {
+        docs_index(DocsIndexParams) -> DocsIndexResult => DocsIndexRead;
+        docs_list(DocsListParams) -> DocsListResult => DocsListRead;
+        docs_inspect(DocsInspectParams) -> DocsInspectResult => DocsInspectRead;
     }
 
-    /// `docs.index`: the project's whole documentation tree.
-    pub fn docs_index(&self, caller: &str, params: DocsIndexParams) -> Answer<DocsIndexResult> {
-        let read = DocsIndexRead {
-            caller: caller.to_owned(),
-            params,
-        };
-        Ok(self.store.read(read).map_err(storage)?.0)
-    }
-
-    /// `docs.list`: documents filtered by section, kind and status, a page at a time.
-    pub fn docs_list(&self, caller: &str, params: DocsListParams) -> Answer<DocsListResult> {
-        let read = DocsListRead {
-            caller: caller.to_owned(),
-            params,
-        };
-        Ok(self.store.read(read).map_err(storage)?.0)
-    }
-
-    /// `docs.inspect`: one document with its body.
-    pub fn docs_inspect(
-        &self,
-        caller: &str,
-        params: DocsInspectParams,
-    ) -> Answer<DocsInspectResult> {
-        let read = DocsInspectRead {
-            caller: caller.to_owned(),
-            params,
-        };
-        Ok(self.store.read(read).map_err(storage)?.0)
-    }
-
-    /// `docs.create`.
-    pub fn docs_create(&self, caller: &str, params: DocsCreateParams) -> Answer<DocsWriteResult> {
-        if let Some(refusal) = self.docs_write_refusal() {
-            return Ok(Err(refusal));
-        }
-        self.store
-            .run(DocsCreateOp {
-                caller: caller.to_owned(),
-                params,
-            })
-            .map_err(storage)
-    }
-
-    /// `docs.update`.
-    pub fn docs_update(&self, caller: &str, params: DocsUpdateParams) -> Answer<DocsWriteResult> {
-        if let Some(refusal) = self.docs_write_refusal() {
-            return Ok(Err(refusal));
-        }
-        self.store
-            .run(DocsUpdateOp {
-                caller: caller.to_owned(),
-                params,
-            })
-            .map_err(storage)
-    }
-
-    /// `docs.move`.
-    pub fn docs_move(&self, caller: &str, params: DocsMoveParams) -> Answer<DocsWriteResult> {
-        if let Some(refusal) = self.docs_write_refusal() {
-            return Ok(Err(refusal));
-        }
-        self.store
-            .run(DocsMoveOp {
-                caller: caller.to_owned(),
-                params,
-            })
-            .map_err(storage)
-    }
-
-    /// `docs.delete`.
-    pub fn docs_delete(&self, caller: &str, params: DocsDeleteParams) -> Answer<DocsDeleteResult> {
-        if let Some(refusal) = self.docs_write_refusal() {
-            return Ok(Err(refusal));
-        }
-        self.store
-            .run(DocsDeleteOp {
-                caller: caller.to_owned(),
-                params,
-            })
-            .map_err(storage)
-    }
-
-    /// `docs.put_media`.
-    pub fn docs_put_media(
-        &self,
-        caller: &str,
-        params: DocsPutMediaParams,
-    ) -> Answer<DocsPutMediaResult> {
-        if let Some(refusal) = self.docs_write_refusal() {
-            return Ok(Err(refusal));
-        }
-        self.store
-            .run(DocsPutMediaOp {
-                caller: caller.to_owned(),
-                params,
-            })
-            .map_err(storage)
+    office_docs_writes! {
+        docs_create(DocsCreateParams) -> DocsWriteResult => DocsCreateOp;
+        docs_update(DocsUpdateParams) -> DocsWriteResult => DocsUpdateOp;
+        docs_move(DocsMoveParams) -> DocsWriteResult => DocsMoveOp;
+        docs_delete(DocsDeleteParams) -> DocsDeleteResult => DocsDeleteOp;
+        docs_put_media(DocsPutMediaParams) -> DocsPutMediaResult => DocsPutMediaOp;
     }
 }

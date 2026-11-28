@@ -12,8 +12,8 @@ use super::ops::{
 use super::paths::{feature_counter_path, feature_path, link_path};
 use super::records::{EntityLinkRecord, FeatureRecord, FeatureStatus, LinkKind};
 use super::rules::{
-    check_feature_replacement_acyclic, slug_from_title, validate_entity_link,
-    validate_feature_record,
+    canonicalize_opt_timestamp, check_feature_replacement_acyclic, slug_from_title,
+    validate_entity_link, validate_feature_record,
 };
 use super::wire::{
     entity_link_wire, feature_status_from_wire, feature_summary_wire, feature_work_type_from_wire,
@@ -55,7 +55,16 @@ pub fn decide_create_feature<V: DeliveryStoreView>(
             "local_slug: another feature in this project uses this slug",
         ));
     }
-    let (number, counter) = allocate_number(view, "project", ctx.project_id, "feature", &id)?;
+    let delivered_at = canonicalize_opt_timestamp("delivered_at", params.delivered_at.as_deref())
+        .map_err(rule_err)?;
+    let (number, counter) = allocate_number(
+        view,
+        "project",
+        ctx.project_id,
+        "feature",
+        &id,
+        ctx.now_rfc3339,
+    )?;
     let rec = FeatureRecord {
         id,
         project_id: ctx.project_id.to_owned(),
@@ -66,7 +75,7 @@ pub fn decide_create_feature<V: DeliveryStoreView>(
         title: params.title.trim().to_owned(),
         status,
         body_markdown: params.body_markdown.clone(),
-        delivered_at: params.delivered_at.clone(),
+        delivered_at,
         retired_reason: None,
         replaced_by_feature_id: None,
         meta: new_meta(ctx),
@@ -128,7 +137,8 @@ pub fn decide_update_feature<V: DeliveryStoreView>(
         rec.body_markdown = body.clone();
     }
     if let Some(ref ts) = params.delivered_at {
-        rec.delivered_at = (!ts.trim().is_empty()).then(|| ts.trim().to_owned());
+        rec.delivered_at =
+            canonicalize_opt_timestamp("delivered_at", Some(ts)).map_err(rule_err)?;
     }
     if let Some(ref reason) = params.retired_reason {
         rec.retired_reason = (!reason.trim().is_empty()).then(|| reason.trim().to_owned());

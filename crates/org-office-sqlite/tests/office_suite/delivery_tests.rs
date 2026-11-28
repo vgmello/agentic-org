@@ -593,6 +593,7 @@ fn phase_release_and_milestone(fx: &Fx, f2_id: &str, impl_task: &str) -> String 
         MilestonesUpdateParams {
             command_id: next_uuid(),
             project: p.clone(),
+            release_id: Some(r1.id.clone()),
             milestone_id: m1.id.clone(),
             expected_revision: 1,
             title: Some("GA Cut Final".into()),
@@ -1459,3 +1460,6 @@ fn knowledge_library_search_enforces_project_visibility_on_both_engines_and_rebu
         fx.office.close().unwrap();
     }
 }
+
+#[path = "delivery_hardening_tests.rs"]
+mod hardening;

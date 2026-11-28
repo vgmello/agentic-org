@@ -27,7 +27,11 @@ pub mod task_ops;
 #[cfg(test)]
 mod tests;
 
-use org_store::{Store, StoreError};
+use org_proto::{ApiError, ErrorCode};
+use org_store::{
+    Actor, Change, Id, Operation, Outcome, Refusal, Sha256, Store, StoreError, UnitOfWork,
+};
+use serde::{de::DeserializeOwned, Serialize};
 
 #[cfg(any(test, feature = "testkit"))]
 pub use companions::{
@@ -114,4 +118,55 @@ pub trait ReadOp {
         self,
         snapshot: &S,
     ) -> Result<Self::Out, StoreError>;
+}
+
+pub(super) fn build_operation<P: Serialize>(
+    kind: &'static str,
+    command_id: &str,
+    caller: &str,
+    params: &P,
+) -> Result<Operation, ApiError> {
+    let id = org_proto::is_uuid_v7(command_id)
+        .then(|| Id::parse(command_id).ok())
+        .flatten()
+        .ok_or_else(|| {
+            ApiError::new(ErrorCode::InvalidRequest, "command_id: a lowercase UUIDv7")
+        })?;
+    let fields = serde_json::to_vec(params).expect("operation params encode");
+    Ok(Operation {
+        id,
+        kind,
+        actor: Id::parse(caller).map_or(Actor::System, Actor::Employee),
+        fingerprint: Sha256::of_parts(&[kind.as_bytes(), b"\0", &fields]),
+    })
+}
+
+pub(super) fn submit_api_op<E, T, F>(
+    store: &Store<E>,
+    op: Operation,
+    label: &str,
+    decode_err: fn(&[u8]) -> ApiError,
+    decide: F,
+) -> Result<Result<T, ApiError>, StoreError>
+where
+    E: OfficeEngine,
+    T: DeserializeOwned,
+    F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
+{
+    let reply = match store.submit(Some(op), false, decide) {
+        Ok(reply) => reply,
+        Err(StoreError::Conflict) => {
+            return Ok(Err(ApiError::new(
+                ErrorCode::OperationReused,
+                "command_id reused with a different request",
+            )))
+        }
+        Err(error) => return Err(error),
+    };
+    if reply.outcome == Outcome::Rejected {
+        return Ok(Err(decode_err(&reply.bytes)));
+    }
+    serde_json::from_slice(&reply.bytes)
+        .map(Ok)
+        .map_err(|e| StoreError::Invalid(format!("corrupt {label} reply: {e}")))
 }

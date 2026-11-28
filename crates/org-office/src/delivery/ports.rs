@@ -20,6 +20,7 @@ pub trait DeliveryRead: TasksRead + ProjectDocsRead {
     fn project_releases(&self, project: &Id) -> Result<Vec<ReleaseRecord>, EngineError>;
     fn release(&self, id: &Id) -> Result<Option<ReleaseRecord>, EngineError>;
     fn release_milestones(&self, release: &Id) -> Result<Vec<MilestoneRecord>, EngineError>;
+    fn project_milestones(&self, project: &Id) -> Result<Vec<MilestoneRecord>, EngineError>;
     fn milestone(&self, id: &Id) -> Result<Option<MilestoneRecord>, EngineError>;
     fn project_deployments(&self, project: &Id) -> Result<Vec<DeploymentRecord>, EngineError>;
     fn deployment(&self, id: &Id) -> Result<Option<DeploymentRecord>, EngineError>;
@@ -33,6 +34,7 @@ pub trait DeliveryRead: TasksRead + ProjectDocsRead {
         &self,
         deployment: &Id,
     ) -> Result<Option<ScopedChangelogRecord>, EngineError>;
+    fn project_changelogs(&self, project: &Id) -> Result<Vec<ScopedChangelogRecord>, EngineError>;
     fn project_links(&self, project: &Id) -> Result<Vec<EntityLinkRecord>, EngineError>;
     fn delivery_counter(
         &self,

@@ -588,6 +588,8 @@ pub struct NumberAllocation {
     pub number: u64,
     /// Entity UUIDv7 holding `number`.
     pub entity_id: String,
+    /// Canonical RFC 3339 UTC timestamp when this number was allocated.
+    pub allocated_at: String,
 }
 
 /// Durable counter + allocation history for `F-<n>`, `R-<n>`, or `M-<n>` numbering.

@@ -1,25 +1,18 @@
-//! Durable records of the documentation tree and their codecs: a document is Markdown with YAML
-//! front matter (read through `org_docs::SourceDoc`, bounded), a media asset's metadata is a
-//! YAML sidecar beside its bytes. A document's path is where its file is, never a field: a move
-//! changes the location only.
+//! Durable records of the documentation tree and thin `Id`/`Meta` adapters over
+//! `org_docs::project_tree::codecs`.
 
+pub use org_docs::project_tree::codecs::MEDIA_RECORD_MAX_BYTES;
+use org_docs::project_tree::codecs::{
+    decode_doc_media, decode_project_doc, encode_doc_media, encode_project_doc, DocActor, DocMeta,
+    RawDocEntry, RawDocMedia, RawProjectDoc,
+};
 pub use org_docs::project_tree::{
     is_body, is_doc_kind, is_sha256_hex, is_summary, media_type_of, DocStatus, MediaKind,
 };
-use org_proto::docs::DOC_MEDIA_MAX_BYTES;
 use org_store::Id;
-use serde_json::{json, Value};
 
 use super::paths::{DocPath, MediaFile};
-use crate::organization::records::{
-    is_line, is_stable_id,
-    yaml::{self, Fields, Reader},
-    Meta, RecordError,
-};
-
-/// The largest media asset the tree keeps (the data contract's `documentation_media.bytes`):
-/// [`DOC_MEDIA_MAX_BYTES`], so every asset replicates to satellites as one `org-sync` payload.
-pub const MEDIA_RECORD_MAX_BYTES: u64 = DOC_MEDIA_MAX_BYTES as u64;
+use crate::organization::records::{By, Meta, RecordError};
 
 /// One document of a project's tree (`documents` with a `path`).
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -36,8 +29,7 @@ pub struct ProjectDoc {
     pub meta: Meta,
 }
 
-/// A document without its body: all the index, the lists and a write's view of the rest of the
-/// tree need, so none of them loads every body of a project.
+/// A document without its body.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct DocEntry {
     pub id: Id,
@@ -77,168 +69,145 @@ pub struct DocMedia {
     pub kind: MediaKind,
     pub media_type: String,
     pub bytes: u64,
-    /// Lowercase hex SHA-256 of the asset's bytes.
     pub sha256: String,
     pub title: String,
     pub summary: String,
     pub meta: Meta,
 }
 
-fn read_id(reader: &mut Reader, key: &str) -> Result<Id, RecordError> {
-    let text = reader.text(key)?;
-    if !is_stable_id(&text) {
-        return Err(reader.error(key, "not a lowercase UUIDv7"));
-    }
-    Id::parse(&text).map_err(|_| reader.error(key, "not a lowercase UUIDv7"))
-}
-
-fn read_optional_id(reader: &mut Reader, key: &str) -> Result<Option<Id>, RecordError> {
-    match reader.optional_text(key)? {
-        None => Ok(None),
-        Some(text) if is_stable_id(&text) => Id::parse(&text)
-            .map(Some)
-            .map_err(|_| reader.error(key, "not a lowercase UUIDv7")),
-        Some(_) => Err(reader.error(key, "not a lowercase UUIDv7")),
+fn by_to_actor(by: &By) -> DocActor {
+    match by {
+        By::Employee(id) => DocActor::Employee(id.to_string()),
+        By::System => DocActor::System,
+        By::Unknown => DocActor::Unknown,
     }
 }
 
-fn read_title(reader: &mut Reader) -> Result<String, RecordError> {
-    let title = reader.text("title")?;
-    if !is_line(&title) {
-        return Err(reader.error("title", "not one line of visible text"));
+fn actor_to_by(actor: DocActor) -> Result<By, RecordError> {
+    match actor {
+        DocActor::Employee(id) => Id::parse(&id)
+            .map(By::Employee)
+            .map_err(|_| RecordError::new("actor_id", "not a lowercase UUIDv7")),
+        DocActor::System => Ok(By::System),
+        DocActor::Unknown => Ok(By::Unknown),
     }
-    Ok(title)
 }
 
-fn optional_id_value(id: Option<&Id>) -> Value {
-    id.map_or(Value::Null, |id| json!(id.as_str()))
+pub(crate) fn meta_to_doc_meta(meta: &Meta) -> DocMeta {
+    DocMeta {
+        revision: meta.revision,
+        created_at: meta.created_at.clone(),
+        created_by: by_to_actor(&meta.created_by),
+        updated_at: meta.updated_at.clone(),
+        updated_by: by_to_actor(&meta.updated_by),
+    }
+}
+
+fn doc_meta_to_meta(meta: DocMeta) -> Result<Meta, RecordError> {
+    Ok(Meta {
+        revision: meta.revision,
+        created_at: meta.created_at,
+        created_by: actor_to_by(meta.created_by)?,
+        updated_at: meta.updated_at,
+        updated_by: actor_to_by(meta.updated_by)?,
+    })
+}
+
+pub(crate) fn entry_to_raw(e: &DocEntry) -> RawDocEntry {
+    RawDocEntry {
+        id: e.id.to_string(),
+        project_id: e.project_id.to_string(),
+        path: e.path.clone(),
+        kind: e.kind.clone(),
+        title: e.title.clone(),
+        status: e.status,
+        summary: e.summary.clone(),
+        owner_employee_id: e.owner_employee_id.as_ref().map(Id::to_string),
+        meta: meta_to_doc_meta(&e.meta),
+    }
+}
+
+pub(crate) fn doc_to_raw(d: &ProjectDoc) -> RawProjectDoc {
+    let e = entry_to_raw(&d.entry());
+    RawProjectDoc {
+        id: e.id,
+        project_id: e.project_id,
+        path: e.path,
+        kind: e.kind,
+        title: e.title,
+        status: e.status,
+        summary: e.summary,
+        owner_employee_id: e.owner_employee_id,
+        body_markdown: d.body_markdown.clone(),
+        meta: e.meta,
+    }
+}
+
+pub(crate) fn media_to_raw(m: &DocMedia) -> RawDocMedia {
+    RawDocMedia {
+        id: m.id.to_string(),
+        project_id: m.project_id.to_string(),
+        file: m.file.clone(),
+        kind: m.kind,
+        media_type: m.media_type.clone(),
+        bytes: m.bytes,
+        sha256: m.sha256.clone(),
+        title: m.title.clone(),
+        summary: m.summary.clone(),
+        meta: meta_to_doc_meta(&m.meta),
+    }
+}
+
+fn parse_id(field: &str, raw: &str) -> Result<Id, RecordError> {
+    Id::parse(raw).map_err(|_| RecordError::new(field, "not a lowercase UUIDv7"))
 }
 
 /// The document's file: front matter, then its body.
 pub fn encode_doc(doc: &ProjectDoc) -> Vec<u8> {
-    let mut fields = Fields::new();
-    doc.meta.write(&mut fields);
-    fields.insert("id".into(), json!(doc.id.as_str()));
-    fields.insert("project_id".into(), json!(doc.project_id.as_str()));
-    fields.insert("kind".into(), json!(doc.kind));
-    fields.insert("title".into(), json!(doc.title));
-    fields.insert("status".into(), json!(doc.status.as_str()));
-    fields.insert(
-        "summary".into(),
-        doc.summary.as_deref().map_or(Value::Null, |s| json!(s)),
-    );
-    fields.insert(
-        "owner_employee_id".into(),
-        optional_id_value(doc.owner_employee_id.as_ref()),
-    );
-    yaml::encode_document(&fields, &doc.body_markdown)
+    encode_project_doc(&doc_to_raw(doc))
 }
 
 /// Reads the document file at `path` of `project`.
 pub fn decode_doc(bytes: &[u8], project: &Id, path: DocPath) -> Result<ProjectDoc, RecordError> {
-    let (mut reader, body_markdown) = yaml::decode_source_document(bytes)?;
-    let meta = Meta::read(&mut reader)?;
-    let id = read_id(&mut reader, "id")?;
-    let project_id = read_id(&mut reader, "project_id")?;
-    if project_id != *project {
-        return Err(reader.error("project_id", "not the project the file is in"));
-    }
-    let kind = reader.text("kind")?;
-    if !is_doc_kind(&kind) {
-        return Err(reader.error("kind", "not a lowercase kind slug outside brief/changelog"));
-    }
-    let title = read_title(&mut reader)?;
-    let status_text = reader.text("status")?;
-    let status = DocStatus::parse(&status_text)
-        .ok_or_else(|| reader.error("status", "not one of: draft current deprecated"))?;
-    let summary = reader.optional_text("summary")?;
-    if summary
-        .as_deref()
-        .is_some_and(|s| s.is_empty() || !is_summary(s))
-    {
-        return Err(reader.error("summary", "not a summary of at most 2 KiB"));
-    }
-    let owner_employee_id = read_optional_id(&mut reader, "owner_employee_id")?;
-    if status == DocStatus::Current && owner_employee_id.is_none() {
-        return Err(reader.error("owner_employee_id", "a current document has an owner"));
-    }
-    if !is_body(&body_markdown) {
-        return Err(RecordError::new("body", "larger than 256 KiB or holds NUL"));
-    }
-    reader.finish()?;
+    let raw = decode_project_doc(bytes, project.as_str(), path)
+        .map_err(|e| RecordError::new(e.field, e.reason))?;
     Ok(ProjectDoc {
-        id,
-        project_id,
-        path,
-        kind,
-        title,
-        status,
-        summary,
-        owner_employee_id,
-        body_markdown,
-        meta,
+        id: parse_id("id", &raw.id)?,
+        project_id: parse_id("project_id", &raw.project_id)?,
+        path: raw.path,
+        kind: raw.kind,
+        title: raw.title,
+        status: raw.status,
+        summary: raw.summary,
+        owner_employee_id: raw
+            .owner_employee_id
+            .as_deref()
+            .map(|id| parse_id("owner_employee_id", id))
+            .transpose()?,
+        body_markdown: raw.body_markdown,
+        meta: doc_meta_to_meta(raw.meta)?,
     })
 }
 
 /// The media asset's metadata sidecar.
 pub fn encode_media(media: &DocMedia) -> Vec<u8> {
-    let mut fields = Fields::new();
-    media.meta.write(&mut fields);
-    fields.insert("id".into(), json!(media.id.as_str()));
-    fields.insert("project_id".into(), json!(media.project_id.as_str()));
-    fields.insert("path".into(), json!(media.file.rel_path()));
-    fields.insert("type".into(), json!(media.kind.as_str()));
-    fields.insert("media_type".into(), json!(media.media_type));
-    fields.insert("bytes".into(), json!(media.bytes));
-    fields.insert("sha256".into(), json!(media.sha256));
-    fields.insert("title".into(), json!(media.title));
-    fields.insert("summary".into(), json!(media.summary));
-    yaml::encode(&fields)
+    encode_doc_media(&media_to_raw(media))
 }
 
 /// Reads the metadata sidecar of `file` in `project`.
 pub fn decode_media(bytes: &[u8], project: &Id, file: MediaFile) -> Result<DocMedia, RecordError> {
-    let mut reader = yaml::decode(bytes)?;
-    let meta = Meta::read(&mut reader)?;
-    let id = read_id(&mut reader, "id")?;
-    let project_id = read_id(&mut reader, "project_id")?;
-    if project_id != *project {
-        return Err(reader.error("project_id", "not the project the file is in"));
-    }
-    if reader.text("path")? != file.rel_path() {
-        return Err(reader.error("path", "not the asset beside this file"));
-    }
-    let kind_text = reader.text("type")?;
-    let kind = MediaKind::parse(&kind_text)
-        .ok_or_else(|| reader.error("type", "not one of: image diagram"))?;
-    let media_type = reader.text("media_type")?;
-    if media_type != media_type_of(&file) {
-        return Err(reader.error("media_type", "not the type the file name says"));
-    }
-    let bytes_len = reader.number("bytes")?;
-    if bytes_len == 0 || bytes_len > MEDIA_RECORD_MAX_BYTES {
-        return Err(reader.error("bytes", "not 1 byte to 5 MiB"));
-    }
-    let sha256 = reader.text("sha256")?;
-    if !is_sha256_hex(&sha256) {
-        return Err(reader.error("sha256", "not lowercase hex SHA-256"));
-    }
-    let title = read_title(&mut reader)?;
-    let summary = reader.text("summary")?;
-    if !is_summary(&summary) {
-        return Err(reader.error("summary", "not a summary of at most 2 KiB"));
-    }
-    reader.finish()?;
+    let raw = decode_doc_media(bytes, project.as_str(), file)
+        .map_err(|e| RecordError::new(e.field, e.reason))?;
     Ok(DocMedia {
-        id,
-        project_id,
-        file,
-        kind,
-        media_type,
-        bytes: bytes_len,
-        sha256,
-        title,
-        summary,
-        meta,
+        id: parse_id("id", &raw.id)?,
+        project_id: parse_id("project_id", &raw.project_id)?,
+        file: raw.file,
+        kind: raw.kind,
+        media_type: raw.media_type,
+        bytes: raw.bytes,
+        sha256: raw.sha256,
+        title: raw.title,
+        summary: raw.summary,
+        meta: doc_meta_to_meta(raw.meta)?,
     })
 }

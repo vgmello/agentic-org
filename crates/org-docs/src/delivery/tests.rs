@@ -205,3 +205,184 @@ fn paths_progress_and_index_rendering_are_deterministic() {
     assert!(text.contains("guides/setup.md"));
     assert!(MediaFile::parse("../evil.png").is_err());
 }
+
+#[test]
+fn codecs_reject_duplicate_composite_keys_canonicalize_timestamps_and_preserve_allocated_at() {
+    let repo_a = "0193a5c0-0000-7000-8000-000000000061";
+    let dup_commits_rel = ReleaseRecord {
+        id: RID.into(),
+        project_id: PID.into(),
+        number: 1,
+        title: "Rel 1".into(),
+        version_label: Some("v1.0.0".into()),
+        body_markdown: String::new(),
+        repository_commits: vec![
+            RepoCommitRecord {
+                repository_id: repo_a.into(),
+                commit_sha: "aaaa1111".into(),
+            },
+            RepoCommitRecord {
+                repository_id: repo_a.into(),
+                commit_sha: "bbbb2222".into(),
+            },
+        ],
+        feature_ids: vec![],
+        task_ids: vec![],
+        flag_settings: vec![],
+        meta: meta(),
+    };
+    let raw_dup_commit = encode_release(&dup_commits_rel);
+    assert!(
+        decode_release(&raw_dup_commit, PID, RID).is_err(),
+        "duplicate repository_id in release commits must fail closed"
+    );
+
+    let dup_rel_flags = ReleaseRecord {
+        repository_commits: vec![],
+        flag_settings: vec![
+            ReleaseFlagSettingRecord {
+                flag_id: FLAG_ID.into(),
+                environment: "prod".into(),
+                target: "primary".into(),
+                value: json!(true),
+                rollout_rules: None,
+            },
+            ReleaseFlagSettingRecord {
+                flag_id: FLAG_ID.into(),
+                environment: "prod".into(),
+                target: "primary".into(),
+                value: json!(false),
+                rollout_rules: None,
+            },
+        ],
+        ..dup_commits_rel
+    };
+    assert!(
+        decode_release(&encode_release(&dup_rel_flags), PID, RID).is_err(),
+        "duplicate (env, target, flag_id) in release flag_settings must fail closed"
+    );
+
+    let dep_with_offsets = DeploymentRecord {
+        id: DID1.into(),
+        project_id: PID.into(),
+        release_id: RID.into(),
+        environment: "prod".into(),
+        target: "primary".into(),
+        operation: DeploymentOperation::Deploy,
+        rollback_of_id: None,
+        baseline_deployment_id: None,
+        status: DeploymentStatus::Succeeded,
+        started_at: Some("2026-11-27T12:00:00+02:00".into()),
+        finished_at: Some("2026-11-27T10:00:00.500Z".into()),
+        external_url: None,
+        body_markdown: String::new(),
+        repository_commits: vec![],
+        flag_settings: vec![DeploymentFlagSettingRecord {
+            flag_id: FLAG_ID.into(),
+            value: json!(true),
+            rollout_rules: None,
+            applied_at: Some("2026-11-27T12:00:00.25+02:00".into()),
+        }],
+        meta: meta(),
+    };
+    let decoded_dep = decode_deployment(&encode_deployment(&dep_with_offsets), PID, DID1).unwrap();
+    assert_eq!(
+        decoded_dep.started_at.as_deref(),
+        Some("2026-11-27T10:00:00.000Z")
+    );
+    assert_eq!(
+        decoded_dep.finished_at.as_deref(),
+        Some("2026-11-27T10:00:00.500Z")
+    );
+    assert_eq!(
+        decoded_dep.flag_settings[0].applied_at.as_deref(),
+        Some("2026-11-27T10:00:00.250Z")
+    );
+
+    let mut dup_dep_flags = dep_with_offsets;
+    dup_dep_flags
+        .flag_settings
+        .push(DeploymentFlagSettingRecord {
+            flag_id: FLAG_ID.into(),
+            value: json!(false),
+            rollout_rules: None,
+            applied_at: None,
+        });
+    assert!(
+        decode_deployment(&encode_deployment(&dup_dep_flags), PID, DID1).is_err(),
+        "duplicate flag_id in deployment flag_settings must fail closed"
+    );
+
+    let ok_counter = NumberCounterRecord {
+        next_number: 3,
+        allocations: vec![
+            NumberAllocation {
+                number: 1,
+                entity_id: FID1.into(),
+                allocated_at: "2026-11-27T10:00:00.000Z".into(),
+            },
+            NumberAllocation {
+                number: 2,
+                entity_id: FID2.into(),
+                allocated_at: "2026-11-27T10:01:00.000Z".into(),
+            },
+        ],
+    };
+    let round_trip = decode_counter(&encode_counter(&ok_counter)).unwrap();
+    assert_eq!(round_trip, ok_counter);
+
+    let dup_num = NumberCounterRecord {
+        next_number: 3,
+        allocations: vec![
+            NumberAllocation {
+                number: 1,
+                entity_id: FID1.into(),
+                allocated_at: "2026-11-27T10:00:00.000Z".into(),
+            },
+            NumberAllocation {
+                number: 1,
+                entity_id: FID2.into(),
+                allocated_at: "2026-11-27T10:01:00.000Z".into(),
+            },
+        ],
+    };
+    assert!(decode_counter(&encode_counter(&dup_num)).is_err());
+
+    let dup_entity = NumberCounterRecord {
+        next_number: 3,
+        allocations: vec![
+            NumberAllocation {
+                number: 1,
+                entity_id: FID1.into(),
+                allocated_at: "2026-11-27T10:00:00.000Z".into(),
+            },
+            NumberAllocation {
+                number: 2,
+                entity_id: FID1.into(),
+                allocated_at: "2026-11-27T10:01:00.000Z".into(),
+            },
+        ],
+    };
+    assert!(decode_counter(&encode_counter(&dup_entity)).is_err());
+
+    let dep_link = EntityLinkRecord {
+        id: DID1.into(),
+        project_id: PID.into(),
+        source_kind: LinkEntityKind::Task,
+        source_id: FID1.into(),
+        kind: LinkKind::DependsOn,
+        target_kind: LinkEntityKind::Task,
+        target_id: FID2.into(),
+    };
+    assert!(
+        decode_link(
+            &encode_link(&dep_link),
+            PID,
+            LinkEntityKind::Task,
+            FID1,
+            DID1
+        )
+        .is_err(),
+        "depends_on must be rejected in project links/"
+    );
+}
