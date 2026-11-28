@@ -1,6 +1,6 @@
 //! Private direct wire decoding: never route integers through JSON Value.
 
-use crate::{Architecture, Platform, Role, MAX_FILES, MAX_TRUSTED_KEYS};
+use crate::{Architecture, Platform, Role, MAX_FILES, MAX_POINTER_TARGETS, MAX_TRUSTED_KEYS};
 use serde::de::{
     self, value::MapAccessDeserializer, IntoDeserializer, MapAccess, SeqAccess, Visitor,
 };
@@ -112,8 +112,38 @@ pub(super) struct File {
     pub macos_cdhash: RequiredNullable<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Pointer {
+    pub format: String,
+    pub channel: String,
+    pub release_id: String,
+    pub sequence: u64,
+    pub installer_contract: u64,
+    pub key_id: String,
+    pub published_at: String,
+    #[serde(deserialize_with = "pointer_targets")]
+    pub targets: Vec<PointerTarget>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PointerTarget {
+    pub platform: Platform,
+    pub architecture: Architecture,
+    pub url: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
 fn manifest_files<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<File>, D::Error> {
     bounded_sequence(deserializer, MAX_FILES)
+}
+
+fn pointer_targets<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<PointerTarget>, D::Error> {
+    bounded_sequence(deserializer, MAX_POINTER_TARGETS)
 }
 
 fn registry_keys<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Key>, D::Error> {

@@ -613,8 +613,15 @@ fn write_regular_beneath_is_atomic_tightens_0644_to_0600_and_never_leaks_temp_fi
     let root = root.canonicalize().unwrap();
     let outside = outside.canonicalize().unwrap();
 
-    // 1. Fresh write creates a 0600 regular file with zero temp files left behind.
+    // 1. Fresh write creates a 0600 regular file, syncs both temp file and parent dir, and leaves zero temp files behind.
+    let sync_before = full_sync_counts();
     super::write_regular_beneath(&root, Path::new("fresh.txt"), b"fresh-bytes").unwrap();
+    let sync_after = full_sync_counts();
+    assert_eq!(
+        sync_after.fsync - sync_before.fsync,
+        2,
+        "write_regular_beneath must sync temp file before rename and parent dir after rename"
+    );
     let fresh = root.join("fresh.txt");
     assert_eq!(fs::read(&fresh).unwrap(), b"fresh-bytes");
     assert_eq!(fs::symlink_metadata(&fresh).unwrap().mode() & 0o7777, 0o600);

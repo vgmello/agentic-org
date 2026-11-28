@@ -9,6 +9,7 @@
 
 mod decode;
 mod payload;
+mod pointer;
 
 use caseless::Caseless;
 use ring::signature::{UnparsedPublicKey, ED25519};
@@ -18,6 +19,10 @@ use std::fmt;
 use unicode_normalization::UnicodeNormalization;
 
 pub use payload::PayloadVerifier;
+pub use pointer::{
+    valid_channel, validate_pointer_url, verify_pointer, Pointer, PointerTarget, UrlPolicy,
+    VerifiedPointer, MAX_CHANNEL_BYTES, MAX_POINTER_BYTES, MAX_URL_BYTES, POINTER_FORMAT,
+};
 
 /// Exact signed profile name.
 pub const FORMAT: &str = "agentic-org-release-v1";
@@ -27,6 +32,8 @@ pub const MAX_MANIFEST_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_REGISTRY_BYTES: usize = 32 * 1024;
 /// Maximum publisher keys in one trusted registry.
 pub const MAX_TRUSTED_KEYS: usize = 16;
+/// Maximum platform/architecture targets in one signed pointer.
+pub const MAX_POINTER_TARGETS: usize = 16;
 /// Maximum signed regular files.
 pub const MAX_FILES: usize = 16_384;
 /// Maximum relative path length in UTF-8 bytes.
@@ -83,6 +90,14 @@ pub enum Error {
     PayloadOverrun,
     PayloadUnderrun,
     PayloadDigestMismatch,
+    PointerTooLarge,
+    InvalidPointer,
+    InvalidChannel,
+    InvalidUrl,
+    DuplicateTarget,
+    MissingTarget,
+    BundleSizeLimit,
+    BundleDigestMismatch,
 }
 
 impl fmt::Display for Error {
@@ -178,6 +193,27 @@ impl TrustedPolicy {
             architecture,
             minimum_sequence,
         })
+    }
+
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+
+    pub fn architecture(&self) -> Architecture {
+        self.architecture
+    }
+
+    pub fn minimum_sequence(&self) -> u64 {
+        self.minimum_sequence
+    }
+
+    /// Returns a policy with a raised minimum sequence floor (never lowering it).
+    pub fn with_minimum_sequence(&self, minimum_sequence: u64) -> Self {
+        Self {
+            platform: self.platform,
+            architecture: self.architecture,
+            minimum_sequence: self.minimum_sequence.max(minimum_sequence),
+        }
     }
 }
 

@@ -490,3 +490,71 @@ fn end_to_end_signed_archive_stage_verify_install_update_and_rollback_safety() {
         .is_err());
     assert_eq!(store.pin(), Some(&pin2));
 }
+
+#[test]
+fn rollback_restores_previous_pin_preserves_highest_sequence_and_rejects_unpinned_targets() {
+    let f = Fixture::new();
+    let mut store = f.open();
+    let pin1 = install(&mut store, &f.bundle("rel-1.0.0", 1));
+    let pin2 = install(&mut store, &f.bundle("rel-2.0.0", 2));
+    assert_eq!(store.pin(), Some(&pin2));
+    assert_eq!(store.previous_pin(), Some(&pin1));
+    assert_eq!(store.highest_sequence(), 2);
+
+    // Arbitrary unpinned release (even with valid format) MUST be refused by rollback.
+    let never_pinned = ReleasePin {
+        release_id: "rel-0.9.0".into(),
+        manifest_sha256: "a".repeat(64),
+        sequence: 1,
+    };
+    assert!(store
+        .rollback_to_with(&never_pinned, synthetic_platform, |_| Ok(()))
+        .is_err());
+
+    // Rollback to previously pinned v1 succeeds and keeps highest_sequence == 2.
+    let rolled = store
+        .rollback_to_with(&pin1, synthetic_platform, |_| Ok(()))
+        .unwrap();
+    assert_eq!(rolled, pin1);
+    assert_eq!(store.pin(), Some(&pin1));
+    assert_eq!(store.highest_sequence(), 2);
+    assert_eq!(records(&store.pins).unwrap(), 3);
+
+    // Reopening and recovering validates the rollback chain cleanly.
+    drop(store);
+    let mut store = f.open();
+    assert_eq!(
+        store.recover_with(synthetic_platform, true).unwrap(),
+        Some(pin1.clone())
+    );
+    assert_eq!(store.highest_sequence(), 2);
+
+    // Normal install still refuses a new sequence-1 downgrade because highest_sequence is 2.
+    assert!(store
+        .install_directory_with(&f.bundle("rel-1.5.0", 1), synthetic_platform, |_| Ok(()))
+        .is_err());
+
+    // A newer sequence-3 release installs cleanly on top of the rollback commit.
+    let pin3 = install(&mut store, &f.bundle("rel-3.0.0", 3));
+    assert_eq!(pin3.sequence, 3);
+    assert_eq!(store.highest_sequence(), 3);
+    assert_eq!(store.previous_pin(), Some(&pin1));
+
+    // Crash between rollback intent and pin reconciles cleanly on recovery.
+    assert!(store
+        .rollback_to_with(&pin1, synthetic_platform, |step| {
+            if step == Step::Intent {
+                Err(Error::Io(std::io::ErrorKind::Interrupted))
+            } else {
+                Ok(())
+            }
+        })
+        .is_err());
+    drop(store);
+    let mut store = f.open();
+    assert_eq!(
+        store.recover_with(synthetic_platform, true).unwrap(),
+        Some(pin1)
+    );
+    assert_eq!(store.highest_sequence(), 3);
+}

@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 # Exposes fixtures only to the agentic-org composition integration tests.
-test-support = ["org-host-tls/test-support"]
+test-support = ["org-host-tls/test-support", "org-host-release/test-support"]
 
 [dependencies]
 argon2.workspace = true

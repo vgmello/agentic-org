@@ -9,6 +9,7 @@ and optional Debian `.deb` development packages when `--signing-key` is omitted.
 from __future__ import annotations
 
 import argparse
+import datetime
 import gzip
 import hashlib
 import io
@@ -30,8 +31,19 @@ MACOS_SIGNING_IDS = {
     "agentic-org-web": "com.vgmello.agentic-org.web",
 }
 RELEASE_FORMAT = "agentic-org-release-v1"
+POINTER_FORMAT = "agentic-org-release-pointer-v1"
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+ARCHIVE_TARGET_RE = re.compile(
+    r"^agentic-org-(?P<release_id>[A-Za-z0-9][A-Za-z0-9._-]{0,95})-(?P<platform>linux|macos)-(?P<arch>x86_64|aarch64)\.tar\.gz$"
+)
+SHA256_LINE_RE = re.compile(r"^(?P<digest>[0-9a-fA-F]{64})[ \t]+\*?(?P<name>[^\r\n]+)$")
+PUBLISHED_AT_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$"
+)
+MAX_SHA256_FILE_BYTES = 4096
+MAX_REGISTRY_BYTES = 256 * 1024
 MAX_FILES = 16_384
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
@@ -449,6 +461,351 @@ def cmd_package(args: argparse.Namespace) -> int:
     return 0
 
 
+def verify_ed25519(key_pem: Path, payload: bytes, signature: bytes) -> None:
+    if len(signature) != 64:
+        raise RuntimeError(f"expected 64-byte Ed25519 signature, got {len(signature)}")
+    with tempfile.TemporaryDirectory(prefix="agentic-org-verify-") as td:
+        pub = Path(td) / "pub.pem"
+        msg = Path(td) / "payload.bin"
+        sig = Path(td) / "payload.sig"
+        pub.write_bytes(run_openssl(["pkey", "-in", str(key_pem), "-pubout"]))
+        msg.write_bytes(payload)
+        sig.write_bytes(signature)
+        run_openssl(
+            [
+                "pkeyutl",
+                "-verify",
+                "-pubin",
+                "-inkey",
+                str(pub),
+                "-rawin",
+                "-in",
+                str(msg),
+                "-sigfile",
+                str(sig),
+            ]
+        )
+
+
+def _extract_archive_control_files(archive_path: Path) -> tuple[bytes, bytes]:
+    with tarfile.open(archive_path, mode="r:gz") as tf:
+        try:
+            manifest_member = tf.getmember("release.v1.json")
+            sig_member = tf.getmember("release.v1.sig")
+        except KeyError as exc:
+            raise SystemExit(
+                f"signed archive {archive_path.name} missing required control file: {exc}"
+            ) from exc
+        manifest_fh = tf.extractfile(manifest_member)
+        sig_fh = tf.extractfile(sig_member)
+        if manifest_fh is None or sig_fh is None:
+            raise SystemExit(f"signed archive {archive_path.name} has unreadable control entry")
+        return manifest_fh.read(), sig_fh.read()
+
+
+def _validate_exact_int(value: object, expected: int, archive_name: str, field: str) -> None:
+    if type(value) is not int or value != expected:
+        raise SystemExit(f"{archive_name}: {field} {value!r} != {expected!r}")
+
+
+def verify_signed_bundle_matches(
+    archive_path: Path,
+    release_id: str,
+    sequence: int,
+    platform: str,
+    arch: str,
+    expected_key_id: str,
+    key_pem: Path,
+) -> None:
+    manifest_bytes, sig_bytes = _extract_archive_control_files(archive_path)
+    verify_ed25519(key_pem, manifest_bytes, sig_bytes)
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    expected_strings = (
+        ("format", RELEASE_FORMAT),
+        ("release_id", release_id),
+        ("platform", platform),
+        ("architecture", arch),
+        ("key_id", expected_key_id),
+    )
+    for field, expected in expected_strings:
+        if manifest.get(field) != expected:
+            raise SystemExit(
+                f"{archive_path.name}: {field} {manifest.get(field)!r} != {expected!r}"
+            )
+    _validate_exact_int(manifest.get("sequence"), sequence, archive_path.name, "sequence")
+    _validate_exact_int(
+        manifest.get("installer_contract"), 1, archive_path.name, "installer_contract"
+    )
+
+
+def _read_regular_file_bounded(path: Path, max_bytes: int, label: str) -> bytes:
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise SystemExit(f"missing or unreadable {label} `{path}`: {exc}") from exc
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        raise SystemExit(f"refusing symlink or non-regular {label} `{path}`")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise SystemExit(f"refusing unsafe {label} `{path}`: {exc}") from exc
+    with os.fdopen(fd, "rb") as fh:
+        opened_st = os.fstat(fh.fileno())
+        if not stat.S_ISREG(opened_st.st_mode):
+            raise SystemExit(f"refusing non-regular {label} `{path}`")
+        data = fh.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise SystemExit(f"{label} `{path}` exceeds {max_bytes}-byte limit")
+    return data
+
+
+def _verify_archive_sha256_file(sha_file: Path, archive_name: str, actual_sha: str) -> None:
+    raw = _read_regular_file_bounded(sha_file, MAX_SHA256_FILE_BYTES, "checksum file")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(f"checksum file `{sha_file.name}` is not valid UTF-8") from exc
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise SystemExit(
+            f"checksum file `{sha_file.name}` must contain exactly one non-empty line (got {len(lines)})"
+        )
+    match = SHA256_LINE_RE.match(lines[0].strip())
+    if not match:
+        raise SystemExit(f"checksum file `{sha_file.name}` is malformed")
+    recorded = match.group("digest").lower()
+    recorded_name = match.group("name").strip()
+    if recorded_name != archive_name:
+        raise SystemExit(
+            f"checksum file `{sha_file.name}` names `{recorded_name}`, expected `{archive_name}`"
+        )
+    if recorded != actual_sha:
+        raise SystemExit(
+            f"checksum mismatch for {archive_name}: {sha_file.name} has {recorded}, "
+            f"actual is {actual_sha}"
+        )
+
+
+def _validate_published_at(raw: str) -> str:
+    if not (20 <= len(raw) <= 32) or not PUBLISHED_AT_RE.match(raw):
+        raise SystemExit(
+            f"invalid --published-at `{raw}`: expected RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"
+        )
+    try:
+        datetime.datetime.fromisoformat(raw[:-1] + "+00:00")
+    except ValueError as exc:
+        raise SystemExit(f"invalid --published-at calendar value `{raw}`: {exc}") from exc
+    return raw
+
+
+def _load_trust_registry_keys(registry_path: Path) -> list[dict[str, object]]:
+    raw = _read_regular_file_bounded(registry_path, MAX_REGISTRY_BYTES, "trust registry")
+    try:
+        reg = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"malformed trust registry `{registry_path}`: {exc}") from exc
+    if not isinstance(reg, dict) or type(reg.get("version")) is not int or reg.get("version") != 1:
+        raise SystemExit(f"unsupported trust registry version in `{registry_path}`")
+    keys = reg.get("keys")
+    if not isinstance(keys, list) or not keys:
+        raise SystemExit(f"trust registry `{registry_path}` contains no keys")
+    return [entry for entry in keys if isinstance(entry, dict)]
+
+
+def _verify_registry_sequence_window(entry: dict[str, object], key_id: str, sequence: int) -> None:
+    min_seq = entry.get("min_sequence")
+    max_seq = entry.get("max_sequence")
+    if type(min_seq) is not int or min_seq < 1:
+        raise SystemExit(f"trust registry entry for `{key_id}` has invalid min_sequence")
+    if sequence < min_seq:
+        raise SystemExit(
+            f"release sequence {sequence} is below trust registry min_sequence {min_seq} for `{key_id}`"
+        )
+    if max_seq is None:
+        return
+    if type(max_seq) is not int or max_seq < min_seq:
+        raise SystemExit(f"trust registry entry for `{key_id}` has invalid max_sequence")
+    if sequence > max_seq:
+        raise SystemExit(
+            f"release sequence {sequence} exceeds trust registry max_sequence {max_seq} for `{key_id}`"
+        )
+
+
+def _verify_trust_registry(
+    registry_path: Path, key_id: str, pub_raw: bytes, sequence: int
+) -> None:
+    keys = _load_trust_registry_keys(registry_path)
+    matched = [k for k in keys if k.get("key_id") == key_id]
+    if len(matched) != 1:
+        raise SystemExit(
+            f"signing key `{key_id}` is not uniquely authorized in trust registry `{registry_path}`"
+        )
+    entry = matched[0]
+    if str(entry.get("public_key_hex", "")).lower() != pub_raw.hex():
+        raise SystemExit(f"trust registry public_key_hex mismatch for `{key_id}`")
+    _verify_registry_sequence_window(entry, key_id, sequence)
+
+
+def _validate_pointer_base_url(raw_url: str, allow_local: bool) -> str:
+    base_url = raw_url.rstrip("/")
+    allowed = ("https://",)
+    if allow_local:
+        allowed = (
+            "https://",
+            "http://127.0.0.1",
+            "http://localhost",
+            "http://[::1]",
+            "file:///",
+        )
+    if not any(base_url.startswith(prefix) for prefix in allowed):
+        raise SystemExit(f"--base-url scheme not permitted: `{base_url}`")
+    return base_url
+
+
+def _discover_release_archives(artifacts_dir: Path, release_id: str) -> list[tuple[str, str, Path]]:
+    discovered: list[tuple[str, str, Path]] = []
+    for entry in sorted(artifacts_dir.iterdir()):
+        if not entry.is_file() or entry.is_symlink():
+            continue
+        match = ARCHIVE_TARGET_RE.match(entry.name)
+        if match and match.group("release_id") == release_id:
+            discovered.append((match.group("platform"), match.group("arch"), entry))
+    if not discovered:
+        raise SystemExit(
+            f"no signed release archives matching agentic-org-{release_id}-<platform>-<arch>.tar.gz "
+            f"found in {artifacts_dir}"
+        )
+    return sorted(discovered, key=lambda item: (item[0], item[1]))
+
+
+def _build_pointer_target(
+    artifacts_dir: Path,
+    archive_path: Path,
+    platform: str,
+    arch: str,
+    release_id: str,
+    sequence: int,
+    base_url: str,
+    key_id: str,
+    key_path: Path,
+) -> dict[str, object]:
+    actual_sha = sha256_file(archive_path)
+    sha_file = artifacts_dir / f"{archive_path.name}.sha256"
+    _verify_archive_sha256_file(sha_file, archive_path.name, actual_sha)
+    verify_signed_bundle_matches(
+        archive_path, release_id, sequence, platform, arch, key_id, key_path
+    )
+    size = archive_path.stat().st_size
+    if size < 1 or size > MAX_PAYLOAD_BYTES:
+        raise SystemExit(f"archive {archive_path.name} size {size} out of bounds")
+    return {
+        "platform": platform,
+        "architecture": arch,
+        "url": f"{base_url}/{archive_path.name}",
+        "sha256": actual_sha,
+        "size": size,
+    }
+
+
+def _collect_pointer_targets(
+    artifacts_dir: Path,
+    release_id: str,
+    sequence: int,
+    base_url: str,
+    key_id: str,
+    key_path: Path,
+) -> list[dict[str, object]]:
+    targets: list[dict[str, object]] = []
+    seen_targets: set[tuple[str, str]] = set()
+    for platform, arch, archive_path in _discover_release_archives(artifacts_dir, release_id):
+        if (platform, arch) in seen_targets:
+            raise SystemExit(f"duplicate target ({platform}, {arch}) in {artifacts_dir}")
+        seen_targets.add((platform, arch))
+        targets.append(
+            _build_pointer_target(
+                artifacts_dir,
+                archive_path,
+                platform,
+                arch,
+                release_id,
+                sequence,
+                base_url,
+                key_id,
+                key_path,
+            )
+        )
+    return targets
+
+
+def cmd_pointer(args: argparse.Namespace) -> int:
+    if not RELEASE_ID_RE.match(args.release_id):
+        raise SystemExit(f"invalid --release-id `{args.release_id}`")
+    if not CHANNEL_RE.match(args.channel):
+        raise SystemExit(f"invalid --channel `{args.channel}`")
+    if args.sequence < 1:
+        raise SystemExit(f"invalid --sequence {args.sequence}: must be >= 1")
+    base_url = _validate_pointer_base_url(args.base_url, args.allow_local_url)
+    key_path = Path(args.signing_key).resolve()
+    if not key_path.is_file():
+        raise SystemExit(f"missing --signing-key file: {key_path}")
+    pub_raw = raw_ed25519_pubkey_from_key(key_path)
+    key_id = hashlib.sha256(pub_raw).hexdigest()
+    if args.trust_registry:
+        _verify_trust_registry(Path(args.trust_registry), key_id, pub_raw, args.sequence)
+
+    artifacts_dir = Path(args.artifacts_dir).resolve()
+    out_dir = Path(args.out_dir or args.artifacts_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    targets = _collect_pointer_targets(
+        artifacts_dir, args.release_id, args.sequence, base_url, key_id, key_path
+    )
+
+    published_at = (
+        _validate_published_at(args.published_at)
+        if args.published_at
+        else datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+    pointer = {
+        "format": POINTER_FORMAT,
+        "channel": args.channel,
+        "release_id": args.release_id,
+        "sequence": args.sequence,
+        "installer_contract": 1,
+        "key_id": key_id,
+        "published_at": published_at,
+        "targets": targets,
+    }
+    pointer_bytes = (json.dumps(pointer, indent=2) + "\n").encode("utf-8")
+    sig_bytes = sign_ed25519(key_path, pointer_bytes)
+    verify_ed25519(key_path, pointer_bytes, sig_bytes)
+
+    pointer_path = out_dir / "release-pointer.v1.json"
+    sig_path = out_dir / "release-pointer.v1.sig"
+    sha_path = out_dir / "release-pointer.v1.json.sha256"
+    pointer_path.write_bytes(pointer_bytes)
+    sig_path.write_bytes(sig_bytes)
+    pointer_sha = hashlib.sha256(pointer_bytes).hexdigest()
+    sha_path.write_text(f"{pointer_sha}  release-pointer.v1.json\n", encoding="utf-8")
+
+    print(
+        json.dumps(
+            {
+                "pointer": str(pointer_path),
+                "signature": str(sig_path),
+                "sha256": pointer_sha,
+                "release_id": args.release_id,
+                "sequence": args.sequence,
+                "channel": args.channel,
+                "targets": len(targets),
+                "key_id": key_id,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Agentic Org release signing & packaging tool")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -471,6 +828,22 @@ def main() -> int:
     p_pkg.add_argument("--signing-key", default="")
     p_pkg.add_argument("--deb", action="store_true")
     p_pkg.set_defaults(func=cmd_package)
+
+    p_ptr = sub.add_parser(
+        "pointer",
+        help="Generate and Ed25519-sign release-pointer.v1.json + release-pointer.v1.sig from signed archives",
+    )
+    p_ptr.add_argument("--artifacts-dir", required=True)
+    p_ptr.add_argument("--out-dir", default="")
+    p_ptr.add_argument("--release-id", required=True)
+    p_ptr.add_argument("--sequence", type=int, required=True)
+    p_ptr.add_argument("--channel", default="stable")
+    p_ptr.add_argument("--base-url", required=True)
+    p_ptr.add_argument("--signing-key", required=True)
+    p_ptr.add_argument("--trust-registry", default="")
+    p_ptr.add_argument("--published-at", default="")
+    p_ptr.add_argument("--allow-local-url", action="store_true")
+    p_ptr.set_defaults(func=cmd_pointer)
 
     args = parser.parse_args()
     return args.func(args)

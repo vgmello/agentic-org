@@ -18,6 +18,8 @@
 //! than `agentic-org serve --name <instance>`, is left untouched with what the operator does
 //! instead; one that runs a program outside this store (a development build) is left too.
 
+mod move_unit;
+
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -27,12 +29,10 @@ use serde::Serialize;
 use org_host::instance::setup::{Journal, Service};
 
 use super::report::service_id;
+use move_unit::{name_flag, report, stop_and_wait, untouched_note, Move, POLL};
 
-/// How long a service asked to stop may take to end (the host stops within 2.5 s).
-const STOP_WAIT: Duration = Duration::from_secs(30);
 /// How long the store may stay busy after the services that held it stopped.
 const STORE_WAIT: Duration = Duration::from_secs(15);
-const POLL: Duration = Duration::from_millis(100);
 
 /// What `release install` did to one instance's registered service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -74,6 +74,17 @@ pub enum InstallAttempt {
     Failed(String),
 }
 
+/// Snapshot of one managed service inspected before an install or auto-update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedServiceInfo {
+    pub instance: String,
+    pub instance_id: String,
+    pub service_id: String,
+    pub root: PathBuf,
+    pub previous_program: PathBuf,
+    pub was_running: bool,
+}
+
 /// The account's registered services, as an install found them and has changed them.
 #[derive(Debug, Default)]
 pub struct ServiceRefresh {
@@ -83,7 +94,9 @@ pub struct ServiceRefresh {
 #[derive(Debug)]
 struct Entry {
     instance: String,
+    instance_id: String,
     id: String,
+    root: PathBuf,
     found: Found,
 }
 
@@ -142,11 +155,114 @@ impl ServiceRefresh {
             let found = inspect_one(manager, &id, &name, releases.as_deref());
             entries.push(Entry {
                 instance: name,
+                instance_id: instance_id.to_owned(),
                 id,
+                root: record.input.root,
                 found,
             });
         }
         Self { entries }
+    }
+
+    /// Managed registered services found in this store, for idle-drain and rollback coordination.
+    pub fn managed_targets(&self) -> Vec<ManagedServiceInfo> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.found {
+                Found::Managed {
+                    unit, was_running, ..
+                } => Some(ManagedServiceInfo {
+                    instance: entry.instance.clone(),
+                    instance_id: entry.instance_id.clone(),
+                    service_id: entry.id.clone(),
+                    root: entry.root.clone(),
+                    previous_program: unit.program.clone(),
+                    was_running: *was_running,
+                }),
+                Found::Untouched { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Registered services whose definition or status could not be read from the service manager
+    /// (for example when `systemd --user` is unavailable).
+    pub fn inspection_failures(&self) -> Vec<(String, String)> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match &entry.found {
+                Found::Untouched {
+                    outcome: RefreshOutcome::Failed,
+                    why,
+                    ..
+                } => Some((entry.instance.clone(), why.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Names of account instances recorded with a registered system service (`Service::Registered`
+    /// and `service_registered == true`), read without invoking any service manager.
+    pub fn registered_setup_instances(base: Option<&Path>) -> Vec<String> {
+        let Some(base) = base else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = std::fs::read_dir(base.join("setup"))
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        names
+            .into_iter()
+            .filter(|name| {
+                Journal::snapshot(base, Some(name)).is_ok_and(|record| {
+                    record.instance_id.is_some()
+                        && record.input.service == Service::Registered
+                        && record.service_registered
+                })
+            })
+            .collect()
+    }
+
+    /// Stops every managed service BEFORE `install` acquires `store.lock`, including settled
+    /// `systemd` `ActiveState=activating` crash-loops that inspect as `ServiceStatus::Stopped`
+    /// (`was_running == false`) as well as `Unloaded` and running units, so crash-looping units
+    /// release `store.lock` and never cause `redefine` conflicts. Safe no-op on genuinely inactive
+    /// units (`Systemd::stop` and `Launchd::stop`); idempotent when already marked `stopped = true`.
+    pub(crate) fn stop_for_rollback(
+        &mut self,
+        manager: &dyn ServiceManager,
+        should_start: &[String],
+    ) {
+        for entry in &mut self.entries {
+            let want_running = should_start.iter().any(|name| name == &entry.instance);
+            entry.prepare_for_rollback(manager, want_running);
+        }
+    }
+
+    /// Re-points managed services to `program` and restarts every instance named in `should_start`
+    /// (even if its process crashed or entered a `systemd` `activating` crash-loop before rollback).
+    pub(crate) fn rollback_to_program(
+        mut self,
+        manager: &dyn ServiceManager,
+        program: &Path,
+        should_start: &[String],
+        restart: bool,
+    ) -> Vec<ServiceRefreshReport> {
+        self.stop_for_rollback(manager, should_start);
+        self.refresh(manager, program, restart)
+    }
+
+    /// Whether any managed service stopped by this refresh remains stopped (for example when
+    /// `install` failed and `resume` could not start it again).
+    pub(crate) fn has_stopped_managed(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|e| matches!(e.found, Found::Managed { stopped: true, .. }))
+    }
+
+    pub(crate) fn account_setup_base() -> Result<Option<PathBuf>, String> {
+        setup_base()
     }
 
     /// What an install would do to each service, for `--dry-run`: `refresh` or the outcome
@@ -174,7 +290,9 @@ impl ServiceRefresh {
         manager: &dyn ServiceManager,
         mut attempt: impl FnMut() -> Result<T, InstallAttempt>,
     ) -> Result<T, String> {
-        let mut deadline: Option<Instant> = None;
+        let mut deadline: Option<Instant> = self
+            .has_stopped_managed()
+            .then(|| Instant::now() + STORE_WAIT);
         loop {
             match attempt() {
                 Ok(done) => return Ok(done),
@@ -253,8 +371,13 @@ impl ServiceRefresh {
     fn resume(&mut self, manager: &dyn ServiceManager, why: String) -> String {
         let mut said = why;
         for entry in &mut self.entries {
-            if let Found::Managed { stopped, .. } = &mut entry.found {
-                if !*stopped {
+            if let Found::Managed {
+                was_running,
+                stopped,
+                ..
+            } = &mut entry.found
+            {
+                if !*stopped || !*was_running {
                     continue;
                 }
                 match manager.start(&entry.id) {
@@ -295,6 +418,42 @@ impl ServiceRefresh {
 }
 
 impl Entry {
+    /// Stops every managed service whenever `!*stopped` BEFORE `install` or `redefine`,
+    /// cancelling settled `systemd` `ActiveState=activating` crash-loops (which inspect as
+    /// `ServiceStatus::Stopped` with `was_running == false`) as well as `Unloaded` and macOS
+    /// `launchd` `KeepAlive` loops so `install` never hits `store.lock` contention and
+    /// `manager.redefine` never fails with `ServiceError::Conflict`. Both `Systemd::stop` and
+    /// `Launchd::stop` are safe no-ops on genuinely inactive units, and `resume`/`Move::run` gate
+    /// restarts on `was_running`.
+    fn prepare_for_rollback(&mut self, manager: &dyn ServiceManager, want_running: bool) {
+        let Found::Managed {
+            unit,
+            was_running,
+            stopped,
+        } = &mut self.found
+        else {
+            return;
+        };
+        if !*stopped {
+            match stop_and_wait(manager, &self.id) {
+                Ok(()) => *stopped = true,
+                Err(err) => {
+                    let program = Some(unit.program.clone());
+                    self.found = Found::Untouched {
+                        outcome: RefreshOutcome::Failed,
+                        why: format!("it could not be stopped before rollback: {err}"),
+                        program,
+                        running: false,
+                    };
+                    return;
+                }
+            }
+        }
+        if want_running {
+            *was_running = true;
+        }
+    }
+
     fn refresh(
         self,
         manager: &dyn ServiceManager,
@@ -328,143 +487,6 @@ impl Entry {
     }
 }
 
-/// One service setup registered from this store, on its way to the new release.
-struct Move<'a> {
-    manager: &'a dyn ServiceManager,
-    instance: &'a str,
-    id: &'a str,
-    /// ` --name <instance>`, or nothing for `default`.
-    flag: String,
-    was_running: bool,
-}
-
-impl Move<'_> {
-    /// Points the definition at `program` unless it names it already (`stopped`: the
-    /// install stopped the service), then starts it again or says how it is left.
-    fn run(
-        &self,
-        unit: Unit,
-        stopped: bool,
-        program: &Path,
-        restart: bool,
-    ) -> ServiceRefreshReport {
-        let target = Unit {
-            program: program.to_owned(),
-            ..unit.clone()
-        };
-        let (outcome, stopped) = if unit.program == target.program {
-            (RefreshOutcome::Unchanged, stopped)
-        } else {
-            let stop = self.was_running && !stopped;
-            match redefine(self.manager, self.id, &target, stop) {
-                Ok(()) => (RefreshOutcome::Refreshed, stopped || stop),
-                Err(refused) => return self.refused(refused, &unit.program, program, stopped),
-            }
-        };
-        if stopped && restart {
-            return self.restart(outcome, &target);
-        }
-        self.left(outcome, &target.program, stopped)
-    }
-
-    fn report(
-        &self,
-        outcome: RefreshOutcome,
-        program: &Path,
-        note: String,
-        running: bool,
-    ) -> ServiceRefreshReport {
-        report(self.instance, outcome, Some(program), note).ran(self.was_running, running)
-    }
-
-    /// The definition could not be pointed at `program`: it still names `previous`.
-    fn refused(
-        &self,
-        (outcome, why, now_stopped): (RefreshOutcome, String, bool),
-        previous: &Path,
-        program: &Path,
-        stopped: bool,
-    ) -> ServiceRefreshReport {
-        let stopped = stopped || now_stopped;
-        let mut note = untouched_note(outcome, &why, program, &self.flag);
-        if stopped {
-            note.push_str(
-                "; it was stopped for the install and its previous release no longer starts",
-            );
-        }
-        self.report(outcome, previous, note, self.was_running && !stopped)
-    }
-
-    /// Loads the definition again where the manager needs it (launchd) and starts it.
-    fn restart(&self, outcome: RefreshOutcome, target: &Unit) -> ServiceRefreshReport {
-        let shown = target.program.display();
-        let started = self
-            .manager
-            .register(target)
-            .and_then(|_| self.manager.start(self.id));
-        match started {
-            Ok(()) => {
-                let note = format!("its service runs {shown} again");
-                self.report(outcome, &target.program, note, true)
-            }
-            Err(e) => {
-                let note = format!(
-                    "its service now names {shown} but could not be started again ({e}): run \
-                     `agentic-org setup{}`",
-                    self.flag
-                );
-                self.report(RefreshOutcome::Failed, &target.program, note, false)
-            }
-        }
-    }
-
-    /// A service not started again: one that still runs, one that was stopped and stays
-    /// so, or one `--no-restart` leaves stopped.
-    fn left(&self, outcome: RefreshOutcome, program: &Path, stopped: bool) -> ServiceRefreshReport {
-        let shown = program.display();
-        if self.was_running && !stopped {
-            let note = format!("its service already runs {shown}");
-            return self.report(outcome, program, note, true);
-        }
-        let flag = &self.flag;
-        let how = match self.manager.status(self.id) {
-            // launchd loads an agent only to start it: the redefined one waits for a login.
-            Ok(ServiceStatus::Unloaded) => {
-                format!("it starts at the next login, or now with `agentic-org setup{flag}`")
-            }
-            _ => format!("start it with `agentic-org service start{flag}`"),
-        };
-        let why = if self.was_running {
-            "it was stopped for the install and not started again (--no-restart)"
-        } else {
-            "it stays stopped"
-        };
-        let note = format!("its service now names {shown}; {why}: {how}");
-        self.report(outcome, program, note, false)
-    }
-}
-
-/// Stops the service first when `stop` (it still runs), then points its definition at
-/// `target`. A refusal is the outcome, why, and whether this call stopped the service.
-fn redefine(
-    manager: &dyn ServiceManager,
-    id: &str,
-    target: &Unit,
-    stop: bool,
-) -> Result<(), (RefreshOutcome, String, bool)> {
-    if stop {
-        stop_and_wait(manager, id).map_err(|e| {
-            let why = format!("it could not be stopped: {e}");
-            (RefreshOutcome::Failed, why, false)
-        })?;
-    }
-    match manager.redefine(target) {
-        Ok(_) => Ok(()),
-        Err(ServiceError::Conflict(why)) => Err((RefreshOutcome::Refused, why, stop)),
-        Err(e) => Err((RefreshOutcome::Failed, e.to_string(), stop)),
-    }
-}
-
 impl ServiceRefreshReport {
     fn ran(mut self, was_running: bool, running: bool) -> Self {
         self.was_running = was_running;
@@ -483,22 +505,6 @@ impl RefreshOutcome {
             Self::Skipped => "skipped",
             Self::Failed => "failed",
         }
-    }
-}
-
-fn report(
-    instance: &str,
-    outcome: RefreshOutcome,
-    program: Option<&Path>,
-    note: String,
-) -> ServiceRefreshReport {
-    ServiceRefreshReport {
-        instance: instance.to_owned(),
-        outcome,
-        was_running: false,
-        running: false,
-        program: program.map(|p| p.display().to_string()),
-        note: format!("Instance \"{instance}\": {note}."),
     }
 }
 
@@ -525,28 +531,6 @@ fn left_alone(
         why,
         program,
         running: matches!(manager.status(id), Ok(ServiceStatus::Running { .. })),
-    }
-}
-
-/// What the operator does about a service an install left untouched.
-fn untouched_note(outcome: RefreshOutcome, why: &str, program: &Path, flag: &str) -> String {
-    let program = program.display();
-    match outcome {
-        RefreshOutcome::Refused => format!(
-            "its service definition was left untouched because it is not what setup wrote \
-             ({why}); to move it to {program}: stop it (`agentic-org service stop{flag} \
-             --yes`), change its program to {program} and reload it in the service manager, \
-             then start it (`agentic-org service start{flag}`); or undo the changes and run \
-             `agentic-org setup{flag}`"
-        ),
-        RefreshOutcome::Skipped => format!(
-            "its service was left as it is ({why}); run `agentic-org setup{flag}` with the \
-             release it should run"
-        ),
-        _ => format!(
-            "its service was left as it is ({why}); when it is stopped, run `agentic-org \
-             setup{flag}` to point it at {program}"
-        ),
     }
 }
 
@@ -613,31 +597,6 @@ fn in_store(program: &Path, releases: &Path) -> bool {
         return false;
     };
     folder == releases || std::fs::canonicalize(folder).is_ok_and(|f| f == releases)
-}
-
-/// Asks the service to stop and waits until the manager no longer reports it running.
-fn stop_and_wait(manager: &dyn ServiceManager, id: &str) -> Result<(), ServiceError> {
-    manager.stop(id)?;
-    let deadline = Instant::now() + STOP_WAIT;
-    while matches!(manager.status(id)?, ServiceStatus::Running { .. }) {
-        if Instant::now() >= deadline {
-            return Err(ServiceError::System(format!(
-                "it still runs {} s after it was asked to stop",
-                STOP_WAIT.as_secs()
-            )));
-        }
-        std::thread::sleep(POLL);
-    }
-    Ok(())
-}
-
-/// ` --name <instance>`, nothing for `default`.
-fn name_flag(instance: &str) -> String {
-    if instance == "default" {
-        String::new()
-    } else {
-        format!(" --name {instance}")
-    }
 }
 
 /// This account's application base, where setup keeps one record per instance

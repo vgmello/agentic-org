@@ -11,6 +11,7 @@ use org_release::{TrustedKeys, TrustedPolicy, VerifiedManifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -21,7 +22,7 @@ use verify::{
 
 /// A pin authenticates exact manifest bytes, not just a version label. It grants
 /// no account, organization, executable or service authority by itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePin {
     pub release_id: String,
@@ -63,6 +64,8 @@ pub(super) struct Commit {
     previous: Option<String>,
     highest_sequence: u64,
     pin: ReleasePin,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    rollback: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -86,6 +89,8 @@ pub struct ReleaseStore {
     pub(super) policy: TrustedPolicy,
     pub(super) keys: TrustedKeys,
     pub(super) head: Option<(Commit, String)>,
+    pub(super) prior_pins: BTreeSet<ReleasePin>,
+    pub(super) history: Vec<ReleasePin>,
 }
 
 impl ReleaseStore {
@@ -93,6 +98,16 @@ impl ReleaseStore {
     /// activation are performed explicitly before setup may open credentials.
     pub fn open(path: &Path) -> Result<Self, Error> {
         let (policy, keys) = super::policy()?;
+        Self::with_policy(path, policy, keys)
+    }
+
+    /// Open a private disk store with an explicit test policy and key registry.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_with_policy(
+        path: &Path,
+        policy: TrustedPolicy,
+        keys: TrustedKeys,
+    ) -> Result<Self, Error> {
         Self::with_policy(path, policy, keys)
     }
 
@@ -114,6 +129,8 @@ impl ReleaseStore {
             policy,
             keys,
             head: None,
+            prior_pins: BTreeSet::new(),
+            history: Vec::new(),
         };
         result.verify_root()?;
         Ok(result)
@@ -125,10 +142,43 @@ impl ReleaseStore {
         self.head.as_ref().map(|(h, _)| &h.pin)
     }
 
+    /// Highest release sequence ever committed to this store (monotonic across rollbacks).
+    pub fn highest_sequence(&self) -> u64 {
+        self.head
+            .as_ref()
+            .map(|(h, _)| h.highest_sequence)
+            .unwrap_or(0)
+    }
+
+    /// The most recently committed distinct release pin prior to the currently active pin.
+    pub fn previous_pin(&self) -> Option<&ReleasePin> {
+        let current = self.pin()?;
+        self.history.iter().rev().find(|pin| *pin != current)
+    }
+
+    /// All distinct release pins ever committed to this store, newest first.
+    pub fn committed_pins(&self) -> Vec<ReleasePin> {
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for pin in self.history.iter().rev() {
+            if seen.insert(pin.clone()) {
+                out.push(pin.clone());
+            }
+        }
+        out
+    }
+
     /// Reconcile an exact frozen pending transaction. This must finish before
     /// any new installation or protected setup work. No domain decisions rerun.
     pub fn recover(&mut self) -> Result<Option<ReleasePin>, Error> {
         self.recover_with(platform::verify, true)
+    }
+
+    /// Test-only recovery without host static platform signature admission (used to verify
+    /// cross-platform macOS policies on Linux test runners).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn recover_without_platform_check(&mut self) -> Result<Option<ReleasePin>, Error> {
+        self.recover_with(|_, _| Ok(()), true)
     }
 
     fn recover_with(
@@ -143,6 +193,8 @@ impl ReleaseStore {
             return Err(Error::InvalidRelease);
         }
         self.head = None;
+        self.prior_pins.clear();
+        self.history.clear();
         for ordinal in 1..=pin_count {
             let bytes = self.pins.read(&record_name(ordinal), MAX_CONTROL)?;
             let commit: Commit = decode(&bytes)?;
@@ -152,6 +204,8 @@ impl ReleaseStore {
             if encode(&intent.commit)? != bytes {
                 return Err(Error::InvalidRelease);
             }
+            self.prior_pins.insert(commit.pin.clone());
+            self.history.push(commit.pin.clone());
             self.head = Some((commit, hex(&Sha256::digest(&bytes))));
         }
         if intent_count > pin_count {
@@ -209,6 +263,95 @@ impl ReleaseStore {
     /// this second pass supplies payload bytes only, never extraction authority.
     pub fn install_archive(&mut self, bundle: &mut ArchiveBundle) -> Result<ReleasePin, Error> {
         self.install_archive_with(bundle, platform::verify, |_| Ok(()))
+    }
+
+    /// Test-only archive install skipping platform code-signature admission (used to verify
+    /// cross-platform macOS policies on Linux test runners).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn install_archive_without_platform_check(
+        &mut self,
+        bundle: &mut ArchiveBundle,
+    ) -> Result<ReleasePin, Error> {
+        self.install_archive_with(bundle, |_, _| Ok(()), |_| Ok(()))
+    }
+
+    /// Roll back the active pin to a previously committed release in this store's verified
+    /// hash chain without decreasing `highest_sequence`. Re-verifies the entire sealed
+    /// release tree (signature, inventory, payload digests, platform admission, and build
+    /// freshness floor) before appending the rollback commit.
+    pub fn rollback_to(&mut self, target: &ReleasePin) -> Result<ReleasePin, Error> {
+        self.rollback_to_with(target, platform::verify, |_| Ok(()))
+    }
+
+    /// Roll back to a previously committed release identified by `release_id`.
+    pub fn rollback_to_release_id(&mut self, release_id: &str) -> Result<ReleasePin, Error> {
+        self.recover_with(platform::verify, false)?;
+        let target = self
+            .history
+            .iter()
+            .rev()
+            .find(|pin| pin.release_id == release_id)
+            .cloned()
+            .ok_or(Error::InvalidRelease)?;
+        self.rollback_to_with(&target, platform::verify, |_| Ok(()))
+    }
+
+    /// Test-only rollback without host static platform signature admission.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rollback_to_without_platform_check(
+        &mut self,
+        target: &ReleasePin,
+    ) -> Result<ReleasePin, Error> {
+        self.rollback_to_with(target, |_, _| Ok(()), |_| Ok(()))
+    }
+
+    fn rollback_to_with(
+        &mut self,
+        target: &ReleasePin,
+        check: impl Fn(&Directory, &VerifiedManifest) -> Result<(), Error> + Copy,
+        mut fault: impl FnMut(Step) -> Result<(), Error>,
+    ) -> Result<ReleasePin, Error> {
+        target.validate()?;
+        self.recover_with(check, false)?;
+        if self.pin() == Some(target) {
+            self.verify_installed(target, check)?;
+            return Ok(target.clone());
+        }
+        if !self.prior_pins.contains(target) {
+            return Err(Error::InvalidRelease);
+        }
+        let (ordinal, previous, highest) = match &self.head {
+            Some((head, hash)) => (
+                head.ordinal.checked_add(1).ok_or(Error::Exhausted)?,
+                Some(hash.clone()),
+                head.highest_sequence,
+            ),
+            None => return Err(Error::InvalidRelease),
+        };
+        if target.sequence > highest {
+            return Err(Error::InvalidRelease);
+        }
+        // Re-verify the sealed release tree on disk against build policy and trusted keys.
+        self.verify_installed(target, check)?;
+        let staging = crate::ids::generate()?;
+        let intent = Intent {
+            version: 1,
+            staging,
+            commit: Commit {
+                version: 1,
+                ordinal,
+                previous,
+                highest_sequence: highest,
+                pin: target.clone(),
+                rollback: true,
+            },
+        };
+        self.verify_root()?;
+        self.intents
+            .publish_control(&record_name(ordinal), &encode(&intent)?)?;
+        fault(Step::Intent)?;
+        self.finish(&intent, check, fault)?;
+        Ok(target.clone())
     }
 
     fn install_archive_with(
@@ -314,6 +457,7 @@ impl ReleaseStore {
                 previous: self.head.as_ref().map(|(_, h)| h.clone()),
                 highest_sequence: highest.max(pin.sequence),
                 pin: pin.clone(),
+                rollback: false,
             },
         };
         self.verify_root()?;
@@ -364,6 +508,8 @@ impl ReleaseStore {
         self.pins
             .publish_control(&record_name(intent.commit.ordinal), &bytes)?;
         fault(Step::Pinned)?;
+        self.prior_pins.insert(intent.commit.pin.clone());
+        self.history.push(intent.commit.pin.clone());
         self.head = Some((intent.commit.clone(), hex(&Sha256::digest(&bytes))));
         self.verify_root()?;
         Ok(())
