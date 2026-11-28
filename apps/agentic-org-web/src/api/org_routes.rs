@@ -115,6 +115,7 @@ fn try_route_organization_subroutes(
         .or_else(|| {
             super::external_auth_routes::try_route(api, request, org, tail, get, post, query)
         })
+        .or_else(|| super::review_routes::try_route(api, request, org, tail, get, post, query))
 }
 
 pub(super) fn route_organization(

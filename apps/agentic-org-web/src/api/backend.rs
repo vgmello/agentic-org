@@ -6,9 +6,9 @@ use super::{
     create_outcome, doc_routes, external_auth_routes, failure, git_routes, hiring_routes,
     instance_routes, instance_routes::CallerAuth, instance_view, invalid, mutation, not_found,
     note_routes, office_routes, open_routes, org_routes, organization_view, process_routes,
-    provider_routes, result, search_routes, session_routes, task_routes, tess_routes, unavailable,
-    view, Call, CliApprovalDecideBody, Credentials, EmptyBody, RegisterBody, Route, SessionApi,
-    SignInBody,
+    provider_routes, result, review_routes, search_routes, session_routes, task_routes,
+    tess_routes, unavailable, view, Call, CliApprovalDecideBody, Credentials, EmptyBody,
+    RegisterBody, Route, SessionApi, SignInBody,
 };
 use crate::body::{stream::StreamedBody, BusinessBody};
 use crate::host::Failure;
@@ -342,6 +342,7 @@ impl ApiBackend for SessionApi {
             Route::Attachments(route) => return attachment_routes::prepare(route, bytes),
             Route::Tess(route) => return tess_routes::prepare(route, bytes),
             Route::ExternalAuth(route) => return external_auth_routes::prepare(route, bytes),
+            Route::Reviews(route) => return review_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -523,6 +524,12 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::Reviews(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(review_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -570,6 +577,7 @@ impl ApiBackend for SessionApi {
             | Call::Attachments(_)
             | Call::Tess(_)
             | Call::ExternalAuth(_)
+            | Call::Reviews(_)
             | Call::OrgSnapshot(_, _)
             | Call::OrgProjects(_, _, _)
             | Call::OrgProjectInspect(_, _, _)

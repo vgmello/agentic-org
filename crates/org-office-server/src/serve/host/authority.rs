@@ -111,11 +111,12 @@ fn requires_owner(method: &str) -> bool {
     )
 }
 
-/// The attachment calls (`TASK-98.1`): never owner-only and never a satellite operator call;
-/// a host channel serves them to any live person, and the office's `AuthorizationPolicy`
-/// decides per file (a person's private space stays theirs alone).
+/// Attachment (`TASK-98.1`) and universal review (`TASK-92.2`) calls: never owner-only and
+/// never a satellite operator call; a host channel serves them to any live active person, and
+/// the office's per-resource authorization decides visibility and action rights.
 fn is_member_scoped_method(method: &str) -> bool {
     org_proto::attachments::ATTACHMENT_METHODS.contains(&method)
+        || org_proto::reviews::REVIEW_METHODS.contains(&method)
 }
 
 fn is_satellite_operator_method(method: &str) -> bool {
