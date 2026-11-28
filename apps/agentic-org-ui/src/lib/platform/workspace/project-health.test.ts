@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectTeam, WorkItemSummary } from '$lib/proto';
 import type { InboxItem } from './inbox-types';
-import { classifyProjectHealth, deriveProjectHealth, isProjectOverdue } from './project-health';
+import {
+	buildProjectHealthOverlay,
+	buildProjectHealthSignals,
+	classifyProjectHealth,
+	deriveProjectHealth,
+	isProjectOverdue
+} from './project-health';
 
 function makeWorkItem(overrides: Partial<WorkItemSummary> = {}): WorkItemSummary {
 	return {
@@ -162,5 +168,104 @@ describe('shared project-health classifier', () => {
 				unassignedTeam: false
 			})
 		).toEqual({ tone: 'ok', label: 'On track', statusPillClass: 't-green' });
+	});
+
+	it('unifies server-side ProjectRow/HomeProject overlays and team validation through buildProjectHealthOverlay', () => {
+		const knownTeamIds = new Set(['team-1']);
+
+		// Empty or stale/unknown rowTeamIds still classify as unassigned (At risk)
+		const emptyTeamOverlay = buildProjectHealthOverlay({ rowTeamIds: ['', '  '] });
+		expect(
+			buildProjectHealthSignals({
+				projectId: 'proj-1',
+				workItems: [],
+				inboxItems: [],
+				projectTeams: [],
+				knownTeamIds,
+				overlay: emptyTeamOverlay,
+				nowMs: NOW
+			}).unassignedTeam
+		).toBe(true);
+
+		const staleTeamOverlay = buildProjectHealthOverlay({ rowTeamIds: ['team-deleted'] });
+		expect(
+			deriveProjectHealth({
+				projectId: 'proj-1',
+				workItems: [],
+				inboxItems: [],
+				projectTeams: [
+					{ id: 'pt-stale', project_id: 'proj-1', team_id: 'team-deleted', version: 1 }
+				],
+				knownTeamIds,
+				overlay: staleTeamOverlay,
+				nowMs: NOW
+			})
+		).toEqual({ tone: 'warn', label: 'At risk', statusPillClass: 't-amber' });
+
+		// Valid rowTeamIds satisfies team assignment even if project_teams is empty
+		const validRowTeamOverlay = buildProjectHealthOverlay({ rowTeamIds: ['team-1'] });
+		expect(
+			deriveProjectHealth({
+				projectId: 'proj-1',
+				workItems: [],
+				inboxItems: [],
+				projectTeams: [],
+				knownTeamIds,
+				overlay: validRowTeamOverlay,
+				nowMs: NOW
+			}).tone
+		).toBe('ok');
+
+		// Server-side rowTasks.blocked and rowBugs.critical/major drive At risk / Off track
+		const rowBlockedOverlay = buildProjectHealthOverlay({
+			rowTasks: { todo: 2, inProgress: 1, blocked: 1, done: 0 },
+			rowTeamIds: ['team-1']
+		});
+		expect(
+			deriveProjectHealth({
+				projectId: 'proj-1',
+				workItems: [],
+				inboxItems: [],
+				projectTeams: TEAM_LINK,
+				knownTeamIds,
+				overlay: rowBlockedOverlay,
+				nowMs: NOW
+			}).tone
+		).toBe('warn');
+
+		const rowBugOverlay = buildProjectHealthOverlay({
+			rowBugs: { critical: 0, major: 1 },
+			rowTeamIds: ['team-1']
+		});
+		expect(
+			deriveProjectHealth({
+				projectId: 'proj-1',
+				workItems: [],
+				inboxItems: [],
+				projectTeams: TEAM_LINK,
+				knownTeamIds,
+				overlay: rowBugOverlay,
+				nowMs: NOW
+			}).tone
+		).toBe('bad');
+
+		// Overdue with homeTotal/homeDone from overlay
+		const overdueOverlay = buildProjectHealthOverlay({
+			due: '2026-11-20',
+			homeDone: 1,
+			homeTotal: 3,
+			rowTeamIds: ['team-1']
+		});
+		expect(
+			deriveProjectHealth({
+				projectId: 'proj-1',
+				workItems: [],
+				inboxItems: [],
+				projectTeams: TEAM_LINK,
+				knownTeamIds,
+				overlay: overdueOverlay,
+				nowMs: NOW
+			}).tone
+		).toBe('warn');
 	});
 });

@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { toAppError } from '$lib/proto';
 import type { PersonPanelDataSource, PersonPanelProfile, PersonPanelWorkItem } from './types';
 
@@ -17,6 +18,7 @@ export class PersonPanelLoader {
 	profile = $state.raw<PersonPanelProfile | undefined>(undefined);
 	openWork = $state.raw<readonly PersonPanelWorkItem[]>([]);
 	totalOpenWork = $state(0);
+	openWorkUnavailable = $state(false);
 	loading = $state(false);
 	error = $state<string | undefined>(undefined);
 
@@ -44,10 +46,13 @@ export class PersonPanelLoader {
 		this.profile = undefined;
 		this.openWork = [];
 		this.totalOpenWork = 0;
+		this.openWorkUnavailable = false;
 		this.error = undefined;
 		this.loading = true;
 
-		const done = this.#run(organizationId, memberId, seq, controller);
+		// Untrack the source invocation so synchronous reactive reads inside loadMember (e.g.,
+		// shellData.personPanelContext()) never subscribe caller $effects or {@attach} hooks.
+		const done = untrack(() => this.#run(organizationId, memberId, seq, controller));
 		return {
 			cancel: () => {
 				if (this.#abort === controller) {
@@ -71,6 +76,7 @@ export class PersonPanelLoader {
 			this.profile = result.profile;
 			this.openWork = result.openWork;
 			this.totalOpenWork = result.totalOpenWork;
+			this.openWorkUnavailable = Boolean(result.openWorkUnavailable);
 			this.error = result.error;
 		} catch (err) {
 			if (this.#disposed || controller.signal.aborted || seq !== this.#seq || isAbortError(err)) {
@@ -79,6 +85,7 @@ export class PersonPanelLoader {
 			this.profile = undefined;
 			this.openWork = [];
 			this.totalOpenWork = 0;
+			this.openWorkUnavailable = false;
 			this.error = toAppError(err).message || 'Could not load profile.';
 		} finally {
 			if (!this.#disposed && seq === this.#seq) {

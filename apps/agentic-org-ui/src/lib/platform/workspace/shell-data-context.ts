@@ -1,6 +1,7 @@
 import { createContext } from 'svelte';
-import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import type { OfficeInfo, OrgSnapshot, ProjectTeam, WorkItemSummary } from '$lib/proto';
 import type { InboxItem } from './inbox-types';
+import type { ProjectHealthOverlay } from './project-health';
 
 export interface ShellRefreshResult {
 	inboxUpdated: boolean;
@@ -21,10 +22,11 @@ export interface ShellDataContext {
 	readonly openInboxCount: number;
 	readonly needsYouCount: number;
 	readonly offices: OfficeInfo[];
-	readonly projectDueById: Readonly<Record<string, string>>;
-	setProjectDueDates(
+	readonly validProjectTeams: readonly ProjectTeam[] | undefined;
+	readonly projectHealthById: Readonly<Record<string, ProjectHealthOverlay>>;
+	setProjectHealthOverlays(
 		organizationId: string,
-		projects: ReadonlyArray<{ id: string; due?: string }>
+		overlays: Readonly<Record<string, ProjectHealthOverlay>>
 	): void;
 	load(id?: string, reset?: boolean): { promise: Promise<ShellRefreshResult>; cancel: () => void };
 	refresh(): Promise<ShellRefreshResult>;

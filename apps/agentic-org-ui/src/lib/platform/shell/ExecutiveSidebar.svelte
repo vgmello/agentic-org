@@ -9,6 +9,7 @@
 	import { tooltipContentClass } from '$lib/components/classes';
 	import type { Connection, ProjectSummary, ProjectTeam, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
+	import type { ProjectHealthOverlay } from '$lib/platform/workspace/project-health';
 	import ExecutiveSidebarFavorites from './ExecutiveSidebarFavorites.svelte';
 	import ExecutiveSidebarFooter from './ExecutiveSidebarFooter.svelte';
 	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
@@ -30,7 +31,7 @@
 		workItems = [],
 		inboxItems = [],
 		projectTeams,
-		projectDueById,
+		projectHealthById,
 		collapsed = false,
 		pinned = true,
 		tessOpen = false,
@@ -51,7 +52,7 @@
 		workItems?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		projectTeams?: readonly ProjectTeam[];
-		projectDueById?: Readonly<Record<string, string>>;
+		projectHealthById?: Readonly<Record<string, ProjectHealthOverlay>>;
 		collapsed?: boolean;
 		pinned?: boolean;
 		tessOpen?: boolean;
@@ -315,7 +316,7 @@
 					{workItems}
 					{inboxItems}
 					{projectTeams}
-					{projectDueById}
+					{projectHealthById}
 					{offline}
 					{isActive}
 					{onNavigate}

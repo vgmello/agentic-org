@@ -1,7 +1,8 @@
 import { untrack } from 'svelte';
-import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import type { OfficeInfo, OrgSnapshot, ProjectTeam, WorkItemSummary } from '$lib/proto';
 import { inboxApi } from '$lib/modules/inbox/api';
 import type { InboxItem } from '$lib/platform/workspace/inbox-types';
+import type { ProjectHealthOverlay } from '$lib/platform/workspace/project-health';
 import {
 	setShellDataContext,
 	useShellData,
@@ -35,7 +36,7 @@ export class ShellData implements ShellDataContext {
 	inboxItems = $state.raw<InboxItem[]>([]);
 	inboxLoadedOrganizationId = $state<string | undefined>(undefined);
 	#layeredOffices = $state.raw<OfficeInfo[]>([]);
-	projectDueById = $state.raw<Readonly<Record<string, string>>>({});
+	#rawProjectHealthById = $state.raw<Readonly<Record<string, ProjectHealthOverlay>>>({});
 	loaded = $state(false);
 	loadedOrganizationId = $state<string | undefined>(undefined);
 
@@ -65,6 +66,39 @@ export class ShellData implements ShellDataContext {
 		return this.#layeredOffices.length > 0 ? this.#layeredOffices : this.#options.getBaseOffices();
 	}
 
+	readonly #knownTeamLookup = $derived.by((): Readonly<Record<string, true>> | undefined => {
+		const snap = this.snapshot;
+		if (!snap) return undefined;
+		const lookup: Record<string, true> = {};
+		for (const team of snap.teams) lookup[team.id] = true;
+		return lookup;
+	});
+
+	readonly validProjectTeams = $derived.by((): readonly ProjectTeam[] | undefined => {
+		const snap = this.snapshot;
+		const lookup = this.#knownTeamLookup;
+		if (!snap || !lookup) return undefined;
+		return (snap.project_teams ?? []).filter((pt) => Boolean(lookup[pt.team_id]));
+	});
+
+	readonly projectHealthById = $derived.by((): Readonly<Record<string, ProjectHealthOverlay>> => {
+		const raw = this.#rawProjectHealthById;
+		const lookup = this.#knownTeamLookup;
+		if (!lookup) return raw;
+		const filtered: Record<string, ProjectHealthOverlay> = {};
+		for (const [id, overlay] of Object.entries(raw)) {
+			if (overlay.rowTeamIds === undefined) {
+				filtered[id] = overlay;
+			} else {
+				filtered[id] = Object.freeze({
+					...overlay,
+					rowTeamIds: Object.freeze(overlay.rowTeamIds.filter((teamId) => Boolean(lookup[teamId])))
+				});
+			}
+		}
+		return Object.freeze(filtered);
+	});
+
 	personPanelContext() {
 		const id = this.organizationId;
 		return {
@@ -75,16 +109,19 @@ export class ShellData implements ShellDataContext {
 		};
 	}
 
-	setProjectDueDates(
+	setProjectHealthOverlays(
 		organizationId: string,
-		projects: ReadonlyArray<{ id: string; due?: string }>
+		overlays: Readonly<Record<string, ProjectHealthOverlay>>
 	): void {
 		if (this.#leaving || organizationId !== this.organizationId) return;
-		const next: Record<string, string> = {};
-		for (const project of projects) {
-			if (project.due) next[project.id] = project.due;
+		const next: Record<string, ProjectHealthOverlay> = {};
+		for (const [id, overlay] of Object.entries(overlays)) {
+			next[id] = Object.freeze({
+				...overlay,
+				...(overlay.rowTeamIds ? { rowTeamIds: Object.freeze([...overlay.rowTeamIds]) } : {})
+			});
 		}
-		this.projectDueById = Object.freeze(next);
+		this.#rawProjectHealthById = Object.freeze(next);
 	}
 
 	#resetFields(): void {
@@ -94,7 +131,7 @@ export class ShellData implements ShellDataContext {
 		this.inboxItems = [];
 		this.inboxLoadedOrganizationId = undefined;
 		this.#layeredOffices = [];
-		this.projectDueById = {};
+		this.#rawProjectHealthById = {};
 		this.loaded = false;
 		this.loadedOrganizationId = undefined;
 	}

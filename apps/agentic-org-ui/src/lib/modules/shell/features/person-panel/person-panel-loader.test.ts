@@ -1,4 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const untrackState = vi.hoisted(() => ({ depth: 0 }));
+
+vi.mock('svelte', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('svelte')>();
+	return {
+		...actual,
+		untrack<T>(fn: () => T): T {
+			untrackState.depth += 1;
+			try {
+				return actual.untrack(fn);
+			} finally {
+				untrackState.depth -= 1;
+			}
+		}
+	};
+});
+
 import { PersonPanelLoader } from './person-panel-loader.svelte';
 import type { PersonPanelDataSource, PersonPanelLoadedData, PersonPanelProfile } from './types';
 
@@ -164,6 +182,46 @@ describe('PersonPanelLoader', () => {
 		await loader.load('org-1', 'rowan').done;
 		expect(loader.profile?.name).toBe('Recovered');
 		expect(loader.error).toBeUndefined();
+		loader.dispose();
+	});
+
+	it('executes loadMember strictly inside untrack() so reactive ShellData reads cannot retrigger caller effects (N1)', async () => {
+		let observedDepth = 0;
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>((_org, memberId) => {
+			observedDepth = untrackState.depth;
+			return Promise.resolve({
+				profile: fakeProfile(memberId, 'Rowan'),
+				openWork: [],
+				totalOpenWork: 0
+			});
+		});
+
+		const loader = new PersonPanelLoader({ loadMember });
+		expect(untrackState.depth).toBe(0);
+		await loader.load('org-1', 'rowan').done;
+		expect(observedDepth).toBeGreaterThan(0);
+		expect(untrackState.depth).toBe(0);
+		loader.dispose();
+	});
+
+	it('surfaces openWorkUnavailable honestly and resets it immediately on subsequent load', async () => {
+		let failWork = true;
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>(async (_org, memberId) => ({
+			profile: fakeProfile(memberId, 'Rowan'),
+			openWork: [],
+			totalOpenWork: 0,
+			openWorkUnavailable: failWork
+		}));
+
+		const loader = new PersonPanelLoader({ loadMember });
+		await loader.load('org-1', 'rowan').done;
+		expect(loader.openWorkUnavailable).toBe(true);
+
+		failWork = false;
+		const next = loader.load('org-1', 'rowan');
+		expect(loader.openWorkUnavailable).toBe(false);
+		await next.done;
+		expect(loader.openWorkUnavailable).toBe(false);
 		loader.dispose();
 	});
 });

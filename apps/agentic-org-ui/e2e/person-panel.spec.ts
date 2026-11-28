@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { enterMockedOrganization } from './mock-organization';
 import { visit } from './ready';
 
 test(
@@ -191,5 +192,83 @@ test(
 		await page.keyboard.press('Escape');
 		await mobileSearch.click({ force: true });
 		await expect(page.locator('.exec-cmdk-dialog')).toHaveCount(0);
+	}
+);
+
+test(
+	'PersonSidePanel does not reload or steal focus when live shellData.refresh() updates snapshot/workItems (N1)',
+	{ tag: '@webkit' },
+	async ({ page }) => {
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await enterMockedOrganization(page, 'N1 reference');
+		await visit(page, '/home');
+
+		const leadLink = page.locator('a[data-person]').first();
+		await expect(leadLink).toBeVisible();
+		await leadLink.click();
+
+		const panel = page.getByTestId('person-side-panel');
+		const heading = panel.locator('#person-panel-title');
+		await expect(heading).toBeVisible();
+		const initialName = (await heading.textContent())?.trim() ?? '';
+		expect(initialName.length).toBeGreaterThan(0);
+		await expect(heading).toBeFocused();
+
+		// Move focus outside the panel (simulating a user continuing to work in the page while inspecting the profile).
+		const searchBtn = page.getByTestId('sidebar-search-trigger');
+		await searchBtn.focus();
+		await expect(searchBtn).toBeFocused();
+
+		// Watch for any spurious reload ("Loading profile…") or focus steal back onto #person-panel-title.
+		await page.evaluate(() => {
+			const probe = { loadingFlashes: 0, titleFocusCount: 0 };
+			(window as unknown as { __n1Probe?: typeof probe }).__n1Probe = probe;
+			const panelEl = document.querySelector('[data-testid="person-side-panel"]');
+			const titleEl = document.getElementById('person-panel-title');
+			titleEl?.addEventListener('focus', () => {
+				probe.titleFocusCount += 1;
+			});
+			if (panelEl) {
+				const mo = new MutationObserver(() => {
+					if (panelEl.textContent?.includes('Loading profile')) probe.loadingFlashes += 1;
+				});
+				mo.observe(panelEl, { childList: true, subtree: true, characterData: true });
+			}
+		});
+
+		// Trigger a real live org mutation -> onFeed -> invalidate('app:org') + shellData.refresh() mutating snapshot/workItems.
+		await page.evaluate(async () => {
+			const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as {
+				organization: { id: string };
+			}[];
+			const orgId = saved[saved.length - 1]?.organization.id;
+			if (!orgId) throw new Error('Expected active mock organization connection');
+			await (
+				window as unknown as {
+					__mockOrgChange: (id: string, command: object) => Promise<unknown>;
+				}
+			).__mockOrgChange(orgId, {
+				method: 'project.create',
+				params: {
+					project_id: '01JC00000000000000000000P1',
+					name: 'Live SSE Probe',
+					teams: [],
+					general_area_id: '01JC00000000000000000000A1'
+				}
+			});
+		});
+
+		// Confirm the live refresh actually propagated into the Home DOM.
+		await expect(page.getByText('Live SSE Probe').first()).toBeVisible();
+
+		// Panel stayed stable: no focus steal, no reload flash, same profile still rendered.
+		await expect(searchBtn).toBeFocused();
+		await expect(heading).toHaveText(initialName);
+		const probe = await page.evaluate(
+			() =>
+				(window as unknown as { __n1Probe?: { loadingFlashes: number; titleFocusCount: number } })
+					.__n1Probe
+		);
+		expect(probe).toEqual({ loadingFlashes: 0, titleFocusCount: 0 });
 	}
 );

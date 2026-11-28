@@ -24,6 +24,7 @@
 		profile,
 		openWork,
 		totalOpenWork,
+		openWorkUnavailable = false,
 		loading,
 		error,
 		canMessage,
@@ -37,6 +38,7 @@
 		profile?: PersonPanelProfile;
 		openWork: readonly PersonPanelWorkItem[];
 		totalOpenWork: number;
+		openWorkUnavailable?: boolean;
 		loading: boolean;
 		error?: string;
 		canMessage: boolean;
@@ -212,6 +214,8 @@
 						All {totalOpenWork} open items
 					</a>
 				{/if}
+			{:else if openWorkUnavailable}
+				<p class="pp-empty">Could not load open work.</p>
 			{:else}
 				<p class="pp-empty">No open work assigned.</p>
 			{/if}

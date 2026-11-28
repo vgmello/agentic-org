@@ -8,6 +8,7 @@
 	import { tooltipContentClass } from '$lib/components/classes';
 	import type { Connection, ProjectSummary, ProjectTeam, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
+	import type { ProjectHealthOverlay } from '$lib/platform/workspace/project-health';
 	import MobileNavigation from './MobileNavigation.svelte';
 
 	let {
@@ -19,7 +20,7 @@
 		workItems = [],
 		inboxItems = [],
 		projectTeams,
-		projectDueById,
+		projectHealthById,
 		tessOpen = false,
 		offline = false,
 		onOpenSearch,
@@ -34,7 +35,7 @@
 		workItems?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		projectTeams?: readonly ProjectTeam[];
-		projectDueById?: Readonly<Record<string, string>>;
+		projectHealthById?: Readonly<Record<string, ProjectHealthOverlay>>;
 		tessOpen?: boolean;
 		offline?: boolean;
 		onOpenSearch?: () => void;
@@ -55,7 +56,7 @@
 		{workItems}
 		{inboxItems}
 		{projectTeams}
-		{projectDueById}
+		{projectHealthById}
 		{tessOpen}
 		{offline}
 		{onOpenSearch}

@@ -346,8 +346,8 @@
 			projects={shellData.snapshot?.projects ?? []}
 			workItems={shellData.workItems}
 			inboxItems={shellData.inboxItems}
-			projectTeams={shellData.snapshot?.project_teams}
-			projectDueById={shellData.projectDueById}
+			projectTeams={shellData.validProjectTeams}
+			projectHealthById={shellData.projectHealthById}
 			collapsed={sidebarDock.collapsed || sidebarDock.textReflowRail}
 			pinned={sidebarDock.pinned}
 			tessOpen={tessPanel.open}
@@ -379,8 +379,8 @@
 			projects={shellData.snapshot?.projects ?? []}
 			workItems={shellData.workItems}
 			inboxItems={shellData.inboxItems}
-			projectTeams={shellData.snapshot?.project_teams}
-			projectDueById={shellData.projectDueById}
+			projectTeams={shellData.validProjectTeams}
+			projectHealthById={shellData.projectHealthById}
 			tessOpen={tessPanel.open}
 			offline={showPaused}
 			onOpenSearch={() => commandBar?.openPalette()}

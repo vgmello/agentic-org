@@ -141,7 +141,25 @@ describe('personPanelDataSource', () => {
 		expect(result.profile?.profileHref).toBe('/members/rowan');
 		expect(result.profile?.workTabHref).toBe('/members/rowan/work');
 		expect(result.totalOpenWork).toBe(4);
+		expect(result.openWorkUnavailable).toBeUndefined();
 		expect(result.openWork.map((item) => item.ref)).toEqual(['ORG-1', 'ORG-2', 'ORG-3']);
+	});
+
+	it('marks openWorkUnavailable when the fallback workItemsApi.queue call fails', async () => {
+		profileMock.mockResolvedValue(makeProfile('rowan', 'Rowan'));
+		queueMock.mockRejectedValue(new Error('Work queue offline'));
+
+		const result = await personPanelDataSource.loadMember(
+			'org-1',
+			'rowan',
+			new AbortController().signal
+		);
+
+		expect(result.error).toBeUndefined();
+		expect(result.profile?.name).toBe('Rowan');
+		expect(result.openWork).toEqual([]);
+		expect(result.totalOpenWork).toBe(0);
+		expect(result.openWorkUnavailable).toBe(true);
 	});
 
 	it('makes 0 workItemsApi.queue calls when profile.openWork is returned by membersApi.profile', async () => {

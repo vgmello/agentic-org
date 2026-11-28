@@ -235,6 +235,11 @@ test(
 				.getByRole('heading', { level: 2, name: /^Processes/ })
 				.first()
 		).toBeFocused();
+		// Re-opening rail More on the active route marks Processes with aria-current="page".
+		await railMore.click();
+		await expect(processesItem).toHaveAttribute('aria-current', 'page');
+		await page.keyboard.press('Escape');
+		await expect(processesItem).toHaveCount(0);
 	}
 );
 

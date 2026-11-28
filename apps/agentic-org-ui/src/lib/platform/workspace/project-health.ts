@@ -21,6 +21,29 @@ export interface ProjectHealthSignals {
 	unassignedTeam: boolean;
 }
 
+/**
+ * Supplemental server-side project health signals hydrated from `projectsApi.list` (`ProjectRow`)
+ * and `homeApi.projects` (`HomeProject`) so Executive Home and sidebar favorites share identical inputs.
+ */
+export interface ProjectHealthOverlay {
+	due?: string;
+	doneCount?: number;
+	totalCount?: number;
+	blockedCount?: number;
+	criticalBugs?: number;
+	rowTeamIds?: readonly string[];
+}
+
+export interface ProjectHealthOverlaySource {
+	due?: string;
+	homeDone?: number;
+	homeTotal?: number;
+	homeBlocked?: number;
+	rowTasks?: { todo: number; inProgress: number; blocked: number; done: number };
+	rowBugs?: { critical: number; major: number };
+	rowTeamIds?: readonly string[];
+}
+
 export function isSeriousOpenBug(item: WorkItemSummary): boolean {
 	return (
 		item.kind === 'bug' &&
@@ -63,6 +86,49 @@ export function isProjectOverdue(
 	return dueMs < utcNoonMs(nowMs);
 }
 
+function resolveOverlayCounts(
+	source: ProjectHealthOverlaySource
+): { doneCount: number; totalCount: number } | undefined {
+	if (source.homeTotal !== undefined && source.homeTotal > 0) {
+		return { doneCount: source.homeDone ?? 0, totalCount: source.homeTotal };
+	}
+	if (!source.rowTasks) return undefined;
+	const rowTotal =
+		source.rowTasks.todo +
+		source.rowTasks.inProgress +
+		source.rowTasks.blocked +
+		source.rowTasks.done;
+	return rowTotal > 0 ? { doneCount: source.rowTasks.done, totalCount: rowTotal } : undefined;
+}
+
+/**
+ * Build a normalized, frozen `ProjectHealthOverlay` from optional `HomeProject` and `ProjectRow` data.
+ * Used identically by Executive Home cards and `ShellData` sidebar sync.
+ */
+export function buildProjectHealthOverlay(
+	source: ProjectHealthOverlaySource
+): ProjectHealthOverlay {
+	const overlay: ProjectHealthOverlay = {};
+	if (source.due) overlay.due = source.due;
+	const counts = resolveOverlayCounts(source);
+	if (counts) {
+		overlay.doneCount = counts.doneCount;
+		overlay.totalCount = counts.totalCount;
+	}
+	const blocked = Math.max(source.rowTasks?.blocked ?? 0, source.homeBlocked ?? 0);
+	if (blocked > 0) overlay.blockedCount = blocked;
+	if (source.rowBugs) {
+		const serious = source.rowBugs.critical + source.rowBugs.major;
+		if (serious > 0) overlay.criticalBugs = serious;
+	}
+	if (source.rowTeamIds !== undefined) {
+		overlay.rowTeamIds = Object.freeze(
+			source.rowTeamIds.map((id) => id.trim()).filter((id) => id.length > 0)
+		);
+	}
+	return Object.freeze(overlay);
+}
+
 /**
  * Single canonical project health classifier shared by Executive Home scorecards and
  * sidebar Favorite projects so both surfaces always show identical health tones and labels.
@@ -92,21 +158,46 @@ export interface ProjectHealthInput {
 	workItems: readonly WorkItemSummary[];
 	inboxItems: readonly InboxItem[];
 	projectTeams?: readonly ProjectTeam[];
+	knownTeamIds?: ReadonlySet<string>;
+	overlay?: ProjectHealthOverlay;
 	due?: string;
 	doneCount?: number;
 	totalCount?: number;
 	nowMs?: number;
 }
 
-/** Derive project health from snapshot work items, open Inbox items, teams, and optional due date. */
-export function deriveProjectHealth(input: ProjectHealthInput): ProjectHealthResult {
+function hasValidTeamAssignment(
+	projectId: string,
+	projectTeams: readonly ProjectTeam[] | undefined,
+	rowTeamIds: readonly string[] | undefined,
+	knownTeamIds: ReadonlySet<string> | undefined
+): boolean {
+	const isKnown = (teamId: string) =>
+		teamId.trim().length > 0 && (!knownTeamIds || knownTeamIds.has(teamId));
+	if (projectTeams?.some((pt) => pt.project_id === projectId && isKnown(pt.team_id))) {
+		return true;
+	}
+	return rowTeamIds?.some(isKnown) ?? false;
+}
+
+/**
+ * Single canonical signal builder shared by Executive Home scorecards and sidebar Favorite projects.
+ * Evaluates work items, open Inbox items, due dates, server-side row overlays, and team assignment
+ * using one consistent rule.
+ */
+export function buildProjectHealthSignals(input: ProjectHealthInput): ProjectHealthSignals {
 	const projItems = input.workItems.filter(
 		(item) => !item.deleted && item.project_id === input.projectId
 	);
-	const doneCount = input.doneCount ?? projItems.filter(isCompletedWorkSummary).length;
-	const totalCount = input.totalCount ?? projItems.length;
-	const blockedCount = projItems.filter((item) => item.status === 'blocked').length;
-	const criticalBugs = projItems.filter(isSeriousOpenBug).length;
+	const doneCount =
+		input.overlay?.doneCount ?? input.doneCount ?? projItems.filter(isCompletedWorkSummary).length;
+	const totalCount = input.overlay?.totalCount ?? input.totalCount ?? projItems.length;
+	const workBlocked = projItems.filter((item) => item.status === 'blocked').length;
+	const blockedCount = Math.max(workBlocked, input.overlay?.blockedCount ?? 0);
+	const criticalBugs = Math.max(
+		projItems.filter(isSeriousOpenBug).length,
+		input.overlay?.criticalBugs ?? 0
+	);
 	const scopedReqsCount = projItems.filter(
 		(item) => item.kind === 'request' && item.status === 'scoped'
 	).length;
@@ -114,17 +205,29 @@ export function deriveProjectHealth(input: ProjectHealthInput): ProjectHealthRes
 		(item) => item.state === 'open' && item.project?.id === input.projectId
 	);
 	const problemCount = openInbox.filter((item) => item.kind === 'problem').length;
+	const canCheckTeam = input.projectTeams !== undefined || input.overlay?.rowTeamIds !== undefined;
 	const unassignedTeam =
-		input.projectTeams !== undefined &&
-		!input.projectTeams.some((pt) => pt.project_id === input.projectId);
+		canCheckTeam &&
+		!hasValidTeamAssignment(
+			input.projectId,
+			input.projectTeams,
+			input.overlay?.rowTeamIds,
+			input.knownTeamIds
+		);
+	const due = input.overlay?.due ?? input.due;
 
-	return classifyProjectHealth({
+	return {
 		criticalBugs,
 		blockedCount,
 		problemCount,
-		isOverdue: isProjectOverdue(input.due, doneCount, totalCount, input.nowMs),
+		isOverdue: isProjectOverdue(due, doneCount, totalCount, input.nowMs),
 		scopedReqsCount,
 		openInboxCount: openInbox.length,
 		unassignedTeam
-	});
+	};
+}
+
+/** Derive project health from snapshot work items, open Inbox items, teams, and optional overlay. */
+export function deriveProjectHealth(input: ProjectHealthInput): ProjectHealthResult {
+	return classifyProjectHealth(buildProjectHealthSignals(input));
 }

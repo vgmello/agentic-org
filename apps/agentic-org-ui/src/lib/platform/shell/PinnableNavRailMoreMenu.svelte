@@ -19,12 +19,14 @@
 		items,
 		ariaLabel,
 		testId,
-		active = false
+		active = false,
+		isItemActive = () => false
 	}: {
 		items: readonly PinnableNavItem<TId>[];
 		ariaLabel: string;
 		testId: string;
 		active?: boolean;
+		isItemActive?: (item: PinnableNavItem<TId>) => boolean;
 	} = $props();
 
 	let open = $state(false);
@@ -112,11 +114,18 @@
 		>
 			{#each items as item (item.id)}
 				{@const MoreIcon = item.Icon}
+				{@const itemActive = isItemActive(item)}
 				<DropdownMenu.Item
-					class="flex min-h-9 items-center gap-2 max-[639px]:min-h-11"
+					aria-current={itemActive ? 'page' : undefined}
+					class={itemActive
+						? 'flex min-h-9 items-center gap-2 bg-surface-raised font-semibold text-fg max-[639px]:min-h-11'
+						: 'flex min-h-9 items-center gap-2 max-[639px]:min-h-11'}
 					onSelect={() => void selectItem(item)}
 				>
-					<MoreIcon class="size-4 shrink-0 text-fg-muted" aria-hidden="true" />
+					<MoreIcon
+						class={itemActive ? 'size-4 shrink-0 text-fg' : 'size-4 shrink-0 text-fg-muted'}
+						aria-hidden="true"
+					/>
 					<span>{item.label}</span>
 				</DropdownMenu.Item>
 			{/each}

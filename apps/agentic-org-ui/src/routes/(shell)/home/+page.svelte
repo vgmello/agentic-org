@@ -45,7 +45,7 @@
 	const live = new HomeLiveState({
 		overview: (id, signal) => officesApi.overview(id, signal),
 		layer: layerOffices,
-		onProjectDueDates: (id, projects) => shellData.setProjectDueDates(id, projects)
+		onProjectHealthOverlays: (id, overlays) => shellData.setProjectHealthOverlays(id, overlays)
 	});
 
 	let spotlightRef = $state<{ jumpToDecision: (id: string) => boolean } | null>(null);

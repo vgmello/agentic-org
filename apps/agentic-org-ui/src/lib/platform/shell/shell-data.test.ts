@@ -132,4 +132,68 @@ describe('ShellData inboxLoadedOrganizationId', () => {
 		expect(orgSignals[2]?.aborted).toBe(true);
 		await third.promise;
 	});
+
+	it('stores frozen projectHealthById overlays, filters stale team IDs, ignores wrong org/post-dispose, and clears on reset', async () => {
+		orgView.mockResolvedValue({
+			snapshot: {
+				members: [],
+				teams: [{ id: 'team-1', name: 'Platform', version: 1 }],
+				projects: [{ id: 'p-1', name: 'Federation' }],
+				project_teams: [
+					{ id: 'pt-valid', project_id: 'p-1', team_id: 'team-1', version: 1 },
+					{ id: 'pt-stale', project_id: 'p-1', team_id: 'team-deleted', version: 1 }
+				]
+			}
+		});
+		workSnapshot.mockResolvedValue({ items: [] });
+		inboxList.mockResolvedValue([]);
+
+		let currentOrg = 'org-1';
+		const shell = new ShellData({
+			getOrganizationId: () => currentOrg,
+			getBaseOffices: () => baseOffices,
+			loadOffices: async (_id, offices) => offices
+		});
+
+		await shell.load('org-1', true).promise;
+
+		// validProjectTeams strips dangling project_teams entries not present in snapshot.teams.
+		expect(shell.validProjectTeams).toEqual([
+			{ id: 'pt-valid', project_id: 'p-1', team_id: 'team-1', version: 1 }
+		]);
+
+		// Wrong organization updates are ignored.
+		shell.setProjectHealthOverlays('org-other', {
+			'p-1': { due: '2026-11-20', blockedCount: 2, rowTeamIds: ['team-1'] }
+		});
+		expect(shell.projectHealthById).toEqual({});
+
+		// Active org overlays are frozen and stale rowTeamIds are filtered against snapshot.teams.
+		shell.setProjectHealthOverlays('org-1', {
+			'p-1': {
+				due: '2026-11-20',
+				blockedCount: 1,
+				criticalBugs: 2,
+				rowTeamIds: ['team-1', 'team-deleted']
+			}
+		});
+		expect(Object.isFrozen(shell.projectHealthById)).toBe(true);
+		expect(Object.isFrozen(shell.projectHealthById['p-1'])).toBe(true);
+		expect(shell.projectHealthById['p-1']).toEqual({
+			due: '2026-11-20',
+			blockedCount: 1,
+			criticalBugs: 2,
+			rowTeamIds: ['team-1']
+		});
+
+		// Switching org with reset=true clears stale overlays.
+		currentOrg = 'org-2';
+		await shell.load('org-2', true).promise;
+		expect(shell.projectHealthById).toEqual({});
+
+		// Updates after dispose() are ignored.
+		shell.dispose();
+		shell.setProjectHealthOverlays('org-2', { 'p-1': { due: '2026-12-01' } });
+		expect(shell.projectHealthById).toEqual({});
+	});
 });

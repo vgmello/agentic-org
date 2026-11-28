@@ -262,6 +262,7 @@
 				ariaLabel={config.moreListAriaLabel}
 				testId="{config.moreToggleTestId}-rail"
 				active={anyMoreActive}
+				{isItemActive}
 			/>
 		{:else if moreItems.length > 0}
 			<li

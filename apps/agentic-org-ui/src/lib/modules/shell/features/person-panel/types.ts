@@ -30,6 +30,7 @@ export interface PersonPanelLoadedData {
 	profile?: PersonPanelProfile;
 	openWork: readonly PersonPanelWorkItem[];
 	totalOpenWork: number;
+	openWorkUnavailable?: boolean;
 	error?: string;
 }
 

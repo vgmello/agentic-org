@@ -15,7 +15,10 @@
 	import { tooltipContentClass } from '$lib/components/classes';
 	import type { ProjectSummary, ProjectTeam, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
-	import { deriveProjectHealth } from '$lib/platform/workspace/project-health';
+	import {
+		deriveProjectHealth,
+		type ProjectHealthOverlay
+	} from '$lib/platform/workspace/project-health';
 	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let {
@@ -23,7 +26,7 @@
 		workItems = [],
 		inboxItems = [],
 		projectTeams,
-		projectDueById,
+		projectHealthById,
 		offline = false,
 		isActive,
 		onNavigate
@@ -32,7 +35,7 @@
 		workItems?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
 		projectTeams?: readonly ProjectTeam[];
-		projectDueById?: Readonly<Record<string, string>>;
+		projectHealthById?: Readonly<Record<string, ProjectHealthOverlay>>;
 		offline?: boolean;
 		isActive: (href: string) => boolean;
 		onNavigate?: (event: MouseEvent, href: string) => void;
@@ -103,7 +106,7 @@
 						workItems,
 						inboxItems,
 						projectTeams,
-						due: projectDueById?.[proj.id]
+						overlay: projectHealthById?.[proj.id]
 					})}
 					<li class="group flex items-center gap-0.5">
 						<a

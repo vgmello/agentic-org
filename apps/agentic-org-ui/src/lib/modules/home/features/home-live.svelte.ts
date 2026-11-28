@@ -15,14 +15,18 @@ import { projectsApi } from '$lib/modules/projects/api';
 import type { ProjectRow } from '$lib/modules/projects/types';
 import { officeApi } from '$lib/modules/offices/office-api';
 import { loadShellWorkItems } from '$lib/modules/workitems/shell-summary';
+import {
+	buildProjectHealthOverlay,
+	type ProjectHealthOverlay
+} from '$lib/platform/workspace/project-health';
 import { toAppError } from '$lib/proto';
 
 export interface HomeOfficesAdapter<TOverview = unknown> {
 	overview(organizationId: string, signal?: AbortSignal): Promise<TOverview>;
 	layer(base: OfficeInfo[], overview: TOverview | undefined): OfficeInfo[];
-	onProjectDueDates?: (
+	onProjectHealthOverlays?: (
 		organizationId: string,
-		projects: ReadonlyArray<{ id: string; due?: string }>
+		overlays: Readonly<Record<string, ProjectHealthOverlay>>
 	) => void;
 }
 
@@ -229,6 +233,38 @@ export class HomeLiveState<TOverview = unknown> {
 		);
 	}
 
+	#publishProjectHealthOverlays(targetOrgId: string): void {
+		if (!this.#officesAdapter.onProjectHealthOverlays) return;
+		const rowById: Record<string, ProjectRow> = {};
+		const homeById: Record<string, HomeProject> = {};
+		const ids: Record<string, true> = {};
+		for (const row of this.projectRows ?? []) {
+			if (!row.archived) {
+				rowById[row.id] = row;
+				ids[row.id] = true;
+			}
+		}
+		for (const homeProj of this.homeProjects ?? []) {
+			homeById[homeProj.id] = homeProj;
+			ids[homeProj.id] = true;
+		}
+		const overlays: Record<string, ProjectHealthOverlay> = {};
+		for (const id of Object.keys(ids)) {
+			const row = rowById[id];
+			const homeProj = homeById[id];
+			overlays[id] = buildProjectHealthOverlay({
+				due: homeProj?.due,
+				homeDone: homeProj?.done,
+				homeTotal: homeProj?.total,
+				homeBlocked: homeProj?.blocked,
+				rowTasks: row?.tasks,
+				rowBugs: row?.bugs,
+				rowTeamIds: row ? [row.ownerTeam.id, ...row.contributors.map((c) => c.id)] : undefined
+			});
+		}
+		this.#officesAdapter.onProjectHealthOverlays(targetOrgId, Object.freeze(overlays));
+	}
+
 	#loadSecondarySlices(targetOrgId: string, signal: AbortSignal, isStale: () => boolean): void {
 		const settle = <T>(promise: Promise<T>, onValue: (value: T) => void, onError: () => void) => {
 			void promise.then(
@@ -292,9 +328,11 @@ export class HomeLiveState<TOverview = unknown> {
 			projectsApi.list(targetOrgId, signal),
 			(res) => {
 				this.projectRows = res.projects;
+				this.#publishProjectHealthOverlays(targetOrgId);
 			},
 			() => {
 				this.projectRows = undefined;
+				this.#publishProjectHealthOverlays(targetOrgId);
 			}
 		);
 
@@ -302,10 +340,11 @@ export class HomeLiveState<TOverview = unknown> {
 			homeApi.projects(targetOrgId, signal),
 			(rows) => {
 				this.homeProjects = rows;
-				this.#officesAdapter.onProjectDueDates?.(targetOrgId, rows);
+				this.#publishProjectHealthOverlays(targetOrgId);
 			},
 			() => {
 				this.homeProjects = undefined;
+				this.#publishProjectHealthOverlays(targetOrgId);
 			}
 		);
 

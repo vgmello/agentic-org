@@ -3,7 +3,11 @@ import type { OfficeInfo, WorkItemSummary } from '$lib/proto';
 import type { AgentBudgets, OrganizationCost } from '$lib/modules/costs/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import { sampleOrg } from '$lib/modules/organization/sample';
-import { deriveProjectHealth } from '$lib/platform/workspace/project-health';
+import type { ProjectRow } from '$lib/modules/projects/types';
+import {
+	buildProjectHealthOverlay,
+	deriveProjectHealth
+} from '$lib/platform/workspace/project-health';
 import {
 	KPI_PILLAR_ORDER,
 	answerExecutiveQuestion,
@@ -1033,33 +1037,63 @@ describe('executive home view model', () => {
 	it('keeps Home deriveProjectCards and sidebar deriveProjectHealth in exact agreement across all risk states', () => {
 		const base = sampleOrg('hq');
 		const nowMs = Date.parse('2026-11-27T12:00:00Z');
+		const validTeam = base.teams[0];
 		const snap = {
 			...base,
 			projects: [
 				{ id: 'p-overdue', name: 'Overdue project' },
-				{ id: 'p-blocked', name: 'Blocked project' },
-				{ id: 'p-bug', name: 'Critical bug project' },
-				{ id: 'p-noteam', name: 'Unassigned project' },
+				{ id: 'p-row-blocked', name: 'Row blocked project' },
+				{ id: 'p-row-bug', name: 'Row bug project' },
+				{ id: 'p-noteam-empty', name: 'Empty row team project' },
+				{ id: 'p-noteam-stale', name: 'Stale row team project' },
 				{ id: 'p-ok', name: 'On-track project' }
 			],
 			project_teams: [
-				{ id: 'pt-1', project_id: 'p-overdue', team_id: base.teams[0].id, version: 1 },
-				{ id: 'pt-2', project_id: 'p-blocked', team_id: base.teams[0].id, version: 1 },
-				{ id: 'pt-3', project_id: 'p-bug', team_id: base.teams[0].id, version: 1 },
-				{ id: 'pt-4', project_id: 'p-ok', team_id: base.teams[0].id, version: 1 }
+				{ id: 'pt-1', project_id: 'p-overdue', team_id: validTeam.id, version: 1 },
+				{ id: 'pt-2', project_id: 'p-row-blocked', team_id: validTeam.id, version: 1 },
+				{ id: 'pt-3', project_id: 'p-row-bug', team_id: validTeam.id, version: 1 },
+				{ id: 'pt-4', project_id: 'p-ok', team_id: validTeam.id, version: 1 }
 			]
 		};
 		const items: WorkItemSummary[] = [
 			makeItem({ id: 'w-overdue', project_id: 'p-overdue', status: 'in_progress' }),
-			makeItem({ id: 'w-blocked', project_id: 'p-blocked', status: 'blocked' }),
-			makeItem({
-				id: 'w-bug',
-				kind: 'bug',
-				project_id: 'p-bug',
-				status: 'new',
-				severity: 'critical'
-			}),
 			makeItem({ id: 'w-ok', project_id: 'p-ok', status: 'done' })
+		];
+		const makeRow = (
+			id: string,
+			number: number,
+			name: string,
+			overrides: Partial<ProjectRow> = {}
+		): ProjectRow => ({
+			id,
+			number,
+			slug: id,
+			name,
+			ownerTeam: { id: validTeam.id, name: validTeam.name, ref: `TEAM-${number}` },
+			contributors: [],
+			archived: false,
+			tasks: { todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0 },
+			bugs: { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 },
+			developmentProcess: null,
+			...overrides
+		});
+		const projectRows: ProjectRow[] = [
+			makeRow('p-overdue', 1, 'Overdue project'),
+			makeRow('p-row-blocked', 2, 'Row blocked project', {
+				tasks: { todo: 1, inProgress: 0, blocked: 1, done: 0, cancelled: 0 }
+			}),
+			makeRow('p-row-bug', 3, 'Row bug project', {
+				bugs: { critical: 1, major: 0, minor: 0, trivial: 0, unset: 0 }
+			}),
+			makeRow('p-noteam-empty', 4, 'Empty row team project', {
+				ownerTeam: { id: '', name: '', ref: '' }
+			}),
+			makeRow('p-noteam-stale', 5, 'Stale row team project', {
+				ownerTeam: { id: 'team-deleted', name: 'Ghost team', ref: 'TEAM-99' }
+			}),
+			makeRow('p-ok', 6, 'On-track project', {
+				tasks: { todo: 0, inProgress: 0, blocked: 0, done: 2, cancelled: 0 }
+			})
 		];
 		const homeProjects = [
 			{
@@ -1073,17 +1107,36 @@ describe('executive home view model', () => {
 				due: '2026-11-20'
 			}
 		];
-		const dueById = new Map([['p-overdue', '2026-11-20']]);
-		const cards = deriveProjectCards(snap, items, { homeProjects, inboxItems: [] }, nowMs);
+		const rowById = new Map(projectRows.map((r) => [r.id, r]));
+		const homeById = new Map(homeProjects.map((h) => [h.id, h]));
+		const knownTeamIds = new Set(snap.teams.map((t) => t.id));
+		const cards = deriveProjectCards(
+			snap,
+			items,
+			{ projectRows, homeProjects, inboxItems: [] },
+			nowMs
+		);
 
 		for (const project of snap.projects) {
 			const card = cards.find((c) => c.id === project.id);
+			const row = rowById.get(project.id);
+			const homeProj = homeById.get(project.id);
+			const overlay = buildProjectHealthOverlay({
+				due: homeProj?.due,
+				homeDone: homeProj?.done,
+				homeTotal: homeProj?.total,
+				homeBlocked: homeProj?.blocked,
+				rowTasks: row?.tasks,
+				rowBugs: row?.bugs,
+				rowTeamIds: row ? [row.ownerTeam.id, ...row.contributors.map((c) => c.id)] : undefined
+			});
 			const sidebar = deriveProjectHealth({
 				projectId: project.id,
 				workItems: items,
 				inboxItems: [],
 				projectTeams: snap.project_teams,
-				due: dueById.get(project.id),
+				knownTeamIds,
+				overlay,
 				nowMs
 			});
 			expect(card).toBeDefined();
@@ -1093,9 +1146,10 @@ describe('executive home view model', () => {
 			});
 		}
 		expect(cards.find((c) => c.id === 'p-overdue')?.health).toBe('At risk');
-		expect(cards.find((c) => c.id === 'p-blocked')?.health).toBe('At risk');
-		expect(cards.find((c) => c.id === 'p-bug')?.health).toBe('Off track');
-		expect(cards.find((c) => c.id === 'p-noteam')?.health).toBe('At risk');
+		expect(cards.find((c) => c.id === 'p-row-blocked')?.health).toBe('At risk');
+		expect(cards.find((c) => c.id === 'p-row-bug')?.health).toBe('Off track');
+		expect(cards.find((c) => c.id === 'p-noteam-empty')?.health).toBe('At risk');
+		expect(cards.find((c) => c.id === 'p-noteam-stale')?.health).toBe('At risk');
 		expect(cards.find((c) => c.id === 'p-ok')?.health).toBe('On track');
 	});
 });

@@ -6,7 +6,7 @@
   - Strictly read-only profile facts; built-in agents (HR & Tess) never expose illegal mutations.
 -->
 <script lang="ts">
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
 	import { captureOverlayOpener, returnFocus } from '$lib/components/focus';
 	import * as Sheet from '$lib/components/ui/sheet';
@@ -52,6 +52,7 @@
 
 	let desktopPanelEl: HTMLElement | null = null;
 	let lastHandledSeq = 0;
+	let lastLoadedKey = '';
 	let lastOpener = $state.raw<HTMLElement | null>(null);
 
 	function trackDesktopPanel(node: HTMLElement) {
@@ -92,6 +93,7 @@
 		const target = opener ?? lastOpener;
 		const within = desktopPanelEl;
 		const wasDesktop = isOpenDesktop;
+		lastLoadedKey = '';
 		loader.cancel();
 		onClose(restoreFocus);
 		if (wasDesktop && restoreFocus) {
@@ -122,22 +124,30 @@
 		const orgId = organizationId;
 		const id = memberId;
 		const seq = openSeq;
-		const incomingOpener = opener;
-		if (seq !== lastHandledSeq) {
-			lastHandledSeq = seq;
-			lastOpener = incomingOpener ?? captureOverlayOpener(node);
-		}
 		if (!id) return;
-		node.scrollTop = 0;
-		loader.load(orgId, id);
-		void tick().then(() => {
-			if (!loader.disposed && open && memberId === id) {
-				focusHeading(node);
+		const loadKey = `${orgId}:${id}:${seq}`;
+		return untrack(() => {
+			if (seq !== lastHandledSeq) {
+				lastHandledSeq = seq;
+				lastOpener = opener ?? captureOverlayOpener(node);
 			}
+			const isNewOpenOrMember = loadKey !== lastLoadedKey;
+			if (isNewOpenOrMember) {
+				lastLoadedKey = loadKey;
+				node.scrollTop = 0;
+				loader.load(orgId, id);
+				void tick().then(() => {
+					if (!loader.disposed && open && memberId === id) {
+						focusHeading(node);
+					}
+				});
+			} else if (!loader.profile && !loader.error) {
+				loader.load(orgId, id);
+			}
+			return () => {
+				loader.cancel();
+			};
 		});
-		return () => {
-			loader.cancel();
-		};
 	}
 
 	function attachModalBack() {
@@ -156,6 +166,7 @@
 			profile={loader.profile}
 			openWork={loader.openWork}
 			totalOpenWork={loader.totalOpenWork}
+			openWorkUnavailable={loader.openWorkUnavailable}
 			loading={loader.loading}
 			error={loader.error}
 			{canMessage}

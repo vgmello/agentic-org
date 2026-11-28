@@ -138,6 +138,7 @@ export interface PersonPanelShellContext {
 interface OpenWorkResult {
 	openWork: readonly PersonPanelWorkItem[];
 	totalOpenWork: number;
+	openWorkUnavailable?: boolean;
 }
 
 async function fetchFallbackOpenWork(
@@ -158,8 +159,8 @@ async function fetchFallbackOpenWork(
 		};
 	} catch (workErr) {
 		if (signal.aborted || isAbortError(workErr)) throw workErr;
-		// Open work list is supplementary; keep profile visible if work queue fails.
-		return { openWork: [], totalOpenWork: 0 };
+		// Open work list is supplementary; keep profile visible and report work-list failure honestly.
+		return { openWork: [], totalOpenWork: 0, openWorkUnavailable: true };
 	}
 }
 
@@ -200,7 +201,7 @@ export function createPersonPanelDataSource(
 			try {
 				const profile = await membersApi.profile(organizationId, memberId, signal);
 				if (signal.aborted) throw abortException();
-				const { openWork, totalOpenWork } = await resolveOpenWork(
+				const { openWork, totalOpenWork, openWorkUnavailable } = await resolveOpenWork(
 					organizationId,
 					memberId,
 					profile,
@@ -210,7 +211,8 @@ export function createPersonPanelDataSource(
 				return {
 					profile: mapProfile(profile, ctx?.snapshot),
 					openWork,
-					totalOpenWork
+					totalOpenWork,
+					...(openWorkUnavailable ? { openWorkUnavailable: true } : {})
 				};
 			} catch (err) {
 				if (signal.aborted || isAbortError(err)) {

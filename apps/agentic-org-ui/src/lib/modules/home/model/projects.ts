@@ -4,8 +4,9 @@ import type { InboxItem } from '$lib/modules/inbox/types';
 import { leadOf, teamsOfProject } from '$lib/modules/organization/model';
 import type { ProjectRow } from '$lib/modules/projects/types';
 import {
+	buildProjectHealthOverlay,
+	buildProjectHealthSignals,
 	classifyProjectHealth,
-	isProjectOverdue,
 	isSeriousOpenBug
 } from '$lib/platform/workspace/project-health';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
@@ -248,6 +249,7 @@ export function deriveProjectCards(
 		...activeSnapshotProjects.map((p) => p.id)
 	]);
 
+	const knownTeamIds = new Set(snapshot.teams.map((t) => t.id));
 	const cards: ProjectBentoCard[] = [];
 	for (const projectId of projectIds) {
 		const snapProj = activeSnapshotProjects.find((p) => p.id === projectId);
@@ -263,22 +265,30 @@ export function deriveProjectCards(
 		const teams = teamsOfProject(snapshot, projectId);
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
-		const isOverdue = isProjectOverdue(homeProj?.due, signals.doneCount, signals.totalCount, nowMs);
-		const unassignedTeam = teams.length === 0 && !row;
-
+		const overlay = buildProjectHealthOverlay({
+			due: homeProj?.due,
+			homeDone: homeProj?.done,
+			homeTotal: homeProj?.total,
+			homeBlocked: homeProj?.blocked,
+			rowTasks: row?.tasks,
+			rowBugs: row?.bugs,
+			rowTeamIds: row ? [row.ownerTeam.id, ...row.contributors.map((c) => c.id)] : undefined
+		});
+		const healthSignals = buildProjectHealthSignals({
+			projectId,
+			workItems: items,
+			inboxItems: openInbox,
+			projectTeams: snapshot.project_teams,
+			knownTeamIds,
+			overlay,
+			nowMs
+		});
+		const { isOverdue, unassignedTeam } = healthSignals;
 		const {
 			label: health,
 			tone: healthTone,
 			statusPillClass
-		} = classifyProjectHealth({
-			criticalBugs: Math.max(signals.criticalBugs, row?.bugs.critical ?? 0),
-			blockedCount: signals.blockedCount,
-			problemCount: projProblems.length,
-			isOverdue,
-			scopedReqsCount: signals.scopedReqs.length,
-			openInboxCount: projInbox.length,
-			unassignedTeam
-		});
+		} = classifyProjectHealth(healthSignals);
 
 		const workHref = `/projects/${projectId}/work`;
 		const blocker = deriveProjectBlocker({
