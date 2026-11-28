@@ -1427,6 +1427,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-github"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "org-proto",
+ "org-redact",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "org-host"
 version = "0.0.0"
 dependencies = [
@@ -1619,6 +1633,7 @@ dependencies = [
  "org-doc-render",
  "org-federation",
  "org-git",
+ "org-github",
  "org-mailbox",
  "org-office",
  "org-office-launch",

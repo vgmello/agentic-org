@@ -120,6 +120,10 @@ impl LiveEvents {
         self.org_changes.load(Ordering::Acquire)
     }
 
+    #[cfg(test)]
+    pub(crate) fn org_change_head(&self) -> u64 {
+        self.org_changed_head()
+    }
     /// Marks one committed change to an Inbox source (owner mailbox, pending tool approval,
     /// budget hold, or review) so `inbox::Hint` recounts and emits `inbox.changed` (`TASK-102`).
     pub(crate) fn record_inbox_changed(&self) {

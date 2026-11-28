@@ -4,11 +4,11 @@
 use super::{
     account_routes, attachment_routes, bad_input, chat_routes, copilot_routes, cost_routes,
     create_outcome, delivery_routes, doc_routes, external_auth_routes, failure, git_routes,
-    hiring_routes, instance_routes, instance_routes::CallerAuth, instance_view, invalid, mutation,
-    not_found, note_routes, office_routes, open_routes, org_routes, organization_view,
-    process_routes, provider_routes, result, review_routes, search_routes, session_routes,
-    task_routes, tess_routes, unavailable, view, Call, CliApprovalDecideBody, Credentials,
-    EmptyBody, RegisterBody, Route, SessionApi, SignInBody,
+    github_routes, hiring_routes, instance_routes, instance_routes::CallerAuth, instance_view,
+    invalid, mutation, not_found, note_routes, office_routes, open_routes, org_routes,
+    organization_view, process_routes, provider_routes, result, review_routes, search_routes,
+    session_routes, task_routes, tess_routes, unavailable, view, Call, CliApprovalDecideBody,
+    Credentials, EmptyBody, RegisterBody, Route, SessionApi, SignInBody,
 };
 use crate::body::{stream::StreamedBody, BusinessBody};
 use crate::host::Failure;
@@ -23,7 +23,7 @@ use org_host_control::browser::{
 use org_host_control::organization::{self as host_org, BrowserAuth};
 use org_proto::web::{
     self as gateway,
-    organizations::{self, CreatingOrganization, SelectedCreateRequest, SelectedOrganizationList},
+    organizations::{self, CreatingOrganization, SelectedOrganizationList},
     CreateState, MutationOutcome, OperationId, OperationKind, OperationLookup, Scope,
     StreamRequest, Version, WebErrorCode,
 };
@@ -250,17 +250,7 @@ impl ApiBackend for SessionApi {
                 return org_routes::prepare_office_restart(self, pair, org, office, bytes);
             }
             Route::OrgMutation(pair, org, op) => {
-                let scope = Scope::Organization {
-                    instance_id: self.host.instance().to_owned(),
-                    org_id: org.clone(),
-                };
-                let command = op.decode(bytes, &scope).map_err(bad_input)?;
-                let id = command.operation_id().clone();
-                return Ok(PreparedCall::mutation(
-                    Call::OrgMutation(pair, org, command),
-                    id,
-                    bytes.len(),
-                ));
+                return org_routes::prepare_org_mutation(self, pair, org, op, bytes);
             }
             Route::OrgOperation(pair, org, id) => {
                 empty().map(|()| Call::OrgOperation(pair, org, id))?
@@ -281,31 +271,7 @@ impl ApiBackend for SessionApi {
             Route::Instance(pair) => empty().map(|()| Call::Instance(pair))?,
             Route::Operation(pair, id) => empty().map(|()| Call::Operation(pair, id))?,
             Route::CreateOrganization(pair) => {
-                // The operation id's format is decided first and named, then the envelope,
-                // its scope and the payload's rules: all before any host call.
-                let raw: serde_json::Value =
-                    serde_json::from_slice(bytes).map_err(|_| invalid())?;
-                // A missing id, or one that is not a string, is named the same way.
-                let id = raw
-                    .get("operation_id")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let id = organizations::host_operation_id(id).map_err(bad_input)?;
-                let request: SelectedCreateRequest =
-                    gateway::decode_request(bytes).map_err(|_| invalid())?;
-                let instance = Scope::Instance {
-                    instance_id: self.host.instance().to_owned(),
-                };
-                request
-                    .scope
-                    .check_target(&instance)
-                    .map_err(|_| invalid())?;
-                let plan = request.params.plan().map_err(bad_input)?;
-                return Ok(PreparedCall::mutation(
-                    Call::CreateOrganization(pair, id.clone(), plan),
-                    id,
-                    bytes.len(),
-                ));
+                return org_routes::prepare_create_organization(self, pair, bytes);
             }
             Route::SignOut(pair) => {
                 serde_json::from_slice::<EmptyBody>(bytes).map_err(|_| invalid())?;
@@ -332,6 +298,7 @@ impl ApiBackend for SessionApi {
             Route::Tasks(route) => return task_routes::prepare(route, bytes),
             Route::Notes(route) => return note_routes::prepare(route, bytes),
             Route::Git(route) => return git_routes::prepare(route, bytes),
+            Route::GitHub(route) => return github_routes::prepare(route, bytes),
             Route::Process(route) => return process_routes::prepare(route, bytes),
             Route::Docs(route) => return doc_routes::prepare(route, bytes),
             Route::Delivery(route) => return delivery_routes::prepare(route, bytes),
@@ -461,6 +428,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::GitHub(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(github_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             Call::Process(call) => AsyncDispatch::Async {
                 future: Box::pin(async move {
                     WebReply::Json(process_routes::execute(&self, call).await)
@@ -574,6 +547,7 @@ impl ApiBackend for SessionApi {
             | Call::Tasks(_)
             | Call::Notes(_)
             | Call::Git(_)
+            | Call::GitHub(_)
             | Call::Search(_)
             | Call::Copilot(_)
             | Call::Process(_)

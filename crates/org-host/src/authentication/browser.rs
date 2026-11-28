@@ -13,8 +13,8 @@ use std::time::Duration;
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
 use org_host_control::browser::{
     BrowserAccount, BrowserAuthEnableParams, BrowserOpenChannelParams, BrowserOrigin,
-    BrowserSession, BrowserSessionGrantParams, Digest32, LinkRegisterParams, SessionSignInParams,
-    SessionValidateParams,
+    BrowserSession, BrowserSessionGrantParams, BrowserWebhookGrantParams, Digest32,
+    LinkRegisterParams, SessionSignInParams, SessionValidateParams,
 };
 use org_host_control::listen::ListenMode;
 use org_host_control::ops::LinkedOrg;
@@ -28,7 +28,7 @@ use super::{
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::accounts::rules::{check_new_password, PasswordRule, Username};
 use crate::accounts::store::{AccountStore, Attempt, ClientAddress, NewAccount, ThrottleKey};
-use crate::control_listener::Connection;
+use crate::control_listener::{ChannelReceipt, Connection};
 use crate::links::LinkKind;
 use crate::sessions::{
     Admission, BrowserSessions, Ended, NewSession, Origin, Scheme, SessionDigest, IDLE_MS,
@@ -98,6 +98,19 @@ fn validate_registration_inputs(
     let origin = origin(&params.origin)?;
     Ok((username, origin))
 }
+
+/// Maximum concurrent live webhook Web channels permitted per organization on the host.
+///
+/// Leaves at least `MAX_WEB_CHANNELS - MAX_WEBHOOK_CHANNELS_PER_ORG` slots free for human
+/// browser sessions even during unauthenticated webhook bursts or reconnect overlap.
+const MAX_WEBHOOK_CHANNELS_PER_ORG: usize = 2;
+
+/// Opened Web channel descriptor returned to the service layer for transfer delivery.
+pub(crate) type OpenedWebChannel = (
+    String,
+    std::os::unix::net::UnixStream,
+    crate::supervisor::channels::ChannelSlot,
+);
 
 impl Authentication {
     pub(super) fn permit(&self) -> Result<HashPermit<'_>, ApiError> {
@@ -421,14 +434,7 @@ impl Authentication {
         organization: &str,
         now_ms: i64,
         ended: &mut Vec<Ended>,
-    ) -> Result<
-        (
-            String,
-            std::os::unix::net::UnixStream,
-            crate::supervisor::channels::ChannelSlot,
-        ),
-        ApiError,
-    > {
+    ) -> Result<OpenedWebChannel, ApiError> {
         let account = self.browser_auth_account(connection, &params.auth, now_ms, ended)?;
         if !account
             .links()
@@ -468,7 +474,9 @@ impl Authentication {
             WebChannel {
                 endpoint: Arc::downgrade(&endpoint),
                 organization: organization.into(),
+                office: endpoint.office.clone(),
                 connection: alive,
+                webhook_only: false,
                 _slot: slot.clone(),
             },
         );
@@ -507,7 +515,10 @@ impl Authentication {
         let (endpoint, organization) = {
             let channels = self.web_channels.lock().map_err(|_| unavailable())?;
             let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
-            if !bound.connection.ptr_eq(&connection.liveness()) || !bound._slot.is_live() {
+            if bound.webhook_only
+                || !bound.connection.ptr_eq(&connection.liveness())
+                || !bound._slot.is_live()
+            {
                 return Err(denied());
             }
             let endpoint = bound.endpoint.upgrade().ok_or_else(unavailable)?;
@@ -534,6 +545,111 @@ impl Authentication {
                 channel_id: &params.channel_id,
                 session_id: &session.session_id,
                 ttl,
+            },
+        )
+    }
+
+    /// `browser.webhook_open_channel`: opens a Web channel to an organization's HQ office for
+    /// forwarding HMAC-signed external webhooks from the admitted web process.
+    ///
+    /// Caps live webhook channels per organization (`MAX_WEBHOOK_CHANNELS_PER_ORG`) before
+    /// acquiring an office `ChannelKind::Web` slot so webhook floods cannot exhaust
+    /// `MAX_WEB_CHANNELS` or starve browser sessions.
+    pub(crate) fn open_webhook_channel(
+        &self,
+        connection: &Connection,
+        endpoint: Arc<crate::supervisor::channels::Endpoint>,
+        organization: &str,
+    ) -> Result<OpenedWebChannel, ApiError> {
+        {
+            let mut channels = self.web_channels.lock().map_err(|_| unavailable())?;
+            channels.retain(|_, channel| channel.live());
+            let org_webhooks = channels
+                .values()
+                .filter(|c| c.webhook_only && c.organization == organization)
+                .count();
+            if channels.len() >= 64 || org_webhooks >= MAX_WEBHOOK_CHANNELS_PER_ORG {
+                return Err(unavailable());
+            }
+        }
+        let (id, socket, slot) = endpoint
+            .open(org_office_launch::ChannelKind::Web)
+            .map_err(|_| unavailable())?;
+        let alive = connection.liveness();
+        if alive
+            .upgrade()
+            .is_none_or(|closed| closed.load(Ordering::SeqCst))
+            || !slot.is_live()
+        {
+            return Err(unavailable());
+        }
+        let mut channels = self.web_channels.lock().map_err(|_| unavailable())?;
+        channels.retain(|_, channel| channel.live());
+        let org_webhooks = channels
+            .values()
+            .filter(|c| c.webhook_only && c.organization == organization)
+            .count();
+        if channels.len() >= 64 || org_webhooks >= MAX_WEBHOOK_CHANNELS_PER_ORG {
+            return Err(unavailable());
+        }
+        channels.insert(
+            id.clone(),
+            WebChannel {
+                endpoint: Arc::downgrade(&endpoint),
+                organization: organization.into(),
+                office: endpoint.office.clone(),
+                connection: alive,
+                webhook_only: true,
+                _slot: slot.clone(),
+            },
+        );
+        Ok((id, socket, slot))
+    }
+
+    /// `browser.webhook_grant`: mints a short-lived (60s) webhook-only grant whose principal
+    /// (`__github_webhook__`) is admitted by the office strictly for `github.webhook.ingest`.
+    pub(crate) fn grant_webhook(
+        &self,
+        connection: &Connection,
+        params: &BrowserWebhookGrantParams,
+    ) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {
+        const WEBHOOK_SESSION_ID: &str = "01000000000000000000000001";
+        let receipt = connection.channel_receipt(&params.channel_id);
+        let endpoint = {
+            let channels = self.web_channels.lock().map_err(|_| unavailable())?;
+            let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
+            if !bound.webhook_only
+                || !bound.connection.ptr_eq(&connection.liveness())
+                || bound.organization != params.org_id
+                || bound.office != params.office_id
+            {
+                return Err(denied());
+            }
+            if matches!(receipt, ChannelReceipt::Closed) || !bound._slot.is_live() {
+                return Err(unavailable());
+            }
+            let endpoint = bound.endpoint.upgrade().ok_or_else(unavailable)?;
+            if endpoint.office != params.office_id {
+                return Err(denied());
+            }
+            if !endpoint.is_live() {
+                return Err(unavailable());
+            }
+            if receipt != ChannelReceipt::Live {
+                return Err(denied());
+            }
+            endpoint
+        };
+        sign_grant(
+            &endpoint,
+            GrantInput {
+                account: "github-webhook",
+                member: org_proto::github::WEBHOOK_PRINCIPAL_MEMBER,
+                org_id: &params.org_id,
+                office_id: &params.office_id,
+                channel_id: &params.channel_id,
+                session_id: WEBHOOK_SESSION_ID,
+                ttl: Duration::from_secs(60),
             },
         )
     }

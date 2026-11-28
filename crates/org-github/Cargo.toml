@@ -1,0 +1,23 @@
+[package]
+name = "org-github"
+description = "GitHub App RS256 JWT auth, short-lived installation token manager, SSRF-hardened HTTP client, and signed webhook ingestion for PR, review, and CI check analysis."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+testkit = []
+
+[dependencies]
+org-proto = { path = "../org-proto" }
+org-redact = { path = "../org-redact" }
+base64.workspace = true
+ring = "=0.17.14"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zeroize = { version = "=1.9.1", features = ["alloc"] }
+
+[lints]
+workspace = true

@@ -19,7 +19,8 @@ impl Service {
     pub(super) fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::browser::{
             BrowserAuthEnable, BrowserCliApprovalDecide, BrowserLocalSession, BrowserOfficeRestart,
-            BrowserOpenChannel, BrowserSessionGrant, BrowserTlsEnable, InstanceView,
+            BrowserOpenChannel, BrowserSessionGrant, BrowserTlsEnable, BrowserWebhookGrant,
+            BrowserWebhookOpenChannel, InstanceView,
         };
         if !is_browser_op(request) || connection.web_listen().is_none() {
             return false;
@@ -46,6 +47,10 @@ impl Service {
             self.open_browser_channel(authentication, request, connection);
         } else if request.is::<BrowserSessionGrant>() {
             self.grant_browser_channel(authentication, request, connection);
+        } else if request.is::<BrowserWebhookOpenChannel>() {
+            self.open_webhook_channel(authentication, request, connection);
+        } else if request.is::<BrowserWebhookGrant>() {
+            self.grant_webhook_channel(authentication, request, connection);
         } else if request.is::<BrowserOfficeRestart>() {
             office_ops::restart_browser_office(self, authentication, request, connection);
         } else if request.is::<BrowserCliApprovalDecide>() {
@@ -131,13 +136,81 @@ impl Service {
             Err(error) => connection.send_response(Response::error(request.id, error)),
         }
     }
+    fn open_webhook_channel(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::{
+            BrowserWebhookOpenChannel, BrowserWebhookOpenChannelResult,
+        };
+        let result = request
+            .params::<BrowserWebhookOpenChannel>()
+            .map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid webhook channel request")
+            })
+            .and_then(|p| {
+                let office = self
+                    .offices
+                    .offices()
+                    .into_iter()
+                    .find(|o| o.organization_id == p.org_id && o.role == org_proto::OfficeRole::Hq)
+                    .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "office not found"))?;
+                let endpoint = self.offices.endpoint(&office.id).ok_or_else(|| {
+                    ApiError::new(ErrorCode::Unavailable, "office channel unavailable")
+                })?;
+                authentication
+                    .open_webhook_channel(connection, endpoint, &office.organization_id)
+                    .map(|(id, socket, witness)| (id, socket, witness, office.id))
+            });
+        match result {
+            Ok((id, socket, witness, office_id)) => {
+                let response = ok::<BrowserWebhookOpenChannel>(
+                    request.id,
+                    &BrowserWebhookOpenChannelResult {
+                        office_id: office_id.clone(),
+                        channel_id: id.clone(),
+                    },
+                );
+                match connection.send_descriptor(response, id, socket.into(), &office_id, witness) {
+                    Ok(()) => {}
+                    Err(control_listener::DescriptorError::Capacity) => {
+                        connection.send_response(Response::error(
+                            request.id,
+                            ApiError::new(ErrorCode::Unavailable, "office channel unavailable"),
+                        ));
+                    }
+                    Err(control_listener::DescriptorError::Transport) => connection.close(),
+                }
+            }
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    }
+    fn grant_webhook_channel(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::BrowserWebhookGrant;
+        let result = request
+            .params::<BrowserWebhookGrant>()
+            .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid webhook grant request"))
+            .and_then(|p| authentication.grant_webhook(connection, &p));
+        match result {
+            Ok(result) => secret_response(connection, request.id, &result),
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    }
 }
 
 fn is_browser_op(request: &Request) -> bool {
     use org_host_control::browser::{
         BrowserAuthEnable, BrowserCliApprovalDecide, BrowserLocalSession, BrowserOfficeRestart,
-        BrowserOpenChannel, BrowserSessionEnd, BrowserSessionGrant, BrowserTlsEnable, InstanceView,
-        LinkRegister, SessionSignIn, SessionValidate,
+        BrowserOpenChannel, BrowserSessionEnd, BrowserSessionGrant, BrowserTlsEnable,
+        BrowserWebhookGrant, BrowserWebhookOpenChannel, InstanceView, LinkRegister, SessionSignIn,
+        SessionValidate,
     };
     const METHODS: &[&str] = &[
         LinkRegister::METHOD,
@@ -147,6 +220,8 @@ fn is_browser_op(request: &Request) -> bool {
         InstanceView::METHOD,
         BrowserOpenChannel::METHOD,
         BrowserSessionGrant::METHOD,
+        BrowserWebhookOpenChannel::METHOD,
+        BrowserWebhookGrant::METHOD,
         BrowserOfficeRestart::METHOD,
         BrowserCliApprovalDecide::METHOD,
         BrowserLocalSession::METHOD,

@@ -108,6 +108,11 @@ fn requires_owner(method: &str) -> bool {
             | "repo.credential_set"
             | "repo.credential_status"
             | "repo.credential_revoke"
+            | "github.app.configure"
+            | "github.app.status"
+            | "github.app.revoke"
+            | "github.repo.bind"
+            | "github.repo.unbind"
     )
 }
 
@@ -215,6 +220,13 @@ pub(super) fn authorize_request(
     checks: &impl Checks,
 ) -> Result<String, AuthRefusal> {
     let member = verify_grant_envelope(request, channel, office, checks)?;
+    if member == org_proto::github::WEBHOOK_PRINCIPAL_MEMBER {
+        return if request.method == org_proto::github::GitHubWebhookIngest::METHOD {
+            Ok(member)
+        } else {
+            Err(AuthRefusal::Opaque(ErrorCode::NotAuthorized))
+        };
+    }
     if requires_owner(&request.method) {
         return checks
             .owner(&member)

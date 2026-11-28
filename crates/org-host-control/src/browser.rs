@@ -176,6 +176,43 @@ impl Call for BrowserSessionGrant {
     type Result = SessionGrantResult;
 }
 
+/// `browser.webhook_open_channel`: opens a Web office channel to an organization's HQ office
+/// exclusively for forwarding HMAC-signed GitHub webhooks (admitted web connection only).
+pub struct BrowserWebhookOpenChannel;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWebhookOpenChannelParams {
+    pub org_id: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWebhookOpenChannelResult {
+    pub office_id: String,
+    pub channel_id: String,
+}
+impl Call for BrowserWebhookOpenChannel {
+    const METHOD: &'static str = "browser.webhook_open_channel";
+    type Params = BrowserWebhookOpenChannelParams;
+    type Result = BrowserWebhookOpenChannelResult;
+}
+
+/// `browser.webhook_grant`: mints a short-lived HMAC-signed office grant bound to
+/// `org_proto::github::WEBHOOK_PRINCIPAL_MEMBER`, which the office admits ONLY for
+/// `github.webhook.ingest` (where the GitHub HMAC-SHA256 signature is verified fail-closed).
+pub struct BrowserWebhookGrant;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWebhookGrantParams {
+    pub org_id: String,
+    pub office_id: String,
+    pub channel_id: String,
+}
+impl Call for BrowserWebhookGrant {
+    const METHOD: &'static str = "browser.webhook_grant";
+    type Params = BrowserWebhookGrantParams;
+    type Result = SessionGrantResult;
+}
+
 /// `browser.office_restart`: restart an `offline` or `unavailable` office on behalf of a
 /// live browser session (admitted web connection only; administrator or organization owner).
 /// Journaled under `office.restart` by `operation_id`.

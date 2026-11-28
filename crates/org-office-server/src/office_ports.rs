@@ -9,9 +9,9 @@ use crate::federation_runtime::HqFederationSlot;
 use crate::session_proxy::build_session_hooks;
 use crate::{
     attachment_calls, chat_calls, copilot_calls, cost_calls, directory, doc_calls,
-    federation_calls, follow, git_calls, live, mailbox_store, org_feed, process_calls,
-    provider_calls, resume_calls, review_calls, search_calls, serve, task_calls, tess_calls,
-    wake_bridge, watcher,
+    federation_calls, follow, git_calls, github_calls, live, mailbox_store, org_feed,
+    process_calls, provider_calls, resume_calls, review_calls, search_calls, serve, task_calls,
+    tess_calls, wake_bridge, watcher,
 };
 use org_office::{Office, OfficeError};
 
@@ -447,6 +447,10 @@ pub(crate) fn build_office_ports(
         )
         .with_sessions(Arc::downgrade(&session_manager)),
     );
+    let github_svc = Arc::new(github_calls::GitHubService::new(
+        Arc::clone(&office),
+        Arc::clone(&live),
+    ));
     session_manager.set_task_worktree_preparer(
         Arc::clone(&git_svc) as Arc<dyn org_office_sessions::TaskWorktreePreparer>
     );
@@ -527,6 +531,18 @@ pub(crate) fn build_office_ports(
         git: Some(gate_rpc_port(&office, move |member, request| {
             git_svc.dispatch(member, request)
         })),
+        github: {
+            let o = Arc::clone(&office);
+            Some(Box::new(move |member, via_grant, request| {
+                if snapshot_pending(&o) {
+                    return Some(org_proto::Response::error(
+                        request.id,
+                        snapshot_unavailable_api_error(),
+                    ));
+                }
+                github_svc.dispatch(member, via_grant, request)
+            }))
+        },
         reviews: Some(gate_rpc_port(&office, move |member, request| {
             review_svc.dispatch(member, request)
         })),

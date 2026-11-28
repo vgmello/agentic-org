@@ -19,10 +19,12 @@ use zeroize::Zeroizing;
 const DOMAIN: &[u8] = b"agentic-org/office-private-key/v1";
 const PROVIDER_CREDENTIAL_DOMAIN: &[u8] = b"agentic-org/provider-credential/v1";
 const GIT_CREDENTIAL_DOMAIN: &[u8] = b"agentic-org/git-credential/v1";
+const GITHUB_APP_DOMAIN: &[u8] = b"agentic-org/github-app/v1";
 const HKDF_SALT: &[u8] = b"agentic-org/hkdf-salt/v1";
 const HKDF_INFO_OFFICE_PRIVATE_KEY: &[u8] = b"agentic-org/wrap-key/office-private-key/v1";
 const HKDF_INFO_PROVIDER_CREDENTIAL: &[u8] = b"agentic-org/wrap-key/provider-credential/v1";
 const HKDF_INFO_GIT_CREDENTIAL: &[u8] = b"agentic-org/wrap-key/git-credential/v1";
+const HKDF_INFO_GITHUB_APP: &[u8] = b"agentic-org/wrap-key/github-app/v1";
 const VERSION: u8 = 1;
 const NONCE: usize = 12;
 const TAG: usize = 16;
@@ -38,6 +40,8 @@ pub enum KeyClass {
     ProviderCredential,
     /// Separate wrapping key for per-repository scoped Git HTTPS tokens (`TASK-135`, `doc-35`).
     GitCredential,
+    /// Separate wrapping key for GitHub App private keys and webhook secrets (`TASK-272`).
+    GitHubApp,
 }
 
 impl KeyClass {
@@ -46,6 +50,7 @@ impl KeyClass {
             Self::OfficePrivateKey => HKDF_INFO_OFFICE_PRIVATE_KEY,
             Self::ProviderCredential => HKDF_INFO_PROVIDER_CREDENTIAL,
             Self::GitCredential => HKDF_INFO_GIT_CREDENTIAL,
+            Self::GitHubApp => HKDF_INFO_GITHUB_APP,
         }
     }
 }
@@ -89,6 +94,15 @@ pub struct GitCredentialBinding<'a> {
     pub office_id: &'a str,
     pub repository_id: &'a str,
     pub scope_url: &'a str,
+}
+
+/// Binding for a wrapped GitHub App secret (`TASK-272`, ADR-0016): private key PEM or webhook secret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GitHubAppCredentialBinding<'a> {
+    pub organization_id: &'a str,
+    pub office_id: &'a str,
+    pub app_id: u64,
+    pub purpose: &'a str,
 }
 
 /// The role of the wrapped private key (ADR-0016 decision 3, `doc-67`).
@@ -209,6 +223,30 @@ pub fn unwrap_git_credential(
     unwrap_with_aad(git_key, &aad, record)
 }
 
+/// Encrypts a GitHub App secret (private key or webhook secret) under a dedicated
+/// `KeyClass::GitHubApp` wrapping key and the `agentic-org/github-app/v1` AAD domain (`TASK-272`).
+pub fn wrap_github_app_credential(
+    github_key: &[u8; 32],
+    binding: &GitHubAppCredentialBinding<'_>,
+    secret: &[u8],
+) -> Result<Vec<u8>, WrapError> {
+    if secret.is_empty() || secret.len() > MAX_KEY_BYTES {
+        return Err(WrapError::Invalid);
+    }
+    let aad = github_app_credential_aad(binding)?;
+    wrap_with_aad(github_key, &aad, secret)
+}
+
+/// Opens a GitHub App secret record made by [`wrap_github_app_credential`].
+pub fn unwrap_github_app_credential(
+    github_key: &[u8; 32],
+    binding: &GitHubAppCredentialBinding<'_>,
+    record: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, WrapError> {
+    let aad = github_app_credential_aad(binding)?;
+    unwrap_with_aad(github_key, &aad, record)
+}
+
 fn wrap_with_aad(key: &[u8; 32], aad: &[u8], secret: &[u8]) -> Result<Vec<u8>, WrapError> {
     let mut nonce = [0; NONCE];
     SystemRandom::new()
@@ -299,6 +337,25 @@ fn git_credential_aad(binding: &GitCredentialBinding<'_>) -> Result<Vec<u8>, Wra
             binding.office_id.as_bytes(),
             binding.repository_id.as_bytes(),
             scope_digest.as_ref(),
+        ],
+    )
+}
+
+fn github_app_credential_aad(
+    binding: &GitHubAppCredentialBinding<'_>,
+) -> Result<Vec<u8>, WrapError> {
+    if binding.app_id == 0 || binding.purpose.is_empty() {
+        return Err(WrapError::Invalid);
+    }
+    let app_id_bytes = binding.app_id.to_be_bytes();
+    encode_aad(
+        GITHUB_APP_DOMAIN,
+        &[
+            b"github-app",
+            binding.organization_id.as_bytes(),
+            binding.office_id.as_bytes(),
+            &app_id_bytes,
+            binding.purpose.as_bytes(),
         ],
     )
 }

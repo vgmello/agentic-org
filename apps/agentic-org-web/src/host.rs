@@ -25,7 +25,10 @@ use std::{
 };
 
 use org_host_control::{
-    browser::{BrowserOpenChannel, BrowserOpenChannelParams},
+    browser::{
+        BrowserOpenChannel, BrowserOpenChannelParams, BrowserWebhookOpenChannel,
+        BrowserWebhookOpenChannelParams,
+    },
     ops,
     organization::BrowserAuth,
 };
@@ -241,6 +244,17 @@ impl HostControl {
             .map_err(|_| Failure::Unavailable)?
     }
 
+    /// Async wrapper for [`open_webhook_channel`](Self::open_webhook_channel).
+    pub(crate) async fn open_webhook_channel_async(
+        self: &Arc<Self>,
+        org_id: String,
+    ) -> Result<(String, String, LocalUnixOfficeStream), Failure> {
+        let host = Arc::clone(self);
+        tokio::task::spawn_blocking(move || host.open_webhook_channel(&org_id))
+            .await
+            .map_err(|_| Failure::Unavailable)?
+    }
+
     /// Like [`request`](Self::request), and `hook` runs on the reader thread
     /// with the decoded reply before the next host frame is applied. It does
     /// not run when the call is refused unwritten or the connection fails.
@@ -312,6 +326,35 @@ impl HostControl {
             of: opened.channel_id.clone(),
         })?;
         Ok((opened.channel_id, stream))
+    }
+
+    /// Opens a webhook-scoped Web channel to `org_id`'s HQ office without a browser session.
+    pub(crate) fn open_webhook_channel(
+        &self,
+        org_id: &str,
+    ) -> Result<(String, String, LocalUnixOfficeStream), Failure> {
+        let mut transfer = self.transfer.lock()?;
+        let opened =
+            self.request::<BrowserWebhookOpenChannel>(&BrowserWebhookOpenChannelParams {
+                org_id: org_id.to_owned(),
+            })?;
+        let until = Instant::now() + DEADLINE;
+        let stream = match transfer.receive_office_channel(
+            &opened.office_id,
+            &opened.channel_id,
+            until,
+            &*self.fatal,
+        ) {
+            Ok(stream) => stream,
+            Err(error) => {
+                self.close();
+                return Err(error);
+            }
+        };
+        self.request::<ops::FdsReceived>(&ops::FdsReceivedParams {
+            of: opened.channel_id.clone(),
+        })?;
+        Ok((opened.office_id, opened.channel_id, stream))
     }
 
     pub fn live(&self) -> bool {

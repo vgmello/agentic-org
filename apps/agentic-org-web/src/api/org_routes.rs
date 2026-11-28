@@ -6,8 +6,8 @@ use hyper::{http::request::Parts, Method, StatusCode};
 use org_proto::web::{
     self as gateway,
     org_mutations::{classify_org_reply, OrgOperation, OrgReplyClassification},
-    organizations, MutationOutcome, OperationId, OperationKind, OperationLookup, Scope,
-    WebErrorCode,
+    organizations::{self, SelectedCreateRequest},
+    MutationOutcome, OperationId, OperationKind, OperationLookup, Scope, WebErrorCode,
 };
 
 use super::{
@@ -118,6 +118,39 @@ fn try_route_organization_subroutes(
         .or_else(|| super::review_routes::try_route(api, request, org, tail, get, post, query))
 }
 
+fn route_open_org(
+    api: &SessionApi,
+    request: &Parts,
+    tail: &[&str],
+    post: bool,
+) -> Result<Route, ApiReply> {
+    match tail {
+        ["preview"] if post => Ok(Route::OpenOrg(super::open_routes::OpenRoute::Preview(
+            api.caller_auth(request)?,
+        ))),
+        [] if post => Ok(Route::OpenOrg(super::open_routes::OpenRoute::Open(
+            api.caller_auth(request)?,
+        ))),
+        [] | ["preview"] => Err(invalid()),
+        _ => Err(not_found()),
+    }
+}
+
+fn try_route_org_knowledge_and_integrations(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    tail: &[&str],
+    get: bool,
+    post: bool,
+    query: bool,
+) -> Option<Result<Route, ApiReply>> {
+    super::doc_routes::try_route(api, request, org, tail)
+        .or_else(|| super::delivery_routes::try_route(api, request, org, tail))
+        .or_else(|| super::search_routes::try_route(api, request, org, tail))
+        .or_else(|| super::github_routes::try_route(api, request, org, tail, get, post, query))
+}
+
 pub(super) fn route_organization(
     api: &SessionApi,
     request: &Parts,
@@ -128,24 +161,11 @@ pub(super) fn route_organization(
     query: bool,
 ) -> Result<Route, ApiReply> {
     if org == "open" {
-        return match tail {
-            ["preview"] if post => Ok(Route::OpenOrg(super::open_routes::OpenRoute::Preview(
-                api.caller_auth(request)?,
-            ))),
-            [] if post => Ok(Route::OpenOrg(super::open_routes::OpenRoute::Open(
-                api.caller_auth(request)?,
-            ))),
-            [] | ["preview"] => Err(invalid()),
-            _ => Err(not_found()),
-        };
+        return route_open_org(api, request, tail, post);
     }
-    if let Some(routed) = super::doc_routes::try_route(api, request, org, tail) {
-        return routed;
-    }
-    if let Some(routed) = super::delivery_routes::try_route(api, request, org, tail) {
-        return routed;
-    }
-    if let Some(routed) = super::search_routes::try_route(api, request, org, tail) {
+    if let Some(routed) =
+        try_route_org_knowledge_and_integrations(api, request, org, tail, get, post, query)
+    {
         return routed;
     }
     if let ["projects", rest @ ..] = tail {
@@ -293,6 +313,56 @@ pub(super) fn prepare_office_restart(
     request.scope.check_target(&target).map_err(|_| invalid())?;
     Ok(PreparedCall::mutation(
         Call::OfficeRestart(pair, org, office, id.clone()),
+        id,
+        bytes.len(),
+    ))
+}
+
+pub(super) fn prepare_org_mutation(
+    api: &SessionApi,
+    pair: CallerAuth,
+    org: String,
+    op: OrgOperation,
+    bytes: &[u8],
+) -> Result<PreparedCall<Call>, ApiReply> {
+    let scope = Scope::Organization {
+        instance_id: api.host.instance().to_owned(),
+        org_id: org.clone(),
+    };
+    let command = op.decode(bytes, &scope).map_err(bad_input)?;
+    let id = command.operation_id().clone();
+    Ok(PreparedCall::mutation(
+        Call::OrgMutation(pair, org, command),
+        id,
+        bytes.len(),
+    ))
+}
+
+pub(super) fn prepare_create_organization(
+    api: &SessionApi,
+    pair: CallerAuth,
+    bytes: &[u8],
+) -> Result<PreparedCall<Call>, ApiReply> {
+    // The operation id's format is decided first and named, then the envelope,
+    // its scope and the payload's rules: all before any host call.
+    let raw: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    // A missing id, or one that is not a string, is named the same way.
+    let id = raw
+        .get("operation_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let id = organizations::host_operation_id(id).map_err(bad_input)?;
+    let request: SelectedCreateRequest = gateway::decode_request(bytes).map_err(|_| invalid())?;
+    let instance = Scope::Instance {
+        instance_id: api.host.instance().to_owned(),
+    };
+    request
+        .scope
+        .check_target(&instance)
+        .map_err(|_| invalid())?;
+    let plan = request.params.plan().map_err(bad_input)?;
+    Ok(PreparedCall::mutation(
+        Call::CreateOrganization(pair, id.clone(), plan),
         id,
         bytes.len(),
     ))

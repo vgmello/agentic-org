@@ -403,6 +403,7 @@ fn copilot_refuses_non_grant_socket_caller_via_shared_answer() {
         tasks: None,
         attachments: None,
         git: None,
+        github: None,
         reviews: None,
         processes: None,
         docs: None,

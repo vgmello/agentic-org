@@ -17,6 +17,7 @@ mod delivery_routes;
 mod doc_routes;
 mod external_auth_routes;
 mod git_routes;
+mod github_routes;
 mod hiring_routes;
 mod hq_context;
 mod instance_routes;
@@ -190,6 +191,7 @@ pub enum Route {
     Tasks(task_routes::TaskRoute),
     Notes(note_routes::NoteRoute),
     Git(git_routes::GitRoute),
+    GitHub(github_routes::GitHubRoute),
     Process(process_routes::ProcessRoute),
     Docs(doc_routes::DocRoute),
     Delivery(delivery_routes::DeliveryRoute),
@@ -240,6 +242,7 @@ pub enum Call {
     Tasks(task_routes::TaskCall),
     Notes(note_routes::NoteCall),
     Git(git_routes::GitCall),
+    GitHub(github_routes::GitHubCall),
     Process(process_routes::ProcessCall),
     Docs(doc_routes::DocCall),
     Delivery(delivery_routes::DeliveryCall),

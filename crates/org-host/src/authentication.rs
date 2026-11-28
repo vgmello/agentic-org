@@ -130,7 +130,9 @@ struct Channel {
 struct WebChannel {
     endpoint: Weak<crate::supervisor::channels::Endpoint>,
     organization: String,
+    office: String,
     connection: Weak<AtomicBool>,
+    webhook_only: bool,
     _slot: crate::supervisor::channels::ChannelSlot,
 }
 impl WebChannel {

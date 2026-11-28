@@ -5,7 +5,10 @@
 
 use std::collections::BTreeMap;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::Duration;
 
 use org_proto::{
@@ -24,6 +27,10 @@ use crate::ports::OFFICE_DEADLINE;
 use crate::transport::local_unix::LocalUnixOfficeStream;
 
 impl MultiplexedChannel {
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
     pub(super) fn from_local_unix(
         office_id: String,
         channel_id: String,
@@ -31,7 +38,15 @@ impl MultiplexedChannel {
         channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
         events: Arc<dyn EventBus>,
     ) -> io::Result<Arc<Self>> {
-        Self::from_local_unix_with_permit(office_id, channel_id, stream, channels, events, None)
+        Self::from_local_unix_keyed(
+            office_id.clone(),
+            office_id,
+            channel_id,
+            stream,
+            channels,
+            events,
+            None,
+        )
     }
 
     pub(super) fn from_local_unix_with_permit(
@@ -42,8 +57,29 @@ impl MultiplexedChannel {
         events: Arc<dyn EventBus>,
         slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> io::Result<Arc<Self>> {
+        Self::from_local_unix_keyed(
+            office_id.clone(),
+            office_id,
+            channel_id,
+            stream,
+            channels,
+            events,
+            slot_permit,
+        )
+    }
+
+    pub(super) fn from_local_unix_keyed(
+        map_key: String,
+        office_id: String,
+        channel_id: String,
+        stream: LocalUnixOfficeStream,
+        channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
+        events: Arc<dyn EventBus>,
+        slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> io::Result<Arc<Self>> {
         let (read_half, write_half) = stream.into_async_split()?;
         Ok(Self::from_async_halves(
+            map_key,
             office_id,
             channel_id,
             read_half,
@@ -54,7 +90,12 @@ impl MultiplexedChannel {
         ))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "channel halves, cache map key, office/channel ids, bus, and optional slot permit"
+    )]
     pub(super) fn from_async_halves<R, W>(
+        map_key: String,
         office_id: String,
         channel_id: String,
         read_half: R,
@@ -69,18 +110,22 @@ impl MultiplexedChannel {
     {
         let (writer, write_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_WRITE_QUEUE);
         let pending: PendingMap = Arc::new(Mutex::new(BTreeMap::new()));
+        let closed = Arc::new(AtomicBool::new(false));
         let channel = Arc::new(Self {
+            office_id,
             channel_id: channel_id.clone(),
             writer,
             pending: Arc::clone(&pending),
+            closed: Arc::clone(&closed),
         });
         tokio::spawn(write_loop(write_half, write_rx));
         tokio::spawn(read_loop(
             read_half,
             pending,
             channels,
-            office_id,
+            map_key,
             channel_id,
+            closed,
             events,
             slot_permit,
         ));
@@ -109,6 +154,12 @@ impl MultiplexedChannel {
                 .pending
                 .lock()
                 .map_err(|_| io::Error::other("office pending map poisoned"))?;
+            if self.is_closed() {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "office channel closed",
+                ));
+            }
             map.insert(rpc_id, tx);
         }
         // From here on the entry is removed however the round trip ends without its reply:
@@ -227,12 +278,17 @@ pub(super) async fn read_bounded_frame<R: AsyncBufRead + Unpin>(
     Ok(true)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "read loop owns stream half, pending waiters, cache map, ids, closed flag, bus, and optional slot permit"
+)]
 pub(super) async fn read_loop<R: AsyncRead + Unpin>(
     read_half: R,
     pending: PendingMap,
     channels: Arc<Mutex<BTreeMap<String, Arc<MultiplexedChannel>>>>,
     office_id: String,
     channel_id: String,
+    closed: Arc<AtomicBool>,
     events: Arc<dyn EventBus>,
     slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) {
@@ -256,6 +312,7 @@ pub(super) async fn read_loop<R: AsyncRead + Unpin>(
             forward_office_event(events.as_ref(), event, &value);
         }
     }
+    closed.store(true, Ordering::Release);
     if let Ok(mut map) = pending.lock() {
         map.clear();
     }
@@ -456,14 +513,18 @@ mod tests {
             pending.lock().unwrap().insert(1, tx);
             let channels = Arc::new(Mutex::new(BTreeMap::new()));
             let (writer, _write_rx) = mpsc::channel(1);
-            channels.lock().unwrap().insert(
-                "office-1".to_owned(),
-                Arc::new(MultiplexedChannel {
-                    channel_id: "ch-1".to_owned(),
-                    writer,
-                    pending: Arc::clone(&pending),
-                }),
-            );
+            let closed = Arc::new(AtomicBool::new(false));
+            let ch = Arc::new(MultiplexedChannel {
+                office_id: "office-1".to_owned(),
+                channel_id: "ch-1".to_owned(),
+                writer,
+                pending: Arc::clone(&pending),
+                closed: Arc::clone(&closed),
+            });
+            channels
+                .lock()
+                .unwrap()
+                .insert("office-1".to_owned(), Arc::clone(&ch));
             let events: Arc<dyn EventBus> = Arc::new(InMemoryEventBus::default());
             read_loop(
                 huge,
@@ -471,10 +532,12 @@ mod tests {
                 Arc::clone(&channels),
                 "office-1".to_owned(),
                 "ch-1".to_owned(),
+                closed,
                 events,
                 None,
             )
             .await;
+            assert!(ch.is_closed());
             assert!(pending.lock().unwrap().is_empty());
             assert!(rx.await.is_err());
             assert!(!channels.lock().unwrap().contains_key("office-1"));

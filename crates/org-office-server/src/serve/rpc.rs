@@ -247,6 +247,46 @@ pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> 
     ))
 }
 
+pub(super) fn github_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if !crate::github_calls::is_github_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if (crate::github_calls::requires_owner_grant(request)
+        || request.is::<org_proto::github::GitHubWebhookIngest>())
+        && !binding.via_grant()
+    {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "GitHub App configuration, repository binding, and webhook ingestion require a verified host grant",
+            ),
+        ));
+    }
+    if let Some(handler) = shared.ports.github.as_ref() {
+        if let Some(response) = handler(Some(member), binding.via_grant(), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
 pub(super) fn reviews_rpc(
     request: &Request,
     shared: &Shared,

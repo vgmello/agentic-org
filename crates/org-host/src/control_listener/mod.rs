@@ -27,7 +27,7 @@ mod connections;
 mod outbound;
 mod request;
 mod serve;
-pub(crate) use connection::{Connection, DescriptorError, ServingReport};
+pub(crate) use connection::{ChannelReceipt, Connection, DescriptorError, ServingReport};
 #[cfg(test)]
 pub(crate) use connections::LocalConnection;
 pub(crate) use connections::WebConnection;

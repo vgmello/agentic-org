@@ -36,6 +36,7 @@ mod federation_runtime;
 pub(crate) use org_federation::stream as federation_stream;
 mod follow;
 mod git_calls;
+mod github_calls;
 mod grant;
 mod hq_creation;
 pub mod inbox;
