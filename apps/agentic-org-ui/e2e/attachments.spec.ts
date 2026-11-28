@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { deflateSync } from 'node:zlib';
 import { enterMockedOrganization } from './mock-organization';
@@ -108,9 +109,10 @@ test(
 		await sendBtn.click();
 
 		// 3. Sent message renders <AttachmentImage> via blob: URL with real decoded pixels.
-		const imageTrigger = page.getByTestId('attachment-image-trigger').last();
+		const imageTile = page.getByTestId('attachment-image-tile').last();
+		const imageTrigger = imageTile.getByTestId('attachment-image-trigger');
 		await expect(imageTrigger).toBeVisible();
-		const renderedImg = imageTrigger.locator('img');
+		const renderedImg = imageTile.locator('img');
 		await expect(renderedImg).toHaveAttribute('src', /^blob:/);
 		await expect
 			.poll(() => renderedImg.evaluate((el: HTMLImageElement) => el.naturalWidth))
@@ -297,6 +299,123 @@ test(
 		await expect(page.getByTestId('attachment-notice')).toContainText(/not accepted/i);
 		await expect(staged).toHaveCount(1);
 		await expect(staged).toHaveAttribute('data-status', 'ready');
+		expect(pageErrors).toEqual([]);
+	}
+);
+
+test(
+	'TASK-98.5 Slice 2A M1/L2: gallery error Retry has zero nested buttons (axe clean) and Lightbox arrows work with tooltip open',
+	{ tag: '@webkit' },
+	async ({ page }) => {
+		const pageErrors: string[] = [];
+		page.on('pageerror', (err) => pageErrors.push(err.message));
+
+		await openChat(page);
+
+		// Stage two PNGs so we can exercise both gallery error Retry (M1) and multi-image Lightbox nav (L2).
+		await page.getByLabel('Attach files').setInputFiles([
+			{
+				name: 'first.png',
+				mimeType: 'image/png',
+				buffer: Buffer.from(PNG_1X1_BASE64, 'base64')
+			},
+			{
+				name: 'second.png',
+				mimeType: 'image/png',
+				buffer: Buffer.from(PNG_1X1_BASE64, 'base64')
+			}
+		]);
+		const staged = page.getByTestId('staged-attachment');
+		await expect(staged).toHaveCount(2);
+		await expect(staged.nth(0)).toHaveAttribute('data-status', 'ready');
+		await expect(staged.nth(1)).toHaveAttribute('data-status', 'ready');
+
+		// Fail the very first gallery image download once, then succeed on Retry.
+		await page.evaluate(async () => {
+			const mod = await import('/e2e/fakes/attachments-runtime.ts');
+			const runtime = mod.getAttachmentsRuntime() as {
+				downloadAttachment: (req: unknown) => Promise<unknown>;
+			};
+			const origDownload = runtime.downloadAttachment;
+			let failedOnce = false;
+			runtime.downloadAttachment = (req: unknown) => {
+				if (!failedOnce) {
+					failedOnce = true;
+					return Promise.reject(new Error('Simulated transient download failure'));
+				}
+				return origDownload(req);
+			};
+		});
+
+		await page.getByTestId('composer').fill('Two screenshots');
+		await page.getByRole('button', { name: /^Send/ }).click();
+
+		const grid = page
+			.getByTestId('message')
+			.filter({ hasText: 'Two screenshots' })
+			.getByTestId('attachment-image-grid');
+		await expect(grid.getByTestId('attachment-image-error')).toHaveCount(1);
+		const retryBtn = grid.getByTestId('attachment-image-retry');
+		await expect(retryBtn).toBeVisible();
+
+		// M1: Zero nested <button> inside <button> and zero axe WCAG / nested-interactive violations.
+		await expect(grid.locator('button button')).toHaveCount(0);
+		const axeScan = await new AxeBuilder({ page })
+			.include('[data-testid="attachment-image-grid"]')
+			.withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+			.analyze();
+		expect(axeScan.violations).toEqual([]);
+
+		// Clicking gallery Retry recovers the image inline and MUST NOT open the lightbox.
+		await retryBtn.click();
+		await expect(page.getByTestId('image-lightbox')).toHaveCount(0);
+		await expect(grid.getByTestId('attachment-image-error')).toHaveCount(0);
+		await expect(grid.locator('img')).toHaveCount(2);
+		await expect
+			.poll(() =>
+				grid
+					.locator('img')
+					.evaluateAll((imgs) => imgs.every((el) => (el as HTMLImageElement).naturalWidth > 0))
+			)
+			.toBe(true);
+		const readyAxeScan = await new AxeBuilder({ page })
+			.include('[data-testid="attachment-image-grid"]')
+			.withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+			.analyze();
+		expect(readyAxeScan.violations).toEqual([]);
+
+		// L2: Open Lightbox, hover toolbar button so ModalTooltip opens, and verify ArrowRight/ArrowLeft still navigate.
+		await grid.getByTestId('attachment-image-trigger').first().click();
+		const lightbox = page.getByTestId('image-lightbox');
+		await expect(lightbox).toBeVisible();
+		await expect(lightbox).toContainText('first.png');
+		await expect(lightbox).toContainText('1 of 2');
+
+		await lightbox.getByRole('button', { name: 'Actual size', exact: true }).hover();
+		await expect(lightbox.locator('[role="tooltip"]')).toBeVisible();
+
+		await page.keyboard.press('ArrowRight');
+		await expect(lightbox).toContainText('second.png');
+		await expect(lightbox).toContainText('2 of 2');
+
+		await page.keyboard.press('ArrowLeft');
+		await expect(lightbox).toContainText('first.png');
+		await expect(lightbox).toContainText('1 of 2');
+
+		// Toolbar Next/Previous buttons also navigate cleanly.
+		await lightbox.getByRole('button', { name: 'Next image', exact: true }).click();
+		await expect(lightbox).toContainText('second.png');
+		await lightbox.getByRole('button', { name: 'Previous image', exact: true }).click();
+		await expect(lightbox).toContainText('first.png');
+
+		// Escape dismisses an open tooltip first (WCAG 1.4.13), then closes the lightbox on second press.
+		await lightbox.getByRole('button', { name: 'Actual size', exact: true }).hover();
+		await expect(lightbox.locator('[role="tooltip"]')).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(lightbox.locator('[role="tooltip"]')).toHaveCount(0);
+		await expect(lightbox).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(lightbox).toBeHidden();
 		expect(pageErrors).toEqual([]);
 	}
 );

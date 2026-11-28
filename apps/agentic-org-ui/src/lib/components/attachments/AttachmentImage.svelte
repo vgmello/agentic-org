@@ -3,7 +3,12 @@
   Authenticated raster image attachment rendered exclusively via the bounded LRU blob: cache.
   Uses Svelte 5 {@attach} (zero $effect) to acquire/release cache refs and abort in-flight loads.
 -->
+<script module lang="ts">
+	export type AttachmentImageStatus = 'loading' | 'ready' | 'authless' | 'error';
+</script>
+
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import ImageOff from '@lucide/svelte/icons/image-off';
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import { attachmentBlobCache } from '$lib/platform/http/attachment-blob-cache';
@@ -17,13 +22,21 @@
 		organizationId,
 		class: className,
 		imgClass,
-		alt
+		alt,
+		retryable = true,
+		retryToken = 0,
+		onStatusChange
 	}: {
 		attachment: AttachmentMeta;
 		organizationId?: string;
 		class?: string;
 		imgClass?: string;
 		alt?: string;
+		/** Render an inline Retry button on load error. Set false when wrapped inside an outer button. */
+		retryable?: boolean;
+		/** External retry counter (incremented by parent sibling controls when retryable is false). */
+		retryToken?: number;
+		onStatusChange?: (status: AttachmentImageStatus) => void;
 	} = $props();
 
 	const getAmbientOrgId = useAttachmentOrgId();
@@ -43,28 +56,35 @@
 
 	let loadState = $state.raw<LoadState>({ kind: 'loading', key: '' });
 	let retryCount = $state(0);
+	const attachmentId = $derived(attachment.id);
+	const loadAttempt = $derived(retryCount + retryToken);
+
+	function setLoadState(next: LoadState) {
+		loadState = next;
+		untrack(() => onStatusChange?.(next.kind));
+	}
 
 	function loadAttachmentBlob(targetOrgId: string, targetId: string, attempt: number) {
 		return () => {
 			void attempt;
 			const key = `${targetOrgId}:${targetId}`;
 			if (!targetOrgId || !targetId) {
-				loadState = { kind: 'error', key, message: 'Image unavailable.' };
+				setLoadState({ kind: 'error', key, message: 'Image unavailable.' });
 				return;
 			}
 			if (!hasAttachmentSessionPair()) {
-				loadState = {
+				setLoadState({
 					kind: 'authless',
 					key,
 					message: 'Sign in with a browser session to view images.'
-				};
+				});
 				return;
 			}
 			const controller = new AbortController();
 			let acquiredKey: string | undefined;
 			let acquiredUrl: string | undefined;
 			let active = true;
-			loadState = { kind: 'loading', key };
+			setLoadState({ kind: 'loading', key });
 
 			void attachmentBlobCache.acquire(targetOrgId, targetId, { signal: controller.signal }).then(
 				(handle) => {
@@ -74,16 +94,20 @@
 					}
 					acquiredKey = handle.key;
 					acquiredUrl = handle.objectUrl;
-					loadState = { kind: 'ready', key, url: handle.objectUrl };
+					setLoadState({ kind: 'ready', key, url: handle.objectUrl });
 				},
 				(err: unknown) => {
 					if (!active || controller.signal.aborted) return;
 					const appErr = toAppError(err);
 					if (appErr.code === 'not_authorized' && !hasAttachmentSessionPair()) {
-						loadState = { kind: 'authless', key, message: appErr.message };
+						setLoadState({ kind: 'authless', key, message: appErr.message });
 						return;
 					}
-					loadState = { kind: 'error', key, message: appErr.message || 'Could not load image.' };
+					setLoadState({
+						kind: 'error',
+						key,
+						message: appErr.message || 'Could not load image.'
+					});
 				}
 			);
 
@@ -96,14 +120,17 @@
 			};
 		};
 	}
+
+	const blobAttachment = $derived(loadAttachmentBlob(orgId, attachmentId, loadAttempt));
 </script>
 
 <div
-	{@attach loadAttachmentBlob(orgId, attachment.id, retryCount)}
+	{@attach blobAttachment}
 	class={cn('relative overflow-hidden rounded-md bg-surface-raised', className)}
 	style={loadState.kind === 'loading' ? aspectStyle : undefined}
 	data-testid="attachment-image"
-	data-attachment-id={attachment.id}
+	data-attachment-id={attachmentId}
+	data-status={loadState.kind}
 >
 	{#if loadState.kind === 'ready'}
 		<img
@@ -125,7 +152,9 @@
 		</div>
 	{:else if loadState.kind === 'authless'}
 		<div
-			class="flex min-h-20 flex-col items-center justify-center gap-1 border border-line px-3 py-3 text-center text-xs/5 text-fg-muted"
+			class="flex min-h-20 flex-col items-center justify-center gap-1 px-3 py-3 text-center text-xs/5 text-fg-muted {retryable
+				? 'border border-line'
+				: ''}"
 			data-testid="attachment-image-authless"
 		>
 			<ImageOff class="size-4 text-fg-subtle" aria-hidden="true" />
@@ -134,19 +163,24 @@
 		</div>
 	{:else}
 		<div
-			class="flex min-h-20 flex-col items-center justify-center gap-1.5 border border-line px-3 py-3 text-center text-xs/5 text-fg-muted"
+			class="flex min-h-20 flex-col items-center justify-center gap-1.5 px-3 py-3 text-center text-xs/5 text-fg-muted {retryable
+				? 'border border-line'
+				: ''}"
 			data-testid="attachment-image-error"
 		>
 			<ImageOff class="size-4 text-danger" aria-hidden="true" />
 			<span>{loadState.message}</span>
-			<button
-				type="button"
-				class="inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium text-brand-text hover:text-brand-text-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-				onclick={() => (retryCount += 1)}
-			>
-				<RotateCw class="size-3" aria-hidden="true" />
-				Retry
-			</button>
+			{#if retryable}
+				<button
+					type="button"
+					class="inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium text-brand-text hover:text-brand-text-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [@media(pointer:coarse)]:min-h-11"
+					aria-label="Retry {altText}"
+					onclick={() => (retryCount += 1)}
+				>
+					<RotateCw class="size-3" aria-hidden="true" />
+					Retry
+				</button>
+			{/if}
 		</div>
 	{/if}
 </div>

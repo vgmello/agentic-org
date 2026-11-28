@@ -75,7 +75,6 @@
 
 	function handleKeydown(event: KeyboardEvent) {
 		if (!open || !hasMany) return;
-		if (document.querySelector('[role="tooltip"]')) return;
 		const target = event.target;
 		if (
 			target instanceof HTMLInputElement ||

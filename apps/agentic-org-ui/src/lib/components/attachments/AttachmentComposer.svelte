@@ -261,9 +261,11 @@
 		notice = undefined;
 		commit([]);
 	}
+	const scopeKey = $derived(resetKey);
+	const scopeAttachment = $derived(trackScope(scopeKey));
 </script>
 
-<div {@attach trackScope(resetKey)} class="min-w-0">
+<div {@attach scopeAttachment} class="min-w-0">
 	<input
 		{@attach bindFileInput}
 		type="file"

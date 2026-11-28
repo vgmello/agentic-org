@@ -164,6 +164,7 @@
 		return entry;
 	}
 	const convDrafts = $derived(draftsForConversation(conversationId, activeOrgId, draftEpoch));
+	const composerResetKey = $derived(conversationId ? `conversation:${conversationId}` : '');
 	let feedScroll = $state<FeedScrollState>({ hasNewer: false, unseenCount: 0 });
 	const jumpLabel = $derived(
 		feedScroll.unseenCount > 0
@@ -315,7 +316,7 @@
 			{cannotRun}
 			{conversation}
 			{ctx}
-			resetKey="conversation:{conversation.id}"
+			resetKey={composerResetKey}
 			draft={convDrafts?.reply}
 			onsend={(t, o) => actions.submit(t, o, conversation, undefined)}
 		/>

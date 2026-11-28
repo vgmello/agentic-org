@@ -131,6 +131,7 @@
 		const key = resetKey;
 		const nextDraft = draft;
 		untrack(() => {
+			if (lastKey === key && lastDraft === nextDraft) return;
 			if (lastKey) {
 				const outgoing = attachmentsBar?.interruptUploads() ?? markInterruptedUploads(staged);
 				if (lastDraft) {
