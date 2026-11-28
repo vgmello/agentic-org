@@ -135,8 +135,7 @@ fn seed_pool_fixture(engine: EngineChoice) -> PoolFixture {
         custody.clone(),
         |_| record(CA_SEED),
         Options {
-            backend: None,
-            engine,
+            engine: engine.clone(),
             clock: clock.clone(),
             testing: Default::default(),
             before_final_checks: None,
@@ -727,7 +726,6 @@ fn run_permit_cooldown_and_budget_interaction_suite(fx: &PoolFixture) {
 
 #[test]
 fn l4_provider_pools_and_permits_on_memory_engine() {
-    org_office_sqlite::install();
     let fx = seed_pool_fixture(EngineChoice::Memory);
     run_pool_lifecycle_and_discovery_suite(&fx);
     run_permit_cooldown_and_budget_interaction_suite(&fx);
@@ -735,8 +733,7 @@ fn l4_provider_pools_and_permits_on_memory_engine() {
 
 #[test]
 fn l4_provider_pools_and_permits_on_sqlite_with_rebuild_and_coordinator_restart() {
-    org_office_sqlite::install();
-    let fx = seed_pool_fixture(EngineChoice::Sqlite);
+    let fx = seed_pool_fixture(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     run_pool_lifecycle_and_discovery_suite(&fx);
     run_permit_cooldown_and_budget_interaction_suite(&fx);
 
@@ -785,8 +782,7 @@ fn l4_provider_pools_and_permits_on_sqlite_with_rebuild_and_coordinator_restart(
         roots,
         custody,
         Options {
-            backend: None,
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             clock,
             testing: Default::default(),
             before_final_checks: None,
@@ -821,7 +817,6 @@ fn l4_provider_pools_and_permits_on_sqlite_with_rebuild_and_coordinator_restart(
 
 #[test]
 fn pass1_hardening_ssrf_auth_boundaries_unknown_auth_dup_models_and_expired_renew() {
-    org_office_sqlite::install();
     use org_office::organization_family::features::validate_endpoint_url;
     // Finding #6: SSRF / parser-confusion URLs refused
     assert!(validate_endpoint_url("https://api.example.com/v1"));

@@ -208,6 +208,15 @@ impl ReleaseStore {
     /// The archive was privately frozen and authenticated on the same held input;
     /// this second pass supplies payload bytes only, never extraction authority.
     pub fn install_archive(&mut self, bundle: &mut ArchiveBundle) -> Result<ReleasePin, Error> {
+        self.install_archive_with(bundle, platform::verify, |_| Ok(()))
+    }
+
+    fn install_archive_with(
+        &mut self,
+        bundle: &mut ArchiveBundle,
+        check: impl Fn(&Directory, &VerifiedManifest) -> Result<(), Error> + Copy,
+        fault: impl FnMut(Step) -> Result<(), Error>,
+    ) -> Result<ReleasePin, Error> {
         let manifest = bundle.manifest().clone();
         let signature = *bundle.signature();
         self.install_with(
@@ -237,8 +246,8 @@ impl ReleaseStore {
                     parent.seal_file(&output, entry.role() == org_release::Role::Executable)
                 })
             },
-            platform::verify,
-            |_| Ok(()),
+            check,
+            fault,
         )
     }
 

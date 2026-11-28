@@ -900,3 +900,73 @@ fn clean_route_enforces_strict_channel_id_allowlist() {
         );
     }
 }
+
+#[test]
+fn task_transition_apply_translation_matches_cli_and_office_parity() {
+    use serde_json::{json, Map, Value};
+
+    let prep = |raw: Value| {
+        let map: Map<String, Value> = raw.as_object().unwrap().clone();
+        let mut seq = 0u64;
+        let mut next_id = || {
+            seq += 1;
+            format!("0193a5c0-0000-7000-8000-{seq:012x}")
+        };
+        crate::apply::prepare_apply_rpc(&mut next_id, "task", "transition", &map, Some(3))
+            .expect("task transition route")
+    };
+
+    // `--note` alone on `blocked` maps to `blocked_reason`, clearing `note`.
+    let note_alias = prep(json!({
+        "task": "T-A2",
+        "status": "blocked",
+        "note": "Waiting on DNS",
+        "waiting_on": "none",
+    }))
+    .expect("note alias on blocked");
+    assert_eq!(note_alias.params["blocked_reason"], "Waiting on DNS");
+    assert!(note_alias.params.get("note").is_none());
+    assert_eq!(note_alias.params["waiting_on_owner"], false);
+
+    // `reason` + `waiting_on: "owner"` on `blocked` succeeds.
+    let reason_owner = prep(json!({
+        "task": "T-A2",
+        "status": "blocked",
+        "reason": "Need owner approval",
+        "waiting_on": "owner",
+    }))
+    .expect("reason + owner on blocked");
+    assert_eq!(reason_owner.params["blocked_reason"], "Need owner approval");
+    assert_eq!(reason_owner.params["waiting_on_owner"], true);
+
+    // Non-blocked with valid `reason` succeeds.
+    let non_blocked = prep(json!({
+        "task": "T-A2",
+        "status": "in_progress",
+        "reason": "Owner approved",
+    }))
+    .expect("non-blocked reason");
+    assert_eq!(non_blocked.params["reason"], "Owner approved");
+    assert!(non_blocked.params.get("blocked_reason").is_none());
+
+    // Fail-closed parity cases:
+    // - `waiting_on_owner: false` / `true` and `waiting_on: "none"` / `"owner"` on non-blocked
+    // - whitespace-only `reason` (blocked and non-blocked) and whitespace-only `note` on blocked
+    // - `blocked_reason` on non-blocked
+    for bad in [
+        json!({"task": "T-A2", "status": "in_progress", "waiting_on_owner": false}),
+        json!({"task": "T-A2", "status": "in_progress", "waiting_on_owner": true}),
+        json!({"task": "T-A2", "status": "in_progress", "waiting_on": "none"}),
+        json!({"task": "T-A2", "status": "in_progress", "waiting_on": "owner"}),
+        json!({"task": "T-A2", "status": "in_progress", "reason": "   \t "}),
+        json!({"task": "T-A2", "status": "blocked", "reason": "   \n "}),
+        json!({"task": "T-A2", "status": "blocked", "note": "   \t "}),
+        json!({"task": "T-A2", "status": "blocked"}),
+        json!({"task": "T-A2", "status": "in_progress", "blocked_reason": "wrong"}),
+    ] {
+        let err = prep(bad.clone())
+            .err()
+            .unwrap_or_else(|| panic!("expected invalid_request for {bad}"));
+        assert_eq!(err.code, ErrorCode::InvalidRequest, "{bad}");
+    }
+}

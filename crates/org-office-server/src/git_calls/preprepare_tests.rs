@@ -444,9 +444,8 @@ struct TestHarness {
 }
 
 fn build_harness(fake_claude: Option<PathBuf>, wire_sessions_on_tasks: bool) -> TestHarness {
-    org_office_sqlite::install();
     let office = Arc::new(Office::for_test(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
     }));
     let owner = office.owner_member_id().to_owned();
     let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
@@ -807,7 +806,9 @@ fn task135_auto_preprepare_fails_closed_on_unauthorized_closed_projectless_and_b
                 task: t_auth.clone(),
                 status: TaskStatus::InProgress,
                 resolution: None,
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 note: None,
                 expected_revision: 1,
                 done_anyway_reason: None,
@@ -826,7 +827,9 @@ fn task135_auto_preprepare_fails_closed_on_unauthorized_closed_projectless_and_b
                 task: t_auth.clone(),
                 status: TaskStatus::Done,
                 resolution: Some("fixed".into()),
+                reason: None,
                 blocked_reason: None,
+                waiting_on_owner: None,
                 note: None,
                 expected_revision: t_rev,
                 done_anyway_reason: None,
@@ -1074,6 +1077,10 @@ fn task160_mid_turn_worktree_prepare_rpc_signals_refresh_and_preserves_isolation
                 employee_id: h.self_agent.clone(),
                 instruction: Some("Begin turn with 0 worktrees".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("start busy Turn 1");
@@ -1208,6 +1215,10 @@ fn warm_up_peer_and_self_idle(h: &TestHarness) {
                     employee_id: emp_id.clone(),
                     instruction: Some(msg.into()),
                     workspace: None,
+                    resume_runtime_session_id: None,
+                    fresh: false,
+                    model: None,
+                    effort: None,
                 },
             )
             .expect("warm Turn 1");

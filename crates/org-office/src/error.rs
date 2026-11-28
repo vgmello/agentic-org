@@ -67,6 +67,24 @@ impl OfficeError {
     }
 }
 
+impl From<org_accounting::AccountingError> for OfficeError {
+    fn from(error: org_accounting::AccountingError) -> Self {
+        match error {
+            org_accounting::AccountingError::Invalid(why) => Self::Invalid(why),
+            org_accounting::AccountingError::Storage(cause) => Self::Storage(cause),
+        }
+    }
+}
+
+impl From<org_budgets::BudgetError> for OfficeError {
+    fn from(error: org_budgets::BudgetError) -> Self {
+        match error {
+            org_budgets::BudgetError::Invalid(why) => Self::Invalid(why),
+            org_budgets::BudgetError::Storage(cause) => Self::Storage(cause),
+        }
+    }
+}
+
 impl fmt::Display for OfficeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

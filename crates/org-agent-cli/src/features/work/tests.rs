@@ -1100,3 +1100,708 @@ fn task_90_surgical_checklist_fields_pruning_and_task_update_cli() {
     assert_eq!(env["error"]["conflict"]["current_revision"], 4);
     assert_eq!(env["error"]["conflict"]["events_since"][0]["revision"], 3);
 }
+
+#[test]
+fn note_adec3_autobind_standalone_turn40_recall_update_and_legacy_aliases() {
+    struct NoteMock {
+        seen: Vec<(String, Value)>,
+        active_task: Option<String>,
+        active_project: Option<String>,
+    }
+
+    fn wire_note(id: &str, task_id: Option<&str>, body: Option<&str>) -> Value {
+        let mut obj = json!({
+            "id": id,
+            "task_id": task_id,
+            "project_id": "0193a5c0-0000-7000-8000-000000000050",
+            "author_id": "0193a5c0-0000-7000-8000-000000000020",
+            "revision": 1,
+            "kind": "decision",
+            "title": "Use FTS5 for task query",
+            "why": "Avoid full-table scans on large backlogs",
+            "alternatives": "Client-side substring scan",
+            "tags": ["search", "shortcut"],
+            "created_at": "2026-11-26T00:00:00.000Z",
+            "updated_at": "2026-11-26T00:00:00.000Z",
+            "editable": true
+        });
+        if let Some(body) = body {
+            obj["body_markdown"] = json!(body);
+        }
+        obj
+    }
+
+    impl OfficeTransport for NoteMock {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.seen.push((method.to_owned(), params.clone()));
+            match method {
+                "project.inspect" => Ok(json!({
+                    "id": "0193a5c0-0000-7000-8000-000000000050",
+                    "number": 1,
+                    "key": "P-1",
+                    "slug": "core",
+                    "name": "Core",
+                    "owner_team_id": "0193a5c0-0000-7000-8000-000000000010",
+                    "revision": 1
+                })),
+                "who" => Ok(json!({
+                    "members": [{
+                        "id": "0193a5c0-0000-7000-8000-000000000020",
+                        "handle": "ada",
+                        "name": "Ada",
+                        "kind": "agent",
+                        "owner": false,
+                        "agent_status": "active",
+                        "role_title": "Engineer",
+                        "presence": "online"
+                    }]
+                })),
+                "tasks.notes.add" => {
+                    let task_id = params
+                        .get("task")
+                        .and_then(Value::as_str)
+                        .map(|_| "0193a5c0-0000-7000-8000-000000000100");
+                    Ok(json!({
+                        "note": wire_note("0193a5c0-0000-7000-8000-000000000401", task_id, Some("Full body"))
+                    }))
+                }
+                "tasks.notes.list" => {
+                    let fields = params
+                        .get("fields")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let wants_body = fields.is_empty()
+                        || fields.iter().any(|v| v.as_str() == Some("body_markdown"));
+                    let body = wants_body.then_some("HUGE_BODY_NEVER_FETCHED_BY_DEFAULT");
+                    Ok(json!({
+                        "notes": [
+                            wire_note("0193a5c0-0000-7000-8000-000000000401", Some("0193a5c0-0000-7000-8000-000000000100"), body),
+                            wire_note("0193a5c0-0000-7000-8000-000000000402", None, body)
+                        ],
+                        "total": 2,
+                        "next_cursor": "2026-11-26T00:00:00.000Z~0193a5c0-0000-7000-8000-000000000402"
+                    }))
+                }
+                "tasks.notes.get" => Ok(json!({
+                    "note": wire_note("0193a5c0-0000-7000-8000-000000000401", None, Some("Full body text"))
+                })),
+                "tasks.notes.update" => Ok(json!({
+                    "note": wire_note("0193a5c0-0000-7000-8000-000000000401", None, Some("Updated"))
+                })),
+                _ => panic!("unexpected RPC: {method}"),
+            }
+        }
+
+        fn active_task(&self) -> Option<String> {
+            self.active_task.clone()
+        }
+
+        fn active_project(&self) -> Option<String> {
+            self.active_project.clone()
+        }
+    }
+
+    let run = |office: &mut TransportOffice<NoteMock>, words: &[&str]| {
+        let args: Vec<String> = words.iter().map(|s| (*s).to_owned()).collect();
+        crate::execute_with_office("agent-os", &args, office)
+    };
+
+    let mut office = TransportOffice(NoteMock {
+        seen: Vec::new(),
+        active_task: Some("T-A1".into()),
+        active_project: Some("P-1".into()),
+    });
+
+    // 1. Low-friction `note add`: only `--text` required; auto-binds active task from env.
+    let out = run(
+        &mut office,
+        &[
+            "note",
+            "add",
+            "--kind",
+            "decision",
+            "--title",
+            "Use FTS5 for task query",
+            "--why",
+            "Avoid full-table scans",
+            "--alternatives",
+            "Substring scan",
+            "--tag",
+            "search",
+            "--tag",
+            "shortcut",
+            "--text",
+            "Details of the FTS5 choice.",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["task"], "T-A1");
+    assert_eq!(sent["kind"], "decision");
+    assert_eq!(sent["title"], "Use FTS5 for task query");
+    assert_eq!(sent["why"], "Avoid full-table scans");
+    assert_eq!(sent["alternatives"], "Substring scan");
+    assert_eq!(sent["tags"], json!(["search", "shortcut"]));
+
+    // 2. `--standalone` skips active task, auto-resolves active project `P-1` -> UUIDv7,
+    // and strips `null` `task_id` from output so org-command conforms cleanly.
+    let out = run(
+        &mut office,
+        &["note", "add", "--standalone", "--text", "Cross-task note"],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert!(sent.get("task").is_none(), "{sent}");
+    assert_eq!(sent["project_id"], "0193a5c0-0000-7000-8000-000000000050");
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert!(env["data"].get("task_id").is_none(), "{}", out.stdout);
+
+    // 3. Default `note list` omits `body_markdown` server-side (<1 KiB Turn-40 recall) and
+    // resolves `--project P-1` and `--author @ada`.
+    let out = run(
+        &mut office,
+        &[
+            "note",
+            "list",
+            "--kind",
+            "decision",
+            "--project",
+            "P-1",
+            "--author",
+            "@ada",
+            "--tag",
+            "search",
+            "--since",
+            "2026-11-26T00:00:00Z",
+            "--limit",
+            "5",
+            "--format",
+            "compact",
+            "--fields",
+            "id,title,why,tags",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert!(
+        out.stdout.len() < 1024,
+        "Turn-40 recall too big: {}",
+        out.stdout.len()
+    );
+    assert!(!out.stdout.contains("HUGE_BODY"), "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["project_id"], "0193a5c0-0000-7000-8000-000000000050");
+    assert_eq!(sent["author_id"], "0193a5c0-0000-7000-8000-000000000020");
+    assert_eq!(sent["kind"], "decision");
+    assert_eq!(sent["tag"], "search");
+    assert_eq!(sent["fields"], json!(["title", "why", "tags"]));
+
+    // 4. Default `note list` with no `--fields` explicitly requests non-body fields only.
+    let out = run(&mut office, &["note", "list", "--kind", "decision"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(
+        sent["fields"],
+        json!(["title", "why", "alternatives", "tags"])
+    );
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["meta"]["total"], 2);
+    assert!(env["data"][0].get("body_markdown").is_none());
+
+    // 5. `note list --count` returns empty data and `meta.total` with minimal wire fields.
+    let out = run(&mut office, &["note", "list", "--count"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["data"], json!([]));
+    assert_eq!(env["meta"]["total"], 2);
+    assert!(env["meta"].get("next_cursor").is_none());
+
+    // 6. Legacy `task-note get` & `task note get` rewrite to `note inspect` cleanly.
+    for line in [
+        &[
+            "note",
+            "inspect",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+        ][..],
+        &[
+            "task-note",
+            "get",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+        ],
+        &[
+            "task",
+            "note",
+            "get",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+        ],
+    ] {
+        let out = run(&mut office, line);
+        assert_eq!(out.exit_code, 0, "{line:?}: {}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["data"]["body_markdown"], "Full body text");
+    }
+
+    // 7. Partial `note update` works without `--text`; empty patch refused.
+    let out = run(
+        &mut office,
+        &[
+            "note",
+            "update",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+            "--if-match",
+            "1",
+            "--title",
+            "Refined title",
+            "--tag",
+            "verified",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["title"], "Refined title");
+    assert_eq!(sent["tags"], json!(["verified"]));
+    assert!(sent.get("body_markdown").is_none());
+
+    // 8. Refusals: `--private` / `--shared` / `--author` rejected on write; `--standalone` + `--task` refused; empty update refused.
+    for bad in [
+        &["note", "add", "--text", "x", "--private"][..],
+        &["note", "add", "--text", "x", "--shared"],
+        &["note", "add", "--text", "x", "--author", "@ada"],
+        &[
+            "note",
+            "add",
+            "--text",
+            "x",
+            "--standalone",
+            "--task",
+            "T-A1",
+        ],
+        &["note", "add", "--text", "x", "--standalone", "--checkpoint"],
+        &["note", "list", "--count", "--cursor", "c1"],
+        &[
+            "note",
+            "update",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+            "--if-match",
+            "1",
+        ],
+    ] {
+        let out = run(&mut office, bad);
+        assert_ne!(out.exit_code, 0, "{bad:?}: {}", out.stdout);
+    }
+}
+
+#[test]
+fn task_105_and_84_cli_list_defaults_blocking_transitions_and_history_filters() {
+    struct BlockingCliMock {
+        seen: Vec<(String, Value)>,
+    }
+
+    fn blocked_task_json() -> Value {
+        json!({
+            "id": "0193a5c0-0000-7000-8000-000000000100",
+            "office_code": "A",
+            "number": 2,
+            "key": "T-A2",
+            "revision": 3,
+            "team_id": "0193a5c0-0000-7000-8000-000000000010",
+            "type": "task",
+            "title": "Deploy service",
+            "status": "blocked",
+            "priority": "high",
+            "resolution": null,
+            "blocked_reason": "Waiting on owner DNS approval",
+            "blocked_since": "2026-11-26T10:00:00.000Z",
+            "waiting_on_owner": true,
+            "dependency_blocked": true,
+            "unmet_blocking_dependencies": [{
+                "id": "0193a5c0-0000-7000-8000-000000000099",
+                "key": "T-A1",
+                "title": "Provision DNS",
+                "status": "cancelled",
+                "cancelled": true
+            }],
+            "labels": [],
+            "reference_files": [],
+            "modified_files": [],
+            "depends_on": ["0193a5c0-0000-7000-8000-000000000099"],
+            "dependents": [],
+            "created_by_kind": "employee",
+            "updated_by_kind": "employee",
+            "checklist_total": 0,
+            "checklist_done": 0,
+            "comment_count": 0,
+            "watcher_count": 0
+        })
+    }
+
+    impl OfficeTransport for BlockingCliMock {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.seen.push((method.to_owned(), params));
+            match method {
+                "tasks.list" => Ok(json!({ "tasks": [blocked_task_json()], "total": 1 })),
+                "tasks.inspect" => Ok(json!({
+                    "task": blocked_task_json(),
+                    "checklist": [],
+                    "comments": [],
+                    "attachments": [],
+                    "watchers": [],
+                    "depends_on_tasks": [],
+                    "dependent_tasks": [],
+                    "history": []
+                })),
+                "tasks.transition" => Ok(json!({ "task": blocked_task_json() })),
+                "tasks.history" => Ok(json!({
+                    "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                    "events": [
+                        {
+                            "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                            "revision": 1,
+                            "occurred_at": "2026-11-26T09:00:00.000Z",
+                            "actor_kind": "employee",
+                            "change": { "type": "created" },
+                            "payload_sha256": "0".repeat(64)
+                        },
+                        {
+                            "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                            "revision": 2,
+                            "occurred_at": "2026-11-26T09:30:00.000Z",
+                            "actor_kind": "employee",
+                            "change": { "type": "status_changed", "from": "todo", "to": "in_progress" },
+                            "payload_sha256": "1".repeat(64)
+                        },
+                        {
+                            "task_id": "0193a5c0-0000-7000-8000-000000000100",
+                            "revision": 3,
+                            "occurred_at": "2026-11-26T10:00:00.000Z",
+                            "actor_kind": "employee",
+                            "change": {
+                                "type": "status_changed",
+                                "from": "in_progress",
+                                "to": "blocked",
+                                "blocked_reason": "Waiting on owner DNS approval",
+                                "waiting_on_owner": true
+                            },
+                            "payload_sha256": "2".repeat(64)
+                        }
+                    ]
+                })),
+                other => panic!("unexpected RPC: {other}"),
+            }
+        }
+    }
+
+    let run = |office: &mut TransportOffice<BlockingCliMock>, args: &[&str]| {
+        let owned: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+        crate::execute_with_office("agent-os", &owned, office)
+    };
+
+    let mut office = TransportOffice(BlockingCliMock { seen: vec![] });
+
+    // 1. `task list` defaults to `status_scope = "open"` and surfaces blocking fields.
+    let out = run(&mut office, &["task", "list"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["status_scope"], "open");
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    let row = &env["data"][0];
+    assert_eq!(row["blocked_reason"], "Waiting on owner DNS approval");
+    assert_eq!(row["blocked_since"], "2026-11-26T10:00:00.000Z");
+    assert_eq!(row["waiting_on_owner"], true);
+    assert_eq!(row["dependency_blocked"], true);
+    assert_eq!(row["unmet_blocking_dependencies"][0]["key"], "T-A1");
+    assert_eq!(row["unmet_blocking_dependencies"][0]["cancelled"], true);
+
+    // 2. `--all`, `--status done`, `--status-scope`, `--done-since`, `--ready`, `--dependency-blocked`.
+    let out = run(&mut office, &["task", "list", "--all"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["status_scope"], "all");
+
+    let out = run(&mut office, &["task", "list", "--status", "done"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["status"], "done");
+    assert!(office
+        .0
+        .seen
+        .last()
+        .unwrap()
+        .1
+        .get("status_scope")
+        .is_none());
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "list",
+            "--status-scope",
+            "open",
+            "--done-since",
+            "2026-11-20T00:00:00Z",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["status_scope"], "open");
+    assert_eq!(
+        office.0.seen.last().unwrap().1["done_since"],
+        "2026-11-20T00:00:00Z"
+    );
+
+    let out = run(&mut office, &["task", "list", "--ready"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["ready"], true);
+
+    let out = run(&mut office, &["task", "list", "--dependency-blocked"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(office.0.seen.last().unwrap().1["dependency_blocked"], true);
+
+    // 3. `task inspect` surfaces blocking fields too.
+    let out = run(&mut office, &["task", "inspect", "--task", "T-A2"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["data"]["task"]["waiting_on_owner"], true);
+    assert_eq!(env["data"]["task"]["dependency_blocked"], true);
+    assert_eq!(
+        env["data"]["task"]["unmet_blocking_dependencies"][0]["status"],
+        "cancelled"
+    );
+
+    // 4. `task transition` primary `--reason`, aliases `--blocked-reason` / `--note`, `--waiting-on owner`, `--waiting-on-owner`.
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--reason",
+            "Waiting on owner DNS approval",
+            "--waiting-on",
+            "owner",
+            "--if-match",
+            "2",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert_eq!(tr["blocked_reason"], "Waiting on owner DNS approval");
+    assert_eq!(tr["waiting_on_owner"], true);
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--blocked-reason",
+            "Legacy alias still works",
+            "--waiting-on-owner",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert_eq!(tr["blocked_reason"], "Legacy alias still works");
+    assert_eq!(tr["waiting_on_owner"], true);
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--note",
+            "Note alias for blocked",
+            "--waiting-on",
+            "none",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert_eq!(tr["blocked_reason"], "Note alias for blocked");
+    assert_eq!(tr["waiting_on_owner"], false);
+
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--reason",
+            "Owner approved DNS",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let tr = &office.0.seen.last().unwrap().1;
+    assert!(tr.get("blocked_reason").is_none());
+    assert_eq!(tr["note"], "Owner approved DNS");
+
+    // 5. Fail-closed CLI refusals (zero transport calls!):
+    //    - `--blocked-reason` on non-blocked transition refused with actionable hint!
+    //    - `--waiting-on owner` on non-blocked transition refused!
+    //    - contradictions on `task list` and `task history` refused!
+    let before = office.0.seen.len();
+    let bad_blocked = run(
+        &mut office,
+        &[
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--blocked-reason",
+            "Should not be silently dropped",
+            "--if-match",
+            "3",
+        ],
+    );
+    assert_ne!(bad_blocked.exit_code, 0);
+    let bad_env: Value = serde_json::from_str(&bad_blocked.stdout).unwrap();
+    assert_eq!(bad_env["error"]["code"], "invalid_request");
+    assert!(
+        bad_env["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("--reason"),
+        "expected actionable hint naming --reason: {bad_env}"
+    );
+
+    for bad_args in [
+        vec![
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--waiting-on",
+            "owner",
+            "--if-match",
+            "3",
+        ],
+        vec![
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--waiting-on",
+            "none",
+            "--if-match",
+            "3",
+        ],
+        vec![
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "in_progress",
+            "--reason",
+            "   \t ",
+            "--if-match",
+            "3",
+        ],
+        vec![
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--reason",
+            "   \n ",
+            "--if-match",
+            "3",
+        ],
+        vec![
+            "task",
+            "transition",
+            "--task",
+            "T-A2",
+            "--status",
+            "blocked",
+            "--note",
+            "   \t ",
+            "--if-match",
+            "3",
+        ],
+        vec!["task", "list", "--all", "--status-scope", "open"],
+        vec!["task", "list", "--ready", "--dependency-blocked"],
+        vec![
+            "task",
+            "list",
+            "--ready",
+            "--done-since",
+            "2026-11-20T00:00:00Z",
+        ],
+        vec!["task", "list", "--done-since", "yesterday"],
+        vec!["task", "list", "--ready", "--status", "blocked"],
+        vec![
+            "task",
+            "history",
+            "--task",
+            "T-A2",
+            "--event-type",
+            "created",
+            "--blocks-only",
+        ],
+    ] {
+        let out = run(&mut office, &bad_args);
+        assert_ne!(out.exit_code, 0, "{bad_args:?}: {}", out.stdout);
+    }
+    assert_eq!(
+        office.0.seen.len(),
+        before,
+        "fail-closed CLI checks must never call transport"
+    );
+
+    // 6. `task history --event-type status_changed` and `--blocks-only`.
+    let out = run(
+        &mut office,
+        &[
+            "task",
+            "history",
+            "--task",
+            "T-A2",
+            "--event-type",
+            "status_changed",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["data"].as_array().unwrap().len(), 2);
+
+    let out = run(
+        &mut office,
+        &["task", "history", "--task", "T-A2", "--blocks-only"],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    let events = env["data"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["change"]["to"], "blocked");
+}

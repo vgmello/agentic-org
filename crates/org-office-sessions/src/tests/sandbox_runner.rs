@@ -158,6 +158,10 @@ fn start_params(employee_id: &str, instruction: &str) -> MemberSessionStartParam
         employee_id: employee_id.to_owned(),
         instruction: Some(instruction.to_owned()),
         workspace: None,
+        resume_runtime_session_id: None,
+        fresh: false,
+        model: None,
+        effort: None,
     }
 }
 

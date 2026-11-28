@@ -19,6 +19,12 @@ fn production_registry_wires_claude_codex_and_agy_and_refuses_unknown() {
         ("agy", "agy"),
         ("antigravity", "agy"),
         ("google", "agy"),
+        ("gemini", "gemini"),
+        ("gemini-cli", "gemini"),
+        ("kimi", "kimi"),
+        ("moonshot", "kimi"),
+        ("pi", "pi"),
+        ("pi-acp", "pi"),
     ] {
         let adapter = reg.resolve(alias).expect("adapter resolves");
         assert_eq!(adapter.id().as_str(), expected_id);
@@ -67,7 +73,13 @@ fn production_registry_wires_claude_codex_and_agy_and_refuses_unknown() {
         let (plan, _) = adapter
             .plan_session(&spec, &ctx)
             .expect("built adapter plans session");
-        assert!(!plan.args.is_empty());
+        assert_eq!(plan.stdio, org_agent_runtime::Stdio::Piped);
+        if expected_id != "pi" {
+            assert!(
+                !plan.args.is_empty(),
+                "{expected_id} should pass ACP/CLI args"
+            );
+        }
     }
     assert!(matches!(
         reg.resolve("nonexistent-runtime"),
@@ -180,6 +192,10 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
                 employee_id: agent_id.clone(),
                 instruction: Some("Say hello from your private home.".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("session started");
@@ -525,6 +541,10 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 employee_id: agent_id.clone(),
                 instruction: Some("first objective".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -561,6 +581,10 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 employee_id: agent_id.clone(),
                 instruction: Some("second objective".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();
@@ -601,6 +625,10 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 employee_id: agent_id.clone(),
                 instruction: Some("third objective after exit".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();

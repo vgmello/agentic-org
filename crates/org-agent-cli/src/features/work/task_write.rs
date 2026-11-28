@@ -25,11 +25,11 @@ use crate::runtime::transport::OfficeTransport;
 /// `Use when:` guidance of each `task` command here.
 pub(super) const CUES: &[CommandCue] = &[
     ("task", "assign", "assigning or clearing a task's responsible team or employee (requires `--if-match`)."),
-    ("task", "comment", "posting a public update, review note, or handoff visible to everyone on the task (use `task-note` for private notes)."),
+    ("task", "comment", "posting a public update, review note, or handoff visible to everyone on the task (use `note` for private notes and decisions)."),
     ("task", "create", "creating a new task, bug, or request with initial priority, labels, files, or dependencies."),
     ("task", "dep-add", "recording that a task depends on an upstream prerequisite task."),
     ("task", "dep-remove", "removing a direct dependency link between two tasks."),
-    ("task", "transition", "moving a task's lifecycle status (`todo`, `in_progress`, `blocked`, `done`, `cancelled`; requires `--if-match`)."),
+    ("task", "transition", "moving a task's lifecycle status (`todo`, `in_progress`, `blocked`, `done`, `cancelled`; requires `--if-match`; pass `--reason` and optional `--waiting-on owner` when blocking)."),
     ("task", "unwatch", "unsubscribing from updates on a task you no longer need to watch."),
     ("task", "update", "editing a task's title, body (or `--append-body`), work type, priority, effort, severity, order, labels, or files (requires `--if-match`)."),
     ("task", "watch", "subscribing to updates on a task you care about."),
@@ -264,6 +264,99 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
     ))
 }
 
+fn parse_waiting_on(
+    i: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<bool>, Refusal> {
+    let waiting_on_enum = opt_string(i, "waiting_on");
+    let waiting_on_bool = i
+        .get("waiting_on_owner")
+        .and_then(serde_json::Value::as_bool);
+    reject_pair(
+        waiting_on_enum.is_some() && waiting_on_bool.is_some(),
+        "--waiting-on",
+        "--waiting-on-owner",
+    )?;
+    match waiting_on_enum.as_deref() {
+        Some("owner") => Ok(Some(true)),
+        Some("none") => Ok(Some(false)),
+        Some(other) => Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("invalid --waiting-on `{other}`"),
+            "Use `--waiting-on owner` or `--waiting-on none`.",
+        )),
+        None => Ok(waiting_on_bool),
+    }
+}
+
+fn resolve_transition_reasons(
+    status: TaskStatus,
+    status_str: &str,
+    i: &serde_json::Map<String, serde_json::Value>,
+    waiting_on_owner: Option<bool>,
+) -> Result<(Option<String>, Option<String>), Refusal> {
+    let reason_flag = opt_string(i, "reason");
+    let blocked_reason_flag = opt_string(i, "blocked_reason");
+    let note_flag = opt_string(i, "note");
+    if status == TaskStatus::Blocked {
+        reject_pair(
+            reason_flag.is_some() && blocked_reason_flag.is_some(),
+            "--reason",
+            "--blocked-reason",
+        )?;
+        let (effective_blocked, extra_note) = match (blocked_reason_flag, reason_flag, note_flag) {
+            (Some(b), None, n) => (Some(b), n),
+            (None, Some(r), n) => (Some(r), n),
+            // `--note` is accepted as an alias for `--reason` when given alone on `blocked`.
+            (None, None, Some(n)) => (Some(n), None),
+            (None, None, None) => (None, None),
+            (Some(_), Some(_), _) => unreachable!("rejected above"),
+        };
+        if effective_blocked
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
+        {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "transitioning to `blocked` requires a non-empty reason.",
+                "Pass `--reason <text>` (1..=1000 chars) explaining what blocks this task.",
+            ));
+        }
+        return Ok((effective_blocked, extra_note));
+    }
+    if blocked_reason_flag.is_some() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "`--blocked-reason` is only allowed when transitioning to `blocked`, not `{status_str}`."
+            ),
+            "Use `--reason <text>` (or `--note <text>`) for an optional note on non-blocked transitions.",
+        ));
+    }
+    if waiting_on_owner.is_some() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "`--waiting-on` / `--waiting-on-owner` is only allowed when transitioning to `blocked`, not `{status_str}`."
+            ),
+            "Omit `--waiting-on` / `--waiting-on-owner` when leaving `blocked` (it clears automatically).",
+        ));
+    }
+    reject_pair(
+        reason_flag.is_some() && note_flag.is_some(),
+        "--reason",
+        "--note",
+    )?;
+    if reason_flag.as_deref().is_some_and(|s| s.trim().is_empty()) {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`--reason` cannot be empty.",
+            "Pass a non-empty reason or omit `--reason` on non-blocked transitions.",
+        ));
+    }
+    Ok((None, reason_flag.or(note_flag)))
+}
+
 pub(super) fn write_task_transition<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
@@ -277,14 +370,19 @@ pub(super) fn write_task_transition<T: OfficeTransport + ?Sized>(
             "Use todo, in_progress, blocked, cancelled, or done.",
         )
     })?;
+    let waiting_on_owner = parse_waiting_on(i)?;
+    let (blocked_reason, note) =
+        resolve_transition_reasons(status, status_str, i, waiting_on_owner)?;
     let params = TasksTransitionParams {
         command_id: cmd_id(request)?,
         task: require_str(i, "task")?.to_owned(),
         expected_revision: require_if_match(request)?,
         status,
-        blocked_reason: opt_string(i, "blocked_reason"),
+        reason: None,
+        blocked_reason,
+        waiting_on_owner,
         resolution: opt_string(i, "resolution"),
-        note: opt_string(i, "note"),
+        note,
         done_anyway_reason: None,
         final_summary: None,
     };

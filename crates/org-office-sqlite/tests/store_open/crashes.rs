@@ -86,13 +86,13 @@ impl Office {
     /// A new office with its organization, and the store it is open on.
     fn created(engine: EngineChoice) -> (Self, OfficeStore) {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         let created = create_organization(&store, 1).expect("an organization");
         assert_eq!(created.outcome, Outcome::Completed);
         let decisions = Arc::new(AtomicUsize::new(0));
         let office = Self {
             place,
-            engine,
+            engine: engine.clone(),
             decisions,
         };
         (office, store)
@@ -115,7 +115,7 @@ impl Office {
         self.place.faults.kill();
         drop(store);
         self.place.faults.revive();
-        self.place.reopen(self.engine)
+        self.place.reopen(self.engine.clone())
     }
 
     /// Whether the team's file is on the drive.
@@ -182,13 +182,13 @@ impl Office {
 #[test]
 fn a_crash_at_every_point_reopens_to_teams_wholly_absent_or_wholly_present() {
     let mut idle = Vec::new();
-    for engine in ENGINES {
+    for engine in engines() {
         for point in CrashPoint::ALL {
             if point == CrashPoint::DuringRebuild {
                 continue;
             }
             let context = format!("{engine:?} {point:?}");
-            let (office, store) = Office::created(engine);
+            let (office, store) = Office::created(engine.clone());
             office.place.faults.arm(point, 1);
             let mut first = Vec::new();
             for (op, team) in TEAMS {
@@ -203,11 +203,11 @@ fn a_crash_at_every_point_reopens_to_teams_wholly_absent_or_wholly_present() {
             store.close().expect("an orderly close");
 
             // A projection rebuilt from nothing equals the one that lived through it.
-            let store = office.place.reopen(engine);
+            let store = office.place.reopen(engine.clone());
             let lived = store.dump();
             store.close().expect("an orderly close");
             let _ = std::fs::remove_dir_all(office.place.runtime());
-            let store = office.place.reopen(engine);
+            let store = office.place.reopen(engine.clone());
             assert_eq!(store.dump(), lived, "{context}: rebuild differs");
             store.close().expect("an orderly close");
         }
@@ -217,8 +217,8 @@ fn a_crash_at_every_point_reopens_to_teams_wholly_absent_or_wholly_present() {
 
 #[test]
 fn a_rebuild_that_dies_leaves_nothing_and_the_next_one_completes() {
-    for engine in ENGINES {
-        let (office, store) = Office::created(engine);
+    for engine in engines() {
+        let (office, store) = Office::created(engine.clone());
         office.team(&store, 2, 0x21).unwrap();
         store.sync().unwrap();
         let (dump, read) = (store.dump(), directory(&store));
@@ -227,14 +227,14 @@ fn a_rebuild_that_dies_leaves_nothing_and_the_next_one_completes() {
 
         let _ = std::fs::remove_dir_all(office.place.runtime());
         office.place.faults.arm(CrashPoint::DuringRebuild, 1);
-        let died = open_store(&office.place.config(engine, Opening::Existing));
+        let died = open_store(&office.place.config(engine.clone(), Opening::Existing));
         assert!(
             died.is_err(),
             "{engine:?}: a rebuild survived its crash point"
         );
         drop(died);
         office.place.faults.revive();
-        let store = office.place.reopen(engine);
+        let store = office.place.reopen(engine.clone());
         assert_eq!(store.dump(), dump, "{engine:?}");
         assert_eq!(directory(&store), read, "{engine:?}");
         store.close().unwrap();
@@ -246,7 +246,8 @@ fn a_rebuild_that_dies_leaves_nothing_and_the_next_one_completes() {
 /// durable byte changes for it.
 #[test]
 fn another_schema_digest_rebuilds_the_projection_and_changes_no_journal_or_file_byte() {
-    let (office, store) = Office::created(EngineChoice::Sqlite);
+    let (office, store) =
+        Office::created(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     office.team(&store, 2, 0x21).unwrap();
     store.sync().unwrap();
     let (dump, read) = (store.dump(), directory(&store));
@@ -256,7 +257,10 @@ fn another_schema_digest_rebuilds_the_projection_and_changes_no_journal_or_file_
     assert!(durable.keys().any(|path| path.ends_with(".log")));
 
     // Another build: this one's schema and one more index.
-    let mut other = office.place.config(EngineChoice::Sqlite, Opening::Existing);
+    let mut other = office.place.config(
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+        Opening::Existing,
+    );
     other.testing.extra_ddl = Some(org_office_sqlite::ANOTHER_BUILDS_DDL);
     let store = open_store(&other).expect("the store on the other schema");
     assert_ne!(store.schema_digest(), digest);
@@ -266,7 +270,9 @@ fn another_schema_digest_rebuilds_the_projection_and_changes_no_journal_or_file_
     assert_eq!(tree(&office.place.durable()), durable);
 
     // And back to this build's.
-    let store = office.place.reopen(EngineChoice::Sqlite);
+    let store = office
+        .place
+        .reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     assert_eq!(store.schema_digest(), digest);
     assert_eq!(store.dump(), dump);
     store.close().unwrap();
@@ -285,7 +291,8 @@ impl Drop for ReleaseFlushes<'_> {
 /// STORE-4 on SQLite.
 #[test]
 fn on_sqlite_a_committed_write_is_answered_while_the_flush_is_held_and_a_team_is_not() {
-    let (office, store) = Office::created(EngineChoice::Sqlite);
+    let (office, store) =
+        Office::created(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let probe = &office.place.probe;
     store.sync().unwrap();
     let flushed = store.status().flushed;
@@ -336,7 +343,8 @@ fn on_sqlite_a_committed_write_is_answered_while_the_flush_is_held_and_a_team_is
 /// STORE-5 on SQLite.
 #[test]
 fn on_sqlite_reads_answer_with_the_disk_failing_and_the_host_gone() {
-    let (office, store) = Office::created(EngineChoice::Sqlite);
+    let (office, store) =
+        Office::created(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let probe = &office.place.probe;
     office.team(&store, 2, 0x21).unwrap();
     let put = Put {
@@ -377,7 +385,8 @@ fn on_sqlite_a_flush_error_stops_the_store_and_reopening_holds_what_the_journal_
     ];
     for (site, nth) in cases {
         let context = format!("{site:?} {nth}");
-        let (office, store) = Office::created(EngineChoice::Sqlite);
+        let (office, store) =
+            Office::created(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
         store.sync().unwrap();
         office.place.faults.arm(CrashPoint::FlushError(site), nth);
         let first = office.team(&store, 2, 0x21);
@@ -410,7 +419,8 @@ fn on_sqlite_a_failed_append_fails_its_batch_alone_and_a_failed_truncation_stops
         serde_json::from_slice(&reply.expect("a team").bytes).expect("a team reply")
     };
     for point in [CrashPoint::AppendError, CrashPoint::ShortAppend] {
-        let (office, store) = Office::created(EngineChoice::Sqlite);
+        let (office, store) =
+            Office::created(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
         office.place.faults.arm(point, 1);
         let failed = office.team(&store, 2, 0x21);
         assert!(
@@ -428,12 +438,15 @@ fn on_sqlite_a_failed_append_fails_its_batch_alone_and_a_failed_truncation_stops
         let again = created(office.team(&store, 2, 0x21));
         assert_eq!((again.number, again.generation), (3, 3), "{point:?}");
         store.close().unwrap();
-        let store = office.place.reopen(EngineChoice::Sqlite);
+        let store = office
+            .place
+            .reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
         assert_eq!(directory(&store).generation, 3, "{point:?}");
         store.close().unwrap();
     }
 
-    let (office, store) = Office::created(EngineChoice::Sqlite);
+    let (office, store) =
+        Office::created(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     office.place.faults.arm(CrashPoint::TruncateError, 1);
     let failed = office.team(&store, 2, 0x21);
     assert!(matches!(failed, Err(StoreError::Append(_))), "{failed:?}");
@@ -463,7 +476,6 @@ const KILL_POINTS: [(&str, CrashPoint); 3] = [
 /// selected point of a second team's creation and never goes past it.
 #[test]
 fn sigkill_child() {
-    org_office_sqlite::install();
     let (Some(root), Ok(selected)) = (std::env::var_os(KILL_ROOT), std::env::var(KILL_POINT))
     else {
         return;
@@ -472,10 +484,12 @@ fn sigkill_child() {
     let point = point.expect("a known kill point").1;
     let office = Office {
         place: Place::at(Path::new(&root)),
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
         decisions: Arc::new(AtomicUsize::new(0)),
     };
-    let store = office.place.create(EngineChoice::Sqlite);
+    let store = office
+        .place
+        .create(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     create_organization(&store, 1).expect("an organization");
     office.team(&store, 2, 0x21).expect("an acknowledged team");
     office.place.faults.on_site_crash(|| {
@@ -530,10 +544,12 @@ fn a_real_sigkill_at_three_points_reopens_to_what_the_journal_holds() {
 
         let office = Office {
             place: Place::at(dir.path()),
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             decisions: Arc::new(AtomicUsize::new(0)),
         };
-        let store = office.place.reopen(EngineChoice::Sqlite);
+        let store = office
+            .place
+            .reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
         let seen = directory(&store);
         let has = |team: u64| seen.teams.iter().any(|t| t.id == id(team));
         // The acknowledged team is there. The other is there exactly when its entry was
@@ -549,7 +565,9 @@ fn a_real_sigkill_at_three_points_reopens_to_what_the_journal_holds() {
         let lived = store.dump();
         store.close().expect("an orderly close");
         std::fs::remove_dir_all(office.place.runtime()).expect("the runtime folder");
-        let store = office.place.reopen(EngineChoice::Sqlite);
+        let store = office
+            .place
+            .reopen(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
         assert_eq!(store.dump(), lived, "{name}: rebuild differs");
         store.close().expect("an orderly close");
     }

@@ -15,6 +15,7 @@
 mod directory;
 pub use directory::RootProbe;
 pub mod registry;
+pub use registry::RebindPreview;
 pub mod setup;
 mod temp;
 

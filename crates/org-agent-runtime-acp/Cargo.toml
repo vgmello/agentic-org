@@ -1,0 +1,19 @@
+[package]
+name = "org-agent-runtime-acp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Unified sans-I/O JSON-RPC 2.0 ACP runtime crate (Agy, Gemini CLI, Kimi Code CLI, Pi) implementing the org-agent-runtime port"
+
+[dependencies]
+org-agent-runtime = { path = "../org-agent-runtime" }
+serde_json.workspace = true
+
+[dev-dependencies]
+org-agent-runtime = { path = "../org-agent-runtime", features = ["testkit"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

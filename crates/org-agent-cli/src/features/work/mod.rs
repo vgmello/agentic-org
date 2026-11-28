@@ -1,6 +1,6 @@
-//! The work slice: `task` (14 verbs), `checklist` (6) and `task-note` (6, shorthand
-//! `task note`) (`TASK-49` `CLI-15`, `TASK-77` B4b, `TASK-90`), with handlers and guidance in each
-//! file and declarative rows in `org_command_catalogue::work`.
+//! The work slice: `task` (14 verbs), `checklist` (6) and `note` (6, aliases
+//! `task-note` / `task note`) (`TASK-49` `CLI-15`, `TASK-77` B4b, `TASK-90`, `TASK-111`),
+//! with handlers and guidance in each file and declarative rows in `org_command_catalogue::work`.
 //!
 //! Each write declares the class the office answers it in (`doc-79`, `ADR-0014`): a create
 //! inside the office's reserved number block, a comment, a watch or unwatch and a checklist
@@ -26,8 +26,8 @@ pub(crate) const DOMAIN: Domain = Domain {
     commands: org_command_catalogue::work::ALL,
     resources: &[
         ("checklist", "listing, adding, checking, editing, removing, or moving steps on a task's checklist."),
+        ("note", "recording private working notes, plans and decisions or publishing a copy as a shared comment (aliases: `task-note`, `task note`)."),
         ("task", "creating, filtering, inspecting, updating, transitioning, assigning, commenting on, or linking task dependencies."),
-        ("task-note", "recording private working notes on a task or publishing a copy as a shared comment (alias: `task note`)."),
     ],
     cues: &[
         task_write::CUES,
@@ -46,9 +46,15 @@ fn dispatch(
     match request.command.resource {
         "task" => dispatch_task(transport, request),
         "checklist" => checklist::try_checklist(transport, request),
-        "task-note" => task_note::try_task_note(transport, request),
+        "note" => task_note::try_task_note(transport, request),
         _ => None,
     }
+}
+
+/// Rewrites legacy `note get ...` (from `task-note get` / `task note get`) to `note inspect ...`
+/// after shorthand alias expansion, preserving backward compatibility without extra catalogue bytes.
+pub(crate) fn rewrite_note_args(_table: &CommandTable, args: &[String]) -> Option<Vec<String>> {
+    crate::runtime::input::rewrite_note_args(args)
 }
 
 fn dispatch_task(
@@ -106,6 +112,21 @@ fn task_to_row(t: &TaskView) -> Value {
     if let Some(ref v) = t.severity {
         m.insert("severity".into(), json!(v));
     }
+    if let Some(ref v) = t.resolution {
+        m.insert("resolution".into(), json!(v));
+    }
+    if let Some(ref v) = t.blocked_reason {
+        m.insert("blocked_reason".into(), json!(v));
+    }
+    if let Some(ref v) = t.blocked_since {
+        m.insert("blocked_since".into(), json!(v));
+    }
+    m.insert("waiting_on_owner".into(), json!(t.waiting_on_owner));
+    m.insert("dependency_blocked".into(), json!(t.dependency_blocked));
+    m.insert(
+        "unmet_blocking_dependencies".into(),
+        json!(t.unmet_blocking_dependencies),
+    );
     m.insert("team_id".into(), json!(t.team_id));
     if let Some(ref v) = t.assigned_team_id {
         m.insert("assigned_team_id".into(), json!(v));

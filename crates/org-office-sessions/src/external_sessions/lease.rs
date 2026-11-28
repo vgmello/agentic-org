@@ -144,7 +144,7 @@ impl SessionManager {
         target: &Employee,
     ) -> Result<(), ApiError> {
         self.authorize_owner_or_person_inner(actor, false)?;
-        if actor == self.office.owner_member_id() {
+        if self.is_owner_actor(actor) {
             return Ok(());
         }
         let person = self
@@ -163,6 +163,9 @@ impl SessionManager {
             Err(ApiError::new(
                 ErrorCode::NotAuthorized,
                 "only the owner, a person who may hire, or the agent's manager or team lead may manage its external sessions",
+            )
+            .with_hint(
+                "Ask the organization owner, a person with hiring access, or the agent's manager or team lead to inspect or manage this agent's external sessions.",
             ))
         }
     }

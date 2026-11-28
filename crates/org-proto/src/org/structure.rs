@@ -65,6 +65,9 @@ pub enum AgentRuntime {
     ClaudeCode,
     Codex,
     Antigravity,
+    Gemini,
+    Kimi,
+    Pi,
     /// Any other runtime, by name (1 to [`AGENT_TEXT_MAX_CHARS`] characters).
     Other(String),
     /// Missing or not known to this build.
@@ -81,6 +84,9 @@ impl<'de> Deserialize<'de> for AgentRuntime {
                 "claude_code" => AgentRuntime::ClaudeCode,
                 "codex" => AgentRuntime::Codex,
                 "antigravity" => AgentRuntime::Antigravity,
+                "gemini" => AgentRuntime::Gemini,
+                "kimi" => AgentRuntime::Kimi,
+                "pi" => AgentRuntime::Pi,
                 _ => AgentRuntime::Unknown,
             },
             serde_json::Value::Object(map) => match map.get("other") {

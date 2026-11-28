@@ -4,10 +4,11 @@
 //! office secrets key (ADR-0016 decision 3, ENC-5).
 use org_office::{
     hq_creation::{Binding, LocalRecord},
-    Custody, DataRoots, Key, NewOffice, Office, OfficeError,
+    Custody, DataRoots, Key, NewOffice, Office, OfficeError, OfficeStorageBackend,
 };
 use org_proto::RecoveryCode;
 use std::path::Path;
+use std::sync::Arc;
 fn invalid() -> OfficeError {
     OfficeError::Invalid("HQ provisioning requires recovery")
 }
@@ -44,7 +45,7 @@ fn unwrap_ca(
 /// directly from the host's request.
 #[expect(
     clippy::too_many_arguments,
-    reason = "HQ provisioning coordinates folder, identity, optional key, binding, roots, custody, recovery, and import source"
+    reason = "HQ provisioning coordinates folder, identity, optional key, binding, roots, custody, recovery, import source, and storage backend"
 )]
 pub(crate) fn prepare(
     folder: &Path,
@@ -55,8 +56,8 @@ pub(crate) fn prepare(
     custody: Custody,
     recovery: RecoveryCode,
     import_source: Option<&org_office_launch::ImportSourceV1>,
+    backend: Arc<dyn OfficeStorageBackend>,
 ) -> Result<Office, OfficeError> {
-    org_office_sqlite::install();
     let Some(key) = key else {
         return Err(invalid());
     };
@@ -95,10 +96,12 @@ pub(crate) fn prepare(
     };
     if let Some(src) = import_source.cloned() {
         let expected_org_id = new.org_id.clone();
+        let backend_for_import = Arc::clone(&backend);
         let load_import = move || {
             let imported = org_office::import::clone_and_validate_state(
                 &src.repository_remote_url,
                 &src.state_branch,
+                backend_for_import.as_ref(),
             )
             .map_err(|_| OfficeError::Invalid("invalid imported organization repository"))?;
             if imported.summary.organization_id.as_str() != expected_org_id {
@@ -126,11 +129,12 @@ pub(crate) fn prepare(
             binding,
             roots,
             custody,
+            backend,
             load_import,
             material,
         );
     }
-    Office::provision_hq(folder, new, key, binding, roots, custody, material)
+    Office::provision_hq(folder, new, key, binding, roots, custody, backend, material)
 }
 
 /// Whether this run can sign with the organization CA.

@@ -109,3 +109,40 @@ fn interrupt_and_steer_are_member_calls_with_closed_params() {
     )
     .is_err());
 }
+
+#[test]
+fn member_session_start_params_supports_optional_resume_and_fresh() {
+    let legacy: MemberSessionStartParams =
+        serde_json::from_value(json!({"command_id": "c1", "employee_id": "e1"})).unwrap();
+    assert_eq!(legacy.resume_runtime_session_id, None);
+    assert!(!legacy.fresh);
+    let legacy_wire = serde_json::to_value(&legacy).unwrap();
+    assert!(legacy_wire.get("resume_runtime_session_id").is_none());
+    assert!(legacy_wire.get("fresh").is_none());
+
+    let warm: MemberSessionStartParams = serde_json::from_value(json!({
+        "command_id": "c2",
+        "employee_id": "e1",
+        "resume_runtime_session_id": "sess-abc-123"
+    }))
+    .unwrap();
+    assert_eq!(
+        warm.resume_runtime_session_id.as_deref(),
+        Some("sess-abc-123")
+    );
+    assert!(!warm.fresh);
+    assert_eq!(
+        serde_json::to_value(&warm).unwrap()["resume_runtime_session_id"],
+        json!("sess-abc-123")
+    );
+
+    let fresh: MemberSessionStartParams = serde_json::from_value(json!({
+        "command_id": "c3",
+        "employee_id": "e1",
+        "fresh": true
+    }))
+    .unwrap();
+    assert!(fresh.fresh);
+    assert_eq!(fresh.resume_runtime_session_id, None);
+    assert_eq!(serde_json::to_value(&fresh).unwrap()["fresh"], json!(true));
+}

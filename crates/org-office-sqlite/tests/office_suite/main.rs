@@ -38,7 +38,13 @@ mod satellite_snapshot_resync_tests;
 mod satellite_tests;
 mod search_tests;
 
-pub(crate) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
+pub(crate) fn sqlite_engine() -> EngineChoice {
+    EngineChoice::Sqlite(org_office_sqlite::sqlite_backend())
+}
+
+pub(crate) fn engines() -> [EngineChoice; 2] {
+    [sqlite_engine(), EngineChoice::Memory]
+}
 pub(crate) const CREATOR: &str = "01900000-0000-7000-8000-000000000012";
 pub(crate) const HR: &str = "01900000-0000-7000-8000-000000000013";
 pub(crate) const TOP_TEAM: &str = "01900000-0000-7000-8000-000000000011";
@@ -57,7 +63,6 @@ pub(crate) struct Site {
 
 impl Site {
     pub(crate) fn new() -> Self {
-        org_office_sqlite::install();
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let (folder, roots) = office_harness::places(&root);

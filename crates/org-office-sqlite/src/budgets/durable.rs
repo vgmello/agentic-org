@@ -7,9 +7,9 @@ use std::path::Path;
 use rusqlite::Connection;
 use serde::Serialize;
 
-use org_office::budgets::BudgetAggregate;
+use org_budgets::BudgetAggregate;
+use org_budgets::BudgetError;
 use org_office::private_fs::{full_sync, private_dir_synced, write_private_atomic};
-use org_office::OfficeError;
 
 use super::project::project_aggregate;
 
@@ -17,7 +17,7 @@ pub(super) fn reconcile_durable_conn(
     conn: &mut Connection,
     durable_root: &Path,
     org_id: &str,
-) -> Result<(), OfficeError> {
+) -> Result<(), BudgetError> {
     let aggregates = load_all_durable(durable_root, org_id)?;
     if aggregates.is_empty() {
         return Ok(());
@@ -26,22 +26,22 @@ pub(super) fn reconcile_durable_conn(
         .iter()
         .filter_map(|a| a.budget.agent_id.clone())
         .collect();
-    let tx = conn.transaction().map_err(OfficeError::storage)?;
+    let tx = conn.transaction().map_err(BudgetError::storage)?;
     for agg in &aggregates {
         let inferred_emps = infer_employee_mirrors(agg, &known_agents);
         project_aggregate(&tx, agg, &inferred_emps)?;
     }
-    tx.commit().map_err(OfficeError::storage)?;
+    tx.commit().map_err(BudgetError::storage)?;
     Ok(())
 }
 
-fn load_all_durable(root: &Path, org_id: &str) -> Result<Vec<BudgetAggregate>, OfficeError> {
+fn load_all_durable(root: &Path, org_id: &str) -> Result<Vec<BudgetAggregate>, BudgetError> {
     if !root.is_dir() {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for entry in fs::read_dir(root).map_err(OfficeError::storage)? {
-        let dir = entry.map_err(OfficeError::storage)?.path();
+    for entry in fs::read_dir(root).map_err(BudgetError::storage)? {
+        let dir = entry.map_err(BudgetError::storage)?.path();
         let agg_path = dir.join("aggregate.v1.json");
         if !agg_path.is_file() {
             continue;
@@ -49,12 +49,12 @@ fn load_all_durable(root: &Path, org_id: &str) -> Result<Vec<BudgetAggregate>, O
         // Durably flush each recovered aggregate file and its ancestor chain before
         // projecting its receipts so an interrupted rename/dir-sync can never be
         // acknowledged without a completed flush (`TASK-97` / Pass 4 Finding #1).
-        let f = fs::File::open(&agg_path).map_err(OfficeError::storage)?;
-        full_sync(&f).map_err(OfficeError::storage)?;
-        private_dir_synced(root, &dir).map_err(OfficeError::storage)?;
+        let f = fs::File::open(&agg_path).map_err(BudgetError::storage)?;
+        full_sync(&f).map_err(BudgetError::storage)?;
+        private_dir_synced(root, &dir).map_err(BudgetError::storage)?;
         let mut agg: BudgetAggregate =
-            serde_json::from_slice(&fs::read(&agg_path).map_err(OfficeError::storage)?)
-                .map_err(OfficeError::storage)?;
+            serde_json::from_slice(&fs::read(&agg_path).map_err(BudgetError::storage)?)
+                .map_err(BudgetError::storage)?;
         if agg.budget.organization_id != org_id {
             continue;
         }
@@ -101,7 +101,7 @@ fn infer_employee_mirrors(
         .collect()
 }
 
-pub(super) fn write_json_atomic<T: Serialize>(path: &Path, val: &T) -> Result<(), OfficeError> {
-    let bytes = serde_json::to_vec_pretty(val).map_err(OfficeError::storage)?;
-    write_private_atomic(path, &bytes).map_err(OfficeError::storage)
+pub(super) fn write_json_atomic<T: Serialize>(path: &Path, val: &T) -> Result<(), BudgetError> {
+    let bytes = serde_json::to_vec_pretty(val).map_err(BudgetError::storage)?;
+    write_private_atomic(path, &bytes).map_err(BudgetError::storage)
 }

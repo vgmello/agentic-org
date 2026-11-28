@@ -14,6 +14,10 @@ fn c8_busy_agent_coalesces_three_arriving_wakes_into_one_follow_up_turn() {
             employee_id: fx.agent_a.clone(),
             instruction: Some("Initial work".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -40,6 +44,9 @@ fn c8_busy_agent_coalesces_three_arriving_wakes_into_one_follow_up_turn() {
                 summary: format!("Queued item {i}"),
                 attachment_ids: Vec::new(),
                 enqueued_at_ms: now_ms(),
+                session_affinity: None,
+                model_override: None,
+                effort_override: None,
             },
         );
         assert_eq!(
@@ -78,6 +85,9 @@ fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
         summary: format!("Peer ask {id}"),
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
+        session_affinity: None,
+        model_override: None,
+        effort_override: None,
     };
 
     assert_eq!(
@@ -130,6 +140,9 @@ fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
                 summary: "Survives restart".into(),
                 attachment_ids: Vec::new(),
                 enqueued_at_ms: now_ms(),
+                session_affinity: None,
+                model_override: None,
+                effort_override: None,
             }],
             hold_reason: Some(WakeHoldReason::HourlyLimit),
             held_since_ms: Some(now_ms().saturating_sub(2200)),
@@ -191,6 +204,9 @@ fn c8_mutual_suspension_deadlock_breaker_resumes_peer_without_human_intervention
             summary: "Just checking in".into(),
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
+            session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(
@@ -216,6 +232,9 @@ fn c8_mutual_suspension_deadlock_breaker_resumes_peer_without_human_intervention
             summary: "Which auth header format?".into(),
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
+            session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(broken, WakeOutcome::Started);
@@ -247,6 +266,10 @@ fn pass1_idle_live_session_accepts_subsequent_wake_and_person_run_clears_stall_l
             employee_id: fx.agent_a.clone(),
             instruction: Some("First turn".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();
@@ -272,6 +295,9 @@ fn pass1_idle_live_session_accepts_subsequent_wake_and_person_run_clears_stall_l
             summary: "Follow up while live idle".into(),
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
+            session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(wake, WakeOutcome::Started);
@@ -301,6 +327,9 @@ fn pass1_idle_live_session_accepts_subsequent_wake_and_person_run_clears_stall_l
             summary: "Should stay held".into(),
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
+            session_affinity: None,
+            model_override: None,
+            effort_override: None,
         },
     );
     assert_eq!(
@@ -316,6 +345,10 @@ fn pass1_idle_live_session_accepts_subsequent_wake_and_person_run_clears_stall_l
             employee_id: fx.agent_a.clone(),
             instruction: Some("Owner manually resumes stalled agent".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .expect("person Run must clear stall_locked and start");
@@ -374,6 +407,9 @@ fn pass1_concurrent_live8_deadlock_process_due_wakes_and_redaction() {
                 summary: "Concurrent peer ask".into(),
                 attachment_ids: Vec::new(),
                 enqueued_at_ms: now_ms(),
+                session_affinity: None,
+                model_override: None,
+                effort_override: None,
             }],
             hold_reason: Some(WakeHoldReason::Busy),
             held_since_ms: Some(now_ms().saturating_sub(50)),

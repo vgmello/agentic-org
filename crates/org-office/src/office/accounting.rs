@@ -145,8 +145,9 @@ impl Office {
         &self,
         connection_id: &str,
     ) -> Result<Option<StoredSubscriptionUsageSnapshot>, OfficeError> {
-        self.accounting
-            .get_subscription_usage(&self.info.org_id, connection_id)
+        Ok(self
+            .accounting
+            .get_subscription_usage(&self.info.org_id, connection_id)?)
     }
 
     /// `cost.subscription_usage.list` without live vault metadata (fallback when no session manager).

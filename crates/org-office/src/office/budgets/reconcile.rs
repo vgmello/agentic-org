@@ -73,7 +73,9 @@ fn block_task_for_budget(office: &Office, task_id: &str) -> Result<(), OfficeErr
                 task: task_id.to_owned(),
                 expected_revision: inspected.task.revision,
                 status: TaskStatus::Blocked,
+                reason: None,
                 blocked_reason: Some("Budget reached".into()),
+                waiting_on_owner: None,
                 resolution: None,
                 note: Some("Task blocked because its budget was reached.".into()),
                 done_anyway_reason: None,
@@ -250,7 +252,9 @@ fn execute_or_reconcile_stop_intent(
             task: intent.task_id.clone(),
             expected_revision: inspected.task.revision,
             status: TaskStatus::Cancelled,
+            reason: None,
             blocked_reason: None,
+            waiting_on_owner: None,
             resolution: Some(
                 intent
                     .reason

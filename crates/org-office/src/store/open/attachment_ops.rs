@@ -133,27 +133,23 @@ pub fn attachment_operation(
     })
 }
 
-/// One shared attachment by ID.
-pub struct AttachmentById(pub Id);
-
-impl ReadOp for AttachmentById {
-    type Out = Option<AttachmentRecord>;
-
-    fn read<S: TasksRead + AttachmentsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
-        Ok(read.attachment(&self.0)?)
-    }
+macro_rules! attachment_read {
+    ($name:ident($arg:ty) => $out:ty : $method:ident) => {
+        pub struct $name(pub $arg);
+        impl ReadOp for $name {
+            type Out = $out;
+            fn read<S: TasksRead + AttachmentsRead>(
+                self,
+                read: &S,
+            ) -> Result<Self::Out, StoreError> {
+                Ok(read.$method(&self.0)?)
+            }
+        }
+    };
 }
 
-/// One file bound to a message or an ask answer, by its attachment ID (`TASK-98.2`).
-pub struct MessageFileById(pub String);
-
-impl ReadOp for MessageFileById {
-    type Out = Option<BoundMessageFile>;
-
-    fn read<S: TasksRead + AttachmentsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
-        Ok(read.message_file(&self.0)?)
-    }
-}
+attachment_read!(AttachmentById(Id) => Option<AttachmentRecord> : attachment);
+attachment_read!(MessageFileById(String) => Option<BoundMessageFile> : message_file);
 
 /// One page of a target's shared attachments.
 pub struct AttachmentsForTarget {

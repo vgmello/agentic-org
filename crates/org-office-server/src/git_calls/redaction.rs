@@ -6,7 +6,7 @@
 //! `GIT_SSH_COMMAND=` / `GIT_ASKPASS=` line scrubbing, control-character normalization, and
 //! UTF-8-safe truncation. Callers receive fixed reasons only.
 
-use org_git::GitError;
+use org_git::{AllowedProtocol, GitCredential, GitError, RemoteSpec};
 use org_proto::{ApiError, ErrorCode};
 use org_redact::{redact_text, REDACTED};
 
@@ -31,10 +31,10 @@ pub(super) fn sanitized_git_reason(err: &GitError) -> String {
     }
 }
 
-/// Scrubs Git-specific environment variable dumps (`GIT_SSH_COMMAND=...`, `GIT_ASKPASS=...`)
-/// that are not classified as generic secret keys by `org_redact`.
+/// Scrubs Git-specific environment variable dumps (`GIT_SSH_COMMAND=...`, `GIT_ASKPASS=...`,
+/// `GIT_CONFIG_VALUE_<N>=...`) that are not classified as generic secret keys by `org_redact`.
 fn scrub_git_env_lines(input: &str) -> String {
-    const KEYS: &[&str] = &["git_ssh_command=", "git_askpass="];
+    const KEYS: &[&str] = &["git_ssh_command=", "git_askpass=", "git_config_value_"];
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
     let mut pos = 0;
@@ -53,7 +53,17 @@ fn scrub_git_env_lines(input: &str) -> String {
             })
             .flatten();
         if let Some(key) = matched {
-            let val_start = i + key.len();
+            let mut val_start = i + key.len();
+            if *key == "git_config_value_" {
+                while val_start < bytes.len() && bytes[val_start].is_ascii_digit() {
+                    val_start += 1;
+                }
+                if bytes.get(val_start) != Some(&b'=') {
+                    i += 1;
+                    continue;
+                }
+                val_start += 1;
+            }
             let val_end = input[val_start..]
                 .find(['\n', '\r'])
                 .map_or(input.len(), |off| val_start + off);
@@ -106,6 +116,65 @@ pub(super) fn redact_git_error_for_log(err: &GitError) -> String {
         }
         other => scrub_git_log_text(&other.to_string()),
     }
+}
+
+/// Whether a raw Git HTTPS stderr message indicates missing or rejected authentication rather
+/// than a transient network outage (`TASK-135`).
+pub(super) fn is_https_auth_failure(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    [
+        "could not read username",
+        "could not read password",
+        "terminal prompts disabled",
+        "authentication failed",
+        "invalid username or token",
+        "invalid username or password",
+        "returned error: 401",
+        "returned error: 403",
+        "http basic: access denied",
+        "repository not found",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+pub(super) fn sanitized_remote_git_reason(err: &GitError, remote: Option<&RemoteSpec>) -> String {
+    if let (GitError::RemoteUnavailable(detail), Some(spec)) = (err, remote) {
+        if spec.protocol == AllowedProtocol::Https && is_https_auth_failure(detail) {
+            return if matches!(spec.credential, GitCredential::None) {
+                "Git HTTPS authentication required: configure a scoped repository credential in this office's vault"
+                    .into()
+            } else {
+                "Git HTTPS authentication rejected: rotate the configured office repository credential"
+                    .into()
+            };
+        }
+    }
+    sanitized_git_reason(err)
+}
+
+/// Maps a remote Git error with an actionable, secret-free operator hint when an HTTPS remote
+/// fails authentication on an office/satellite lacking a scoped vault credential (`TASK-135`).
+pub(super) fn map_remote_git_error(err: GitError, remote: &RemoteSpec, repo_ref: &str) -> ApiError {
+    if let GitError::RemoteUnavailable(ref detail) = err {
+        if remote.protocol == AllowedProtocol::Https && is_https_auth_failure(detail) {
+            eprintln!(
+                "agentic-org-office: git auth error: {}",
+                redact_git_error_for_log(&err)
+            );
+            let message = if matches!(remote.credential, GitCredential::None) {
+                format!(
+                    "Git HTTPS authentication failed for `{repo_ref}`: no scoped repository credential is configured in this office's vault (personal host `gh` credentials are never used). Configure one with `agentic-org repo set-credential --repo {repo_ref}`."
+                )
+            } else {
+                format!(
+                    "Git HTTPS authentication failed for `{repo_ref}` with the configured office repository credential (token may be expired, revoked, or lack repository scope). Rotate it with `agentic-org repo set-credential --repo {repo_ref}`."
+                )
+            };
+            return ApiError::new(ErrorCode::NotAuthorized, message);
+        }
+    }
+    map_git_error(err)
 }
 
 pub(super) fn map_git_error(err: GitError) -> ApiError {

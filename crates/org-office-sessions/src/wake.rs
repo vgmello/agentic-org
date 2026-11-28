@@ -44,6 +44,9 @@ pub enum WakeKind {
     /// inside a stale sandboxed session (`TASK-160`). Always defers to `TurnEnded` so the stale
     /// warm process recycles cleanly and resumes the same conversation with fresh bare-cache grants.
     SandboxRefresh,
+    ReviewRequested,
+    ReviewVerdict,
+    ReviewReply,
 }
 
 impl WakeKind {
@@ -57,11 +60,14 @@ impl WakeKind {
             Self::AskAnswer | Self::WatcherAnswer => "answer",
             Self::Recovery => "recovery",
             Self::SandboxRefresh => "sandbox_refresh",
+            Self::ReviewRequested => "review_requested",
+            Self::ReviewVerdict => "review_verdict",
+            Self::ReviewReply => "review_reply",
         }
     }
 
     /// Whether this wake kind is eligible for non-destructive mid-turn delivery while busy
-    /// (`doc-101` §4A). `TaskAssignment` and `Recovery` always defer to `TurnEnded`.
+    /// (`doc-101` §4A). `TaskAssignment`, `Recovery`, and review wakes always defer to `TurnEnded`.
     pub fn is_mid_turn_eligible(self) -> bool {
         matches!(
             self,
@@ -104,6 +110,15 @@ impl WakeHoldReason {
     }
 }
 
+/// Optional two-stage warm/fresh session affinity directive attached to a wake item (`TASK-92.1`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeSessionAffinity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_runtime_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh: bool,
+}
+
 /// One durable pending-start work item queued for an agent (`ADR-0030` d2..3, `TASK-115`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingWakeItem {
@@ -125,6 +140,27 @@ pub struct PendingWakeItem {
     /// Lightweight IDs of bound attachments carried by this wake (`TASK-98.3`). Never base64.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachment_ids: Vec<String>,
+    /// Optional session resume/fresh directive for review rounds (`TASK-92.1`, ADR-0028).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_affinity: Option<WakeSessionAffinity>,
+    /// Optional per-task / per-turn model override (`TASK-136`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<String>,
+    /// Optional per-task / per-turn reasoning effort override (`TASK-136`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_override: Option<String>,
+}
+
+/// Extracts and validates the atomic per-turn `model`/`effort` override carried by a wake batch
+/// (`TASK-136`); never mixes `model_override` from one item with `effort_override` from another.
+pub fn extract_wake_model_override(
+    items: &[PendingWakeItem],
+) -> Result<crate::router::TurnModelOverride, org_proto::ApiError> {
+    crate::router::select_atomic_turn_override(
+        items
+            .iter()
+            .map(|i| (i.model_override.as_deref(), i.effort_override.as_deref())),
+    )
 }
 
 /// Durable per-agent pending-start queue persisted in `pending-wakes.v1.json` (`LIVE-4`).
@@ -174,6 +210,25 @@ impl PendingWakeQueueRecord {
         if self.seen_item_ids.len() > 512 {
             let drain = self.seen_item_ids.len() - 512;
             self.seen_item_ids.drain(..drain);
+        }
+        // Deduplicate queued undispatched `ReviewReply` wakes for the same review/finding thread
+        // (`ADR-0028` / `TASK-92.1`), preserving person-triggered priority and attachments.
+        if item.kind == WakeKind::ReviewReply {
+            if let Some(existing) = self.items.iter_mut().find(|ex| {
+                ex.kind == WakeKind::ReviewReply
+                    && ex.source_id == item.source_id
+                    && ex.conversation_id == item.conversation_id
+            }) {
+                existing.sender_is_person |= item.sender_is_person;
+                existing.summary = merge_dedup_reply_summary(&existing.summary, &item.summary);
+                for att in item.attachment_ids {
+                    if !att.is_empty() && !existing.attachment_ids.contains(&att) {
+                        existing.attachment_ids.push(att);
+                    }
+                }
+                self.updated_at = rfc3339_now();
+                return true;
+            }
         }
         self.items.push(item);
         self.updated_at = rfc3339_now();
@@ -226,11 +281,9 @@ pub struct PendingAskAnswer {
 
 fn collect_unique_attachment_ids<'a>(groups: impl Iterator<Item = &'a [String]>) -> Vec<String> {
     let mut out = Vec::new();
-    for ids in groups {
-        for id in ids {
-            if !id.is_empty() && !out.contains(id) {
-                out.push(id.clone());
-            }
+    for id in groups.flatten().filter(|id| !id.is_empty()) {
+        if !out.contains(id) {
+            out.push(id.clone());
         }
     }
     out
@@ -532,6 +585,18 @@ fn display_source_id(item: &PendingWakeItem) -> String {
     sanitize_untrusted_meta(&item.source_id, MAX_META_FIELD_BYTES)
 }
 
+fn merge_dedup_reply_summary(existing: &str, incoming: &str) -> String {
+    let mut combined = match (existing.is_empty(), incoming.is_empty()) {
+        (true, _) => incoming.to_owned(),
+        (_, true) => existing.to_owned(),
+        (false, false) => format!("{existing}\n---\n{incoming}"),
+    };
+    if combined.len() > MAX_WAKE_ITEM_BODY_BYTES {
+        combined.truncate(combined.floor_char_boundary(MAX_WAKE_ITEM_BODY_BYTES));
+    }
+    combined
+}
+
 fn format_action_hint(item: &PendingWakeItem) -> String {
     let sid = display_source_id(item);
     match item.kind {
@@ -542,6 +607,15 @@ fn format_action_hint(item: &PendingWakeItem) -> String {
             "Take it with `agent-os msg accept --id {sid}`, inspect with `agent-os msg read --id {sid}`, or reply via `agent-os msg reply --id {sid} --body '...'`.",
         ),
         WakeKind::TaskAssignment => format!("Inspect with `agent-os task inspect --task {sid}`."),
+        WakeKind::ReviewRequested => format!(
+            "Inspect with `agent-os review inspect --review {sid}`, read the diff with `agent-os review diff --review {sid}`, and submit your verdict via `agent-os review verdict`.",
+        ),
+        WakeKind::ReviewVerdict => format!(
+            "Inspect findings via `agent-os review inspect --review {sid}`, resolve blockers, and resubmit with `agent-os review resubmit --review {sid}`.",
+        ),
+        WakeKind::ReviewReply => format!(
+            "Inspect the discussion with `agent-os review inspect --review {sid}` or reply with `agent-os review finding --review {sid} --action reply`.",
+        ),
         WakeKind::Recovery => {
             "Resume carefully without duplicating completed side effects.".to_owned()
         }

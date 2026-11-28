@@ -87,5 +87,11 @@ fn on_a_refusing_build_every_public_function_refuses_first() {
     )));
     assert!(refusal(super::entropy(&mut [0; 32])));
     assert!(refusal(super::RecoveryScan::new("ORG_SESSION_MARK")));
+    assert_eq!(super::process_rss_bytes(own as u32), None);
     assert_eq!(super::process_tree_rss_bytes(own as u32), None);
+}
+
+#[test]
+fn process_rss_bytes_rejects_zero_pid() {
+    assert_eq!(super::process_rss_bytes(0), None);
 }

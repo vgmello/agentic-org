@@ -17,12 +17,15 @@ const HELP: &str = "agentic-org-office: the host-managed office worker\n\
 Started only by its host, which hands it a verified control pipe; run by hand it opens no \
 socket and touches no office.\n";
 
-/// Concrete runtime adapters injected from the office composition root (`TASK-216`).
+/// Concrete runtime adapters injected from the office composition root (`TASK-216`, `TASK-271`).
 fn production_runtimes() -> org_office_sessions::RuntimeRegistry {
     org_office_sessions::RuntimeRegistry::with_adapters([
         Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()) as Arc<dyn AgentRuntime>,
         Arc::new(org_agent_runtime_codex::CodexRuntime::new()) as Arc<dyn AgentRuntime>,
-        Arc::new(org_agent_runtime_agy::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+        Arc::new(org_agent_runtime_acp::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+        Arc::new(org_agent_runtime_acp::GeminiRuntime::new()) as Arc<dyn AgentRuntime>,
+        Arc::new(org_agent_runtime_acp::KimiRuntime::new()) as Arc<dyn AgentRuntime>,
+        Arc::new(org_agent_runtime_acp::PiRuntime::new()) as Arc<dyn AgentRuntime>,
     ])
 }
 
@@ -78,12 +81,12 @@ fn main() {
         }
     };
     org_office_server::install_panic_hook();
-    // Composition root: inject the concrete SQLite storage backend.
-    org_office_sqlite::install();
+    // Composition root: inject the concrete SQLite storage backend explicitly.
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(org_office_server::run_with_runtimes(
         &args,
         control,
         production_runtimes(),
+        org_office_sqlite::sqlite_backend(),
     ));
 }

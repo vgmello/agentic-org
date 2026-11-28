@@ -973,5 +973,215 @@ fn task80_host_channel_blocking_tess_turn_events_avoids_hol_blocking_and_enforce
     srv.join().unwrap();
 }
 
+#[test]
+fn task210_host_channel_agent_sessions_authorizes_persons_and_gives_accurate_refusals() {
+    let mut shared = shared();
+    let office_id = shared.hello.office.as_ref().unwrap().office.id.clone();
+    shared.ports.sessions = Some(Box::new(|actor, req| {
+        if !req.is::<org_proto::sessions::MemberSessionList>() {
+            return None;
+        }
+        let params = req
+            .params::<org_proto::sessions::MemberSessionList>()
+            .unwrap();
+        Some(
+            Response::ok::<org_proto::sessions::MemberSessionList>(
+                req.id,
+                &org_proto::sessions::SessionListResult {
+                    employee_id: params
+                        .employee_id
+                        .unwrap_or_else(|| actor.unwrap().to_owned()),
+                    sessions: Vec::new(),
+                    live_session_id: None,
+                },
+            )
+            .unwrap(),
+        )
+    }));
+
+    // 1. Authorized owner succeeds on `member.session_list` over the host channel.
+    let ctx = context();
+    let ok_resp = answer(
+        &shared,
+        &ctx,
+        &signed(
+            &shared,
+            "member.session_list",
+            json!({"employee_id": org_mailbox::testkit::fixture::PAT_ID}),
+        ),
+    );
+    assert!(
+        ok_resp.get("result").is_some(),
+        "owner must succeed on member.session_list over host channel: {ok_resp}"
+    );
+
+    // 2. Valid grant whose member is NOT an active person (e.g., an agent or offboarded member)
+    //    gets an accurate authorization error + hint on agent session read methods rather than
+    //    opaque `request refused on host channel`.
+    let make_grant_req = |shared: &Shared, member: &str, method: &str, params: Value| {
+        let office = &shared.hello.office.as_ref().unwrap().office;
+        let mut grant = json!({
+            "account": "account",
+            "member": member,
+            "org_id": office.organization_id,
+            "office_id": office.id,
+            "channel_id": "opaque-channel",
+            "session_id": "session",
+            "exp": u64::MAX,
+            "mac": "00".repeat(32)
+        });
+        sign(&mut grant);
+        Request {
+            id: 71,
+            method: method.into(),
+            params,
+            principal: Some(json!({"grant": grant})),
+        }
+    };
+
+    let agent_id = org_mailbox::testkit::fixture::members()
+        .into_iter()
+        .find(|m| m.kind == MemberKind::Agent)
+        .expect("fixture agent")
+        .id;
+    for (method, params) in [
+        ("member.external_sessions", json!({"employee_id": "@ada"})),
+        ("member.external_pending", json!({})),
+        ("member.session_list", json!({"employee_id": "@ada"})),
+    ] {
+        let resp = answer(
+            &shared,
+            &ctx,
+            &make_grant_req(&shared, &agent_id, method, params.clone()),
+        );
+        assert_eq!(resp["error"]["code"], "not_authorized", "{method}: {resp}");
+        assert_ne!(
+            resp["error"]["message"], "request refused on host channel",
+            "{method} must return accurate authorization error, not opaque refusal: {resp}"
+        );
+        assert!(
+            resp["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("active organization person")),
+            "{method}: {resp}"
+        );
+        assert!(
+            resp["error"]["hint"]
+                .as_str()
+                .is_some_and(|h| !h.is_empty()),
+            "{method} must carry an actionable hint: {resp}"
+        );
+
+        // Unauthenticated / tampered MAC / expired grants STILL return opaque refusal!
+        let mut bad_mac = make_grant_req(&shared, OWNER_ID, method, params.clone());
+        bad_mac.principal.as_mut().unwrap()["grant"]["mac"] = json!("ff".repeat(32));
+        refused(answer(&shared, &ctx, &bad_mac), "not_authorized");
+    }
+
+    // 3. Unlinked satellite operator grant (`office.role = Satellite`, `claims.member == office.id`)
+    //    calling agent session reads receives an accurate unlinked-account authorization error.
+    shared.hello.office.as_mut().unwrap().office.role = org_proto::OfficeRole::Satellite;
+    for (method, params) in [
+        ("member.external_sessions", json!({"employee_id": "@ada"})),
+        ("member.external_pending", json!({})),
+        ("member.session_list", json!({"employee_id": "@ada"})),
+    ] {
+        let resp = answer(
+            &shared,
+            &ctx,
+            &make_grant_req(&shared, &office_id, method, params),
+        );
+        assert_eq!(resp["error"]["code"], "not_authorized", "{method}: {resp}");
+        assert_ne!(
+            resp["error"]["message"], "request refused on host channel",
+            "{method} on satellite must return accurate refusal: {resp}"
+        );
+        assert!(
+            resp["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("not linked to an active organization person")),
+            "{method}: {resp}"
+        );
+    }
+}
+
+#[test]
+fn copilot_features_offloads_off_host_channel_loop_without_hol_blocking() {
+    let mut shared = shared();
+    let entered = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let entered_cb = Arc::clone(&entered);
+    let release_cb = Arc::clone(&release);
+    shared.ports.copilot = Some(Box::new(move |_member, req| {
+        if !req.is::<org_proto::copilot::CopilotFeatures>() {
+            return None;
+        }
+        {
+            let mut g = entered_cb.0.lock().unwrap();
+            *g = true;
+            entered_cb.1.notify_all();
+        }
+        let mut r = release_cb.0.lock().unwrap();
+        while !*r {
+            r = release_cb.1.wait(r).unwrap();
+        }
+        Some(
+            Response::ok::<org_proto::copilot::CopilotFeatures>(
+                req.id,
+                &org_proto::copilot::CopilotFeaturesResult {
+                    features: Vec::new(),
+                },
+            )
+            .unwrap(),
+        )
+    }));
+    let ctx = context();
+    let mut feat_req = signed(&shared, "copilot.features", json!({}));
+    feat_req.id = 201;
+    let mut who_req = signed(&shared, "who", json!({}));
+    who_req.id = 202;
+
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let shared = Arc::new(shared);
+    let srv_shared = Arc::clone(&shared);
+    let srv = std::thread::spawn(move || {
+        serve(socket, &srv_shared, ctx, &Default::default());
+    });
+    let mut reader = std::io::BufReader::new(peer);
+    let hello = exchange(&mut reader, "hello", json!({"api": {"min": 2, "max": 2}}));
+    assert_eq!(hello["result"]["api_version"], 2);
+
+    frame::write_message(reader.get_mut(), &feat_req).unwrap();
+    {
+        let mut g = entered.0.lock().unwrap();
+        while !*g {
+            g = entered.1.wait(g).unwrap();
+        }
+    }
+
+    // `who` must answer immediately while `copilot.features` is still probing on its worker thread.
+    let who_started = std::time::Instant::now();
+    frame::write_message(reader.get_mut(), &who_req).unwrap();
+    let first: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(
+        first["id"], 202,
+        "who must not head-of-line block behind copilot.features: {first}"
+    );
+    assert!(who_started.elapsed() < Duration::from_millis(500));
+
+    {
+        let mut r = release.0.lock().unwrap();
+        *r = true;
+        release.1.notify_all();
+    }
+    let second: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(second["id"], 201);
+    assert!(second["result"]["features"].is_array(), "{second}");
+
+    drop(reader);
+    srv.join().unwrap();
+}
+
 #[path = "inventory.rs"]
 mod inventory;

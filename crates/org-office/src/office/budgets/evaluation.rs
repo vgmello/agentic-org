@@ -198,7 +198,7 @@ pub(super) fn period_watermark_regressed(
     {
         Ok(ok) => Ok(ok),
         Err(err) => {
-            storage_err = Some(err);
+            storage_err = Some(err.into());
             Err(ApiError::new(
                 ErrorCode::StorageError,
                 "failed to verify stream watermark continuity",
@@ -226,7 +226,7 @@ pub(super) fn evaluate_in_memory(
     {
         Ok(ok) => Ok(ok),
         Err(err) => {
-            storage_err = Some(err);
+            storage_err = Some(err.into());
             Err(ApiError::new(
                 ErrorCode::StorageError,
                 "failed to verify stream watermark continuity",

@@ -44,6 +44,41 @@ fn invalid(message: impl Into<String>) -> Refusal {
     refuse(ErrorCode::InvalidRequest, message)
 }
 
+fn apply_blocking_filters(
+    params: &TasksListParams,
+    mut statuses: TaskStatusSet,
+) -> Result<(TaskStatusSet, Option<bool>), Refusal> {
+    if params.ready && params.dependency_blocked {
+        return Err(invalid(
+            "`ready` and `dependency_blocked` cannot be given together",
+        ));
+    }
+    if params.ready {
+        if params.done_since.is_some() {
+            return Err(invalid("`ready` cannot be combined with `done_since`"));
+        }
+        if params.status_scope == Some(TaskStatusScope::Closed) {
+            return Err(invalid(
+                "`ready` cannot be combined with `status_scope` closed",
+            ));
+        }
+        if let Some(status) = params.status {
+            if status == TaskStatus::Blocked || status.is_closed() {
+                return Err(invalid(format!(
+                    "`ready` contradicts `status` {}",
+                    status.as_str()
+                )));
+            }
+        }
+        statuses = statuses
+            .without(TaskStatus::Blocked)
+            .without(TaskStatus::Done)
+            .without(TaskStatus::Cancelled);
+        return Ok((statuses, Some(false)));
+    }
+    Ok((statuses, params.dependency_blocked.then_some(true)))
+}
+
 /// The query `params` ask, or the refusal of what they ask wrongly. Task references in the
 /// dependency filters must name a task (`not_found` otherwise).
 pub(crate) fn list_query<R: TasksRead>(
@@ -56,25 +91,28 @@ pub(crate) fn list_query<R: TasksRead>(
             "`unassigned` and `assignee_id` cannot be given together",
         ));
     }
-    let statuses = statuses(params)?;
+    let (statuses, dependency_blocked) = apply_blocking_filters(params, statuses(params)?)?;
     let done_since_ms = done_since(params.done_since.as_deref())?;
-    let labels = if params.labels.is_empty() {
-        None
-    } else {
-        let labels = normalize_labels(&params.labels).map_err(|e| refuse(e.code, e.message))?;
-        Some(LabelFilter {
-            labels,
-            mode: params.label_match,
+    let labels = (!params.labels.is_empty())
+        .then(|| {
+            normalize_labels(&params.labels)
+                .map(|labels| LabelFilter {
+                    labels,
+                    mode: params.label_match,
+                })
+                .map_err(|e| refuse(e.code, e.message))
         })
-    };
-    let depends_on = match params.depends_on.as_deref() {
-        Some(reference) => Some(require_task(view, reference)?.id),
-        None => None,
-    };
-    let dependent_of = match params.dependent_of.as_deref() {
-        Some(reference) => Some(require_task(view, reference)?.id),
-        None => None,
-    };
+        .transpose()?;
+    let depends_on = params
+        .depends_on
+        .as_deref()
+        .map(|r| require_task(view, r).map(|t| t.id))
+        .transpose()?;
+    let dependent_of = params
+        .dependent_of
+        .as_deref()
+        .map(|r| require_task(view, r).map(|t| t.id))
+        .transpose()?;
     let trimmed = |value: &Option<String>| value.as_deref().map(|v| v.trim().to_owned());
     Ok(TaskListQuery {
         task_type: trimmed(&params.task_type),
@@ -88,6 +126,7 @@ pub(crate) fn list_query<R: TasksRead>(
         labels,
         depends_on,
         dependent_of,
+        dependency_blocked,
         text: params
             .query
             .as_deref()

@@ -18,7 +18,7 @@ pub(super) fn seed_org_with_two_people(
     place: &Place,
     engine: EngineChoice,
 ) -> (OfficeStore, Id, Id) {
-    let store = place.create(engine);
+    let store = place.create(engine.clone());
     let here = identity();
     let cmd = creation_command();
     let owner = cmd.creator.employee_id.clone();
@@ -50,9 +50,9 @@ pub(super) fn seed_org_with_two_people(
 
 #[test]
 fn engine_independent_messaging_conversations_channels_mentions_reactions_and_rebuild() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine.clone());
         let here = identity();
         let now = "2026-11-21T12:00:00.000Z".to_owned();
 
@@ -387,8 +387,10 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
         let before_dump = store.dump();
         store.close().unwrap();
 
-        if engine == EngineChoice::Sqlite {
-            let office_db = place.config(engine, Opening::Existing).projection_path();
+        if engine.is_sqlite() {
+            let office_db = place
+                .config(engine.clone(), Opening::Existing)
+                .projection_path();
             let protected_db = office_db
                 .parent()
                 .unwrap()
@@ -401,7 +403,7 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
             std::fs::remove_dir_all(office_db.parent().unwrap()).unwrap();
         }
 
-        let reopened = place.reopen(engine);
+        let reopened = place.reopen(engine.clone());
         let after_dump = reopened.dump();
         assert_eq!(
             before_dump, after_dump,
@@ -445,9 +447,9 @@ fn engine_independent_messaging_conversations_channels_mentions_reactions_and_re
 
 #[test]
 fn messaging_pass1_security_mentions_reactions_snooze_and_org_changes_regressions() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine.clone());
         let here = identity();
         let now = "2026-11-21T12:00:00.000Z".to_owned();
         let top_team = creation_command().team_id;
@@ -759,9 +761,9 @@ fn messaging_pass1_security_mentions_reactions_snooze_and_org_changes_regression
 
 #[test]
 fn messaging_pass2_dm_hijack_and_handoff_hr_guard_regressions() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine.clone());
         let here = identity();
         let now = "2026-11-21T12:00:00.000Z".to_owned();
         let top_team = creation_command().team_id;
@@ -924,9 +926,9 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
         MsgWithdrawParams, QuestionAnswer,
     };
 
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine.clone());
         let here = identity();
         let t0_ms: u64 = 1_700_000_010_000;
         let now = org_office::format_rfc3339_ms(t0_ms);
@@ -1212,11 +1214,13 @@ fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild(
         // 3. Delete runtime and rebuild: verify answer + withdrawal survive identically!
         let before = store.dump();
         store.close().unwrap();
-        if engine == EngineChoice::Sqlite {
-            let office_db = place.config(engine, Opening::Existing).projection_path();
+        if engine.is_sqlite() {
+            let office_db = place
+                .config(engine.clone(), Opening::Existing)
+                .projection_path();
             std::fs::remove_dir_all(office_db.parent().unwrap()).unwrap();
         }
-        let reopened = place.reopen(engine);
+        let reopened = place.reopen(engine.clone());
         assert_eq!(before, reopened.dump(), "{engine:?}: ask rebuild mismatch");
         let (rebuilt_msgs, _) = reopened
             .read(ChatMessagesRead {
@@ -1476,9 +1480,9 @@ fn assert_snoozed_owner_views(
 
 #[test]
 fn task81_snooze_unsnooze_isolation_ask_expiry_and_rebuild() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine.clone());
         let here = identity();
         let bob = add_third_person(&store, &here, &owner);
         let t0_ms = 1_795_262_400_000u64;
@@ -1544,15 +1548,17 @@ fn task81_snooze_unsnooze_isolation_ask_expiry_and_rebuild() {
             .unwrap();
         assert_eq!(snoozed_ask.state, MessageLifecycleState::Snoozed);
 
-        assert_snoozed_owner_views(&store, &owner, &bob, &ask_id, &ch_msg_id, engine);
+        assert_snoozed_owner_views(&store, &owner, &bob, &ask_id, &ch_msg_id, engine.clone());
 
         let before = store.dump();
         store.close().unwrap();
-        if engine == EngineChoice::Sqlite {
-            let office_db = place.config(engine, Opening::Existing).projection_path();
+        if engine.is_sqlite() {
+            let office_db = place
+                .config(engine.clone(), Opening::Existing)
+                .projection_path();
             std::fs::remove_dir_all(office_db.parent().unwrap()).unwrap();
         }
-        let reopened = place.reopen(engine);
+        let reopened = place.reopen(engine.clone());
         assert_eq!(
             before,
             reopened.dump(),

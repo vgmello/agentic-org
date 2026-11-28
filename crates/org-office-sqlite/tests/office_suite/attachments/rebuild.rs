@@ -57,9 +57,8 @@ fn attachment_rows(office: &Office) -> Vec<String> {
 
 #[test]
 fn standalone_files_are_canonical_yaml_and_survive_deleting_and_rebuilding_the_projection() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(office, &fx.agent, "plan.md", "text/markdown", b"# Plan\n").unwrap();
         let project_file = attach_upload(
@@ -188,7 +187,7 @@ fn standalone_files_are_canonical_yaml_and_survive_deleting_and_rebuilding_the_p
         // The private space is HQ's authoritative database, not a projection: on SQLite it
         // is untouched by the rebuild; the memory engine's starts empty with each opening.
         match engine {
-            EngineChoice::Sqlite => {
+            EngineChoice::Sqlite(_) => {
                 assert_eq!(view(office, &fx.person, &private.id).unwrap(), private);
                 assert_eq!(
                     read_all(office, &fx.person, &private.id, 100).unwrap(),
@@ -207,9 +206,8 @@ fn standalone_files_are_canonical_yaml_and_survive_deleting_and_rebuilding_the_p
 
 #[test]
 fn a_retried_attach_is_answered_once_even_after_its_upload_is_consumed() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(office, &fx.person, "a.txt", "text/plain", b"a").unwrap();
         let mut params = attach_params(AttachmentTargetKind::Project, Some(&fx.project));
@@ -295,9 +293,8 @@ fn staged_upload_exists(office: &Office, actor: &str, upload_id: &str) -> bool {
 
 #[test]
 fn a_private_command_id_reused_for_another_upload_is_refused_and_loses_nothing() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let first = upload(office, &fx.person, "a.txt", "text/plain", b"first").unwrap();
         let mut params = attach_params(AttachmentTargetKind::UserPrivate, None);
@@ -344,9 +341,8 @@ fn a_private_command_id_reused_for_another_upload_is_refused_and_loses_nothing()
 
 #[test]
 fn another_persons_private_command_id_is_their_own_and_reveals_nothing() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let mine = upload(office, &fx.person, "a.txt", "text/plain", b"pat's").unwrap();
         let mut params = attach_params(AttachmentTargetKind::UserPrivate, None);
@@ -379,9 +375,8 @@ fn another_persons_private_command_id_is_their_own_and_reveals_nothing() {
 
 #[test]
 fn a_private_retry_with_other_metadata_or_target_is_refused() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let staged = upload(office, &fx.person, "a.txt", "text/plain", b"a").unwrap();
         let mut params = attach_params(AttachmentTargetKind::UserPrivate, None);

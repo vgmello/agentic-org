@@ -4,8 +4,8 @@
 use std::time::{Duration, Instant};
 
 use org_office::accounting::{
-    build_snapshot_view, StoredSubscriptionUsageSnapshot, SubscriptionCredentialPresence,
-    SUBSCRIPTION_USAGE_FRESHNESS_MS,
+    build_snapshot_view, StoredSubscriptionUsageSnapshot, SubscriptionConnectionMeta,
+    SubscriptionCredentialPresence, SUBSCRIPTION_USAGE_FRESHNESS_MS,
 };
 use org_office::organization_family::records::{ProviderAuthMode, ProviderConnection};
 use org_office::{format_rfc3339_ms, Office};
@@ -325,7 +325,13 @@ pub(super) fn collect_one_connection(
     let stored =
         persist_outcome_with_fallback(ctx, conn.id.as_str(), attempt_seq, auth_source, outcome)?;
     Ok(Some(build_snapshot_view(
-        conn,
+        SubscriptionConnectionMeta {
+            id: conn.id.as_str(),
+            key: &conn.key,
+            name: &conn.name,
+            provider_type: &conn.provider_type,
+            subscription_identity: conn.subscription_identity.as_deref(),
+        },
         &ctx.office.info().office_id,
         Some(&stored),
         &cred_presence,

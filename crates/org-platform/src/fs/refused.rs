@@ -181,6 +181,14 @@ pub(super) fn has_macos_private_root_aliases() -> bool {
     false
 }
 
+pub(super) fn is_safe_executable_file(_path: &Path) -> bool {
+    false
+}
+
+pub(super) fn resolve_safe_executable_file(_path: &Path) -> Option<std::path::PathBuf> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};
@@ -280,6 +288,8 @@ mod tests {
         ));
         assert!(!super::paths_case_insensitive_by_default());
         assert!(!super::has_macos_private_root_aliases());
+        assert!(!super::is_safe_executable_file(&dir.path().join("bin")));
+        assert!(super::resolve_safe_executable_file(&dir.path().join("bin")).is_none());
     }
 
     #[test]

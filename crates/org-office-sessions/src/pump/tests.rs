@@ -51,6 +51,7 @@ fn test_pump_ctx(
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: dir.display().to_string(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         allow_host_auth: false,
@@ -111,6 +112,7 @@ fn test_pump_ctx(
             stage_mid_turn_wakes: None,
             on_mid_turn_delivered: None,
             is_sandbox_topology_stale: None,
+            on_approval_changed: None,
         },
         stop_epoch: 0,
         partition: None,
@@ -118,6 +120,8 @@ fn test_pump_ctx(
         attachments_root: dir.join("attachments"),
         model_supports_vision: true,
         attachment_resolver: Arc::new(NoopAttachmentResolver),
+        turn_override: Default::default(),
+        telemetry: None,
     }
 }
 
@@ -280,7 +284,9 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
     };
 
     // Sandboxed: write inside writable_roots is allowed; write outside is auto-denied.
-    let inside_ctrl = handle_approval_request(&mut st, &make_req(ws.join("a.rs")), &[]);
+    let (inside_ctrl, inside_denied) =
+        handle_approval_request(&mut st, &make_req(ws.join("a.rs")), &[]);
+    assert!(inside_denied.is_none());
     assert!(matches!(
         inside_ctrl,
         Some(Control::Answer {
@@ -288,7 +294,9 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
             ..
         })
     ));
-    let outside_ctrl = handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    let (outside_ctrl, outside_denied) =
+        handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    assert!(outside_denied.is_some());
     assert!(matches!(
         outside_ctrl,
         Some(Control::Answer {
@@ -299,7 +307,9 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
 
     // Unsandboxed: writable_roots check is skipped so preset allow rule governs.
     st.sandbox_enabled = false;
-    let unsandboxed_ctrl = handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    let (unsandboxed_ctrl, unsandboxed_denied) =
+        handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    assert!(unsandboxed_denied.is_none());
     assert!(matches!(
         unsandboxed_ctrl,
         Some(Control::Answer {
@@ -356,12 +366,13 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
         serde_json::json!({}),
     );
     escalated.capability = Some(org_agent_runtime::ToolCapability::Unknown);
-    assert!(handle_approval_request(&mut st, &escalated, &[]).is_none());
+    let (esc_ctrl, esc_denied) = handle_approval_request(&mut st, &escalated, &[]);
+    assert!(esc_ctrl.is_none() && esc_denied.is_none());
     let pending = st.pending_approvals.last().expect("escalated to the owner");
-    assert_no_corpus_secret(&corpus, &pending.tool, "pump/approval tool");
+    assert_no_corpus_secret(&corpus, &pending.view.tool, "pump/approval tool");
     assert_no_corpus_secret(
         &corpus,
-        pending.reason.as_deref().unwrap_or_default(),
+        pending.view.reason.as_deref().unwrap_or_default(),
         "pump/approval reason",
     );
 
@@ -374,10 +385,13 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
         serde_json::json!({ "command": "ls" }),
     );
     match handle_approval_request(&mut st, &denied, &[]) {
-        Some(Control::Answer {
-            decision: Decision::Deny { message, .. },
-            ..
-        }) => assert_no_corpus_secret(
+        (
+            Some(Control::Answer {
+                decision: Decision::Deny { message, .. },
+                ..
+            }),
+            Some(_),
+        ) => assert_no_corpus_secret(
             &corpus,
             message.as_deref().unwrap_or_default(),
             "pump/approval deny message",
@@ -652,4 +666,278 @@ fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
         .collect();
     assert_eq!(texts, ["steer-d", "ordinary-3"]);
     assert_eq!(st.queued_turns, 2);
+}
+
+#[test]
+fn approval_hook_fires_on_cancel_and_interrupted_turn_clearance() {
+    use org_agent_runtime::SessionEvent;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    ctx.hooks.on_approval_changed = Some(Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let mut loop_state = PumpLoopState::new(false);
+
+    let req1 = ApprovalRequest::new(
+        ApprovalId::new("a-cancel-1"),
+        org_agent_runtime::ApprovalKind::Unknown,
+        org_agent_runtime::Escalation::None,
+        "mystery_tool",
+        serde_json::json!({}),
+    );
+    let req2 = ApprovalRequest::new(
+        ApprovalId::new("a-interrupt-2"),
+        org_agent_runtime::ApprovalKind::Unknown,
+        org_agent_runtime::Escalation::None,
+        "mystery_tool",
+        serde_json::json!({}),
+    );
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(req1),
+        &ctx,
+        &mut loop_state,
+    );
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(req2),
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+    // Runtime cancellation clears only the cancelled ID and fires the hook.
+    super::events::handle_event(
+        &SessionEvent::ApprovalCancelled {
+            id: ApprovalId::new("a-cancel-1"),
+        },
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    assert_eq!(ctx.state.lock().unwrap().pending_approvals.len(), 1);
+
+    // Interrupting the turn clears the remaining approval and fires the hook.
+    loop_state.interrupt_sent = true;
+    super::events::handle_event(
+        &SessionEvent::TurnEnded {
+            outcome: org_agent_runtime::TurnOutcome::Interrupted,
+            errors: Vec::new(),
+        },
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 4);
+    assert!(ctx.state.lock().unwrap().pending_approvals.is_empty());
+}
+
+fn escalated_request(id: &str, tool: &str) -> ApprovalRequest {
+    let mut req = ApprovalRequest::new(
+        ApprovalId::new(id),
+        org_agent_runtime::ApprovalKind::Command,
+        org_agent_runtime::Escalation::None,
+        tool,
+        serde_json::json!({}),
+    );
+    req.capability = Some(org_agent_runtime::ToolCapability::Shell);
+    req
+}
+
+#[test]
+fn non_person_interrupted_turn_ended_clears_pending_approvals_settles_idle_and_fires_hook() {
+    use org_agent_runtime::{SessionEvent, TurnOutcome};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    for outcome in [
+        TurnOutcome::Failed {
+            reason: "runtime aborted".into(),
+        },
+        TurnOutcome::Completed,
+        TurnOutcome::Interrupted,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = test_pump_ctx(dir.path(), None, None);
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        ctx.hooks.on_approval_changed = Some(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        let mut loop_state = PumpLoopState::new(false);
+        assert!(!loop_state.interrupt_sent);
+
+        super::events::handle_event(
+            &SessionEvent::ApprovalRequested(escalated_request("a-end-1", "Bash")),
+            &ctx,
+            &mut loop_state,
+        );
+        assert_eq!(
+            ctx.state.lock().unwrap().state,
+            SessionState::WaitingApproval
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        super::events::handle_event(
+            &SessionEvent::TurnEnded {
+                outcome: outcome.clone(),
+                errors: Vec::new(),
+            },
+            &ctx,
+            &mut loop_state,
+        );
+        let st = ctx.state.lock().unwrap();
+        assert!(st.pending_approvals.is_empty(), "outcome={outcome:?}");
+        assert_eq!(st.state, SessionState::Idle, "outcome={outcome:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "outcome={outcome:?}");
+    }
+}
+
+#[test]
+fn turn_ended_preserves_recovery_required_and_turn_started_drains_stale_approvals() {
+    use org_agent_runtime::{SessionEvent, TurnOutcome};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+    ctx.hooks.on_approval_changed = Some(Arc::new(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let mut loop_state = PumpLoopState::new(false);
+    loop_state.had_external_effect = true;
+
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(escalated_request("a-rec-1", "Bash")),
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    // Side-effecting failover failure transitions to RecoveryRequired while still clearing approvals.
+    super::events::handle_event(
+        &SessionEvent::TurnEnded {
+            outcome: TurnOutcome::SignedOut,
+            errors: Vec::new(),
+        },
+        &ctx,
+        &mut loop_state,
+    );
+    {
+        let st = ctx.state.lock().unwrap();
+        assert!(st.pending_approvals.is_empty());
+        assert_eq!(st.state, SessionState::RecoveryRequired);
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+    // Defensively, TurnStarted also drains any stale pending_approvals and notifies outside lock.
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(escalated_request("a-stale-1", "Bash")),
+        &ctx,
+        &mut loop_state,
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    super::events::handle_event(
+        &SessionEvent::TurnStarted {
+            turn_id: Some("t-next".into()),
+            solicited: true,
+        },
+        &ctx,
+        &mut loop_state,
+    );
+    {
+        let st = ctx.state.lock().unwrap();
+        assert!(st.pending_approvals.is_empty());
+        assert_eq!(st.state, SessionState::Running);
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 4);
+}
+
+#[test]
+fn duplicate_approval_request_id_replaces_in_place_without_duplicating() {
+    use org_agent_runtime::SessionEvent;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_pump_ctx(dir.path(), None, None);
+    let mut loop_state = PumpLoopState::new(false);
+
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(escalated_request("a-dup-1", "Bash")),
+        &ctx,
+        &mut loop_state,
+    );
+    super::events::handle_event(
+        &SessionEvent::ApprovalRequested(escalated_request("a-dup-1", "Read")),
+        &ctx,
+        &mut loop_state,
+    );
+
+    let st = ctx.state.lock().unwrap();
+    assert_eq!(st.pending_approvals.len(), 1);
+    assert_eq!(st.pending_approvals[0].view.approval_id, "a-dup-1");
+    assert_eq!(st.pending_approvals[0].view.tool, "Read");
+}
+
+#[test]
+fn allow_always_rejects_wildcard_capability_tokens_and_invalid_tool_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_pump_ctx(dir.path(), None, None);
+    let mut st = ctx.state.lock().unwrap();
+    let initial_version = st.policy.version;
+
+    for bad_tool in [
+        "*",
+        "cap:shell",
+        "cap:read",
+        "CAP:shell",
+        "Bash(rm -rf /)",
+        "bad tool",
+        "\x1b[31mBash\x1b[0m",
+        "-flag",
+        "",
+    ] {
+        assert!(
+            !super::is_allow_always_eligible("none", bad_tool),
+            "{bad_tool:?}"
+        );
+        let req = escalated_request("a-bad", bad_tool);
+        assert!(handle_approval_request(&mut st, &req, &[]).0.is_none());
+        let entry = st.pending_approvals.last().expect("escalated");
+        assert_eq!(
+            entry.view.escalation, "none",
+            "test must exercise escalation == none so rejection proves tool-name gating"
+        );
+        assert!(
+            entry.allow_always_tool.is_none(),
+            "raw tool {bad_tool:?} must never be eligible for allow_always"
+        );
+        let removed = super::remove_pending_approval_locked(&mut st, "a-bad", Some(bad_tool));
+        assert!(removed);
+        assert!(
+            st.policy.allow.is_empty(),
+            "disallowed tool {bad_tool:?} must never insert a policy rule"
+        );
+        assert_eq!(st.policy.version, initial_version);
+    }
+
+    // Valid concrete ToolName with Escalation::None still inserts its rule.
+    assert!(super::is_allow_always_eligible("none", "Bash"));
+    assert!(!super::is_allow_always_eligible(
+        "permission_change",
+        "Bash"
+    ));
+    assert!(
+        handle_approval_request(&mut st, &escalated_request("a-ok", "Bash"), &[])
+            .0
+            .is_none()
+    );
+    assert!(super::remove_pending_approval_locked(
+        &mut st,
+        "a-ok",
+        Some("Bash")
+    ));
+    assert_eq!(st.policy.allow.len(), 1);
+    assert_eq!(st.policy.allow[0].tool.as_str(), "Bash");
+    assert_eq!(st.policy.version, initial_version + 1);
 }

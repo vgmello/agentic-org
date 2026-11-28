@@ -398,3 +398,215 @@ fn repository_locks_make_owner_only_folders_and_lock_files() {
     assert_eq!(fs::read(&lock_file).unwrap(), b"kept");
     assert_eq!(mode(&lock_file), 0o600);
 }
+
+#[test]
+fn task135_https_token_scopes_to_exact_repo_url_never_writes_config_and_redacts_debug() {
+    use base64::Engine as _;
+    use zeroize::Zeroizing;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let runner = GitRunner::new(tmp.path().join("clean-home")).unwrap();
+    let secret = "ghp_TASK135_SCOPED_TOKEN_987654321";
+    let cred = crate::GitCredential::HttpsToken {
+        username: "x-access-token".to_owned(),
+        token: Zeroizing::new(secret.to_owned()),
+        scope_url: "https://github.com/acme/app".to_owned(),
+    };
+    let debug = format!("{cred:?}");
+    assert!(
+        !debug.contains(secret),
+        "GitCredential Debug must redact token: {debug}"
+    );
+    assert!(debug.contains("<redacted>"), "{debug}");
+
+    let expected_header = format!(
+        "Authorization: Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{secret}"))
+    );
+    let urlmatch = |target: &str| {
+        runner.run_checked(
+            None,
+            None,
+            AllowedProtocol::Https,
+            &cred,
+            &["config", "--get-urlmatch", "http.extraHeader", target],
+        )
+    };
+    // Exact repo URL and its `.git` variant both receive the scoped header.
+    assert_eq!(
+        urlmatch("https://github.com/acme/app").unwrap().trim(),
+        expected_header
+    );
+    assert_eq!(
+        urlmatch("https://github.com/acme/app.git").unwrap().trim(),
+        expected_header
+    );
+    // Sibling repo on the same host and unrelated host MUST NOT receive the header.
+    for other in [
+        "https://github.com/acme/other.git",
+        "https://github.com/acme/app-2.git",
+        "https://evil.example/acme/app.git",
+    ] {
+        let res = urlmatch(other);
+        assert!(
+            res.is_err() || res.unwrap().trim().is_empty(),
+            "scoped token must NOT match unrelated URL `{other}`"
+        );
+    }
+
+    // Invalid token/username/scope values fail closed before invoking git.
+    for bad in [
+        crate::GitCredential::HttpsToken {
+            username: "bad:user".to_owned(),
+            token: Zeroizing::new("tok".to_owned()),
+            scope_url: "https://github.com/acme/app.git".to_owned(),
+        },
+        crate::GitCredential::HttpsToken {
+            username: "x-access-token".to_owned(),
+            token: Zeroizing::new("tok\ninjected".to_owned()),
+            scope_url: "https://github.com/acme/app.git".to_owned(),
+        },
+        crate::GitCredential::HttpsToken {
+            username: "x-access-token".to_owned(),
+            token: Zeroizing::new("tok".to_owned()),
+            scope_url: "http://github.com/acme/app.git".to_owned(),
+        },
+        crate::GitCredential::HttpsToken {
+            username: "x-access-token".to_owned(),
+            token: Zeroizing::new("tok".to_owned()),
+            scope_url: "https://user@github.com/acme/app.git".to_owned(),
+        },
+    ] {
+        assert!(matches!(
+            runner.run_checked(None, None, AllowedProtocol::Https, &bad, &["--version"]),
+            Err(GitError::InvalidInput(_))
+        ));
+    }
+
+    // Bare cache config and worktree `.git` contain zero tokens or extraHeader lines.
+    let (remote_dir, base_sha) = seed_bare_remote(tmp.path());
+    let cache_dir = tmp.path().join("cache.git");
+    fetch_cache(
+        &runner,
+        &cache_dir,
+        &RemoteSpec::local(&remote_dir).unwrap(),
+        false,
+    )
+    .unwrap();
+    let wt_dir = tmp.path().join("wt");
+    create_worktree(
+        &runner,
+        &cache_dir,
+        &wt_dir,
+        "task/T-135-check",
+        &base_sha,
+        false,
+    )
+    .unwrap();
+    let cache_cfg = fs::read_to_string(cache_dir.join("config")).unwrap();
+    let wt_git = fs::read_to_string(wt_dir.join(".git")).unwrap();
+    assert!(!cache_cfg.contains("extraHeader") && !cache_cfg.contains("credential"));
+    assert!(!wt_git.contains("extraHeader") && !wt_git.contains(secret));
+}
+
+#[test]
+fn task135_git_runner_isolates_host_gitconfig_and_never_inherits_host_credential_helpers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runner = GitRunner::new(tmp.path().join("clean-home")).unwrap();
+
+    // `git config --list --show-origin` under `GitRunner` must inherit ZERO global/system
+    // config entries (no host `~/.gitconfig`, no host `gh auth git-credential` helper).
+    let out = runner
+        .run_checked(
+            None,
+            None,
+            AllowedProtocol::Https,
+            &crate::GitCredential::None,
+            &["config", "--list", "--show-origin"],
+        )
+        .unwrap();
+    assert!(
+        !out.contains("gh auth git-credential")
+            && !out.contains("osxkeychain")
+            && !out.contains("libsecret"),
+        "office git runner must never inherit host credential helpers: {out}"
+    );
+    assert!(
+        !out.contains("file:"),
+        "office git runner must disable host global/system gitconfig files: {out}"
+    );
+    // `credential.helper` must only contain the explicit empty reset (`credential.helper=`).
+    let helpers = runner
+        .run_checked(
+            None,
+            None,
+            AllowedProtocol::Https,
+            &crate::GitCredential::None,
+            &["config", "--get-all", "credential.helper"],
+        )
+        .unwrap();
+    assert!(
+        helpers.lines().all(|line| line.trim().is_empty()),
+        "credential.helper must stay empty when GitCredential::None is active: {helpers:?}"
+    );
+    let follow = runner
+        .run_checked(
+            None,
+            None,
+            AllowedProtocol::Https,
+            &crate::GitCredential::None,
+            &["config", "--get", "http.followRedirects"],
+        )
+        .unwrap();
+    assert_eq!(
+        follow.trim(),
+        "false",
+        "GitRunner must disable HTTP redirects to prevent credential replay"
+    );
+}
+
+#[test]
+fn task135_canonical_https_repo_scope_rejects_widening_traversal_and_bad_ports() {
+    assert_eq!(
+        crate::canonical_https_repo_scope("https://GitHub.COM:443/Acme/App.git/").unwrap(),
+        "https://github.com:443/Acme/App.git"
+    );
+    for bad in [
+        "https://github.com",
+        "https://github.com/",
+        "https://github.com/acme/..",
+        "https://github.com/acme/repo/..",
+        "https://github.com/acme/./repo",
+        "https://github.com/acme//repo",
+        "https://github.com/acme/%2e%2e/other",
+        "https://github.com/acme/%2Fother",
+        "https://github.com/acme/%5cother",
+        "https://github.com:0/acme/repo",
+        "https://github.com:99999/acme/repo",
+        "https://github.com:abc/acme/repo",
+        "https://user@github.com/acme/repo",
+        "http://github.com/acme/repo",
+    ] {
+        assert!(
+            crate::canonical_https_repo_scope(bad).is_err(),
+            "expected `{bad}` to be rejected"
+        );
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let runner = GitRunner::new(tmp.path().join("clean-home")).unwrap();
+    let bad_cred = crate::GitCredential::HttpsToken {
+        username: "user@host".into(),
+        token: zeroize::Zeroizing::new("tok".into()),
+        scope_url: "https://github.com/acme/repo.git".into(),
+    };
+    assert!(runner
+        .run_checked(
+            None,
+            None,
+            AllowedProtocol::Https,
+            &bad_cred,
+            &["--version"]
+        )
+        .is_err());
+}

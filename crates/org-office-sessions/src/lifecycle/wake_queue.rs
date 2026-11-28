@@ -214,14 +214,21 @@ impl SessionManager {
         self.preprepare_task_worktrees(emp_id, &task_refs);
         let task_ref = task_refs.first().copied();
         let attachment_ids = crate::wake::collect_wake_attachment_ids(&matching);
-        match self.spawn_or_send_autonomous_with_attachments(
+        let Ok(turn_override) = crate::wake::extract_wake_model_override(&matching) else {
+            return self.hold_refused_batch(emp_id, ts);
+        };
+        match self.spawn_or_send_autonomous_with_affinity(
             employee,
             objective,
             attachment_ids,
             susp.runtime_session_id.as_deref(),
+            false,
+            false,
+            false,
             task_ref,
             trigger,
             partition,
+            turn_override,
         ) {
             Ok(_) => {
                 let notify_remaining = {
@@ -325,21 +332,45 @@ impl SessionManager {
         };
         let waited_ms = queue.held_since_ms.map(|since| ts.saturating_sub(since));
         let first = &queue.items[0];
-        let wants_resume = queue.items.iter().any(|i| {
-            matches!(
-                i.kind,
-                WakeKind::AskAnswer | WakeKind::WatcherAnswer | WakeKind::SandboxRefresh
-            )
-        });
-        let resume_rsid = wants_resume
+        let force_fresh = queue
+            .items
+            .iter()
+            .any(|i| i.session_affinity.as_ref().is_some_and(|a| a.fresh));
+        let affinity_resume = (!force_fresh)
             .then(|| {
-                self.store
-                    .read_active_turn(emp_id)
-                    .ok()
-                    .flatten()
-                    .and_then(|r| r.runtime_session_id)
+                queue.items.iter().rev().find_map(|i| {
+                    i.session_affinity
+                        .as_ref()
+                        .and_then(|a| a.resume_runtime_session_id.clone())
+                })
             })
             .flatten();
+        let enforce_affinity_guard = affinity_resume.is_some();
+        let allow_sandbox_spec_change = !force_fresh
+            && !enforce_affinity_guard
+            && queue
+                .items
+                .iter()
+                .any(|i| i.kind == WakeKind::SandboxRefresh);
+        let wants_resume = !force_fresh
+            && affinity_resume.is_none()
+            && queue.items.iter().any(|i| {
+                matches!(
+                    i.kind,
+                    WakeKind::AskAnswer | WakeKind::WatcherAnswer | WakeKind::SandboxRefresh
+                )
+            });
+        let resume_rsid = affinity_resume.or_else(|| {
+            wants_resume
+                .then(|| {
+                    self.store
+                        .read_active_turn(emp_id)
+                        .ok()
+                        .flatten()
+                        .and_then(|r| r.runtime_session_id)
+                })
+                .flatten()
+        });
         let trigger = serde_json::json!({
             "type": "turn_trigger",
             "kind": first.kind.as_str(),
@@ -348,20 +379,28 @@ impl SessionManager {
             "coalesced_count": queue.items.len(),
             "held_reason": queue.hold_reason.map(|r| r.as_str()),
             "waited_ms": waited_ms,
+            "fresh_session": force_fresh,
             "at": rfc3339_now(),
         });
         let task_refs = assigned_task_refs(&queue.items);
         self.preprepare_task_worktrees(emp_id, &task_refs);
         let task_ref = task_refs.first().copied();
         let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
-        match self.spawn_or_send_autonomous_with_attachments(
+        let Ok(turn_override) = crate::wake::extract_wake_model_override(&queue.items) else {
+            return self.hold_refused_batch(emp_id, ts);
+        };
+        match self.spawn_or_send_autonomous_with_affinity(
             employee,
             objective,
             attachment_ids,
             resume_rsid.as_deref(),
+            force_fresh,
+            enforce_affinity_guard,
+            allow_sandbox_spec_change,
             task_ref,
             trigger,
             partition,
+            turn_override,
         ) {
             Ok(_) => {
                 let notify_remaining = {

@@ -6,8 +6,8 @@ use org_proto::costs::UsageRecordView;
 use org_proto::{ApiError, ErrorCode};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use org_office::accounting::VerifiedStreamWatermark;
-use org_office::OfficeError;
+use org_accounting::AccountingError;
+use org_accounting::VerifiedStreamWatermark;
 
 use super::{AccountingState, CheckpointCoverageRow};
 
@@ -17,7 +17,7 @@ pub(super) fn check_existing_usage(
     conn: &Connection,
     org_id: &str,
     rec: &UsageRecordView,
-) -> Result<DedupReplay, OfficeError> {
+) -> Result<DedupReplay, AccountingError> {
     let staged_match: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM staged_usage_records \
@@ -33,7 +33,7 @@ pub(super) fn check_existing_usage(
             ],
             |r| r.get(0),
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     if staged_match {
         return Ok(Some(Err(ApiError::new(
             ErrorCode::Conflict,
@@ -48,11 +48,11 @@ pub(super) fn check_existing_usage(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     if let Some((sha, payload)) = by_source {
         if sha == rec.payload_sha256 {
             let existing: UsageRecordView =
-                serde_json::from_str(&payload).map_err(OfficeError::storage)?;
+                serde_json::from_str(&payload).map_err(AccountingError::storage)?;
             return Ok(Some(Ok((existing, true))));
         }
         return Ok(Some(Err(ApiError::new(
@@ -68,11 +68,11 @@ pub(super) fn check_existing_usage(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     if let Some((sha, payload)) = by_id {
         if sha == rec.payload_sha256 {
             let existing: UsageRecordView =
-                serde_json::from_str(&payload).map_err(OfficeError::storage)?;
+                serde_json::from_str(&payload).map_err(AccountingError::storage)?;
             return Ok(Some(Ok((existing, true))));
         }
         return Ok(Some(Err(ApiError::new(
@@ -87,7 +87,7 @@ pub(super) fn check_supersedes_valid(
     conn: &Connection,
     org_id: &str,
     rec: &UsageRecordView,
-) -> Result<Option<ApiError>, OfficeError> {
+) -> Result<Option<ApiError>, AccountingError> {
     let Some(parent_id) = rec.supersedes_id.as_deref() else {
         return Ok(None);
     };
@@ -97,7 +97,7 @@ pub(super) fn check_supersedes_valid(
             params![org_id, parent_id],
             |r| r.get(0),
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     if parent_staged {
         return Ok(Some(ApiError::new(
             ErrorCode::Conflict,
@@ -110,7 +110,7 @@ pub(super) fn check_supersedes_valid(
             params![org_id, parent_id],
             |r| r.get(0),
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     if !exists {
         return Ok(Some(ApiError::new(
             ErrorCode::NotFound,
@@ -127,7 +127,7 @@ pub(super) fn check_supersedes_valid(
             params![org_id, parent_id],
             |r| r.get(0),
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     if already_superseded {
         return Ok(Some(ApiError::new(
             ErrorCode::Conflict,
@@ -149,7 +149,7 @@ fn verify_stream_checkpoint(
     hw: i64,
     head_sha: Option<&str>,
     chain_sha: Option<&str>,
-) -> Result<Option<Option<String>>, OfficeError> {
+) -> Result<Option<Option<String>>, AccountingError> {
     if hw < 0 {
         return Ok(None);
     }
@@ -159,7 +159,7 @@ fn verify_stream_checkpoint(
              WHERE organization_id=?1 AND origin_office_id=?2 AND producer_id=?3 \
              ORDER BY source_sequence ASC",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     let rows = stmt
         .query_map(params![org_id, office, prod], |r| {
             Ok((
@@ -169,12 +169,12 @@ fn verify_stream_checkpoint(
                 r.get::<_, String>(3)?,
             ))
         })
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     let mut count: i64 = 0;
     let mut last_payload_sha: Option<String> = None;
     let mut running_chain: Option<String> = None;
     for row in rows {
-        let (seq, id, stored_sha, json) = row.map_err(OfficeError::storage)?;
+        let (seq, id, stored_sha, json) = row.map_err(AccountingError::storage)?;
         count += 1;
         if seq != count {
             return Ok(None);
@@ -185,12 +185,12 @@ fn verify_stream_checkpoint(
         if rec.id != id
             || rec.source_sequence != (seq as u64)
             || rec.payload_sha256 != stored_sha
-            || org_office::accounting::compute_usage_payload_sha256(org_id, &rec) != stored_sha
+            || org_accounting::compute_usage_payload_sha256(org_id, &rec) != stored_sha
         {
             return Ok(None);
         }
         last_payload_sha = Some(stored_sha);
-        running_chain = Some(org_office::accounting::chain_usage_stream_head(
+        running_chain = Some(org_accounting::chain_usage_stream_head(
             running_chain.as_deref(),
             &rec,
         ));
@@ -212,7 +212,7 @@ fn verify_stream_checkpoint(
 pub(super) fn load_checkpoint_coverage_rows(
     conn: &Connection,
     org_id: &str,
-) -> Result<Vec<CheckpointCoverageRow>, OfficeError> {
+) -> Result<Vec<CheckpointCoverageRow>, AccountingError> {
     let mut stmt = conn
         .prepare(
             "SELECT origin_office_id, producer_id, high_water_sequence, head_sha256, \
@@ -220,7 +220,7 @@ pub(super) fn load_checkpoint_coverage_rows(
              FROM usage_stream_checkpoints WHERE organization_id=?1 \
              ORDER BY origin_office_id, producer_id",
         )
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     let rows = stmt
         .query_map([org_id], |r| {
             Ok(CheckpointCoverageRow {
@@ -232,10 +232,10 @@ pub(super) fn load_checkpoint_coverage_rows(
                 at: r.get(5)?,
             })
         })
-        .map_err(OfficeError::storage)?;
+        .map_err(AccountingError::storage)?;
     let mut out = Vec::new();
     for row in rows {
-        out.push(row.map_err(OfficeError::storage)?);
+        out.push(row.map_err(AccountingError::storage)?);
     }
     Ok(out)
 }
@@ -245,7 +245,7 @@ pub(super) fn evaluate_stream_coverage_row(
     org_id: &str,
     row: &CheckpointCoverageRow,
     incomplete: &mut BTreeSet<(String, String)>,
-) -> Result<Option<VerifiedStreamWatermark>, OfficeError> {
+) -> Result<Option<VerifiedStreamWatermark>, AccountingError> {
     let key = (row.office.clone(), row.prod.clone());
     let stream_key = (org_id.to_owned(), row.office.clone(), row.prod.clone());
     let prefix_head = conn

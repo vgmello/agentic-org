@@ -107,9 +107,8 @@ fn list_attachments(
 
 #[test]
 fn task_and_comment_attachments_persist_project_and_rebuild_losslessly_on_both_engines() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
 
         // 1. Create a task with one staged upload.
@@ -325,9 +324,8 @@ fn task_and_comment_attachments_persist_project_and_rebuild_losslessly_on_both_e
 
 #[test]
 fn task_and_comment_attachment_caps_and_acl_are_enforced() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
 
         // Task cap: 20 allowed, 21st refused with `TooLarge`.

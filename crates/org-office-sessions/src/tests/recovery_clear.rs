@@ -170,6 +170,7 @@ fn failover_request(
         rate_limit_resets_at: None,
         stop_epoch,
         partition: None,
+        turn_override: Default::default(),
     }
 }
 
@@ -404,6 +405,9 @@ fn pass6_unrecovered_pre_pump_handle_is_persisted_but_never_registered_while_dra
                     std::collections::BTreeSet::new(),
                 ),
                 partition: None,
+                active_model: None,
+                active_effort: None,
+                pinned_override: Default::default(),
             },
         );
         assert!(

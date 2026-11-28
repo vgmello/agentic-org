@@ -39,8 +39,8 @@ pub use inspect::{
 };
 pub use refresh::{list_origin_branches, refresh_cache, remote_default_branch, CacheRefresh};
 pub use runner::{
-    validate_local_origin_path, validate_remote_url, AllowedProtocol, GitCommandOutput,
-    GitCredential, GitRunner, RemoteSpec, MIN_GIT_VERSION,
+    canonical_https_repo_scope, validate_local_origin_path, validate_remote_url, AllowedProtocol,
+    GitCommandOutput, GitCredential, GitRunner, RemoteSpec, MIN_GIT_VERSION,
 };
 pub use worktree::{
     check_ref_format, choose_unique_task_branch, cleanup_worktree, create_checkpoint_bundle,

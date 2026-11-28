@@ -341,18 +341,17 @@ fn put_findings(
     rid: &Id,
     rows: &[ReviewFindingRecord],
 ) -> Result<(), EngineError> {
-    let owners: std::collections::BTreeMap<String, String> = all(
-        db,
-        "SELECT id, review_id FROM review_findings WHERE organization_id=?1",
-        vec![txt(s)],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    )?
-    .into_iter()
-    .collect();
+    if rows.is_empty() {
+        return Ok(());
+    }
     for f in rows {
-        if owners
-            .get(f.id.as_str())
-            .is_some_and(|ex| ex != rid.as_str())
+        if one(
+            db,
+            "SELECT review_id FROM review_findings WHERE organization_id=?1 AND id=?2",
+            vec![txt(s), txt(f.id.as_str())],
+            |row| row.get::<_, String>(0),
+        )?
+        .is_some_and(|ex| ex != rid.as_str())
         {
             return Err(EngineError::new(format!(
                 "finding {} belongs to another review",

@@ -11,6 +11,7 @@ use org_proto::{ApiError, ErrorCode};
 use org_store::Sha256;
 
 use crate::budgets::{
+    check_operation_replay, mark_open_periods_kept_paused, resolve_reached_notices,
     ActiveBudgetHoldInfo, BudgetAggregate, BudgetEventRecord, OpenBudgetInboxNotice,
 };
 use crate::error::OfficeError;
@@ -195,32 +196,6 @@ fn request_fingerprint(val: &serde_json::Value) -> String {
     hex
 }
 
-/// Checks `operation_id` replay AFTER caller authorization has already passed (`Pass 1 High #2`).
-fn check_operation_replay(
-    agg: &BudgetAggregate,
-    operation_id: &str,
-    caller_id: &str,
-    action: &str,
-    req_hash: &str,
-) -> Result<bool, ApiError> {
-    let Some(ev) = agg.events.iter().find(|e| e.operation_id == operation_id) else {
-        return Ok(false);
-    };
-    let parsed: serde_json::Value =
-        serde_json::from_str(&ev.payload_json).unwrap_or(serde_json::Value::Null);
-    let same_actor = ev.actor_id.as_deref() == Some(caller_id);
-    let same_action = parsed.get("action").and_then(|v| v.as_str()) == Some(action);
-    let same_hash = parsed.get("request_hash").and_then(|v| v.as_str()) == Some(req_hash);
-    if same_actor && same_action && same_hash {
-        Ok(true)
-    } else {
-        Err(ApiError::new(
-            ErrorCode::Conflict,
-            "operation_id reused with different actor, action, or parameters",
-        ))
-    }
-}
-
 enum StopExecutionOutcome {
     Closed(&'static str),
     Refused(String),
@@ -253,29 +228,12 @@ fn push_budget_event(
     });
 }
 
-fn mark_open_periods_kept_paused(agg: &mut BudgetAggregate) {
-    for p in &mut agg.periods {
-        if p.state == "open" {
-            p.kept_paused = true;
-        }
-    }
-}
-
-fn resolve_reached_notices(agg: &mut BudgetAggregate, now_utc: &str) {
-    for n in &mut agg.notices {
-        if n.kind == "budget_reached" && n.delivery_state != "resolved" {
-            n.delivery_state = "resolved".into();
-            n.resolved_at = Some(now_utc.to_owned());
-        }
-    }
-}
-
 fn save_budget_aggregate(
     office: &Office,
     agg: &BudgetAggregate,
 ) -> Result<Result<(), ApiError>, OfficeError> {
     let emp_kinds = collect_employee_kinds(office, agg)?;
-    office.budgets.save_aggregate(agg, &emp_kinds)
+    Ok(office.budgets.save_aggregate(agg, &emp_kinds)?)
 }
 
 fn collect_employee_kinds(

@@ -708,6 +708,9 @@ fn make_wake(
         summary: summary.into(),
         attachment_ids,
         enqueued_at_ms: now_ms(),
+        session_affinity: None,
+        model_override: None,
+        effort_override: None,
     }
 }
 

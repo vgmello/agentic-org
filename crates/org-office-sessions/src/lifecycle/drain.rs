@@ -34,6 +34,7 @@ pub(super) fn recycle_stale_warm_handle(
 pub(super) fn try_send_wake_on_live_handle(
     employee_id: &str,
     queue_task_id: Option<&str>,
+    turn_override: &crate::router::TurnModelOverride,
     turn: crate::pump::QueuedTurn,
     ctx: &TurnEndDrainCtx,
 ) -> Result<bool, WakeHoldReason> {
@@ -55,14 +56,27 @@ pub(super) fn try_send_wake_on_live_handle(
                 handle.oauth_expires_at_ms,
                 Arc::clone(&handle.active_permit),
                 handle.sandbox_plan.clone(),
+                handle.pinned_override.clone(),
             )
         })
     };
-    let Some((run_id, tx, conn_id, route_digest, oauth_expires_at_ms, active_permit, sandbox_plan)) =
-        handle_info
+    let Some((
+        run_id,
+        tx,
+        conn_id,
+        route_digest,
+        oauth_expires_at_ms,
+        active_permit,
+        sandbox_plan,
+        pinned_override,
+    )) = handle_info
     else {
         return Ok(false);
     };
+    if pinned_override != *turn_override {
+        recycle_stale_warm_handle(employee_id, &run_id, "model_or_effort_changed", ctx);
+        return Ok(false);
+    }
     if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
         recycle_stale_warm_handle(employee_id, &run_id, "oauth_token_expiring", ctx);
         return Ok(false);
@@ -94,6 +108,7 @@ pub(super) fn try_send_wake_on_live_handle(
         &active_permit,
         employee_id,
         queue_task_id,
+        turn_override,
     ) {
         Ok(permit) => permit,
         Err(LivePermitError::Stale) => {
@@ -176,9 +191,10 @@ pub(super) enum LivePermitError {
     Hold(WakeHoldReason),
 }
 
-/// Acquires a warm turn permit for a live handle: [`crate::router::acquire_warm_permit_for_office`]
-/// in production, which on a satellite is an HQ permit RPC (after worktree and bare-repository
-/// digest walks). The drain calls it with no employee lock held (`TASK-170`).
+/// Acquires a warm turn permit for a live handle:
+/// [`crate::router::acquire_warm_permit_for_office_with_override`] in production, which on a
+/// satellite is an HQ permit RPC (after worktree and bare-repository digest walks). The drain
+/// calls it with no employee lock held (`TASK-170`, `TASK-136`).
 pub(crate) type WarmPermitAcquirer = Arc<
     dyn Fn(
             &Office,
@@ -187,6 +203,7 @@ pub(crate) type WarmPermitAcquirer = Arc<
             &str,
             Option<&str>,
             Option<&str>,
+            Option<&crate::router::TurnModelOverride>,
         ) -> crate::router::WarmPermitOutcome
         + Send
         + Sync,
@@ -194,7 +211,7 @@ pub(crate) type WarmPermitAcquirer = Arc<
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "permit acquisition takes the acquirer, office, HQ port, route, permit slot, employee, and task"
+    reason = "permit acquisition takes the acquirer, office, HQ port, route, permit slot, employee, task, and model/effort override"
 )]
 pub(super) fn acquire_live_handle_permit(
     acquire_warm_permit: &WarmPermitAcquirer,
@@ -205,6 +222,7 @@ pub(super) fn acquire_live_handle_permit(
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
     employee_id: &str,
     task_id: Option<&str>,
+    turn_override: &crate::router::TurnModelOverride,
 ) -> Result<Option<(String, u64)>, LivePermitError> {
     let Some(cid) = conn_id else {
         return Ok(None);
@@ -216,7 +234,15 @@ pub(super) fn acquire_live_handle_permit(
     {
         return Ok(None);
     }
-    match acquire_warm_permit(office, hq_permits, cid, employee_id, task_id, route_digest) {
+    match acquire_warm_permit(
+        office,
+        hq_permits,
+        cid,
+        employee_id,
+        task_id,
+        route_digest,
+        Some(turn_override),
+    ) {
         crate::router::WarmPermitOutcome::Granted(p) => Ok(Some(p)),
         crate::router::WarmPermitOutcome::StaleWarm => Err(LivePermitError::Stale),
         crate::router::WarmPermitOutcome::Unavailable { .. } => {
@@ -243,21 +269,44 @@ pub(super) fn acquire_live_handle_permit(
 /// the same items in between. A wake withdrawn while the permit RPC runs may still reach the
 /// session in this turn (as on the cold-start path, `launch_claimed_wakes`); it is pruned from
 /// the durable queue either way.
-pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) {
-    if !ctx
+pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) -> bool {
+    if ctx
         .store
-        .pending_wakes_path(employee_id)
-        .is_ok_and(|p| p.exists())
+        .read_pending_wakes(employee_id)
+        .ok()
+        .flatten()
+        .is_none_or(|q| q.items.is_empty())
     {
-        return;
+        return false;
     }
     let Some(_dispatch_guard) = DispatchWakeGuard::try_acquire(&ctx.dispatching_wakes, employee_id)
     else {
-        return;
+        return false;
     };
     let Some(claim) = claim_live_drain_batch(employee_id, ctx) else {
-        return;
+        return false;
     };
+    if claim.requires_session_recycle {
+        let run_id = {
+            let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.get(employee_id).and_then(|h| {
+                h.state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .run_id
+                    .clone()
+            })
+        };
+        if let Some(run_id) = run_id {
+            return recycle_stale_warm_handle(
+                employee_id,
+                &run_id,
+                "session_affinity_requested",
+                ctx,
+            );
+        }
+        return false;
+    }
     if !claim.task_refs.is_empty() {
         if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
             let refs: Vec<&str> = claim.task_refs.iter().map(String::as_str).collect();
@@ -267,10 +316,22 @@ pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEn
     let sent = try_send_wake_on_live_handle(
         employee_id,
         claim.task_id.as_deref(),
+        &claim.turn_override,
         crate::pump::QueuedTurn::new(claim.objective.clone(), claim.attachment_ids.clone()),
         ctx,
     );
+    let busy_again = matches!(sent, Ok(true));
     commit_live_drain(employee_id, ctx, &claim, sent);
+    busy_again
+}
+
+/// Runs one turn-end drain using the production `turn_end_drain_ctx()` (`TASK-136` tests).
+#[cfg(test)]
+pub(crate) fn drain_pending_wakes_into_live_pump_for_test(
+    mgr: &SessionManager,
+    employee_id: &str,
+) -> bool {
+    drain_pending_wakes_into_live_pump(employee_id, &mgr.turn_end_drain_ctx())
 }
 
 /// Runs one turn-end drain for `employee_id` with `acquirer` standing in for the warm-permit
@@ -283,7 +344,7 @@ pub(crate) fn drain_into_live_pump_with_acquirer(
 ) {
     let mut ctx = mgr.turn_end_drain_ctx();
     ctx.acquire_warm_permit = acquirer;
-    drain_pending_wakes_into_live_pump(employee_id, &ctx);
+    let _ = drain_pending_wakes_into_live_pump(employee_id, &ctx);
 }
 
 /// Items claimed from the durable queue for one live-pump drain, with the provenance recorded in
@@ -295,8 +356,10 @@ pub(super) struct LiveDrainClaim {
     pub(super) task_id: Option<String>,
     pub(super) task_refs: Vec<String>,
     pub(super) person_triggered: bool,
+    pub(super) requires_session_recycle: bool,
     pub(super) trigger: serde_json::Value,
     pub(super) ts: u64,
+    pub(super) turn_override: crate::router::TurnModelOverride,
 }
 
 /// Phase 1 of the drain, under the employee lock: reads the queue, applies every hold that
@@ -382,6 +445,12 @@ pub(super) fn claim_live_drain_batch(
         "at": rfc3339_now(),
     });
     let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
+    let requires_session_recycle = queue.items.iter().any(|i| i.session_affinity.is_some());
+    let Ok(turn_override) = crate::wake::extract_wake_model_override(&queue.items) else {
+        queue.set_hold(WakeHoldReason::AdmissionRefused, ts, None);
+        let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
+        return None;
+    };
     Some(LiveDrainClaim {
         item_ids: queue.items.iter().map(|i| i.item_id.clone()).collect(),
         objective,
@@ -389,8 +458,10 @@ pub(super) fn claim_live_drain_batch(
         task_id,
         task_refs: task_refs_owned,
         person_triggered,
+        requires_session_recycle,
         trigger,
         ts,
+        turn_override,
     })
 }
 
@@ -510,7 +581,9 @@ impl SessionManager {
             office: Arc::clone(&self.office),
             sandbox_runner: Arc::clone(&self.sandbox_runner),
             hq_permits: self.config.hq_permits.clone(),
-            acquire_warm_permit: Arc::new(crate::router::acquire_warm_permit_for_office),
+            acquire_warm_permit: Arc::new(
+                crate::router::acquire_warm_permit_for_office_with_override,
+            ),
             weak_mgr: self.weak_self(),
             hourly_limit: self.config.hourly_wake_limit,
             window_ms: self.config.wake_window.as_millis() as u64,

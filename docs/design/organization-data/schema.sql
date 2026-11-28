@@ -449,7 +449,10 @@ CREATE TABLE tasks (
   effort INTEGER CHECK (effort >= 0),
   severity TEXT,
   resolution TEXT,
-  blocked_reason TEXT,
+  blocked_reason TEXT CHECK (blocked_reason IS NULL OR (
+    length(trim(blocked_reason, char(9, 10, 13, 32))) > 0 AND length(blocked_reason) <= 1000)),
+  blocked_since TEXT,
+  waiting_on_owner INTEGER NOT NULL DEFAULT 0 CHECK (waiting_on_owner IN (0, 1)),
   rank_order INTEGER CHECK (rank_order >= 0),
   -- TASK-88: the attributed closing summary, set on close or by `tasks.final_summary` only.
   final_summary TEXT CHECK (final_summary IS NULL OR (
@@ -465,6 +468,9 @@ CREATE TABLE tasks (
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
+  CHECK (blocked_reason IS NULL OR status = 'blocked'),
+  CHECK (blocked_since IS NULL OR status = 'blocked'),
+  CHECK (waiting_on_owner = 0 OR status = 'blocked'),
   CHECK ((final_summary IS NULL AND final_summary_at IS NULL AND final_summary_by_kind IS NULL
           AND final_summary_by_id IS NULL)
       OR (final_summary IS NOT NULL AND final_summary_at IS NOT NULL
@@ -726,6 +732,34 @@ CREATE TABLE hire_requests (
   FOREIGN KEY (organization_id, home_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, role_id) REFERENCES roles(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE team_limit_requests (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'approved', 'denied')),
+  team_id TEXT NOT NULL,
+  requested_by_employee_id TEXT NOT NULL,
+  approver_employee_id TEXT NOT NULL,
+  current_max_members INTEGER NOT NULL CHECK (current_max_members BETWEEN 1 AND 100),
+  requested_max_members INTEGER NOT NULL CHECK (requested_max_members BETWEEN 1 AND 100),
+  reason TEXT NOT NULL CHECK (length(reason) > 0),
+  decision_reason TEXT,
+  decided_by_employee_id TEXT,
+  decided_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id),
+  CHECK (requested_max_members > current_max_members),
+  CHECK ((state = 'pending') = (decided_by_employee_id IS NULL)),
+  CHECK ((state = 'pending') = (decided_at IS NULL)),
+  CHECK (state <> 'pending' OR decision_reason IS NULL),
+  FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, requested_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, approver_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, decided_by_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE watchers (
@@ -2681,6 +2715,15 @@ BEGIN
   SELECT RAISE(ABORT, 'terminal hire request is immutable');
 END;
 
+CREATE INDEX team_limit_requests_by_team_state ON team_limit_requests(organization_id, team_id, state);
+CREATE INDEX team_limit_requests_by_approver ON team_limit_requests(organization_id, approver_employee_id, state);
+
+CREATE TRIGGER team_limit_request_terminal_immutable BEFORE UPDATE ON team_limit_requests
+WHEN OLD.state IN ('approved', 'denied')
+BEGIN
+  SELECT RAISE(ABORT, 'terminal team limit request is immutable');
+END;
+
 CREATE TRIGGER office_codes_immutable BEFORE UPDATE ON office_codes
 WHEN NEW.organization_id <> OLD.organization_id OR NEW.code <> OLD.code
   OR NEW.office_id <> OLD.office_id OR NEW.issued_at <> OLD.issued_at
@@ -2853,37 +2896,91 @@ CREATE TABLE review_reviewers (
 CREATE TRIGGER review_reviewers_independent_insert BEFORE INSERT ON review_reviewers
 WHEN NEW.removed = 0
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM reviews r
     WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
-      AND r.independent = 1 AND r.created_by = NEW.reviewer_id
+      AND r.independent = 1
+      AND (
+        r.created_by = NEW.reviewer_id
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.review_id
+            AND rd.round_number = NEW.round_number AND rd.submitted_by = NEW.reviewer_id
+        )
+      )
   );
 END;
-CREATE TRIGGER review_reviewers_independent_update BEFORE UPDATE OF organization_id, review_id, reviewer_id, removed ON review_reviewers
+CREATE TRIGGER review_reviewers_independent_update BEFORE UPDATE OF organization_id, review_id, round_number, reviewer_id, removed ON review_reviewers
 WHEN NEW.removed = 0
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM reviews r
     WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
-      AND r.independent = 1 AND r.created_by = NEW.reviewer_id
+      AND r.independent = 1
+      AND (
+        r.created_by = NEW.reviewer_id
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.review_id
+            AND rd.round_number = NEW.round_number AND rd.submitted_by = NEW.reviewer_id
+        )
+      )
   );
 END;
 CREATE TRIGGER reviews_independent_after_insert AFTER INSERT ON reviews
 WHEN NEW.independent = 1
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM review_reviewers rr
     WHERE rr.organization_id = NEW.organization_id AND rr.review_id = NEW.id
-      AND rr.removed = 0 AND rr.reviewer_id = NEW.created_by
+      AND rr.removed = 0
+      AND (
+        rr.reviewer_id = NEW.created_by
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.id
+            AND rd.round_number = rr.round_number AND rd.submitted_by = rr.reviewer_id
+        )
+      )
   );
 END;
 CREATE TRIGGER reviews_independent_after_update AFTER UPDATE OF independent, created_by ON reviews
 WHEN NEW.independent = 1
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM review_reviewers rr
     WHERE rr.organization_id = NEW.organization_id AND rr.review_id = NEW.id
-      AND rr.removed = 0 AND rr.reviewer_id = NEW.created_by
+      AND rr.removed = 0
+      AND (
+        rr.reviewer_id = NEW.created_by
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.id
+            AND rd.round_number = rr.round_number AND rd.submitted_by = rr.reviewer_id
+        )
+      )
+  );
+END;
+CREATE TRIGGER review_rounds_independent_after_insert AFTER INSERT ON review_rounds
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
+    SELECT 1 FROM reviews r
+    JOIN review_reviewers rr
+      ON rr.organization_id = r.organization_id AND rr.review_id = r.id
+    WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
+      AND r.independent = 1 AND rr.round_number = NEW.round_number
+      AND rr.removed = 0 AND rr.reviewer_id = NEW.submitted_by
+  );
+END;
+CREATE TRIGGER review_rounds_independent_after_update AFTER UPDATE OF submitted_by ON review_rounds
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
+    SELECT 1 FROM reviews r
+    JOIN review_reviewers rr
+      ON rr.organization_id = r.organization_id AND rr.review_id = r.id
+    WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
+      AND r.independent = 1 AND rr.round_number = NEW.round_number
+      AND rr.removed = 0 AND rr.reviewer_id = NEW.submitted_by
   );
 END;
 

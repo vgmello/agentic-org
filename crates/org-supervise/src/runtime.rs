@@ -161,6 +161,12 @@ const REVIEWED_ENV_SWITCHES: &[&str] = &[
     "AGY_DISABLE_AUTOUPDATE",
     "AGY_SUBPROCESS_ENV_SCRUB",
     "AGY_CONFIG_DIR",
+    "NO_COLOR",
+    "GEMINI_TELEMETRY_ENABLED",
+    "GEMINI_CLI_HOME",
+    "GEMINI_SYSTEM_MD",
+    "KIMI_SHARE_DIR",
+    "PI_CODING_AGENT_DIR",
 ];
 
 /// The runtime-only lifecycle metadata, retained for the pump/stop layer.

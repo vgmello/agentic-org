@@ -27,6 +27,7 @@ fn binding_debug_redacts_session_token() {
         session_token: Some("super-secret-session-token".into()),
         agent_id: Some("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into()),
         external_state: None,
+        ..Binding::default()
     };
     let rendered = format!("{binding:?}");
     assert!(

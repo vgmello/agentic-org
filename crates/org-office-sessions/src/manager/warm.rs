@@ -27,6 +27,9 @@ pub(crate) struct StartReservation {
 
 pub(crate) struct LaunchRouteOpts<'a> {
     pub(super) resume_runtime_session_id: Option<&'a str>,
+    pub(super) force_fresh: bool,
+    pub(super) enforce_affinity_guard: bool,
+    pub(super) allow_sandbox_spec_change: bool,
     pub(super) task_ref: Option<&'a str>,
     pub(super) is_failover_switch: bool,
     pub(super) oauth_refresh_attempted: bool,
@@ -37,6 +40,7 @@ pub(crate) struct LaunchRouteOpts<'a> {
     /// The Chief of Staff partition the run serves, and so the caller its binding acts for
     /// (`TASK-80.1`); `None` for anyone else.
     pub(crate) partition: Option<PartitionKey>,
+    pub(crate) turn_override: crate::router::TurnModelOverride,
 }
 
 impl<'a> LaunchRouteOpts<'a> {
@@ -46,9 +50,13 @@ impl<'a> LaunchRouteOpts<'a> {
         task_ref: Option<&'a str>,
         start_stop_epoch: u64,
         partition: Option<PartitionKey>,
+        turn_override: crate::router::TurnModelOverride,
     ) -> Self {
         Self {
             resume_runtime_session_id,
+            force_fresh: false,
+            enforce_affinity_guard: false,
+            allow_sandbox_spec_change: false,
             task_ref,
             is_failover_switch: false,
             oauth_refresh_attempted: false,
@@ -56,7 +64,20 @@ impl<'a> LaunchRouteOpts<'a> {
             tried_connections: Vec::new(),
             start_stop_epoch,
             partition,
+            turn_override,
         }
+    }
+
+    pub(super) fn with_affinity(
+        mut self,
+        force_fresh: bool,
+        enforce_affinity_guard: bool,
+        allow_sandbox_spec_change: bool,
+    ) -> Self {
+        self.force_fresh = force_fresh;
+        self.enforce_affinity_guard = enforce_affinity_guard;
+        self.allow_sandbox_spec_change = allow_sandbox_spec_change;
+        self
     }
 }
 
@@ -71,6 +92,7 @@ pub(super) struct WarmHandleTurn<'a> {
     pub(super) text: String,
     pub(super) attachment_ids: Vec<String>,
     pub(super) start_stop_epoch: u64,
+    pub(super) turn_override: &'a crate::router::TurnModelOverride,
 }
 
 /// Results of a warm handle's disk and SQLite freshness checks, run with no lock held.
@@ -147,7 +169,14 @@ pub(super) fn dispatch_warm_handle_turn(
     if needs_permit {
         let cid = turn.conn_id.as_deref().unwrap_or_default();
         let digest = (!turn.route_digest.is_empty()).then_some(turn.route_digest.as_str());
-        match acquire_or_reroute_warm_permit(mgr, cid, turn.emp_id, turn.task_ref, digest) {
+        match acquire_or_reroute_warm_permit(
+            mgr,
+            cid,
+            turn.emp_id,
+            turn.task_ref,
+            digest,
+            turn.turn_override,
+        ) {
             Ok(Ok(granted)) => {
                 installed_pid = install_warm_permit(mgr, &turn.active_permit, granted)
             }
@@ -353,14 +382,16 @@ pub(super) fn acquire_or_reroute_warm_permit(
     emp_id: &str,
     task_ref: Option<&str>,
     route_digest: Option<&str>,
+    turn_override: &crate::router::TurnModelOverride,
 ) -> Result<Result<(String, u64), Option<LiveSessionHandle>>, ApiError> {
-    match crate::router::acquire_warm_permit_for_office(
+    match crate::router::acquire_warm_permit_for_office_with_override(
         &mgr.office,
         mgr.config.hq_permits.as_deref(),
         cid,
         emp_id,
         task_ref,
         route_digest,
+        Some(turn_override),
     ) {
         crate::router::WarmPermitOutcome::Granted(p) => Ok(Ok(p)),
         crate::router::WarmPermitOutcome::Refused(err) => Err(err),
@@ -397,6 +428,7 @@ pub(super) fn acquire_or_reroute_warm_permit(
 pub(super) fn warm_handle_stop_reason(
     handle: &LiveSessionHandle,
     requested_workspace: Option<&str>,
+    requested_override: &crate::router::TurnModelOverride,
     state: SessionState,
     freshness: WarmFreshness,
 ) -> Option<&'static str> {
@@ -405,6 +437,9 @@ pub(super) fn warm_handle_stop_reason(
     }
     if state != SessionState::Idle {
         return None;
+    }
+    if handle.pinned_override != *requested_override {
+        return Some("model_or_effort_changed");
     }
     if freshness.sandbox_topology_stale {
         return Some("sandbox_topology_changed");

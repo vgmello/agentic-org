@@ -162,23 +162,70 @@ fn allows_host_subscription_auth_blocks_oauth_injected_runtimes_and_enforces_mod
 
     let claude = org_agent_runtime_claude::ClaudeRuntime::new();
     let codex = org_agent_runtime_codex::CodexRuntime::new();
-    let agy = org_agent_runtime_agy::AgyRuntime::new();
+    let agy = org_agent_runtime_acp::AgyRuntime::new();
+    let gemini = org_agent_runtime_acp::GeminiRuntime::new();
+    let kimi = org_agent_runtime_acp::KimiRuntime::new();
+    let pi = org_agent_runtime_acp::PiRuntime::new();
 
-    // OAuth-injected runtimes (Claude) NEVER fall back to ambient host credentials.
-    assert!(claude.host_profile().uses_host_oauth_token_injection);
-    assert!(!allows_host_subscription_auth(
-        &[],
-        None,
-        claude.host_profile().uses_host_oauth_token_injection
-    ));
-    assert!(!allows_host_subscription_auth(
-        &[],
-        Some(ProviderAuthMode::SubscriptionCli),
-        claude.host_profile().uses_host_oauth_token_injection
-    ));
-    assert!(host_config_dir_for(claude.host_profile().host_config_subdir, true).is_none());
+    // Vault-only OAuth-injected runtimes (Claude, Gemini, Kimi, Pi) NEVER fall back to ambient
+    // host credentials or mount host config directories.
+    let vault_only_runtimes: [&dyn org_agent_runtime::AgentRuntime; 4] =
+        [&claude, &gemini, &kimi, &pi];
+    for rt in vault_only_runtimes {
+        let profile = rt.host_profile();
+        assert!(
+            profile.uses_host_oauth_token_injection,
+            "{} must require vault credentials",
+            rt.id()
+        );
+        assert!(
+            profile.host_config_subdir.is_none(),
+            "{} must never declare a host_config_subdir",
+            rt.id()
+        );
+        assert!(!allows_host_subscription_auth(
+            &[],
+            None,
+            profile.uses_host_oauth_token_injection
+        ));
+        assert!(!allows_host_subscription_auth(
+            &[],
+            Some(ProviderAuthMode::SubscriptionCli),
+            profile.uses_host_oauth_token_injection
+        ));
+        assert!(host_config_dir_for(profile.host_config_subdir, true).is_none());
+    }
+
+    // Missing vault credential for SubscriptionCli fails closed for Gemini, Kimi, and Pi.
+    let dir = tempfile::tempdir().unwrap();
+    let empty_vault = test_vault(dir.path());
+    let noop = VaultRefreshCoordinator::noop();
+    let now = 2_000_000_000_000u64;
+    for rt in vault_only_runtimes {
+        let res = super::resolve_connection_vault_auth(
+            &empty_vault,
+            &noop,
+            rt,
+            "conn-empty",
+            rt.id().as_str(),
+            ProviderAuthMode::SubscriptionCli,
+            now,
+        );
+        assert!(
+            matches!(
+                res,
+                Err(super::ConnectionAuthError::VaultAuth(
+                    VaultAuthError::MissingCredential
+                ))
+            ),
+            "{} must fail closed on missing vault credential instead of falling back to host",
+            rt.id()
+        );
+    }
 
     // Non-OAuth-injected runtimes (Codex/Agy) respect mode and empty-vault checks.
+    assert!(!codex.host_profile().uses_host_oauth_token_injection);
+    assert!(!agy.host_profile().uses_host_oauth_token_injection);
     assert!(allows_host_subscription_auth(&[], None, false));
     assert!(allows_host_subscription_auth(
         &[],

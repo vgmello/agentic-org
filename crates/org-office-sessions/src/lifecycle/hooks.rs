@@ -41,6 +41,7 @@ impl SessionManager {
         oauth_expires_at_ms: Option<u64>,
         sandbox_plan: SandboxPlan,
         partitioned: bool,
+        turn_override: crate::router::TurnModelOverride,
     ) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
@@ -90,20 +91,15 @@ impl SessionManager {
         });
 
         let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
-            build_permit_hooks(self, employee_id, route_digest, oauth_expires_at_ms);
-
-        let rl_office = Arc::clone(&self.office);
-        let rl_hq_permits = self.config.hq_permits.clone();
-        let on_rate_limit: RateLimitHook = Arc::new(move |conn_id, resets_at| {
-            let _ = rl_office.record_connection_cooldown_internal(conn_id, None, resets_at, None);
-            crate::router::report_cooldown_any(
-                &rl_office,
-                rl_hq_permits.as_deref(),
-                conn_id,
-                resets_at,
-                Some("rate_limited"),
+            build_permit_hooks(
+                self,
+                employee_id,
+                route_digest,
+                oauth_expires_at_ms,
+                turn_override,
             );
-        });
+
+        let on_rate_limit = build_rate_limit_hook(self);
 
         let failover_weak = self.weak_self();
         let on_failover: FailoverHook = Arc::new(move |req| {
@@ -137,8 +133,39 @@ impl SessionManager {
             stage_mid_turn_wakes: (!partitioned).then_some(stage_mid_turn_wakes),
             on_mid_turn_delivered: (!partitioned).then_some(on_mid_turn_delivered),
             is_sandbox_topology_stale,
+            on_approval_changed: Some(build_approval_changed_hook(&self.approval_change_hook)),
         }
     }
+}
+
+fn build_approval_changed_hook(
+    slot: &Arc<Mutex<Option<crate::manager::ApprovalChangeHook>>>,
+) -> crate::pump::ApprovalChangedHook {
+    let approval_hook = Arc::clone(slot);
+    Arc::new(move || {
+        let cb = approval_hook
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(cb) = cb {
+            cb();
+        }
+    })
+}
+
+fn build_rate_limit_hook(mgr: &SessionManager) -> RateLimitHook {
+    let rl_office = Arc::clone(&mgr.office);
+    let rl_hq_permits = mgr.config.hq_permits.clone();
+    Arc::new(move |conn_id, resets_at| {
+        let _ = rl_office.record_connection_cooldown_internal(conn_id, None, resets_at, None);
+        crate::router::report_cooldown_any(
+            &rl_office,
+            rl_hq_permits.as_deref(),
+            conn_id,
+            resets_at,
+            Some("rate_limited"),
+        );
+    })
 }
 
 /// The turn-end hook: settles the turn's usage and budget holds, then hands queued wakes on.
@@ -148,15 +175,21 @@ impl SessionManager {
 fn build_turn_ended_hook(mgr: &SessionManager, partitioned: bool) -> TurnEndedHook {
     let drain_ctx = mgr.turn_end_drain_ctx();
     Arc::new(move |emp_id: &str| {
-        if let Some(mgr) = drain_ctx.weak_mgr.as_ref().and_then(|weak| weak.upgrade()) {
-            mgr.hibernation
-                .note_turn_idle(emp_id, std::time::Instant::now());
-        }
         let _ = flush_pending_usage(&drain_ctx.office, &drain_ctx.store, emp_id);
         let _ = drain_ctx.office.mark_budget_holds_stopped(emp_id);
         if !partitioned {
-            drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
+            let busy_again = drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
+            if !busy_again {
+                if let Some(mgr) = drain_ctx.weak_mgr.as_ref().and_then(|weak| weak.upgrade()) {
+                    mgr.hibernation
+                        .note_turn_idle(emp_id, std::time::Instant::now());
+                }
+            }
             return;
+        }
+        if let Some(mgr) = drain_ctx.weak_mgr.as_ref().and_then(|weak| weak.upgrade()) {
+            mgr.hibernation
+                .note_turn_idle(emp_id, std::time::Instant::now());
         }
         let queued = drain_ctx
             .store
@@ -429,6 +462,7 @@ pub(super) fn build_permit_hooks(
     employee_id: &str,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
+    turn_override: crate::router::TurnModelOverride,
 ) -> (
     PermitAcquireHook,
     PermitRenewHook,
@@ -443,13 +477,14 @@ pub(super) fn build_permit_hooks(
             return Err("WARM_ROUTE_STALE: oauth token expiring".into());
         }
         let digest = (!route_digest.is_empty()).then_some(route_digest.as_str());
-        match crate::router::acquire_warm_permit_for_office(
+        match crate::router::acquire_warm_permit_for_office_with_override(
             &acq_office,
             acq_hq_permits.as_deref(),
             conn_id,
             &acq_emp,
             task_id,
             digest,
+            Some(&turn_override),
         ) {
             crate::router::WarmPermitOutcome::Granted(p) => Ok(p),
             crate::router::WarmPermitOutcome::StaleWarm => {

@@ -10,6 +10,9 @@ use crate::Call;
 /// first. Absent means the runtime's default. Anything else is refused as `InvalidRequest`.
 pub const AGENT_EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
+/// Alias for [`AGENT_EFFORT_LEVELS`] used by per-task/per-turn effort routing (`TASK-136`).
+pub const EFFORT_LEVELS: [&str; 5] = AGENT_EFFORT_LEVELS;
+
 /// A role record returned by `role.list` and `role.inspect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleRecord {
@@ -511,6 +514,14 @@ impl Call for ModelProfileList {
     type Params = ModelProfileListParams;
     type Result = ModelProfileListResult;
 }
+
+mod team_limits;
+pub use team_limits::{
+    format_team_full_hint, TeamFullHintInput, TeamLimitRequestCreate, TeamLimitRequestCreateParams,
+    TeamLimitRequestDecide, TeamLimitRequestDecideParams, TeamLimitRequestList,
+    TeamLimitRequestListParams, TeamLimitRequestListResult, TeamLimitRequestOpResult,
+    TeamLimitRequestRecord, MAX_SUGGESTED_OPEN_TEAMS,
+};
 
 #[cfg(test)]
 mod tests;

@@ -53,10 +53,13 @@ impl FamilyTable for TasksTables {
         }
         for (id, t) in &self.tasks {
             lines.push(format!(
-                "task {id} key={} rev={} status={} order={:?} labels={:?}",
+                "task {id} key={} rev={} status={} blocked_reason={:?} blocked_since={:?} waiting_on_owner={} order={:?} labels={:?}",
                 t.key(),
                 t.meta.revision,
                 t.status.as_str(),
+                t.blocked_reason,
+                t.blocked_since,
+                t.waiting_on_owner,
                 t.rank_order,
                 t.labels
             ));

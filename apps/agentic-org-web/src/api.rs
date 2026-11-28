@@ -11,6 +11,7 @@
 mod account_routes;
 mod attachment_routes;
 mod chat_routes;
+mod copilot_routes;
 mod cost_routes;
 mod doc_routes;
 mod external_auth_routes;
@@ -24,6 +25,7 @@ mod open_routes;
 mod org_routes;
 mod process_routes;
 mod provider_routes;
+mod review_routes;
 mod search_routes;
 mod session_routes;
 mod task_routes;
@@ -190,12 +192,14 @@ pub enum Route {
     Process(process_routes::ProcessRoute),
     Docs(doc_routes::DocRoute),
     Search(search_routes::SearchRoute),
+    Copilot(copilot_routes::CopilotRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
     OfficeFederation(office_routes::OfficeFederationRoute),
     Attachments(attachment_routes::AttachmentRoute),
     Tess(tess_routes::TessRoute),
     ExternalAuth(external_auth_routes::ExternalAuthRoute),
+    Reviews(review_routes::ReviewRoute),
 }
 
 pub enum Call {
@@ -237,12 +241,14 @@ pub enum Call {
     Process(process_routes::ProcessCall),
     Docs(doc_routes::DocCall),
     Search(search_routes::SearchCall),
+    Copilot(copilot_routes::CopilotCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),
     OfficeFederation(office_routes::OfficeFederationCall),
     Attachments(attachment_routes::AttachmentCall),
     Tess(tess_routes::TessCall),
     ExternalAuth(external_auth_routes::ExternalAuthCall),
+    Reviews(review_routes::ReviewCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.

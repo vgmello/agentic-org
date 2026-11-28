@@ -21,8 +21,8 @@ pub mod validation;
 pub use features::ReviewInspectSections;
 pub use files::ReviewFiles;
 pub use ports::{
-    ReviewActorInfo, ReviewContextRead, ReviewListQuery, ReviewProjectInfo, ReviewTaskInfo,
-    ReviewsEngine, ReviewsRead, ReviewsWrite,
+    ReviewActorInfo, ReviewAttachmentInfo, ReviewContextRead, ReviewListQuery, ReviewProjectInfo,
+    ReviewTaskInfo, ReviewsEngine, ReviewsRead, ReviewsWrite,
 };
 pub use records::{
     compute_review_status, has_open_blocker, parse_review_key, OfficeReviewCounterRecord,

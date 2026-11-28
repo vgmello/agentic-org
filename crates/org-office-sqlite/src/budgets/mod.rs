@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
-use org_office::budgets::BudgetAggregate;
+use org_budgets::{BudgetAggregate, BudgetError};
 use org_office::private_fs::{absolute, private_dir, private_dir_synced, sync_dir, tighten_dir};
 use org_office::storage_layout as layout;
 use org_office::OfficeError;
@@ -50,7 +50,7 @@ PRAGMA busy_timeout = 5000;
 
 /// Isolated durable + SQLite [`BudgetStore`].
 ///
-/// [`BudgetStore`]: org_office::budgets::BudgetStore
+/// [`BudgetStore`]: org_budgets::BudgetStore
 pub struct SqliteBudgetStore {
     durable_root: PathBuf,
     needs_reconcile: AtomicBool,
@@ -82,7 +82,9 @@ impl SqliteBudgetStore {
             BUDGETS_ADAPTER_FORMAT,
             &full_ddl,
             BUDGETS_PRAGMAS,
-            |conn| reconcile_durable_conn(conn, &durable_budgets, org_id),
+            |conn| {
+                reconcile_durable_conn(conn, &durable_budgets, org_id).map_err(OfficeError::from)
+            },
         )?;
 
         Ok(Self {
@@ -92,13 +94,13 @@ impl SqliteBudgetStore {
         })
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, OfficeError> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, BudgetError> {
         self.conn
             .lock()
-            .map_err(|_| OfficeError::Invalid("budgets sqlite connection poisoned"))
+            .map_err(|_| BudgetError::Invalid("budgets sqlite connection poisoned"))
     }
 
-    fn ensure_reconciled(&self, conn: &mut Connection, org_id: &str) -> Result<(), OfficeError> {
+    fn ensure_reconciled(&self, conn: &mut Connection, org_id: &str) -> Result<(), BudgetError> {
         if self.needs_reconcile.load(Ordering::Acquire) {
             reconcile_durable_conn(conn, &self.durable_root, org_id)?;
             self.needs_reconcile.store(false, Ordering::Release);
@@ -106,20 +108,20 @@ impl SqliteBudgetStore {
         Ok(())
     }
 
-    fn write_durable(&self, agg: &BudgetAggregate) -> Result<(), OfficeError> {
+    fn write_durable(&self, agg: &BudgetAggregate) -> Result<(), BudgetError> {
         let dir = self.durable_root.join(&agg.budget.id);
-        private_dir_synced(&self.durable_root, &dir).map_err(OfficeError::storage)?;
+        private_dir_synced(&self.durable_root, &dir).map_err(BudgetError::storage)?;
         let agg_path = dir.join("aggregate.v1.json");
         if agg_path.is_file() {
             // Historical committed versions are immutable: fail closed if an update tries to
             // alter any already-committed policy revision (`TASK-97` / Pass 2 Finding #2).
             let prev: BudgetAggregate =
-                serde_json::from_slice(&fs::read(&agg_path).map_err(OfficeError::storage)?)
-                    .map_err(OfficeError::storage)?;
+                serde_json::from_slice(&fs::read(&agg_path).map_err(BudgetError::storage)?)
+                    .map_err(BudgetError::storage)?;
             for old_ver in &prev.versions {
                 let matched = agg.versions.iter().find(|v| v.revision == old_ver.revision);
                 if matched != Some(old_ver) {
-                    return Err(OfficeError::Invalid(
+                    return Err(BudgetError::Invalid(
                         "conflicting immutable budget policy version",
                     ));
                 }
@@ -128,6 +130,6 @@ impl SqliteBudgetStore {
         // Single atomic rename + `F_FULLFSYNC` publishes budget, versions, periods, events,
         // notices, and holds together with zero torn-child window (`TASK-97` / Pass 2 Finding #2).
         write_json_atomic(&agg_path, agg)?;
-        sync_dir(&self.durable_root).map_err(OfficeError::storage)
+        sync_dir(&self.durable_root).map_err(BudgetError::storage)
     }
 }

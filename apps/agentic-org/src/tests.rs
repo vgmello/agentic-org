@@ -29,13 +29,18 @@ fn help_subcommand_routes_to_command_help() {
         &["help", "org", "create"],
         &["help", "office"],
         &["help", "office", "invite"],
+        &["help", "office", "metrics"],
         &["help", "project", "create"],
         &["help", "provider", "bind"],
+        &["help", "release", "verify"],
         &["help", "release", "install"],
         &["help", "msg"],
         &["help", "agent", "bind"],
         &["help", "agent", "renew"],
         &["help", "agent", "sessions"],
+        &["help", "repo", "set-credential"],
+        &["help", "repo", "credential-status"],
+        &["help", "repo", "revoke-credential"],
         &["help", "task", "create"],
         &["help", "who"],
         &["help", "sign-in"],
@@ -43,6 +48,7 @@ fn help_subcommand_routes_to_command_help() {
         &["help", "recovery"],
         &["help", "admin", "tls", "set"],
         &["help", "service", "status"],
+        &["help", "instance", "rebind"],
         &["help", "status"],
         &["help", "logs"],
         &["help", "doctor"],
@@ -151,9 +157,16 @@ fn cli_reference_documents_every_top_level_and_office_command() {
         "worktree",
         "task",
         "checklist",
-        "task-note",
+        "note",
+        "review",
+        "search",
         "service",
+        "instance",
         "status",
+        "logs",
+        "doctor",
+        "support",
+        "uninstall",
         "completion",
         "recovery",
         "backup",
@@ -167,6 +180,8 @@ fn cli_reference_documents_every_top_level_and_office_command() {
     for sub in ["start", "stop", "status"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org service {sub}"));
     }
+    assert_cli_reference_entry_has_use_when("`agentic-org instance rebind");
+    assert_cli_reference_entry_has_use_when("`agentic-org release verify");
     for sub in ["show", "use", "clear"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org context {sub}"));
     }
@@ -197,6 +212,7 @@ fn cli_reference_documents_every_top_level_and_office_command() {
         "cancel",
         "remove",
         "sync-status",
+        "metrics",
         "join",
         "remove-pending",
         "re-enroll",
@@ -221,7 +237,9 @@ fn cli_reference_documents_every_top_level_and_office_command() {
         "`agent-os channel",
         "`agent-os task ",
         "`agent-os checklist",
-        "`agent-os task-note",
+        "`agent-os note",
+        "`agent-os review",
+        "`agent-os search",
         "`agent-os repo",
         "`agent-os worktree",
         "`agent-os status",

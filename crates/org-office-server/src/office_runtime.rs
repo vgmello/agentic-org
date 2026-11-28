@@ -94,12 +94,28 @@ struct PreparedOfficeRuntime {
 }
 
 /// HQ's inbox over `office`, with every source registered here, in the composition root: the
-/// organization (the inbox's own), the mailbox and the budget. `inbox` imports neither
-/// `mailbox_store` nor `cost_calls`; both implement its `Source` contract.
+/// organization (the inbox's own), the mailbox, the budget, and (when a session manager is
+/// supplied) live pending tool approvals (`TASK-102`). `inbox` imports neither `mailbox_store`
+/// nor `cost_calls`; both implement its `Source` contract.
+#[cfg(test)]
 pub(crate) fn hq_inbox(office: Arc<Office>) -> std::io::Result<inbox::Hq> {
+    hq_inbox_with_sessions(office, None)
+}
+
+pub(crate) fn hq_inbox_with_sessions(
+    office: Arc<Office>,
+    sessions: Option<Arc<org_office_sessions::SessionManager>>,
+) -> std::io::Result<inbox::Hq> {
     let mailbox = crate::mailbox_store::MailboxInboxSource::new(Arc::clone(&office));
     let budget = crate::cost_calls::BudgetInboxSource::new(Arc::clone(&office));
-    inbox::Hq::new(office, vec![Arc::new(mailbox), Arc::new(budget)])
+    let mut sources: Vec<Arc<dyn inbox::Source>> = vec![Arc::new(mailbox), Arc::new(budget)];
+    if let Some(sessions) = sessions {
+        sources.push(Arc::new(inbox::PendingApprovalsInboxSource::new(
+            Arc::clone(&office),
+            sessions,
+        )));
+    }
+    inbox::Hq::new(office, sources)
 }
 
 fn prepare_office_runtime(
@@ -117,9 +133,12 @@ fn prepare_office_runtime(
         Box::new(move || live_wake.notify()),
         office.owner_member_id().to_owned(),
     ));
-    let inbox = match hq_inbox(Arc::clone(office)) {
+    let session_manager = start_session_manager_with_runtimes(Arc::clone(office), socket, runtimes);
+    let inbox = match hq_inbox_with_sessions(Arc::clone(office), Some(Arc::clone(&session_manager)))
+    {
         Ok(inbox) => inbox,
         Err(error) => {
+            session_manager.shutdown("inbox initialization failed");
             eprintln!("agentic-org-office: inbox clock initialization failed: {error}");
             log_causes(&error);
             let _ = std::fs::remove_file(socket);
@@ -131,7 +150,6 @@ fn prepare_office_runtime(
             return None;
         }
     };
-    let session_manager = start_session_manager_with_runtimes(Arc::clone(office), socket, runtimes);
     let channel_watcher = start_channel_watcher(Arc::clone(office), &session_manager);
     let sat_sync_wake = Arc::new(SatSyncWake::default());
     let hq_fed_slot: HqFederationSlot = Arc::default();

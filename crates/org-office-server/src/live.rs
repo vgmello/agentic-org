@@ -33,6 +33,9 @@ pub(crate) enum Live {
     Received(Box<MessageReceivedData>),
     StateChanged(MessageStateChangedData),
     InboxChanged(org_proto::inbox::InboxChangedData),
+    /// A committed domain mutation (such as a review change) that refreshes browser
+    /// organization/review views via `org.changed` (`TASK-92.2`).
+    OrgChanged(u64),
 }
 
 /// What a reader got from [`LiveEvents::since`].
@@ -73,6 +76,7 @@ pub(crate) struct LiveEvents {
     presence: Mutex<Presence>,
     wake: Box<dyn Fn() + Send + Sync>,
     mailbox_changes: AtomicU64,
+    org_changes: AtomicU64,
     owner_member_id: Option<String>,
 }
 
@@ -102,6 +106,7 @@ impl LiveEvents {
             }),
             wake,
             mailbox_changes: AtomicU64::new(0),
+            org_changes: AtomicU64::new(0),
             owner_member_id,
         }
     }
@@ -110,10 +115,28 @@ impl LiveEvents {
         self.mailbox_changes.load(Ordering::Acquire)
     }
 
-    /// Marks one committed change relevant to the owner's mailbox so `inbox::Hint` recounts.
-    pub(crate) fn record_mailbox_change(&self) {
+    #[cfg(test)]
+    pub(crate) fn org_changed_head(&self) -> u64 {
+        self.org_changes.load(Ordering::Acquire)
+    }
+
+    /// Marks one committed change to an Inbox source (owner mailbox, pending tool approval,
+    /// budget hold, or review) so `inbox::Hint` recounts and emits `inbox.changed` (`TASK-102`).
+    pub(crate) fn record_inbox_changed(&self) {
         self.mailbox_changes.fetch_add(1, Ordering::Release);
         (self.wake)();
+    }
+
+    /// Marks one committed domain mutation affecting organization/review views so subscribers
+    /// and browser SSE streams receive `org.changed` immediately (`TASK-92.2`).
+    pub(crate) fn record_org_changed(&self) {
+        let seq = self.org_changes.fetch_add(1, Ordering::AcqRel) + 1;
+        self.publish_live(Live::OrgChanged(seq));
+    }
+
+    /// Marks one committed change relevant to the owner's mailbox so `inbox::Hint` recounts.
+    pub(crate) fn record_mailbox_change(&self) {
+        self.record_inbox_changed();
     }
 
     pub(crate) fn publish_live(&self, event: Live) {
@@ -274,6 +297,21 @@ pub(crate) fn follow_session_activity(live: &Arc<LiveEvents>, hub: &SessionStrea
         }
         true
     })
+}
+
+/// Connects `sessions`' pending tool approval lifecycle (arrival, decision, cancel, stop) to
+/// `live`'s inbox revision counter so `inbox::Hint` recounts and emits `inbox.changed`
+/// (`TASK-102`). Holds `live` weakly to avoid reference cycles at office shutdown.
+pub(crate) fn follow_session_approvals(
+    live: &Arc<LiveEvents>,
+    sessions: &org_office_sessions::SessionManager,
+) {
+    let live = Arc::downgrade(live);
+    sessions.set_approval_change_hook(Arc::new(move || {
+        if let Some(live) = live.upgrade() {
+            live.record_inbox_changed();
+        }
+    }));
 }
 
 /// Where a subscriber starts reading the live events.

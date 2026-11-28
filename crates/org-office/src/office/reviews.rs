@@ -10,10 +10,10 @@ use org_proto::ApiError;
 
 use crate::error::OfficeError;
 use crate::reviews::features::ReviewInspectSections;
-use crate::reviews::records::{ResolvedCodePin, ReviewEventRecord};
+use crate::reviews::records::{ResolvedCodePin, ReviewEventRecord, ReviewReviewerRecord};
 use crate::store::open::review_ops::{
     ReviewCloseOp, ReviewEventsRead, ReviewFindingOpCmd, ReviewInspectRead, ReviewListRead,
-    ReviewRequestOp, ReviewResubmitOp, ReviewRouteOp, ReviewVerdictOp,
+    ReviewRequestOp, ReviewResubmitOp, ReviewReviewerRecordsRead, ReviewRouteOp, ReviewVerdictOp,
 };
 use crate::store::open::{ReadOp, StoreOp};
 
@@ -65,6 +65,15 @@ impl Office {
     pub fn review_events(&self, c: &str, review: &str) -> Answer<Vec<ReviewEventRecord>> {
         self.r_read(ReviewEventsRead(c.into(), review.into()))
     }
+    pub fn review_reviewer_records(&self, review_id: &str) -> Answer<Vec<ReviewReviewerRecord>> {
+        let Ok(id) = org_store::Id::parse(review_id) else {
+            return Ok(Err(ApiError::new(
+                org_proto::ErrorCode::InvalidRequest,
+                "invalid review_id",
+            )));
+        };
+        self.r_read(ReviewReviewerRecordsRead(id))
+    }
     pub fn review_route(&self, c: &str, p: ReviewRouteParams) -> Answer<ReviewRouteResult> {
         self.r_run(ReviewRouteOp(c.into(), p))
     }
@@ -72,7 +81,7 @@ impl Office {
         self.r_run(ReviewFindingOpCmd(c.into(), p))
     }
     pub fn review_verdict(&self, c: &str, p: ReviewVerdictParams) -> Answer<ReviewVerdictResult> {
-        self.review_verdict_checked(c, p, None)
+        self.review_verdict_with_session(c, p, None, None)
     }
     pub fn review_verdict_checked(
         &self,
@@ -80,7 +89,16 @@ impl Office {
         p: ReviewVerdictParams,
         rev: Option<u64>,
     ) -> Answer<ReviewVerdictResult> {
-        self.r_run(ReviewVerdictOp(c.into(), p, rev))
+        self.review_verdict_with_session(c, p, rev, None)
+    }
+    pub fn review_verdict_with_session(
+        &self,
+        c: &str,
+        p: ReviewVerdictParams,
+        rev: Option<u64>,
+        runtime_session_id: Option<String>,
+    ) -> Answer<ReviewVerdictResult> {
+        self.r_run(ReviewVerdictOp(c.into(), p, rev, runtime_session_id))
     }
     pub fn review_resubmit(&self, c: &str, p: ReviewResubmitParams) -> Answer<ReviewRoundResult> {
         self.review_resubmit_with_pin(c, p, None)

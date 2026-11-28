@@ -160,9 +160,24 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org service status [--name <instance>]`
   Inspect whether the instance's registered OS service is running.
   **Use when:** checking host service health before running organization or office commands.
+- `agentic-org instance rebind [<name>] [--name <instance>] [--yes] [--dry-run] [--json]`
+  Verify and rebind a stopped instance's recorded directory identity (`device`/`inode`) in `instance.json` and `locator/instances.json` after copying or restoring its root onto a new inode. Refuses while `host.lock` or any `office.lock` is held, requires explicit confirmation (`--yes` when non-interactive), and fails closed if configuration matches neither the recorded nor actual filesystem identity.
+  **Use when:** host startup reports `RootUnavailable` after restoring or moving an instance root directory onto a new inode.
 - `agentic-org status [--name <instance>] [--office <office_id>]`
   Show the selected instance and office (and which tier chose them), the instance's service state and the saved context.
   **Use when:** checking which instance and office commands act on before running them.
+- `agentic-org logs [--instance <instance>] [--office <office_id>] [--lines <N>] [--json] [-q]`
+  Show bounded, symlink-safe, secret-redacted host and office stderr logs (`1..=2000` lines; every line scrubbed through `org-redact` plus PEM/token-URL/recovery-code passes).
+  **Use when:** inspecting recent operational host or office logs safely without exposing Bearer tokens, cookies, API keys, vault credentials, or PEM private keys.
+- `agentic-org doctor [--instance <instance>] [--office <office_id>] [--org-dir <path>] [--json] [-q]`
+  Run read-only host layout, owner-only permissions, `host-registry.created` consistency, socket, release-pin, AppArmor/userns, and durable organization-state integrity checks (never reading `private/` or `protected/`). Exits `0` when all checks pass and `1` if any check fails.
+  **Use when:** diagnosing host permissions, stale `host-registry.created` markers, sockets, AppArmor confinement, or durable organization-state integrity.
+- `agentic-org support [--instance <instance>] [--output <path>] [--lines <N>] [--json]`
+  Generate a deterministic, 100% secret-redacted JSON diagnostic bundle (`agentic-org-support-v1`) combining instance summary, `doctor`, and redacted `logs`; writes atomically with mode `0600` when `--output <path>` is supplied (refusing symlinks) and never reads `host-registry.db`, `private/`, `protected/`, or private keys.
+  **Use when:** collecting a shareable troubleshooting bundle without leaking credentials, keys, or private databases.
+- `agentic-org uninstall [--instance <instance>] [--yes] [--dry-run] [--json]`
+  Cleanly uninstall a stopped instance's runtime, sockets, logs, setup records, locator entry, saved CLI context, and host registry metadata — explicitly clearing `host-registry.created` so a fresh setup can initialize cleanly while leaving non-installed files untouched. Fails closed without `--yes` or while `registry.lock`, `host.lock`, any `office.lock`, or a registered service is active.
+  **Use when:** cleanly tearing down a stopped instance and clearing `host-registry.created` before a fresh setup.
 
 ### Sign-In, Context & Administration
 
@@ -241,6 +256,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org office sync-status [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
   Show live federation and replication sync status for an HQ or satellite office.
   **Use when:** verifying live mTLS federation and replication health on either HQ or a satellite.
+- `agentic-org office metrics [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
+  Show live per-office aggregate and per-agent efficiency telemetry (active/idle sessions, turn p50/p95/avg latency, token and cache-hit ratios, current/peak RSS bytes, sandbox denial counts, active model and effort; owner-only).
+  **Use when:** monitoring live agent dogfood efficiency, cache-hit rates, memory footprint, and sandbox denials on an office.
 - `agentic-org office join (--invitation-file <path> | --invitation-stdin) [--yes] [--login <login>] [--name <instance>] [--json]`
   Join this host as a satellite office using an HQ-issued invitation token.
   **Use when:** enrolling this remote host as a new satellite office after running `agentic-org setup`.
@@ -265,15 +283,18 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 
 ### Providers, Releases, Messaging & Agents
 
-- `agentic-org provider create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org provider create <name> --key <key> --provider <type> --runtime <claude|codex|agy|gemini|kimi|pi> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Create an org-wide provider connection and auto-generated model profile on HQ.
-  **Use when:** enabling Claude, Codex, or Agy for agents across an organization.
+  **Use when:** enabling Claude, Codex, Agy, Gemini, Kimi, or Pi for agents across an organization.
+- `agentic-org provider detect [--installed] [--runtime <claude|codex|agy|gemini|kimi|pi>] [--json]`
+  Auto-detect supported local CLI runtimes (`claude`, `codex`, `agy`, `gemini`, `kimi`, `pi`) installed on this host.
+  **Use when:** checking which agent CLIs are installed on this machine before onboarding or binding providers.
 - `agentic-org provider list [--include-archived] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   List org-wide provider connections.
   **Use when:** finding a provider `connection_id` before binding it on an HQ or satellite office.
 - `agentic-org provider bind <connection_id> --auth-ref <ref> [--binary <path>] [--account-ref <ref>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Bind a provider connection to the local HQ or satellite office.
-  **Use when:** configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, or `agy` turns.
+  **Use when:** configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, `agy`, `gemini`, `kimi`, or `pi` turns.
 - `agentic-org provider refresh <connection_id> --driver-version <ver> --model <id[:driver_id]> [--account-ref <ref>] [--ttl <secs>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Record a fresh local readiness and discovered-model observation for a bound provider connection.
   **Use when:** marking a headless office's local runtime binding ready for agent session routing (accepts comma-separated `--model` entries).
@@ -283,6 +304,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org provider models [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
   List model profiles available for hiring.
   **Use when:** finding a `model_profile_id` before hiring an agent with `agentic-org hr hire`.
+- `agentic-org release verify <bundle.tar.gz | bundle-dir> [--store <dir>] [--json]`
+  Verify a signed release bundle's Ed25519 signature, closed inventory, and SHA-256 payload hashes offline without mutating the release store or touching running services (refusing symlinks, path traversal, and untrusted keys).
+  **Use when:** verifying a prebuilt offline release archive or directory before installing or activating it.
 - `agentic-org release install <bundle.tar.gz | bundle-dir> [--store <dir>] [--no-restart] [--json]`
   Verify Ed25519 signature, closed inventory, and executable hashes, then atomically pin a signed release into this host's release store. Each instance's registered service that `setup` wrote then moves to the new release (its `launchd` `ProgramArguments` / `systemd` `ExecStart`; arguments and environment unchanged): a running service holds the store, so it is stopped for the install and started again on the new release (`--no-restart` leaves it stopped); a stopped service stays stopped (a stopped `launchd` agent loads again at the next login or with `agentic-org setup`); a failed install starts again what it stopped. A service definition changed by hand, or one running a program outside this store, is left untouched and the install prints the steps to upgrade it. `--json` adds `services` (`instance`, `outcome` `refreshed|unchanged|refused|skipped|failed`, `was_running`, `running`, `program`, `note`), and `services_warning` when the registered services could not be read (the install goes on without them; standard error stays empty or holds only an error's envelope); `--dry-run` lists what would happen to each service (`action`, `running`, and `restart`: whether it would be started again).
   **Use when:** installing or upgrading prebuilt signed binaries on macOS or Linux without compiling from source (see [Remote Satellite Office Setup](remote-office-setup.md)).
@@ -316,18 +340,27 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org agent revoke @<handle> [<session_id>]` (also `--member`, `--session`)
   End an agent's external lease at once: its fast tokens stop working, its connections close, and its held wakes run again as managed turns. Pausing or offboarding the agent revokes it too.
   **Use when:** cutting off an external agent session immediately (a lost laptop, a finished pairing session).
-- `agentic-org team list|inspect|create|update`
-  Discover, inspect, or create organization teams over an approved office channel.
-  **Use when:** finding a `team_id` before hiring agents or creating projects.
+- `agentic-org team list|inspect|create|update|move|archive|set-limit|request-limit|limit-requests|decide-limit`
+  Discover, inspect, create, or manage organization teams and member-cap limits over an approved office channel. Team leads can request a `max_members` increase (`team request-limit --team <id> --max-members <n> --reason "..."`) routed to their manager, who lists (`team limit-requests`) and approves or denies it (`team decide-limit --request <id> --approve|--deny --if-match <rev>`).
+  **Use when:** finding a `team_id`, creating a sub-team, or raising/requesting a team's `max_members` limit before hiring or moving agents.
 - `agentic-org role list|inspect|create|update`
   Discover, inspect, or create role catalog entries over an approved office channel.
   **Use when:** inspecting or authoring reusable role definitions before hiring agents.
 - `agentic-org who`
   List people and agents with live presence and `@handles` over an approved office channel.
   **Use when:** checking active handles and online presence across HQ and satellite offices.
-- `agentic-org repo register|list|attach|status|fetch|push`
-  Register and manage organization/project Git repositories, refresh an office's cache of the origin, and push task branches over an approved office channel.
-  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, fetching newly pushed origin branches (`repo fetch --repo <id-or-key>`), or pushing a task branch.
+- `agentic-org repo register|list|attach|status|fetch|push|set-credential|credential-status|revoke-credential`
+  Register and manage organization/project Git repositories, store encrypted per-repository HTTPS tokens in an office vault, refresh an office's cache of the origin, and push task branches over an approved office channel.
+  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, fetching newly pushed origin branches (`repo fetch --repo <id-or-key>`), pushing a task branch, or managing scoped per-repo vault credentials.
+- `agentic-org repo set-credential --repo <id-or-key> [--username <user>] [--token-file <path> | --token-stdin] [--office <office_id>] [--json]`
+  Store an encrypted per-repository HTTPS token inside the target office's credential vault (`<office>/git-credentials/repos/<repository_id>/credential.v1.json`, `0700`/`0600`, denied in every agent sandbox) so worker offices never depend on personal host `gh` or `~/.git-credentials`. Tokens are read from `--token-file` (regular file only), `--token-stdin`, or an echo-off terminal prompt — never CLI flags.
+  **Use when:** authorizing an HQ or satellite office to clone, fetch, or push a private HTTPS repository with a scoped fine-grained token.
+- `agentic-org repo credential-status --repo <id-or-key> [--office <office_id>] [--json]`
+  Show whether an office holds an encrypted per-repository HTTPS token (or host helper) for a repository, its canonical scope URL, and audit metadata without exposing secrets.
+  **Use when:** verifying whether an HQ or satellite office has a scoped HTTPS token configured for a repository.
+- `agentic-org repo revoke-credential --repo <id-or-key> [--office <office_id>] [--json]`
+  Delete an office's stored per-repository HTTPS token from its credential vault.
+  **Use when:** rotating or revoking a scoped repository HTTPS token on an office.
 - `agentic-org worktree list|prepare`
   List or prepare isolated task Git worktrees over an approved office channel.
   **Use when:** preparing a clean per-task Git worktree before editing code or inspecting active worktrees.
@@ -337,9 +370,15 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org checklist add|check|edit|remove|move`
   Manage task checklist items over an approved office channel.
   **Use when:** adding, checking/unchecking, editing, removing, or reordering task checklist steps.
-- `agentic-org task-note add|list|get|update|remove|publish` (alias: `agentic-org task note ...`)
-  Manage private task notes over an approved office channel.
-  **Use when:** keeping private working notes on a task or publishing a copy as a shared task comment.
+- `agentic-org note add|list|inspect|update|remove|publish` (aliases: `agentic-org task-note ...`, `agentic-org task note ...`)
+  Manage private working notes, plans, and decisions over an approved office channel.
+  **Use when:** recording private working notes, plans, or decisions, recalling them across tasks/projects, or publishing a copy as a shared task comment.
+- `agentic-org review request|list|inspect|diff|route|finding|verdict|resubmit|close`
+  Manage universal code, doc, task, and artifact reviews over an approved office channel.
+  **Use when:** requesting reviews, reading bare-cache diffs, raising findings, submitting verdicts, resubmitting rounds (`--fresh` for clean final validation), or closing reviews from the terminal.
+- `agentic-org search query`
+  Full-text BM25 search across tasks, processes, projects, directory, readable messages, or private notes and decisions.
+  **Use when:** locating related tasks, processes, messages, or private working decisions by keyword, type, project, channel, status, label, assignee, or modified file.
 - `agentic-org directory|person|member|session|grant|process|skill|budget <verb>`
   The remaining office resources, over the same approved office channel as `task` and `msg`.
   **Use when:** browsing the directory, people and membership, sessions and grants, organization, team and project processes and standards, agent skills or budgets from the terminal.
@@ -360,12 +399,12 @@ Contract rules every command follows:
 
 - **Output format & structured JSON input.** `--json` (bare switch, before or after the command) selects JSON output; `--format json|yaml|compact` picks an explicit format; `AGENT_OS_FORMAT` sets the default when neither flag is given (managed agent runtimes receive `AGENT_OS_FORMAT=json`). Structured JSON request bodies use `--input-json <object>` (or `--input-file` / `--stdin` with `--input-format json|yaml`).
 - **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` reports no total, and `msg list` reports one only for a `--since-read` or `--after-id` read, whose `meta.next_cursor` is the message the next page starts after).
-- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
+- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, note, review, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
 - **Retries are safe.** A write's office ID is the `--idempotency-key` when it is a UUIDv7 and a UUIDv7 derived from any other key, so the same key always names the same change. `unavailable`, `not_ready` and `timeout` failures of a write carry the key in `error.retry_with`.
 - **Office error details reach you.** `error.retry_after_ms` (with `rate_limited`) and `error.field` / `error.rule` (an input that broke a rule) are printed when the office reports them.
 - **Yes-or-no flags take no value.** Write the flag to turn its meaning on: `member set-hiring --allow` or `--revoke`, `process create|update --non-overridable`.
 - **Flags are never dropped.** A combination a command cannot honor (for example `msg reply --answer` with `--body`, `msg list --channel` with `--unread-only`, which points to `--since-read`) is refused with `invalid_request`.
-- **Shorthands are one command everywhere**: `who` = `directory list`, `task note` = `task-note`, `context` = `session context`, `resume` / `me` = `session resume`, in a command line, its `--help` and `--schema`, and `session attach` lines.
+- **Shorthands are one command everywhere**: `who` = `directory list`, `task-note` / `task note` = `note`, `context` = `session context`, `resume` / `me` = `session resume`, in a command line, its `--help` and `--schema`, and `session attach` lines.
 
 - `agent-os context` (shorthand for `agent-os session context`)
   One envelope with the mode-appropriate standing rules (`mode: managed` receives managed-turn rules; `mode: external` receives external-workspace rules without managed-only wake copy), the grouped command catalogue, the guide index and, when bound, who you are and the must-follow (non-overridable) processes and standards that apply, whole, within 8 KiB (`mandatory_truncated` and `mandatory_omitted` name any left out, to read with `process inspect`). `--offline` (or a shell without a binding) answers from the binary alone, without the office, in at most 6 KiB; `--project <project>` adds a project's must-follow processes. When a session token or binding file is set, an office or auth failure fails the command; it never falls back to offline.
@@ -388,9 +427,15 @@ Contract rules every command follows:
 - `agent-os checklist add|check|edit|remove|move`
   Step-level checklist tracking on tasks.
   **Use when:** adding, checking/unchecking, editing, removing, or reordering checklist steps on a task.
-- `agent-os task-note add|list|get|update|remove|publish` (alias: `agent-os task note ...`)
-  Private task notes with optional copy-to-comment publishing and optional sparse `--checkpoint` upsert (`task-note add --task <task> --checkpoint --text <text>`) / filter (`task-note list --task <task> --checkpoint`).
-  **Use when:** recording sparse private working notes or updating one pinned working checkpoint on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
+- `agent-os note add|list|inspect|update|remove|publish` (aliases: `agent-os task-note ...`, `agent-os task note ...`)
+  Private working notes, plans, and decisions (`--kind note|plan|decision`, `--title`, `--why`, `--alternatives`, repeatable `--tag`, auto-bound `--task` with `--standalone` override, `--project`, and `--checkpoint` upsert) with compact cross-task recall (`note list` omits `body_markdown` by default and forwards `--fields` server-side) and explicit copy-to-comment publishing (`note publish`).
+  **Use when:** recording private working notes, non-obvious decisions, or one pinned working checkpoint (`add|list|inspect|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
+- `agent-os review request|list|inspect|diff|route|finding|verdict|resubmit|close`
+  Universal reviews for code (pinned bare-cache commits and inter-round diffs), docs, tasks, and artifacts, with warm round-2..N continuity and `--fresh` independent validation passes.
+  **Use when:** opening a review (`request`), inspecting rounds/findings/staleness (`inspect --fields`), reading bounded commit diffs (`diff --since-round`), raising or resolving findings (`finding --action add|reply`), recording verdicts (`verdict`), resubmitting fixes (`resubmit --fresh`), or closing (`close`).
+- `agent-os search query`
+  Full-text BM25 search across tasks, processes, projects, members, teams, roles, readable messages, or private notes/decisions (`--types private_note|private_decision` on their own) with truthful `meta.coverage` (`searched` / `omitted`), `--count`, `--limit`/`--cursor`, and `--fields`.
+  **Use when:** searching organization knowledge, readable messages, or your private notes/decisions with multi-query keyword expansion before creating tasks or making decisions.
 - `agent-os repo register|list|attach|status|fetch|push`
   Git repository registry, office bare-cache status, on-demand origin fetch, and task-branch pushes.
   **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, seeing branches pushed to the origin after your worktree was prepared (`repo fetch --repo <id-or-key>`), or pushing your task branch (`repo push`).

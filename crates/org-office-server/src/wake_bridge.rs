@@ -108,7 +108,10 @@ pub(crate) fn on_chat_send_committed(
             source_id: committed.message.id.clone(),
             summary: committed.message.body_markdown.clone(),
             attachment_ids: attachment_ids.clone(),
+            session_affinity: None,
             enqueued_at_ms: ts,
+            model_override: None,
+            effort_override: None,
         };
         if sessions.enqueue_wake(target_id, item) == WakeOutcome::Started {
             woke.push(target_id.to_owned());
@@ -235,7 +238,10 @@ pub(crate) fn on_chat_ask_committed(
             source_id: committed.result.ask_id.clone(),
             summary: question_summary.clone(),
             attachment_ids: attachment_ids.clone(),
+            session_affinity: None,
             enqueued_at_ms: ts,
+            model_override: None,
+            effort_override: None,
         };
         if sessions.enqueue_wake(target_id, item) == WakeOutcome::Started {
             woke.push(target_id.to_owned());
@@ -341,6 +347,8 @@ pub(crate) fn on_task_comment_committed(
         .iter()
         .map(|a| a.id.clone())
         .collect();
+    let task_override =
+        org_office_sessions::parse_task_routing_labels_or_default(&inspected.task.labels);
     let ts = now_ms();
     for target_id in targets {
         let item = PendingWakeItem {
@@ -355,7 +363,10 @@ pub(crate) fn on_task_comment_committed(
             source_id: result.task.key.clone(),
             summary: summary.clone(),
             attachment_ids: attachment_ids.clone(),
+            session_affinity: None,
             enqueued_at_ms: ts,
+            model_override: task_override.model.clone(),
+            effort_override: task_override.effort_str().map(str::to_owned),
         };
         let _ = sessions.enqueue_wake(&target_id, item);
     }

@@ -176,7 +176,7 @@ fn open_bench_store(root: &std::path::Path, flush_ms: u64, probe: &Probe) -> Off
     let custody = Arc::new(FakeCustody::new());
     let clock = Arc::new(FixedClock(CREATION_AT));
     let mut cfg = StoreConfig::new(
-        EngineChoice::Sqlite,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
         root.join("durable"),
         root.join("runtime"),
         identity(),
@@ -341,7 +341,6 @@ fn check_thresholds(args: &Args, report: &Report) -> Result<(), String> {
 }
 
 fn main() {
-    org_office_sqlite::install();
     let args = parse_args().unwrap_or_else(|e| {
         eprintln!("store_latency: {e}");
         std::process::exit(2);

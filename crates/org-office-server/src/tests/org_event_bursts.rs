@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-use org_office::{EngineChoice, Office, OrgDeltaPayload, TestOffice};
+use org_office::{Office, OrgDeltaPayload, TestOffice};
 use org_proto::tasks::{TasksCreateParams, TasksUpdateParams};
 use org_store::{DurablePath, Files, StoreError};
 use org_sync::organization::{apply, OrgEvent, PeerIdentity, PeerRole, MAX_PAYLOAD_BYTES};
@@ -34,10 +34,9 @@ pub(super) struct Fixture {
 
 /// A real HQ serving federation, and a satellite enrolled with it and holding HQ's snapshot.
 pub(super) fn fixture(name: &str, suffix: u8) -> Fixture {
-    org_office_sqlite::install();
-    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
-    }));
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice::sqlite(
+        org_office_sqlite::sqlite_backend(),
+    )));
     let owner = hq.owner_member_id().to_owned();
     let hq_team = hq.org_snapshot().unwrap().teams[0].id.clone();
     let server = HqFederationServer::start(

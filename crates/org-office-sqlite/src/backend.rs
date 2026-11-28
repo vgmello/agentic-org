@@ -1,20 +1,19 @@
-//! `OfficeEngineAdapter` and `OfficeStorageBackend` implementations for SQLite (`TASK-255`),
-//! plus composition-root installation and convenience openers.
+//! `OfficeEngineAdapter` and `OfficeStorageBackend` implementations for SQLite (`TASK-255`,
+//! `TASK-282`), explicitly injected at composition roots.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use org_office::{
     accounting::AccountingStore,
     attachments::user_space::UserSpaceStore,
     budgets::BudgetStore,
-    hq_creation::{Binding, LocalRecord},
     private_notes::PrivateNotesStore,
     providers::ProviderPoolStore,
     replication::{durable::ReplicationProjection, memory::ReplicationCoreData},
     search::ports::PrivateNotesSearch,
-    BoxedSnapshot, BoxedTx, Custody, DataRoots, Key, NewOffice, Office, OfficeEngineAdapter,
-    OfficeError, OfficeStorageBackend, PrivateNotesOpened, StoreConfig,
+    BoxedSnapshot, BoxedTx, OfficeEngineAdapter, OfficeError, OfficeStorageBackend,
+    PrivateNotesOpened, StoreConfig,
 };
 use org_store::{Cursor, Engine, EngineError, Id, StoreError};
 
@@ -209,63 +208,4 @@ pub fn open_sqlite_projection(config: &StoreConfig) -> Result<SqliteEngine, Stor
 /// Returns an `Arc<dyn OfficeStorageBackend>` backed by [`SqliteStorageBackend`].
 pub fn sqlite_backend() -> Arc<dyn OfficeStorageBackend> {
     Arc::new(SqliteStorageBackend)
-}
-
-/// Installs [`SqliteStorageBackend`] as the process-wide SQLite backend in `org-office`.
-/// Idempotent: returns `true` on the first installation and `false` on subsequent calls.
-pub fn install() -> bool {
-    org_office::install_sqlite_backend(sqlite_backend())
-}
-
-/// Opens an existing office explicitly backed by [`SqliteStorageBackend`].
-pub fn open_office(
-    folder: impl Into<PathBuf>,
-    key: Option<Key>,
-    instance: &str,
-    roots: DataRoots,
-    custody: Custody,
-) -> Result<Office, OfficeError> {
-    Office::open_with_backend(folder, key, instance, roots, custody, sqlite_backend())
-}
-
-/// Opens an existing office with an explicit active owner and [`SqliteStorageBackend`].
-pub fn open_office_as_owner(
-    folder: impl Into<PathBuf>,
-    key: Option<Key>,
-    instance: &str,
-    roots: DataRoots,
-    custody: Custody,
-    active_owner: &str,
-) -> Result<Office, OfficeError> {
-    Office::open_as_owner_with_backend(
-        folder,
-        key,
-        instance,
-        roots,
-        custody,
-        active_owner,
-        sqlite_backend(),
-    )
-}
-
-/// Provisions a new HQ office explicitly backed by [`SqliteStorageBackend`].
-pub fn provision_hq_office(
-    folder: impl Into<PathBuf>,
-    new: &NewOffice,
-    key: Key,
-    binding: &Binding,
-    roots: DataRoots,
-    custody: Custody,
-    material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
-) -> Result<Office, OfficeError> {
-    Office::provision_hq_with_backend(
-        folder,
-        new,
-        key,
-        binding,
-        roots,
-        custody,
-        sqlite_backend(),
-        material,
-    )
 }

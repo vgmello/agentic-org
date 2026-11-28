@@ -6,9 +6,9 @@ use std::path::Path;
 
 use org_proto::costs::UsageRecordView;
 
-use org_office::accounting::UsageStreamCheckpoint;
+use org_accounting::AccountingError;
+use org_accounting::UsageStreamCheckpoint;
 use org_office::private_fs::{full_sync, private_dir_synced};
-use org_office::OfficeError;
 
 use super::files::{safe_segment, write_atomic};
 
@@ -87,7 +87,7 @@ fn scan_reconciled_stream_chain(
             contiguous = false;
             break;
         }
-        running_chain = Some(org_office::accounting::chain_usage_stream_head(
+        running_chain = Some(org_accounting::chain_usage_stream_head(
             running_chain.as_deref(),
             rec,
         ));
@@ -133,7 +133,7 @@ fn try_advance_stream_checkpoint<'a>(
     info: &mut ReconciledStreamInfo<'a>,
     checkpoints: &mut [UsageStreamCheckpoint],
     covered_ids: &mut BTreeSet<&'a str>,
-) -> Result<bool, OfficeError> {
+) -> Result<bool, AccountingError> {
     if info.advanced || !info.prefix_ok || !info.contiguous {
         return Ok(false);
     }
@@ -157,7 +157,7 @@ fn try_advance_stream_checkpoint<'a>(
     let cp_dir = durable_root
         .join("checkpoints")
         .join(safe_segment(&info.origin));
-    private_dir_synced(durable_root, &cp_dir).map_err(OfficeError::storage)?;
+    private_dir_synced(durable_root, &cp_dir).map_err(AccountingError::storage)?;
     let cp_path = cp_dir.join(format!("{}.json", safe_segment(&info.producer)));
     let cp = UsageStreamCheckpoint {
         organization_id: org_id.to_owned(),
@@ -169,7 +169,7 @@ fn try_advance_stream_checkpoint<'a>(
         state: "open".into(),
         checkpointed_at: head.recorded_at.clone(),
     };
-    let cp_bytes = serde_json::to_vec_pretty(&cp).map_err(OfficeError::storage)?;
+    let cp_bytes = serde_json::to_vec_pretty(&cp).map_err(AccountingError::storage)?;
     write_atomic(&cp_path, &cp_bytes)?;
     checkpoints[info.existing_idx] = cp;
     covered_ids.extend(tentative);
@@ -181,7 +181,7 @@ fn sync_unadvanced_checkpoints(
     durable_root: &Path,
     infos: &[ReconciledStreamInfo<'_>],
     checkpoints: &mut [UsageStreamCheckpoint],
-) -> Result<(), OfficeError> {
+) -> Result<(), AccountingError> {
     for info in infos {
         if info.advanced {
             continue;
@@ -189,7 +189,7 @@ fn sync_unadvanced_checkpoints(
         let cp_dir = durable_root
             .join("checkpoints")
             .join(safe_segment(&info.origin));
-        private_dir_synced(durable_root, &cp_dir).map_err(OfficeError::storage)?;
+        private_dir_synced(durable_root, &cp_dir).map_err(AccountingError::storage)?;
         let cp_path = cp_dir.join(format!("{}.json", safe_segment(&info.producer)));
         if info.missing_chain
             && info.prefix_ok
@@ -198,12 +198,13 @@ fn sync_unadvanced_checkpoints(
         {
             let mut upgraded = checkpoints[info.existing_idx].clone();
             upgraded.chain_sha256 = info.prefix_chain.clone();
-            let cp_bytes = serde_json::to_vec_pretty(&upgraded).map_err(OfficeError::storage)?;
+            let cp_bytes =
+                serde_json::to_vec_pretty(&upgraded).map_err(AccountingError::storage)?;
             write_atomic(&cp_path, &cp_bytes)?;
             checkpoints[info.existing_idx] = upgraded;
         } else if cp_path.is_file() {
-            let f = fs::File::open(&cp_path).map_err(OfficeError::storage)?;
-            full_sync(&f).map_err(OfficeError::storage)?;
+            let f = fs::File::open(&cp_path).map_err(AccountingError::storage)?;
+            full_sync(&f).map_err(AccountingError::storage)?;
         }
     }
     Ok(())
@@ -220,7 +221,7 @@ pub(super) fn sync_checkpoints_for_reconciled_records(
     org_id: &str,
     records: &[UsageRecordView],
     checkpoints: &mut [UsageStreamCheckpoint],
-) -> Result<(), OfficeError> {
+) -> Result<(), AccountingError> {
     let (mut infos, prefix_candidates) = analyze_reconciled_streams(org_id, records, checkpoints);
     let mut covered_ids: BTreeSet<&str> = BTreeSet::new();
     loop {

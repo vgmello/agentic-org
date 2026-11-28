@@ -57,6 +57,8 @@ pub(super) use host::HostChannel;
 
 #[cfg(test)]
 pub(crate) use self::connection::serve_grant_bound_stream_for_test;
+#[cfg(test)]
+pub(crate) use self::host::serve_host_channel_for_test;
 
 /// Most `msg.wait` calls held at once on one connection; more get `unavailable`.
 pub(crate) const MAX_HELD: usize = org_proto::msg::MAX_HELD_CALLS_PER_CONNECTION;
@@ -146,8 +148,9 @@ pub type ChatFn = Box<
         + Sync,
 >;
 
-/// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
-pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+/// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`), carrying whether the
+/// caller acted through a verified person/owner grant (`via_grant`, `TASK-136`).
+pub type TasksFn = Box<dyn Fn(Option<&str>, bool, &Request) -> Option<Response> + Send + Sync>;
 
 /// Dispatches the ten chunked `attachment.*` RPCs (`TASK-98.1`, `TASK-98.7`), carrying any active
 /// Chief-of-Staff delegation context into `attachment.render` for caller-scoped buffers and
@@ -158,6 +161,9 @@ pub type AttachmentsFn =
 /// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
 pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches universal `review.*` RPCs (`TASK-92.1`).
+pub type ReviewsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// Dispatches C5 organization processes, standards, and built-in skills RPCs (`TASK-44`).
 pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
@@ -166,6 +172,9 @@ pub type DocsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send 
 
 /// Dispatches unified cross-entity `search.query` (`TASK-91`).
 pub type SearchFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
+/// Dispatches `copilot.features` and `copilot.draft` (`TASK-60` AC #3).
+pub type CopilotFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
 /// Dispatches L2/L3 usage, cost accounting, and budget RPCs (`TASK-53`).
 pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
@@ -238,6 +247,8 @@ pub struct OfficePorts {
     pub attachments: Option<AttachmentsFn>,
     /// C7 repository, worktree, and Git push dispatcher (`TASK-51`).
     pub git: Option<GitFn>,
+    /// Universal `review.*` dispatcher (`TASK-92.1`).
+    pub reviews: Option<ReviewsFn>,
     /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).
     pub processes: Option<ProcessesFn>,
     /// The project documentation tree's `docs.*` dispatcher (`TASK-55`). `None`: they answer
@@ -246,6 +257,8 @@ pub struct OfficePorts {
     /// Unified cross-entity search (`TASK-91`). `None`: `search.query` answers
     /// `unknown_method`.
     pub search: Option<SearchFn>,
+    /// Smart drafting copilot (`copilot.features`, `copilot.draft`; `TASK-60` AC #3).
+    pub copilot: Option<CopilotFn>,
     /// L2/L3 usage, cost accounting, and budget controls dispatcher (`TASK-53`).
     pub costs: Option<CostsFn>,
     /// L4 provider pools, office bindings, discovery, readiness, and quota dispatcher (`TASK-54`).

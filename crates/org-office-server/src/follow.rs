@@ -284,6 +284,12 @@ pub(crate) fn push_with_hint(
                 Live::Received(data) => wire.emit::<MessageReceived>(&data),
                 Live::StateChanged(data) => wire.emit::<MessageStateChanged>(&data),
                 Live::InboxChanged(data) => deliver_hint(&data),
+                Live::OrgChanged(seq) => wire.emit::<OrgChanged>(&OrgChangedData {
+                    position: last,
+                    command_id: format!("live-org:{seq}"),
+                    changes: Vec::new(),
+                    actor: None,
+                }),
             };
             if !sent {
                 return;

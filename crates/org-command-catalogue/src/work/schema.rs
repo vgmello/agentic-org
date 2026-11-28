@@ -23,6 +23,24 @@ pub(super) const WRITE_ERRORS: &[ErrorCode] = &[
     ErrorCode::Unavailable,
 ];
 
+pub(super) const BLOCKING_DEP_FIELDS: &[Field] = &[
+    Field::required("id", Type::String, "Prerequisite task UUIDv7"),
+    Field::required("key", Type::String, "Prerequisite task key (T-<CODE><N>)"),
+    Field::required("title", Type::String, "Prerequisite task title"),
+    Field::required(
+        "status",
+        Type::Enum(&["todo", "in_progress", "blocked", "cancelled", "done"]),
+        "Current prerequisite status",
+    ),
+    Field::required(
+        "cancelled",
+        Type::Boolean,
+        "True when prerequisite was cancelled rather than completed",
+    ),
+];
+
+pub(super) const BLOCKING_DEP_TYPE: Type = Type::Object(BLOCKING_DEP_FIELDS);
+
 pub(super) const TASK_FIELDS: &[Field] = &[
     Field::required("id", Type::String, "Task UUIDv7"),
     Field::required("key", Type::String, "Office-coded task key (e.g. T-A1)"),
@@ -45,6 +63,32 @@ pub(super) const TASK_FIELDS: &[Field] = &[
     ),
     Field::optional("effort", Type::Integer, "Optional effort estimate"),
     Field::optional("severity", Type::String, "Optional bug severity"),
+    Field::optional("resolution", Type::String, "Optional closure resolution"),
+    Field::optional(
+        "blocked_reason",
+        Type::String,
+        "Explicit block reason when status is blocked",
+    ),
+    Field::optional(
+        "blocked_since",
+        Type::String,
+        "RFC 3339 start of current continuous blocked span",
+    ),
+    Field::optional(
+        "waiting_on_owner",
+        Type::Boolean,
+        "Whether explicit block awaits owner action",
+    ),
+    Field::optional(
+        "dependency_blocked",
+        Type::Boolean,
+        "Whether any direct depends_on prerequisite is unmet",
+    ),
+    Field::optional(
+        "unmet_blocking_dependencies",
+        Type::List(&BLOCKING_DEP_TYPE),
+        "Unmet direct upstream depends_on prerequisites",
+    ),
     Field::required("team_id", Type::String, "Accountable owning team UUIDv7"),
     Field::optional("assigned_team_id", Type::String, "Assigned team UUIDv7"),
     Field::optional("assignee_id", Type::String, "Assigned employee UUIDv7"),

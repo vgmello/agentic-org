@@ -2,7 +2,10 @@
 //! and agent lifecycle features. Read-only authority predicates live in
 //! [`crate::organization::authority`].
 
-use org_store::{Actor, Engine, OfficeIdentity, Refusal, Stream, Timestamp, UnitOfWork};
+use org_proto::hiring::{format_team_full_hint, TeamFullHintInput, MAX_SUGGESTED_OPEN_TEAMS};
+use org_store::{
+    Actor, Engine, Id, OfficeIdentity, Refusal, StoreError, Stream, Timestamp, UnitOfWork,
+};
 
 pub(crate) use crate::organization::authority::is_owner;
 pub use crate::organization::authority::{
@@ -11,14 +14,21 @@ pub use crate::organization::authority::{
 };
 use crate::organization::{
     ports::OrganizationRead,
-    records::{By, Employee, EmployeeStatus, OfficeRole, Organization, Team},
+    records::{By, Employee, EmployeeKind, EmployeeStatus, OfficeRole, Organization, Team},
 };
 
 use super::{
     invalid,
-    shared::{named, reject},
+    shared::{named, reject_with_hint},
     RejectCode, NOT_AUTHORIZED,
 };
+
+/// Which operation triggered a `max_members` capacity check (governs authorized alternative teams).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CapacityOp {
+    Hire,
+    Move,
+}
 
 /// Admitted context for any active employee (person or agent) at HQ.
 pub(crate) struct AdmittedActor {
@@ -67,19 +77,86 @@ where
     })
 }
 
-/// Enforces `team.max_members` (ADR-0029 decision 8 / HIRE-6), naming the limit in the refusal.
+fn caller_may_target_team(
+    view: &impl OrganizationRead,
+    owner: &Id,
+    actor: &Employee,
+    team_id: &Id,
+    op: CapacityOp,
+) -> Result<bool, StoreError> {
+    match op {
+        CapacityOp::Hire => may_hire_into(view, owner, actor, team_id),
+        CapacityOp::Move => {
+            Ok(is_owner(owner, actor) || is_person_ancestor_lead(view, actor, team_id, true)?)
+        }
+    }
+}
+
+type OpenTeamSlot = (String, String, u64, u64);
+
+fn authorized_open_teams(
+    view: &impl OrganizationRead,
+    owner: &Id,
+    actor: &Employee,
+    full_team_id: &Id,
+    op: CapacityOp,
+) -> Result<(Vec<OpenTeamSlot>, usize), StoreError> {
+    let mut open = Vec::new();
+    for candidate in view.teams()? {
+        if candidate.id == *full_team_id || !candidate.is_active() {
+            continue;
+        }
+        if !caller_may_target_team(view, owner, actor, &candidate.id, op)? {
+            continue;
+        }
+        let used = team_active_member_count(view, &candidate.id)?;
+        if used < candidate.max_members {
+            open.push((
+                candidate.name,
+                candidate.id.as_str().to_owned(),
+                used,
+                candidate.max_members,
+            ));
+        }
+    }
+    open.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let extra = open.len().saturating_sub(MAX_SUGGESTED_OPEN_TEAMS);
+    open.truncate(MAX_SUGGESTED_OPEN_TEAMS);
+    Ok((open, extra))
+}
+
+/// Enforces `team.max_members` (ADR-0029 decision 8 / HIRE-6), returning an actionable hint listing
+/// caller-authorized open teams, sub-team creation, and direct/requested limit increases.
 pub(crate) fn check_team_capacity(
     view: &impl OrganizationRead,
+    owner: &Id,
+    actor: &Employee,
     team: &Team,
+    op: CapacityOp,
 ) -> Result<(), Refusal> {
     let count = team_active_member_count(view, &team.id)?;
-    if count >= team.max_members {
-        let msg = format!(
-            "{} is full ({count} of {} members; max_members limit reached)",
-            named(team),
-            team.max_members
-        );
-        return reject(RejectCode::InvalidRequest, msg);
+    if count < team.max_members {
+        return Ok(());
     }
-    Ok(())
+    let msg = format!(
+        "{} is full ({count} of {} members; max_members limit reached)",
+        named(team),
+        team.max_members
+    );
+    let (open_teams, extra_open_count) = authorized_open_teams(view, owner, actor, &team.id, op)?;
+    let owner_caller = is_owner(owner, actor);
+    let can_set_directly = actor.kind == EmployeeKind::Person
+        && (owner_caller || is_person_ancestor_lead(view, actor, &team.id, true)?);
+    let can_request_increase = team.lead_employee_id.as_ref() == Some(&actor.id) && !owner_caller;
+    let hint = format_team_full_hint(&TeamFullHintInput {
+        team_id: team.id.as_str(),
+        current_max: team.max_members,
+        team_revision: team.meta.revision,
+        open_teams: &open_teams,
+        extra_open_count,
+        is_owner: owner_caller,
+        can_set_directly,
+        can_request_increase,
+    });
+    reject_with_hint(RejectCode::InvalidRequest, msg, hint)
 }

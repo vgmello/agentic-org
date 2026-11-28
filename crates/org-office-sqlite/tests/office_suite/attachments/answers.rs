@@ -95,9 +95,8 @@ fn projected_files(office: &Office) -> (usize, usize) {
 
 #[test]
 fn an_answers_files_persist_on_its_answer_and_its_reply_and_survive_a_rebuild() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let mockup = png(office, &fx.agent, "mockup.png");
         let ask = office
@@ -218,9 +217,8 @@ fn an_answers_files_persist_on_its_answer_and_its_reply_and_survive_a_rebuild() 
 
 #[test]
 fn answer_files_follow_the_same_rules_as_message_files() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let office = &fx.office;
         let ask = office
             .msg_ask(&fx.agent, ask_params(&fx.person, Vec::new()))

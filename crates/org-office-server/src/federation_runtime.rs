@@ -172,6 +172,9 @@ pub(crate) fn build_federation_wake_handler(
             "ask" => org_office_sessions::WakeKind::Ask,
             "ask_answer" => org_office_sessions::WakeKind::AskAnswer,
             "task" => org_office_sessions::WakeKind::TaskAssignment,
+            "review_requested" => org_office_sessions::WakeKind::ReviewRequested,
+            "review_verdict" => org_office_sessions::WakeKind::ReviewVerdict,
+            "review_reply" => org_office_sessions::WakeKind::ReviewReply,
             _ => org_office_sessions::WakeKind::DirectMessage,
         };
         let item = org_office_sessions::PendingWakeItem {
@@ -186,10 +189,13 @@ pub(crate) fn build_federation_wake_handler(
             source_id: wake.source_id,
             summary: wake.summary,
             attachment_ids: wake.attachment_ids,
+            session_affinity: None,
             enqueued_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
+            model_override: None,
+            effort_override: None,
         };
         sessions
             .enqueue_wake_durable(&wake.employee_id, item)

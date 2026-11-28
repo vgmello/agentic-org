@@ -30,10 +30,10 @@ fn the_four_audited_inaccuracies_fail_the_guard() {
         "`agent-os msg ask --prompt <text> --subject <text>`",
         "`to` is required",
     );
-    // `task transition` takes --blocked-reason, and requires --if-match.
+    // `task transition` takes --reason (and aliases --blocked-reason/--note), never --why, and requires --if-match.
     assert_fails(
-        "`agent-os task transition --task <ref> --status blocked --reason <text> --if-match <rev>`",
-        "--reason is not a flag of `task transition`",
+        "`agent-os task transition --task <ref> --status blocked --why <text> --if-match <rev>`",
+        "--why is not a flag of `task transition`",
     );
     assert_fails(
         "`agent-os task transition --task <ref> --status <status>`",
@@ -47,7 +47,8 @@ fn the_four_audited_inaccuracies_fail_the_guard() {
     // Their corrections hold.
     for good in [
         "`agent-os channel summarize --channel <ch> --question <text>`",
-        "`agent-os task transition --task <ref> --status blocked --blocked-reason <text> --if-match <rev>`",
+        "`agent-os task transition --task <ref> --status blocked --reason <text> --if-match <rev>`",
+        "`agent-os task transition --task <ref> --status blocked --blocked-reason <text> --waiting-on owner --if-match <rev>`",
         r#"`agent-os msg ask --to @<handle> --input-json '{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"}]}'`"#,
         "`agent-os msg ask --to @<handle> --prompt <text> --question-type choice --option <id>=<label> --default-value <id>`",
         "`agent-os member set-hiring --member <id> --allow --if-match <rev>`",

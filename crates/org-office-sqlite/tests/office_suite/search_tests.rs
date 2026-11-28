@@ -29,7 +29,12 @@ use org_office::{
     SatelliteProvisionSpec, TestOffice,
 };
 
-const ENGINES: [EngineChoice; 2] = [EngineChoice::Memory, EngineChoice::Sqlite];
+fn engines() -> [EngineChoice; 2] {
+    [
+        EngineChoice::Memory,
+        EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
+    ]
+}
 const CHANGED_FILE: &str = "crates/org-office/src/search.rs";
 
 /// The fixture's owner (a person), agents A and B and A's task, plus: a project with a second
@@ -128,7 +133,7 @@ fn task(
 }
 
 fn world(engine: EngineChoice) -> World {
-    let f = seed_fixture(engine);
+    let f = seed_fixture(engine.clone());
     let office = &f.office;
     let team = office.org_snapshot().unwrap().teams[0].id.clone();
     let project = next_uuid();
@@ -742,10 +747,9 @@ fn fingerprint(w: &World) -> Vec<SearchPrint> {
 
 #[test]
 fn search_finds_every_kind_filters_pages_and_isolates_on_memory_and_sqlite() {
-    org_office_sqlite::install();
     let mut prints = Vec::new();
-    for engine in ENGINES {
-        let w = world(engine);
+    for engine in engines() {
+        let w = world(engine.clone());
         assert_every_kind_is_found(&w);
         assert_filters_narrow(&w);
         prints.push(fingerprint(&w));
@@ -788,8 +792,7 @@ fn holds(bytes: &(Vec<u8>, Vec<u8>), needle: &[u8]) -> bool {
 
 #[test]
 fn a_deleted_runtime_rebuilds_every_index_and_the_private_one_stays_masked_and_apart() {
-    org_office_sqlite::install();
-    let w = world(EngineChoice::Sqlite);
+    let w = world(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let before = fingerprint(&w);
     let office_id = w.f.office.info().office_id.clone();
     let runtime = w.f.roots.runtime.join(&office_id);
@@ -854,7 +857,6 @@ fn a_deleted_runtime_rebuilds_every_index_and_the_private_one_stays_masked_and_a
 /// no private notes, says so, and never makes a private search index.
 #[test]
 fn a_satellite_omits_private_notes_truthfully_and_never_makes_their_index() {
-    org_office_sqlite::install();
     let (hq, sat, roots, _dir) = satellite_of_a_real_hq();
     let owner = hq.owner_member_id().to_owned();
     let shared = found(&sat, &owner, params("hr"));
@@ -903,7 +905,7 @@ fn satellite_of_a_real_hq() -> (Office, Office, DataRoots, tempfile::TempDir) {
     use org_store::{testkit::FakeCustody, Id, OfficeIdentity};
 
     let hq = Office::for_test_with_real_ca(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
     });
     let owner = hq.owner_member_id().to_owned();
     let org_id = hq.info().org_id.clone();
@@ -984,8 +986,7 @@ fn satellite_of_a_real_hq() -> (Office, Office, DataRoots, tempfile::TempDir) {
         roots.clone(),
         custody,
         Options {
-            backend: None,
-            engine: EngineChoice::Sqlite,
+            engine: EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()),
             clock: std::sync::Arc::new(org_store::SystemClock),
             testing: Default::default(),
             before_final_checks: None,

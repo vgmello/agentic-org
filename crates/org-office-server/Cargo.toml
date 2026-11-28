@@ -12,6 +12,7 @@ test-support = []
 
 [dependencies]
 org-channel-watcher = { path = "../org-channel-watcher" }
+org-copilot = { path = "../org-copilot" }
 org-federation = { path = "../org-federation" }
 org-pki = { path = "../org-pki" }
 base64.workspace = true
@@ -19,7 +20,6 @@ zeroize = "=1.9.1"
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }
 org-office = { path = "../org-office" }
-org-office-sqlite = { path = "../org-office-sqlite" }
 org-doc-render = { path = "../org-doc-render" }
 org-git = { path = "../org-git" }
 # The writer custody contract the office's store calls, implemented over the host channel.
@@ -44,7 +44,6 @@ sha2.workspace = true
 org-agent-cli = { path = "../org-agent-cli" }
 org-agent-runtime = { path = "../org-agent-runtime" }
 org-channel-watcher = { path = "../org-channel-watcher", features = ["testkit"] }
-org-copilot = { path = "../org-copilot" }
 org-federation = { path = "../org-federation", features = ["testkit"] }
 org-sync = { path = "../org-sync" }
 org-sync-proto = { path = "../org-sync-proto" }

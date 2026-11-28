@@ -220,7 +220,10 @@ impl SessionManager {
             source_id: delivery_id.clone(),
             summary: text.to_owned(),
             attachment_ids: Vec::new(),
+            session_affinity: None,
             enqueued_at_ms: now_ms(),
+            model_override: None,
+            effort_override: None,
         };
         let (notice, turn) = compose_person_steer(&sender);
         Ok(SteerRequest {

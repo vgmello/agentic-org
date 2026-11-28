@@ -60,6 +60,7 @@ impl Office {
         key: Key,
         roots: DataRoots,
         custody: Custody,
+        backend: std::sync::Arc<dyn crate::store::backend::OfficeStorageBackend>,
     ) -> Result<Office, OfficeError> {
         Self::provision_satellite_with(
             folder.into(),
@@ -67,7 +68,7 @@ impl Office {
             key,
             roots,
             custody,
-            Options::production(),
+            Options::production(backend),
             true,
         )
     }
@@ -80,6 +81,7 @@ impl Office {
         key: Key,
         roots: DataRoots,
         custody: Custody,
+        backend: std::sync::Arc<dyn crate::store::backend::OfficeStorageBackend>,
     ) -> Result<Office, OfficeError> {
         Self::provision_satellite_with(
             folder.into(),
@@ -87,7 +89,7 @@ impl Office {
             key,
             roots,
             custody,
-            Options::production(),
+            Options::production(backend),
             false,
         )
     }
@@ -280,8 +282,7 @@ fn provision_satellite_impl(
     }
     let store = open_store(&cfg).map_err(storage)?;
     let companions = open_companion_stores(crate::office::CompanionOpenSpec {
-        engine: options.engine,
-        backend: options.backend.as_ref(),
+        engine: &options.engine,
         roots: &roots,
         info: &info,
         identity: &custody.identity,

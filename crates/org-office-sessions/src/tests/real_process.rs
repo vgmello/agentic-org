@@ -178,7 +178,7 @@ echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"t1","st
 
     let mut registry = RuntimeRegistry::production();
     registry.register(
-        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Arc::new(org_agent_runtime_acp::AgyRuntime::new()),
         Some(fake_agy),
     );
     registry.register(
@@ -243,6 +243,10 @@ echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"t1","st
                     employee_id: agent_id.clone(),
                     instruction: Some("Say hello".into()),
                     workspace: None,
+                    resume_runtime_session_id: None,
+                    fresh: false,
+                    model: None,
+                    effort: None,
                 },
             )
             .expect("session started");
@@ -408,7 +412,7 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
     );
     let mut registry = RuntimeRegistry::production();
     registry.register(
-        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Arc::new(org_agent_runtime_acp::AgyRuntime::new()),
         Some(fake_agy),
     );
     let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
@@ -440,6 +444,10 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
                 employee_id: agent_id.clone(),
                 instruction: Some("Hello".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("session starts with effective processes");
@@ -485,6 +493,10 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
                 employee_id: agent_id,
                 instruction: Some("Start".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect_err("launch must refuse when mandatory standards overflow budget");
@@ -551,7 +563,7 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
     );
     let mut registry = RuntimeRegistry::production();
     registry.register(
-        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Arc::new(org_agent_runtime_acp::AgyRuntime::new()),
         Some(fake_agy),
     );
     let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
@@ -583,6 +595,10 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
                 employee_id: contrib_agent_id.clone(),
                 instruction: Some("Say hello.".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("plain start");

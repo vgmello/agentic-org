@@ -20,17 +20,20 @@ use org_host::cli_error::{office_refused, HostCliError};
 
 /// Help text for `agentic-org provider`.
 pub const HELP: &str = "agentic-org provider <subcommand>\n\
-Use when: registering org-wide AI provider connections on HQ, binding local CLI runtimes on HQ or satellite offices, refreshing office readiness observations, or listing available model profiles.\n\n\
+Use when: registering org-wide AI provider connections on HQ, detecting installed local CLI runtimes, binding local CLI runtimes on HQ or satellite offices, refreshing office readiness observations, or listing available model profiles.\n\n\
 Subcommands:\n  \
-create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
+create <name> --key <key> --provider <type> --runtime <claude|codex|agy|gemini|kimi|pi> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 Create an org-wide provider connection and auto-generated model profile on HQ\n      \
-Use when: enabling Claude, Codex, or Agy for agents in an organization.\n  \
+Use when: enabling Claude, Codex, Agy, Gemini, Kimi, or Pi for agents in an organization.\n  \
+detect [--installed] [--runtime <claude|codex|agy|gemini|kimi|pi>] [--json]\n      \
+Auto-detect supported local CLI runtimes installed on this host\n      \
+Use when: checking which agent CLIs are available before onboarding or binding providers on this machine.\n  \
 list [--include-archived] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 List org-wide provider connections\n      \
 Use when: finding a provider `connection_id` before binding it on an office.\n  \
 bind <connection_id> --auth-ref <ref> [--binary <path>] [--account-ref <ref>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 Bind a provider connection to this local HQ or satellite office\n      \
-Use when: configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, or `agy` turns.\n  \
+Use when: configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, `agy`, `gemini`, `kimi`, or `pi` turns.\n  \
 refresh <connection_id> --driver-version <ver> --model <id[:driver_id]> [--account-ref <ref>] [--ttl <secs>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 Record a fresh local readiness and discovered-model observation for a bound provider connection\n      \
 Use when: marking a headless office's local runtime binding ready for agent session routing (accepts comma-separated `--model` entries).\n  \

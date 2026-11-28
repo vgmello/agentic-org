@@ -121,6 +121,8 @@ impl TasksWrite for SqliteTx {
             opt_u64_val(record.rank_order)?,
         ];
         final_summary_values(record.final_summary.as_ref(), &mut values);
+        values.push(opt_text_val(record.blocked_since.as_deref()));
+        values.push(Value::Integer(i64::from(record.waiting_on_owner)));
         meta_values(&meta, &mut values)?;
         let columns = format!("organization_id, {TASK_COLS}, schema_version, {META}");
         put(db, "tasks", &columns, 2, values)?;

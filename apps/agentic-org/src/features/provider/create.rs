@@ -21,10 +21,10 @@ pub(crate) struct CreateArgs {
     /// Its unique key
     #[arg(long)]
     pub(super) key: String,
-    /// The provider type (for example anthropic, openai, google)
+    /// The provider type (for example anthropic, openai, google, moonshot, pi)
     #[arg(long = "provider", value_name = "PROVIDER")]
     pub(super) provider_type: String,
-    /// The runtime driver (for example claude, codex, agy)
+    /// The runtime driver (for example claude, codex, agy, gemini, kimi, pi)
     #[arg(long = "runtime", value_name = "RUNTIME")]
     pub(super) runtime_driver: String,
     /// How it authenticates

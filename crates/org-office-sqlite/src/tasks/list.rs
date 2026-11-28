@@ -17,7 +17,9 @@
 
 use std::collections::BTreeMap;
 
-use org_proto::tasks::{ChecklistSection, LabelMatchMode, TaskSortMode, TaskStatus};
+use org_proto::tasks::{
+    BlockingDependencyWire, ChecklistSection, LabelMatchMode, TaskSortMode, TaskStatus,
+};
 use org_store::{EngineError, Id};
 use rusqlite::{types::Value, Connection};
 
@@ -145,6 +147,18 @@ pub(super) fn filter(scope: &str, query: &TaskListQuery) -> Result<Clause, Engin
              AND k.source_kind = 'task' AND k.source_id = {at} AND k.kind = 'depends_on')"
         ));
     }
+    if let Some(wanted) = query.dependency_blocked {
+        let predicate = "EXISTS (SELECT 1 FROM links k \
+             JOIN tasks dep ON dep.organization_id = k.organization_id AND dep.id = k.target_id \
+             WHERE k.organization_id = t.organization_id AND k.source_kind = 'task' \
+             AND k.source_id = t.id AND k.kind = 'depends_on' AND k.target_kind = 'task' \
+             AND dep.status <> 'done')";
+        if wanted {
+            clause.and(predicate);
+        } else {
+            clause.and(&format!("NOT {predicate}"));
+        }
+    }
     if let Some(q) = &query.text {
         mentions(&mut clause, q);
     }
@@ -165,10 +179,18 @@ pub(super) fn filter(scope: &str, query: &TaskListQuery) -> Result<Clause, Engin
 /// closed enum's own, never caller text.
 fn statuses(clause: &mut Clause, query: &TaskListQuery) -> Result<(), EngineError> {
     let set = query.statuses;
-    if set == TaskStatusSet::OPEN {
-        clause.and(OPEN);
-    } else if set.is_empty() {
+    if set.is_empty() {
         clause.and("0");
+    } else if !set.contains(TaskStatus::Done) && !set.contains(TaskStatus::Cancelled) {
+        // Any non-empty subset of open statuses emits the partial-index predicate verbatim
+        // (`status NOT IN ('done', 'cancelled')`), so SQLite uses `tasks_open_by_project` /
+        // `tasks_open_by_team` with zero `TEMP B-TREE` for `ready = true`,
+        // `dependency_blocked = true`, and narrow open status subsets.
+        clause.and(OPEN);
+        if set != TaskStatusSet::OPEN {
+            let names: Vec<String> = set.iter().map(|s| format!("'{}'", s.as_str())).collect();
+            clause.and(&format!("t.status IN ({})", names.join(", ")));
+        }
     } else if set != TaskStatusSet::ALL {
         let names: Vec<String> = set.iter().map(|s| format!("'{}'", s.as_str())).collect();
         clause.and(&format!("t.status IN ({})", names.join(", ")));
@@ -212,12 +234,13 @@ fn carries(clause: &mut Clause, filter: &LabelFilter) {
     }
 }
 
-/// `q` (already lowercase) in the key, title, body, a label or a file path.
+/// `q` (already lowercase) in the key, title, body, blocked_reason, a label or a file path.
 fn mentions(clause: &mut Clause, q: &str) {
     let at = clause.bind(text(q));
     clause.and(&format!(
         "(instr(lower(t.key), {at}) > 0 OR instr(lower(t.title), {at}) > 0 \
          OR instr(lower(t.body_markdown), {at}) > 0 \
+         OR (t.blocked_reason IS NOT NULL AND instr(lower(t.blocked_reason), {at}) > 0) \
          OR EXISTS (SELECT 1 FROM task_labels l WHERE l.organization_id = t.organization_id \
            AND l.task_id = t.id AND instr(l.label, {at}) > 0) \
          OR EXISTS (SELECT 1 FROM task_files f WHERE f.organization_id = t.organization_id \
@@ -278,15 +301,56 @@ pub(super) fn rollups(
         let upstream = fetch(
             db,
             &format!(
-                "SELECT source_id, target_id FROM links WHERE organization_id = ?1 \
-                 AND source_kind = 'task' AND source_id IN {targets} AND kind = 'depends_on' \
-                 ORDER BY source_id, target_id"
+                "SELECT k.source_id, k.target_id, dep.office_code, dep.number, dep.title, dep.status \
+                 FROM links k \
+                 LEFT JOIN tasks dep \
+                   ON dep.organization_id = k.organization_id AND dep.id = k.target_id \
+                 WHERE k.organization_id = ?1 \
+                   AND k.source_kind = 'task' AND k.source_id IN {targets} \
+                   AND k.kind = 'depends_on' AND k.target_kind = 'task' \
+                 ORDER BY k.source_id, dep.office_code, dep.number, k.target_id"
             ),
             values.clone(),
-            |r| Ok((id(r, 0)?, id(r, 1)?)),
+            |r| {
+                let source = id(r, 0)?;
+                let target = id(r, 1)?;
+                let code: Option<String> = r.get(2)?;
+                let dep = match code {
+                    Some(office_code) => {
+                        let num = number(r, 3)?;
+                        let title: String = r.get(4)?;
+                        let status_raw: String = r.get(5)?;
+                        let status = TaskStatus::parse(&status_raw)
+                            .ok_or_else(|| super::bad_col(5, "invalid status"))?;
+                        Some((office_code, num, title, status))
+                    }
+                    None => None,
+                };
+                Ok((source, target, dep))
+            },
         )?;
-        for (task, target) in upstream {
-            out.entry(task).or_default().depends_on.push(target);
+        for (task, target, dep) in upstream {
+            let entry = out.entry(task).or_default();
+            entry.depends_on.push(target.clone());
+            if let Some((office_code, num, title, status)) = dep {
+                if status != TaskStatus::Done {
+                    entry
+                        .unmet_blocking_dependencies
+                        .push(BlockingDependencyWire {
+                            id: target.as_str().to_owned(),
+                            key: format!("T-{office_code}{num}"),
+                            title,
+                            status,
+                            cancelled: status == TaskStatus::Cancelled,
+                        });
+                }
+            }
+        }
+        for id in chunk {
+            if let Some(entry) = out.get_mut(id) {
+                entry.depends_on.sort();
+                entry.depends_on.dedup();
+            }
         }
         let downstream = fetch(
             db,

@@ -30,19 +30,28 @@ impl ChatService {
         &self,
         member: &str,
         is_owner: bool,
+        via_grant: bool,
         after_live_seq: Option<u64>,
         live_head: u64,
     ) -> (
         Vec<org_proto::msg::MessageReceivedData>,
         Vec<org_proto::msg::MessageStateChangedData>,
         Vec<org_proto::inbox::InboxChangedData>,
+        Vec<u64>,
         bool,
     ) {
         let mut messages_received = Vec::new();
         let mut message_states = Vec::new();
         let mut inbox_changes = Vec::new();
+        let mut org_live_seqs = Vec::new();
         let Some(after) = after_live_seq else {
-            return (messages_received, message_states, inbox_changes, false);
+            return (
+                messages_received,
+                message_states,
+                inbox_changes,
+                org_live_seqs,
+                false,
+            );
         };
         let batch = self.live.since(after, live_head);
         for ev in batch.events {
@@ -54,25 +63,58 @@ impl ChatService {
                     message_states.push(data);
                 }
                 Live::InboxChanged(data) if is_owner => inbox_changes.push(data),
+                Live::OrgChanged(seq) if via_grant => org_live_seqs.push(seq),
                 _ => {}
             }
         }
-        (messages_received, message_states, inbox_changes, batch.lost)
+        (
+            messages_received,
+            message_states,
+            inbox_changes,
+            org_live_seqs,
+            batch.lost,
+        )
     }
 
     fn collect_events_poll_result(
         &self,
         member: &str,
         is_owner: bool,
+        via_grant: bool,
         params: &org_proto::chat::ChatEventsPollParams,
     ) -> Result<ChatEventsPollResult, org_office::OfficeError> {
         let snapshot = self.office.org_snapshot()?;
         let org_head_seq = snapshot.position.seq;
-        let (org_changes, snapshot_required) =
+        let (mut org_changes, snapshot_required) =
             self.poll_org_changes(is_owner, params.after_org_seq, org_head_seq)?;
         let head = self.live.head();
-        let (messages_received, message_states, inbox_changes, live_lost) =
-            self.collect_live_events(member, is_owner, params.after_live_seq, head.messages);
+        let (messages_received, message_states, inbox_changes, org_live_seqs, live_lost) = self
+            .collect_live_events(
+                member,
+                is_owner,
+                via_grant,
+                params.after_live_seq,
+                head.messages,
+            );
+        if !snapshot_required && !org_live_seqs.is_empty() {
+            let safe_position = org_changes.last().map_or_else(
+                || org_proto::org::Position {
+                    epoch: snapshot.position.epoch,
+                    seq: params.after_org_seq.map_or(snapshot.position.seq, |after| {
+                        after.min(snapshot.position.seq)
+                    }),
+                },
+                |last| last.position,
+            );
+            for seq in org_live_seqs {
+                org_changes.push(org_proto::org::OrgChangedData {
+                    position: safe_position,
+                    command_id: format!("live-org:{seq}"),
+                    changes: Vec::new(),
+                    actor: None,
+                });
+            }
+        }
         let presence_changes = params
             .after_presence_seq
             .map(|after| self.live.presence_since(after, head.presence).0)
@@ -111,7 +153,8 @@ impl ChatService {
         let deadline = events_poll_deadline(&params);
         loop {
             let token = self.feed_wake.as_ref().map(|w| w.token());
-            let result = match self.collect_events_poll_result(member, is_owner, &params) {
+            let result = match self.collect_events_poll_result(member, is_owner, via_grant, &params)
+            {
                 Ok(res) => res,
                 Err(error) => {
                     crate::logged("chat.events_poll.org", &error);

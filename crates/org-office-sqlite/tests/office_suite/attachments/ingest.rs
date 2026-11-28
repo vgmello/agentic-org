@@ -10,7 +10,7 @@ use org_store::Id;
 
 use super::custody::{check, shipped, SATELLITE};
 use super::update_meta::ArchiveProject;
-use super::{attach_upload, read_all, upload, Fixture, ENGINES};
+use super::{attach_upload, engines, read_all, upload, Fixture};
 use org_media::testkit::{gif, jpeg_with_exif, png_with_text, webp, GPS_MARKER};
 use org_office::attachments::media::{self, MediaType};
 use org_office::attachments::records::AttachmentRecord;
@@ -42,7 +42,6 @@ fn org_file(fx: &Fixture, mime: &str, bytes: &[u8]) -> AttachmentRecord {
 
 #[test]
 fn hq_never_keeps_an_image_that_still_carries_metadata_or_bytes_after_its_end() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let before = fx.office.attachment_blob_counts().unwrap();
     let clean = sample_png(12, 8);
@@ -90,7 +89,6 @@ fn hq_never_keeps_an_image_that_still_carries_metadata_or_bytes_after_its_end() 
 
 #[test]
 fn hq_refuses_a_shipped_name_that_does_not_fit_its_type() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let text = b"plain notes".to_vec();
     let png = sample_png(4, 4);
@@ -121,7 +119,6 @@ fn hq_refuses_a_shipped_name_that_does_not_fit_its_type() {
 
 #[test]
 fn hq_refuses_a_record_whose_type_dimensions_or_page_count_are_not_its_bytes() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let before = fx.office.attachment_blob_counts().unwrap();
     let png = sample_png(12, 8);
@@ -172,9 +169,8 @@ fn hq_refuses_a_record_whose_type_dimensions_or_page_count_are_not_its_bytes() {
 
 #[test]
 fn a_new_attachment_never_binds_bytes_hq_holds_without_sending_them() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         // A project file HQ holds, which only the project's team may add to.
         let secret = b"the platform team's roadmap".to_vec();
         let staged = upload(&fx.office, &fx.person, "plan.txt", "text/plain", &secret).unwrap();
@@ -232,9 +228,8 @@ fn a_new_attachment_never_binds_bytes_hq_holds_without_sending_them() {
 
 #[test]
 fn two_attachments_of_the_same_bytes_both_send_them_and_are_kept_once() {
-    org_office_sqlite::install();
-    for engine in ENGINES {
-        let fx = Fixture::new(engine);
+    for engine in engines() {
+        let fx = Fixture::new(engine.clone());
         let bytes = sample_png(10, 6);
         let (shared_before, private_before) = fx.office.attachment_blob_counts().unwrap();
         let first = org_file(&fx, "image/png", &bytes);
@@ -281,8 +276,7 @@ fn two_attachments_of_the_same_bytes_both_send_them_and_are_kept_once() {
 
 #[test]
 fn the_uploader_is_decided_again_when_the_bytes_arrive() {
-    org_office_sqlite::install();
-    let fx = Fixture::new(EngineChoice::Sqlite);
+    let fx = Fixture::new(EngineChoice::Sqlite(org_office_sqlite::sqlite_backend()));
     let bytes = b"written before the project closed".to_vec();
     let record = shipped(
         &fx.person,
@@ -313,7 +307,6 @@ fn the_uploader_is_decided_again_when_the_bytes_arrive() {
 
 #[test]
 fn an_empty_shipped_file_is_an_invalid_request_not_too_large() {
-    org_office_sqlite::install();
     let fx = Fixture::new(EngineChoice::Memory);
     let empty = org_file(&fx, "text/plain", b"");
     assert_eq!(empty.byte_count, 0);

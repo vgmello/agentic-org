@@ -15,6 +15,7 @@ mod fetch;
 mod preprepare;
 mod push;
 mod redaction;
+mod vault;
 mod worktree;
 
 use std::sync::{Arc, Mutex, Weak};
@@ -25,19 +26,22 @@ use org_office::git::{git_clean_home_path, OfficeGitState, RepoCacheState, TaskW
 use org_office::organization_family::records::{Repository, RepositoryKind};
 use org_office::Office;
 use org_proto::git::{
-    CacheStateWire, GitPush, RepoAttach, RepoAttachParams, RepoAttachResult, RepoFetch, RepoList,
-    RepoListParams, RepoListResult, RepoRegister, RepoRegisterParams, RepoRegisterResult,
-    RepoStatus, RepoStatusParams, RepoStatusResult, RepositoryKindWire, RepositoryRecordWire,
-    WorktreeList, WorktreeListParams, WorktreeListResult, WorktreePrepare,
+    CacheStateWire, GitPush, RepoAttach, RepoAttachParams, RepoAttachResult, RepoCredentialRevoke,
+    RepoCredentialRevokeParams, RepoCredentialSet, RepoCredentialSetParams, RepoCredentialStatus,
+    RepoCredentialStatusParams, RepoCredentialView, RepoFetch, RepoList, RepoListParams,
+    RepoListResult, RepoRegister, RepoRegisterParams, RepoRegisterResult, RepoStatus,
+    RepoStatusParams, RepoStatusResult, RepositoryKindWire, RepositoryRecordWire, WorktreeList,
+    WorktreeListParams, WorktreeListResult, WorktreePrepare,
 };
 use org_proto::resume::ResumeWorktreeItem;
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use self::credentials::{
-    record_or_verify_local_origin, resolve_remote_spec, validate_register_origin,
+    inspect_repo_credential_status, record_or_verify_local_origin, resolve_remote_spec,
+    validate_register_origin,
 };
 use self::fetch::{FetchGate, FETCH_COOLDOWN};
-use self::redaction::{map_git_error, map_office_error};
+use self::redaction::{map_git_error, map_office_error, map_remote_git_error};
 
 /// Whether `request` belongs to the C7 Git/repository/worktree RPC family.
 pub(crate) fn is_git_method(request: &Request) -> bool {
@@ -46,6 +50,9 @@ pub(crate) fn is_git_method(request: &Request) -> bool {
         || request.is::<RepoAttach>()
         || request.is::<RepoStatus>()
         || request.is::<RepoFetch>()
+        || request.is::<RepoCredentialSet>()
+        || request.is::<RepoCredentialStatus>()
+        || request.is::<RepoCredentialRevoke>()
         || request.is::<WorktreeList>()
         || request.is::<WorktreePrepare>()
         || request.is::<GitPush>()
@@ -66,7 +73,16 @@ pub(crate) struct GitService {
 }
 
 impl GitService {
+    #[cfg(test)]
     pub(crate) fn new(office: Arc<Office>, live: Arc<LiveEvents>) -> Self {
+        Self::with_locks(office, live, Arc::new(RepoLocks::new()))
+    }
+
+    pub(crate) fn with_locks(
+        office: Arc<Office>,
+        live: Arc<LiveEvents>,
+        locks: Arc<RepoLocks>,
+    ) -> Self {
         let loaded = OfficeGitState::load(office.runtime_root(), &office.info().office_id)
             .unwrap_or_else(|e| {
                 eprintln!("agentic-org-office: failed loading git-state.json: {e}");
@@ -75,7 +91,7 @@ impl GitService {
         Self {
             office,
             live,
-            locks: Arc::new(RepoLocks::new()),
+            locks,
             state: Mutex::new(loaded),
             runner: Mutex::new(None),
             fetch_gate: FetchGate::new(FETCH_COOLDOWN),
@@ -125,6 +141,21 @@ impl GitService {
         }
         if request.is::<RepoFetch>() {
             return Some(run_call::<RepoFetch>(request, |p| self.handle_fetch(p)));
+        }
+        if request.is::<RepoCredentialSet>() {
+            return Some(run_call::<RepoCredentialSet>(request, |p| {
+                self.handle_credential_set(member, p)
+            }));
+        }
+        if request.is::<RepoCredentialStatus>() {
+            return Some(run_call::<RepoCredentialStatus>(request, |p| {
+                self.handle_credential_status(member, p)
+            }));
+        }
+        if request.is::<RepoCredentialRevoke>() {
+            return Some(run_call::<RepoCredentialRevoke>(request, |p| {
+                self.handle_credential_revoke(member, p)
+            }));
         }
         if request.is::<WorktreeList>() {
             return Some(run_call::<WorktreeList>(request, |p| {
@@ -246,7 +277,9 @@ impl GitService {
             .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "repository not found"))?;
         let remote = resolve_remote_spec(&self.office, &repo)?;
         let runner = self.runner()?;
-        let heads = ls_remote_heads(&runner, &remote).map_err(map_git_error)?;
+        let repo_ref = repo.key.as_deref().unwrap_or(repo.id.as_str());
+        let heads = ls_remote_heads(&runner, &remote)
+            .map_err(|err| map_remote_git_error(err, &remote, repo_ref))?;
         if !heads.contains_key(branch) {
             return Err(ApiError::new(
                 ErrorCode::NotFound,
@@ -326,6 +359,73 @@ impl GitService {
                 .then_with(|| a.repository_id.cmp(&b.repository_id))
         });
         Ok(WorktreeListResult { worktrees })
+    }
+
+    fn require_owner(&self, member: &str, msg: &str) -> Result<(), ApiError> {
+        if member == self.office.owner_member_id()
+            || member == self.office.effective_owner_member_id()
+        {
+            Ok(())
+        } else {
+            Err(ApiError::new(ErrorCode::NotAuthorized, msg))
+        }
+    }
+
+    fn handle_credential_set(
+        &self,
+        member: &str,
+        params: RepoCredentialSetParams,
+    ) -> Result<RepoCredentialView, ApiError> {
+        self.require_owner(
+            member,
+            "only the organization owner may configure repository credentials",
+        )?;
+        let repo = self
+            .office
+            .resolve_repository(&params.repository)
+            .map_err(map_office_error)?
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "repository not found"))?;
+        vault::store_repo_https_token(
+            &self.office,
+            &repo,
+            params.username.as_deref(),
+            &params.token,
+        )
+    }
+
+    fn handle_credential_status(
+        &self,
+        member: &str,
+        params: RepoCredentialStatusParams,
+    ) -> Result<RepoCredentialView, ApiError> {
+        self.require_owner(
+            member,
+            "only the organization owner may inspect repository credentials",
+        )?;
+        let repo = self
+            .office
+            .resolve_repository(&params.repository)
+            .map_err(map_office_error)?
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "repository not found"))?;
+        inspect_repo_credential_status(&self.office, &repo)
+    }
+
+    fn handle_credential_revoke(
+        &self,
+        member: &str,
+        params: RepoCredentialRevokeParams,
+    ) -> Result<RepoCredentialView, ApiError> {
+        self.require_owner(
+            member,
+            "only the organization owner may revoke repository credentials",
+        )?;
+        let repo = self
+            .office
+            .resolve_repository(&params.repository)
+            .map_err(map_office_error)?
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "repository not found"))?;
+        vault::revoke_repo_https_token(&self.office, &repo)?;
+        inspect_repo_credential_status(&self.office, &repo)
     }
 
     /// Returns caller-owned active worktrees for `agent.resume`, strictly scoped to
@@ -411,3 +511,5 @@ mod fetch_tests;
 mod preprepare_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vault_tests;

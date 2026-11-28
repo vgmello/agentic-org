@@ -157,6 +157,68 @@ fn list_query_refuses_conflicts_and_unknown_dependency_references() {
         }),
         ErrorCode::NotFound
     );
+    assert_eq!(
+        refused(TasksListParams {
+            ready: true,
+            dependency_blocked: true,
+            ..TasksListParams::default()
+        }),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        refused(TasksListParams {
+            ready: true,
+            status: Some(Blocked),
+            ..TasksListParams::default()
+        }),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        refused(TasksListParams {
+            ready: true,
+            status_scope: Some(TaskStatusScope::Closed),
+            ..TasksListParams::default()
+        }),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        refused(TasksListParams {
+            ready: true,
+            done_since: SINCE.map(str::to_owned),
+            ..TasksListParams::default()
+        }),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        refused(TasksListParams {
+            ready: true,
+            status_scope: Some(TaskStatusScope::Open),
+            done_since: SINCE.map(str::to_owned),
+            ..TasksListParams::default()
+        }),
+        ErrorCode::InvalidRequest
+    );
+
+    let ready_q = list_query(
+        &view,
+        &TasksListParams {
+            ready: true,
+            ..TasksListParams::default()
+        },
+    )
+    .expect("valid ready query");
+    assert_eq!(ready_q.statuses, set(&[Todo, InProgress]));
+    assert_eq!(ready_q.dependency_blocked, Some(false));
+
+    let dep_q = list_query(
+        &view,
+        &TasksListParams {
+            dependency_blocked: true,
+            ..TasksListParams::default()
+        },
+    )
+    .expect("valid dependency_blocked query");
+    assert_eq!(dep_q.dependency_blocked, Some(true));
 
     let query = list_query(
         &view,

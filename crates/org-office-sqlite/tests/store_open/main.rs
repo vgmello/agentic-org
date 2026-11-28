@@ -30,13 +30,21 @@ mod local;
 mod messaging;
 mod messaging_catchup;
 mod task_ax;
+mod task_blocking;
 mod task_dod;
 mod task_numbering;
+mod task_query_bench;
 mod task_replicas;
 mod task_storage;
 mod tasks;
 
-pub(crate) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
+pub(crate) fn sqlite_engine() -> EngineChoice {
+    EngineChoice::Sqlite(org_office_sqlite::sqlite_backend())
+}
+
+pub(crate) fn engines() -> [EngineChoice; 2] {
+    [sqlite_engine(), EngineChoice::Memory]
+}
 
 /// One office's directories, custody and disk, which outlive any one opening.
 pub(crate) struct Place {
@@ -57,7 +65,6 @@ impl Place {
 
     /// The office under `root`, as a new process finds it: nothing kept in memory.
     pub(crate) fn at(root: &Path) -> Self {
-        org_office_sqlite::install();
         Self {
             root: root.canonicalize().expect("a real path"),
             custody: Arc::new(FakeCustody::new()),
@@ -208,9 +215,8 @@ mod sqlite_suite {
     use super::*;
 
     fn open() -> (Arc<SqliteEngine>, Place) {
-        org_office_sqlite::install();
         let place = Place::new();
-        let config = place.config(EngineChoice::Sqlite, Opening::Existing);
+        let config = place.config(sqlite_engine(), Opening::Existing);
         let engine = open_sqlite_projection(&config).expect("a new projection");
         (Arc::new(engine), place)
     }
@@ -230,19 +236,27 @@ mod memory_suite {
 
 #[test]
 fn only_an_engine_that_is_built_in_is_chosen() {
-    assert_eq!(EngineChoice::named("sqlite"), Ok(EngineChoice::Sqlite));
-    assert_eq!(EngineChoice::named("memory"), Ok(EngineChoice::Memory));
+    assert!(
+        EngineChoice::named("sqlite", Some(org_office_sqlite::sqlite_backend()))
+            .unwrap()
+            .is_sqlite()
+    );
+    assert!(matches!(
+        EngineChoice::named("sqlite", None),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(EngineChoice::named("memory", None).unwrap().is_memory());
     for name in ["postgres", "SQLite", "", "sqlite3"] {
-        let refused = EngineChoice::named(name);
+        let refused = EngineChoice::named(name, Some(org_office_sqlite::sqlite_backend()));
         assert!(matches!(refused, Err(StoreError::Invalid(_))), "{name:?}");
     }
 }
 
 #[test]
 fn both_engines_create_read_retry_and_reopen_through_the_one_seam() {
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         assert_eq!(store.read(DirectoryGeneration).unwrap().0, 0, "{engine:?}");
         let created = create_organization(&store, 1).unwrap();
         assert_eq!(created.outcome, Outcome::Completed, "{engine:?}");
@@ -257,12 +271,12 @@ fn both_engines_create_read_retry_and_reopen_through_the_one_seam() {
         assert_eq!(before.counter.as_ref().map(|c| c.last_number), Some(2));
         store.close().unwrap();
 
-        let store = place.reopen(engine);
+        let store = place.reopen(engine.clone());
         assert_eq!(directory(&store), before, "{engine:?}");
         assert_eq!(create_team(&store, 2, 0x21), Ok(team), "{engine:?}");
         store.close().unwrap();
         // A second creation of the same journal is refused.
-        let again = place.config(engine, Opening::Create(AnchorFacts::default()));
+        let again = place.config(engine.clone(), Opening::Create(AnchorFacts::default()));
         assert!(open_store(&again).is_err(), "{engine:?}");
     }
 }
@@ -270,7 +284,7 @@ fn both_engines_create_read_retry_and_reopen_through_the_one_seam() {
 #[test]
 fn the_sqlite_projection_is_in_the_offices_runtime_folder_and_deleting_it_rebuilds_it() {
     let place = Place::new();
-    let store = place.create(EngineChoice::Sqlite);
+    let store = place.create(sqlite_engine());
     create_organization(&store, 1).unwrap();
     create_team(&store, 2, 0x21).unwrap();
     store.sync().unwrap();
@@ -281,7 +295,7 @@ fn the_sqlite_projection_is_in_the_offices_runtime_folder_and_deleting_it_rebuil
     let durable = tree(&place.durable());
 
     std::fs::remove_dir_all(&folder).unwrap();
-    let store = place.reopen(EngineChoice::Sqlite);
+    let store = place.reopen(sqlite_engine());
     assert_eq!(store.dump(), dump);
     assert_eq!(directory(&store), read);
     store.close().unwrap();
@@ -310,7 +324,7 @@ fn memory_and_sqlite_agree_on_every_scripted_command() {
     for seed in 0..4u64 {
         let script = OrganizationScript::new();
         let (sqlite, memory) = (Place::new(), Place::new());
-        let on_sqlite = sqlite.create(EngineChoice::Sqlite);
+        let on_sqlite = sqlite.create(sqlite_engine());
         let on_memory = memory.create(EngineChoice::Memory);
         let mut rng = Rng::new(seed);
         let mut steps: Vec<Step> = Vec::new();
@@ -345,7 +359,7 @@ fn memory_and_sqlite_agree_on_every_scripted_command() {
 
 /// How long the SQLite projection's log is, in bytes.
 fn log_bytes(place: &Place) -> u64 {
-    let config = place.config(EngineChoice::Sqlite, Opening::Existing);
+    let config = place.config(sqlite_engine(), Opening::Existing);
     let mut log = config.projection_path().into_os_string();
     log.push("-wal");
     std::fs::metadata(log).expect("the log").len()
@@ -376,7 +390,7 @@ fn the_sqlite_log_stops_growing_while_the_store_stays_open_and_a_long_read_only_
     use std::sync::mpsc::channel;
 
     let place = Place::new();
-    let store = place.create(EngineChoice::Sqlite);
+    let store = place.create(sqlite_engine());
     create_organization(&store, 1).unwrap();
     store.sync().unwrap();
     // One committed write, then a round of the flusher.
@@ -434,9 +448,9 @@ fn projects_suite_passes_on_memory_and_sqlite_and_survives_rebuild() {
     }
 
     let mut engine_outputs = Vec::new();
-    for engine in ENGINES {
+    for engine in engines() {
         let place = Place::new();
-        let store = place.create(engine);
+        let store = place.create(engine.clone());
         let creation = creation_command();
         let owner = creation.creator.employee_id.clone();
         let team1 = creation.team_id.clone();
@@ -776,12 +790,14 @@ fn projects_suite_passes_on_memory_and_sqlite_and_survives_rebuild() {
 
         // 7. Close, delete SQLite projection file (`runtime/<office>/office.db`), reopen, and verify rebuild!
         store.close().unwrap();
-        if engine == EngineChoice::Sqlite {
-            let db_path = place.config(engine, Opening::Existing).projection_path();
+        if engine.is_sqlite() {
+            let db_path = place
+                .config(engine.clone(), Opening::Existing)
+                .projection_path();
             assert!(db_path.is_file());
             std::fs::remove_file(&db_path).unwrap();
         }
-        let reopened = place.reopen(engine);
+        let reopened = place.reopen(engine.clone());
         let after_list = reopened
             .read(ProjectsList {
                 include_archived: false,

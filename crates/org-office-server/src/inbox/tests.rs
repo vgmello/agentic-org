@@ -87,7 +87,8 @@ fn list_and_recount_use_the_same_exact_unfiltered_counts_past_the_item_cap() {
             questions: 2,
             decisions: 3,
             problems: 4,
-            total: 511,
+            reviews: 1,
+            total: 512,
         },
     );
     let b = Fake::new(
@@ -97,7 +98,8 @@ fn list_and_recount_use_the_same_exact_unfiltered_counts_past_the_item_cap() {
             questions: 4,
             decisions: 5,
             problems: 6,
-            total: 18,
+            reviews: 2,
+            total: 20,
         },
     );
     let sources: [&dyn Source; 2] = [&a, &b];
@@ -132,7 +134,8 @@ fn list_and_recount_use_the_same_exact_unfiltered_counts_past_the_item_cap() {
             questions: 6,
             decisions: 8,
             problems: 10,
-            total: 529
+            reviews: 3,
+            total: 532
         }
     );
     for source in [&a, &b] {
@@ -199,7 +202,7 @@ fn failure_omits_that_sources_items_and_counts_and_marks_both_paths_degraded() {
 
 #[test]
 fn each_count_overflow_degrades_the_whole_source_without_partial_items_or_totals() {
-    for field in 0..5 {
+    for field in 0..6 {
         let mut a = InboxCounts::default();
         let mut b = InboxCounts::default();
         let a_fields = [
@@ -207,6 +210,7 @@ fn each_count_overflow_degrades_the_whole_source_without_partial_items_or_totals
             &mut a.questions,
             &mut a.decisions,
             &mut a.problems,
+            &mut a.reviews,
             &mut a.total,
         ];
         let b_fields = [
@@ -214,6 +218,7 @@ fn each_count_overflow_degrades_the_whole_source_without_partial_items_or_totals
             &mut b.questions,
             &mut b.decisions,
             &mut b.problems,
+            &mut b.reviews,
             &mut b.total,
         ];
         *a_fields[field] = u64::MAX;

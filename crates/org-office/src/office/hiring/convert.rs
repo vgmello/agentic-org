@@ -3,33 +3,33 @@
 
 use org_proto::hiring::{
     AgentExecutionRecord, HireProposalWire, HireRequestRecord, ModelProfileRecord, RoleRecord,
+    TeamLimitRequestRecord,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Outcome, Reply, StoreError};
 
 use crate::organization::{
     authority::HIRE_DENIED,
+    features::{TEAM_LIMIT_DECIDE_DENIED, TEAM_LIMIT_REQUEST_DENIED},
     ops::{OrgRejection, NOT_AUTHORIZED},
     records::{
         self, AgentExecutionConfig, HireProposal, HireRequest, ModelProfile, PermissionPreset,
-        ReasoningEffort, Role,
+        ReasoningEffort, Role, TeamLimitRequest,
     },
 };
-use crate::structure::wire::rejection_code;
+use crate::structure::wire::rejection_error;
 
 pub(super) fn parse_id(raw: &str, field: &str) -> Result<Id, ApiError> {
-    if !records::is_stable_id(raw) {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!("{field} must be a lowercase UUIDv7"),
-        ));
-    }
-    Id::parse(raw).map_err(|_| {
+    let err = || {
         ApiError::new(
             ErrorCode::InvalidRequest,
             format!("{field} must be a lowercase UUIDv7"),
         )
-    })
+    };
+    records::is_stable_id(raw)
+        .then(|| Id::parse(raw).ok())
+        .flatten()
+        .ok_or_else(err)
 }
 
 pub(super) fn opt_id(raw: Option<&str>, field: &str) -> Result<Option<Id>, ApiError> {
@@ -43,7 +43,10 @@ pub(super) fn storage_err(_err: StoreError) -> ApiError {
 pub(super) fn map_store_error(err: StoreError) -> ApiError {
     match err {
         StoreError::Invalid(msg) => {
-            if msg == HIRE_DENIED || msg == NOT_AUTHORIZED {
+            if matches!(
+                msg.as_str(),
+                HIRE_DENIED | NOT_AUTHORIZED | TEAM_LIMIT_REQUEST_DENIED | TEAM_LIMIT_DECIDE_DENIED
+            ) {
                 ApiError::new(ErrorCode::NotAuthorized, msg)
             } else {
                 ApiError::new(ErrorCode::InvalidRequest, msg)
@@ -64,7 +67,7 @@ pub(super) fn decode_reply<T: serde::de::DeserializeOwned>(reply: Reply) -> Resu
         Outcome::Rejected => {
             let rej: OrgRejection = serde_json::from_slice(&reply.bytes)
                 .map_err(|_| ApiError::new(ErrorCode::StorageError, "unreadable rejection"))?;
-            Err(ApiError::new(rejection_code(rej.code), rej.message))
+            Err(rejection_error(rej))
         }
     }
 }
@@ -213,6 +216,28 @@ pub(super) fn exec_to_wire(e: &AgentExecutionConfig) -> AgentExecutionRecord {
         enabled: e.enabled,
         system_prompt_markdown: e.system_prompt_markdown.clone(),
         revision: e.meta.revision,
+    }
+}
+
+pub(super) fn team_limit_to_wire(r: &TeamLimitRequest) -> TeamLimitRequestRecord {
+    TeamLimitRequestRecord {
+        id: r.id.as_str().to_owned(),
+        revision: r.revision,
+        state: r.state.as_str().to_owned(),
+        team_id: r.team_id.as_str().to_owned(),
+        requested_by_employee_id: r.requested_by_employee_id.as_str().to_owned(),
+        approver_employee_id: r.approver_employee_id.as_str().to_owned(),
+        current_max_members: r.current_max_members,
+        requested_max_members: r.requested_max_members,
+        reason: r.reason.clone(),
+        decision_reason: r.decision_reason.clone(),
+        decided_by_employee_id: r
+            .decided_by_employee_id
+            .as_ref()
+            .map(|i| i.as_str().to_owned()),
+        decided_at: r.decided_at.clone(),
+        created_at: r.created_at.clone(),
+        updated_at: r.updated_at.clone(),
     }
 }
 

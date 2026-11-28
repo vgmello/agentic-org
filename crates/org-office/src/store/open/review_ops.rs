@@ -1,5 +1,6 @@
 //! Engine-independent `ReadOp` and `StoreOp` wrappers for universal reviews (`TASK-92.1`).
 
+use org_proto::attachments::AttachmentTargetKind;
 use org_proto::reviews::{
     ReviewCloseParams, ReviewFindingParams, ReviewFindingResult, ReviewInspectParams,
     ReviewInspectResult, ReviewListParams, ReviewListResult, ReviewMutationResult,
@@ -16,12 +17,13 @@ use serde::de::DeserializeOwned;
 use crate::organization::records::{Employee, EmployeeKind, EmployeeStatus, TeamStatus};
 use crate::projects::records::Project;
 use crate::reviews::features::{
-    decide_close, decide_finding, decide_request, decide_resubmit, decide_route, decide_verdict,
-    decode_refusal, inspect_review, list_events, list_reviews, ReviewInspectSections,
+    decide_close, decide_finding, decide_request, decide_resubmit, decide_route,
+    decide_verdict_with_session, decode_refusal, inspect_review, list_events, list_reviews,
+    ReviewInspectSections,
 };
 use crate::reviews::ports::{
-    ReviewActorInfo, ReviewContextRead, ReviewListQuery, ReviewProjectInfo, ReviewTaskInfo,
-    ReviewsRead,
+    ReviewActorInfo, ReviewAttachmentInfo, ReviewContextRead, ReviewListQuery, ReviewProjectInfo,
+    ReviewTaskInfo, ReviewsRead,
 };
 use crate::reviews::records::{
     OfficeReviewCounterRecord, ResolvedCodePin, ReviewEventRecord, ReviewFindingRecord,
@@ -48,64 +50,42 @@ fn to_project(p: Project) -> ReviewProjectInfo {
         id: p.id,
         owner_team_id: p.owner_team_id,
         contributing_team_ids: p.contributing_team_ids,
+        repository_ids: p
+            .repositories
+            .into_iter()
+            .map(|r| r.repository_id)
+            .collect(),
         archived: p.archived,
     }
 }
 
 struct ReviewView<'a, S: ?Sized>(&'a S);
 
-impl<S: ReviewsRead + ?Sized> ReviewsRead for ReviewView<'_, S> {
-    fn review(&self, id: &Id) -> Result<Option<ReviewRecord>, EngineError> {
-        self.0.review(id)
-    }
-    fn review_by_key(&self, c: &str, n: u64) -> Result<Option<ReviewRecord>, EngineError> {
-        self.0.review_by_key(c, n)
-    }
-    fn list_reviews(&self, q: &ReviewListQuery) -> Result<Vec<ReviewRecord>, EngineError> {
-        self.0.list_reviews(q)
-    }
-    fn max_review_number(&self, c: &str) -> Result<u64, EngineError> {
-        self.0.max_review_number(c)
-    }
-    fn office_review_counter(
-        &self,
-        c: &str,
-    ) -> Result<Option<OfficeReviewCounterRecord>, EngineError> {
-        self.0.office_review_counter(c)
-    }
-    fn office_review_counters(&self) -> Result<Vec<OfficeReviewCounterRecord>, EngineError> {
-        self.0.office_review_counters()
-    }
-    fn review_rounds(&self, id: &Id) -> Result<Vec<ReviewRoundRecord>, EngineError> {
-        self.0.review_rounds(id)
-    }
-    fn review_reviewers(&self, id: &Id) -> Result<Vec<ReviewReviewerRecord>, EngineError> {
-        self.0.review_reviewers(id)
-    }
-    fn review_findings(&self, id: &Id) -> Result<Vec<ReviewFindingRecord>, EngineError> {
-        self.0.review_findings(id)
-    }
-    fn review_finding_by_id(&self, id: &Id) -> Result<Option<ReviewFindingRecord>, EngineError> {
-        self.0.review_finding_by_id(id)
-    }
-    fn review_finding_replies(
-        &self,
-        id: &Id,
-    ) -> Result<Vec<ReviewFindingReplyRecord>, EngineError> {
-        self.0.review_finding_replies(id)
-    }
-    fn review_finding_reply_by_id(
-        &self,
-        id: &Id,
-    ) -> Result<Option<ReviewFindingReplyRecord>, EngineError> {
-        self.0.review_finding_reply_by_id(id)
-    }
-    fn review_events(&self, id: &Id) -> Result<Vec<ReviewEventRecord>, EngineError> {
-        self.0.review_events(id)
-    }
-    fn review_child_parent_ids(&self) -> Result<Vec<Id>, EngineError> {
-        self.0.review_child_parent_ids()
-    }
+macro_rules! fwd_reviews_read {
+    ($($name:ident($($arg:ident: $ty:ty),*) -> $ret:ty;)+) => {
+        impl<S: ReviewsRead + ?Sized> ReviewsRead for ReviewView<'_, S> {
+            $(fn $name(&self $(, $arg: $ty)*) -> Result<$ret, EngineError> {
+                self.0.$name($($arg),*)
+            })+
+        }
+    };
+}
+
+fwd_reviews_read! {
+    review(id: &Id) -> Option<ReviewRecord>;
+    review_by_key(c: &str, n: u64) -> Option<ReviewRecord>;
+    list_reviews(q: &ReviewListQuery) -> Vec<ReviewRecord>;
+    max_review_number(c: &str) -> u64;
+    office_review_counter(c: &str) -> Option<OfficeReviewCounterRecord>;
+    office_review_counters() -> Vec<OfficeReviewCounterRecord>;
+    review_rounds(id: &Id) -> Vec<ReviewRoundRecord>;
+    review_reviewers(id: &Id) -> Vec<ReviewReviewerRecord>;
+    review_findings(id: &Id) -> Vec<ReviewFindingRecord>;
+    review_finding_by_id(id: &Id) -> Option<ReviewFindingRecord>;
+    review_finding_replies(id: &Id) -> Vec<ReviewFindingReplyRecord>;
+    review_finding_reply_by_id(id: &Id) -> Option<ReviewFindingReplyRecord>;
+    review_events(id: &Id) -> Vec<ReviewEventRecord>;
+    review_child_parent_ids() -> Vec<Id>;
 }
 
 impl<S: TasksRead + ?Sized> ReviewContextRead for ReviewView<'_, S> {
@@ -127,6 +107,9 @@ impl<S: TasksRead + ?Sized> ReviewContextRead for ReviewView<'_, S> {
             .team(id)?
             .is_some_and(|t| t.status == TeamStatus::Active))
     }
+    fn team_lead(&self, id: &Id) -> Result<Option<Id>, EngineError> {
+        Ok(self.0.team(id)?.and_then(|t| t.lead_employee_id))
+    }
     fn team_chain(&self, id: &Id) -> Result<Option<Vec<Id>>, EngineError> {
         self.0.team_chain(id)
     }
@@ -144,6 +127,31 @@ impl<S: TasksRead + ?Sized> ReviewContextRead for ReviewView<'_, S> {
     }
     fn repository_exists(&self, id: &Id) -> Result<bool, EngineError> {
         Ok(self.0.repositories()?.iter().any(|r| r.id == *id))
+    }
+    fn repository_project_ids(&self, id: &Id) -> Result<Vec<Id>, EngineError> {
+        let has = |p: &Project| p.repositories.iter().any(|r| r.repository_id == *id);
+        Ok(self
+            .0
+            .projects()?
+            .into_iter()
+            .filter(has)
+            .map(|p| p.id)
+            .collect())
+    }
+    fn attachment_info(&self, id: &Id) -> Result<Option<ReviewAttachmentInfo>, EngineError> {
+        let Some(a) = self.0.attachment(id)? else {
+            return Ok(None);
+        };
+        let target_id = match (a.target_kind, a.target_id) {
+            (AttachmentTargetKind::TaskComment, Some(c)) => {
+                self.0.task_comment_by_id(&c)?.map(|x| x.task_id)
+            }
+            (_, tid) => tid,
+        };
+        Ok(Some(ReviewAttachmentInfo {
+            target_kind: a.target_kind,
+            target_id,
+        }))
     }
 }
 
@@ -227,8 +235,18 @@ review_ops! {
         ReviewRequestOp(oid: Id, c: String, p: ReviewRequestParams, pin: Option<ResolvedCodePin>) -> ReviewRoundResult, "review.request", p.command_id, &c, (&p, &pin) => |u| decide_request(&ReviewView(u.view()), &oid, u.now().0, &c, &p, pin.as_ref());
         ReviewRouteOp(c: String, p: ReviewRouteParams) -> ReviewRouteResult, "review.route", p.command_id, &c, &p => |u| decide_route(&ReviewView(u.view()), u.now().0, &c, &p);
         ReviewFindingOpCmd(c: String, p: ReviewFindingParams) -> ReviewFindingResult, "review.finding", p.command_id, &c, &p => |u| decide_finding(&ReviewView(u.view()), u.now().0, &c, &p);
-        ReviewVerdictOp(c: String, p: ReviewVerdictParams, rev: Option<u64>) -> ReviewVerdictResult, "review.verdict", p.command_id, &c, (&p, rev) => |u| decide_verdict(&ReviewView(u.view()), u.now().0, &c, &p, rev);
+        ReviewVerdictOp(c: String, p: ReviewVerdictParams, rev: Option<u64>, sid: Option<String>) -> ReviewVerdictResult, "review.verdict", p.command_id, &c, (&p, rev) => |u| decide_verdict_with_session(&ReviewView(u.view()), u.now().0, &c, &p, rev, sid.as_deref());
         ReviewResubmitOp(c: String, p: ReviewResubmitParams, pin: Option<ResolvedCodePin>) -> ReviewRoundResult, "review.resubmit", p.command_id, &c, (&p, &pin) => |u| decide_resubmit(&ReviewView(u.view()), u.now().0, &c, &p, pin.as_ref());
         ReviewCloseOp(c: String, p: ReviewCloseParams) -> ReviewMutationResult, "review.close", p.command_id, &c, &p => |u| decide_close(&ReviewView(u.view()), u.now().0, &c, &p);
+    }
+}
+
+pub struct ReviewReviewerRecordsRead(pub Id);
+
+impl ReadOp for ReviewReviewerRecordsRead {
+    type Out = Result<Vec<ReviewReviewerRecord>, ApiError>;
+
+    fn read<S: TasksRead + ReviewsRead>(self, snap: &S) -> Answer<Vec<ReviewReviewerRecord>> {
+        Ok(Ok(snap.review_reviewers(&self.0)?))
     }
 }
