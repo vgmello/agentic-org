@@ -462,6 +462,7 @@
 				"navigation.spec.ts",
 				"shell-*.spec.ts",
 				"executive-ui.spec.ts",
+				"person-panel.spec.ts",
 				"desktop-navigation-focus.spec.ts",
 				"team-page.spec.ts",
 				"look-primitives.spec.ts",
@@ -587,9 +588,9 @@
 			"why": "The top-bar New menu opens the existing creation flows lazily (work item, request, message, hire, add a person) via direct non-barrel imports to keep the shell bundle lean; their categories keep their specs, and the shell journeys open the menu."
 		},
 		{
-			"from": "src/lib/platform/shell/ExecutiveCommandBar.svelte",
+			"from": "src/lib/platform/shell/{ExecutiveCommandBar.svelte,shell-chat-nav.ts}",
 			"to": "src/lib/modules/messaging/{types,api}.ts",
-			"why": "CmdK # channel jump lazily reads live Chat conversation records via messaging/api (mirroring NewMenu) and types from messaging/types without importing the messaging barrel or chat mocks; the chat and shell-look specs cover it."
+			"why": "CmdK # channel jump and shell DM navigation lazily read or open live Chat conversations via messaging/api (mirroring NewMenu) and types from messaging/types without importing the messaging barrel or chat mocks; the chat and shell-look specs cover it."
 		},
 		{
 			"from": "e2e/*.spec.ts",

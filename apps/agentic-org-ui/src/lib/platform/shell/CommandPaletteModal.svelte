@@ -146,6 +146,7 @@
 					onkeydown={onInputKeydown}
 					type="text"
 					role="combobox"
+					aria-label={modalMode === 'ai' ? 'Ask Tess' : 'Search, run a command, or ask Tess'}
 					aria-autocomplete="list"
 					aria-expanded={modalMode === 'cmd' && entries.length > 0}
 					aria-controls={modalMode === 'cmd' && entries.length > 0

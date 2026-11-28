@@ -3,6 +3,13 @@ import type { HomeProject } from '$lib/modules/home/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import { leadOf, teamsOfProject } from '$lib/modules/organization/model';
 import type { ProjectRow } from '$lib/modules/projects/types';
+import {
+	buildProjectHealthOverlay,
+	buildProjectHealthSignals,
+	classifyProjectHealth,
+	type ProjectHealthOverlay,
+	type ProjectHealthSignals
+} from '$lib/platform/workspace/project-health';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import {
 	formatDueShort,
@@ -22,79 +29,25 @@ interface ProjectWorkSignals {
 	scopedReqs: WorkItemSummary[];
 }
 
-function resolveProjectDoneTotal(
-	projItems: readonly WorkItemSummary[],
-	row: ProjectRow | undefined,
-	homeProj: HomeProject | undefined
-): { doneCount: number; totalCount: number } {
-	if (homeProj && homeProj.total > 0)
-		return { doneCount: homeProj.done, totalCount: homeProj.total };
-	const rowTotal = row
-		? row.tasks.todo + row.tasks.inProgress + row.tasks.blocked + row.tasks.done
-		: 0;
-	if (row && rowTotal > 0) return { doneCount: row.tasks.done, totalCount: rowTotal };
-	return { doneCount: projItems.filter(isItemDone).length, totalCount: projItems.length };
-}
-
-function isSeriousOpenBug(item: WorkItemSummary): boolean {
-	return (
-		item.kind === 'bug' &&
-		item.status !== 'closed' &&
-		(item.severity === 'critical' || item.severity === 'major')
-	);
-}
-
 function computeProjectSignals(
 	projItems: readonly WorkItemSummary[],
-	row: ProjectRow | undefined,
-	homeProj: HomeProject | undefined
+	overlay: ProjectHealthOverlay,
+	healthSignals: ProjectHealthSignals
 ): ProjectWorkSignals {
-	const { doneCount, totalCount } = resolveProjectDoneTotal(projItems, row, homeProj);
+	const doneCount = overlay.doneCount ?? projItems.filter(isItemDone).length;
+	const totalCount = overlay.totalCount ?? projItems.length;
 	const pct = totalCount > 0 ? Math.round((doneCount * 100) / totalCount) : 0;
 	const blockedItems = projItems.filter((i) => i.status === 'blocked');
-	const blockedCount = Math.max(
-		blockedItems.length,
-		row?.tasks.blocked ?? 0,
-		homeProj?.blocked ?? 0
-	);
-	const criticalBugs = Math.max(
-		projItems.filter(isSeriousOpenBug).length,
-		row ? row.bugs.critical + row.bugs.major : 0
-	);
 	const scopedReqs = projItems.filter((i) => i.kind === 'request' && i.status === 'scoped');
-	return { doneCount, totalCount, pct, blockedItems, blockedCount, criticalBugs, scopedReqs };
-}
-
-function classifyProjectHealth(input: {
-	criticalBugs: number;
-	blockedCount: number;
-	projProblemsCount: number;
-	hasRowCriticalBug: boolean;
-	isOverdue: boolean;
-	scopedReqsCount: number;
-	projInboxCount: number;
-	unassignedTeam: boolean;
-}): {
-	health: ProjectBentoCard['health'];
-	healthTone: ProjectBentoCard['healthTone'];
-	statusPillClass: ProjectBentoCard['statusPillClass'];
-} {
-	const offTrack =
-		input.criticalBugs > 0 ||
-		input.blockedCount >= 2 ||
-		(input.projProblemsCount > 0 && input.blockedCount > 0) ||
-		input.hasRowCriticalBug;
-	if (offTrack) return { health: 'Off track', healthTone: 'bad', statusPillClass: 't-red' };
-
-	const atRisk =
-		input.isOverdue ||
-		input.blockedCount > 0 ||
-		input.scopedReqsCount > 0 ||
-		input.projInboxCount >= 2 ||
-		input.unassignedTeam;
-	if (atRisk) return { health: 'At risk', healthTone: 'warn', statusPillClass: 't-amber' };
-
-	return { health: 'On track', healthTone: 'ok', statusPillClass: 't-green' };
+	return {
+		doneCount,
+		totalCount,
+		pct,
+		blockedItems,
+		blockedCount: healthSignals.blockedCount,
+		criticalBugs: healthSignals.criticalBugs,
+		scopedReqs
+	};
 }
 
 interface BlockerPresentation {
@@ -265,6 +218,42 @@ const RISK_RANK: Record<ProjectBentoCard['health'], number> = {
 	'On track': 2
 };
 
+/**
+ * Single canonical mapper from Home/Projects API rows to a domain-neutral `ProjectHealthOverlay`.
+ * Shared by `deriveProjectCards` and `HomeLiveState` so Home and Sidebar stay strictly in sync.
+ */
+export function buildHomeProjectHealthOverlay(
+	row: ProjectRow | undefined,
+	homeProj: HomeProject | undefined
+): ProjectHealthOverlay {
+	const rowTotal = row
+		? row.tasks.todo + row.tasks.inProgress + row.tasks.blocked + row.tasks.done
+		: 0;
+	const hasHomeTotal = Boolean(homeProj && homeProj.total > 0);
+	return buildProjectHealthOverlay({
+		dueDate: homeProj?.due,
+		doneCount: hasHomeTotal ? homeProj?.done : rowTotal > 0 ? row?.tasks.done : undefined,
+		totalCount: hasHomeTotal ? homeProj?.total : rowTotal > 0 ? rowTotal : undefined,
+		blockedCount: Math.max(row?.tasks.blocked ?? 0, homeProj?.blocked ?? 0),
+		criticalBugCount: row ? row.bugs.critical + row.bugs.major : 0,
+		teamIds: row ? [row.ownerTeam.id, ...row.contributors.map((c) => c.id)] : undefined
+	});
+}
+
+/** Build the complete frozen `projectId -> ProjectHealthOverlay` map for Home -> Shell sync. */
+export function buildHomeProjectHealthOverlays(
+	projectRows: readonly ProjectRow[] | undefined,
+	homeProjects: readonly HomeProject[] | undefined
+): Readonly<Record<string, ProjectHealthOverlay>> {
+	const rowById = new Map((projectRows ?? []).filter((r) => !r.archived).map((r) => [r.id, r]));
+	const homeById = new Map((homeProjects ?? []).map((h) => [h.id, h]));
+	const overlays: Record<string, ProjectHealthOverlay> = {};
+	for (const id of new Set([...rowById.keys(), ...homeById.keys()])) {
+		overlays[id] = buildHomeProjectHealthOverlay(rowById.get(id), homeById.get(id));
+	}
+	return Object.freeze(overlays);
+}
+
 export function deriveProjectCards(
 	snapshot: OrgSnapshot,
 	items: readonly WorkItemSummary[],
@@ -277,21 +266,19 @@ export function deriveProjectCards(
 	);
 	const homeById = new Map((domain?.homeProjects ?? []).map((p) => [p.id, p]));
 	const openInbox = (domain?.inboxItems ?? []).filter((i) => i.state === 'open');
-	const todayUtc = utcNoonMs(nowMs);
 
 	const projectIds = new Set<string>([
 		...rowById.keys(),
 		...activeSnapshotProjects.map((p) => p.id)
 	]);
 
+	const knownTeamIds = new Set(snapshot.teams.map((t) => t.id));
 	const cards: ProjectBentoCard[] = [];
 	for (const projectId of projectIds) {
 		const snapProj = activeSnapshotProjects.find((p) => p.id === projectId);
 		const row = rowById.get(projectId);
 		const homeProj = homeById.get(projectId);
 		const projItems = items.filter((i) => !i.deleted && i.project_id === projectId);
-		const signals = computeProjectSignals(projItems, row, homeProj);
-
 		const projInbox = openInbox.filter((i) => i.project?.id === projectId);
 		const projProblems = projInbox.filter((i) => i.kind === 'problem');
 		const projApprovals = projInbox.filter((i) => i.kind === 'approval' || i.kind === 'decision');
@@ -299,25 +286,23 @@ export function deriveProjectCards(
 		const teams = teamsOfProject(snapshot, projectId);
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
-		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
-		const isOverdue = Boolean(
-			dueDt &&
-			dueDt.getTime() < todayUtc &&
-			signals.totalCount > 0 &&
-			signals.doneCount < signals.totalCount
-		);
-		const unassignedTeam = teams.length === 0 && !row;
-
-		const { health, healthTone, statusPillClass } = classifyProjectHealth({
-			criticalBugs: signals.criticalBugs,
-			blockedCount: signals.blockedCount,
-			projProblemsCount: projProblems.length,
-			hasRowCriticalBug: Boolean(row && row.bugs.critical > 0),
-			isOverdue,
-			scopedReqsCount: signals.scopedReqs.length,
-			projInboxCount: projInbox.length,
-			unassignedTeam
+		const overlay = buildHomeProjectHealthOverlay(row, homeProj);
+		const healthSignals = buildProjectHealthSignals({
+			projectId,
+			workItems: items,
+			inboxItems: openInbox,
+			projectTeams: snapshot.project_teams,
+			knownTeamIds,
+			overlay,
+			nowMs
 		});
+		const signals = computeProjectSignals(projItems, overlay, healthSignals);
+		const { isOverdue, unassignedTeam } = healthSignals;
+		const {
+			label: health,
+			tone: healthTone,
+			statusPillClass
+		} = classifyProjectHealth(healthSignals);
 
 		const workHref = `/projects/${projectId}/work`;
 		const blocker = deriveProjectBlocker({

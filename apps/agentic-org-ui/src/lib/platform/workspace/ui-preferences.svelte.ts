@@ -1,4 +1,33 @@
 import { SvelteURLSearchParams } from 'svelte/reactivity';
+import {
+	DEFAULT_PINNED_ORG_NAV,
+	DEFAULT_PINNED_WORKSPACE_NAV,
+	ORG_NAV_IDS,
+	WORKSPACE_NAV_IDS,
+	moveOrgNavItem,
+	moveWorkspaceNavItem,
+	normalizeOrgNav,
+	normalizeWorkspaceNav,
+	toggleOrgNavPin,
+	toggleWorkspaceNavPin,
+	type OrgNavId,
+	type WorkspaceNavId
+} from './nav-prefs';
+
+export {
+	DEFAULT_PINNED_ORG_NAV,
+	DEFAULT_PINNED_WORKSPACE_NAV,
+	ORG_NAV_IDS,
+	WORKSPACE_NAV_IDS,
+	moveOrgNavItem,
+	moveWorkspaceNavItem,
+	normalizeOrgNav,
+	normalizeWorkspaceNav,
+	toggleOrgNavPin,
+	toggleWorkspaceNavPin,
+	type OrgNavId,
+	type WorkspaceNavId
+};
 
 export type UiTheme =
 	'ocean' | 'classic' | 'graphite' | 'graphite-light' | 'cozy' | 'report' | 'report-dark';
@@ -76,58 +105,9 @@ export const STORAGE_KEYS = {
 	assemblyDividers: 'agentic-org.ui.assemblyDividers',
 	showTessPill: 'agentic-org.ui.showTessPill',
 	archiveAfterDays: 'agentic-org.ui.archiveAfterDays',
-	workspaceNav: 'agentic-org.ui.workspaceNav'
+	workspaceNav: 'agentic-org.ui.workspaceNav.v2',
+	orgNav: 'agentic-org.ui.orgNav.v1'
 } as const;
-
-export const WORKSPACE_NAV_IDS = ['work', 'chat', 'activity', 'projects', 'insights'] as const;
-export type WorkspaceNavId = (typeof WORKSPACE_NAV_IDS)[number];
-export const DEFAULT_PINNED_WORKSPACE_NAV: readonly WorkspaceNavId[] = [
-	'work',
-	'chat',
-	'activity',
-	'projects'
-];
-const VALID_WORKSPACE_NAV = new Set<string>(WORKSPACE_NAV_IDS);
-
-/** Pure parser/normalizer for persisted pinned Workspace nav items (always keeps >= 1 valid item). */
-export function normalizeWorkspaceNav(raw: unknown): WorkspaceNavId[] {
-	if (!Array.isArray(raw)) return [...DEFAULT_PINNED_WORKSPACE_NAV];
-	const out: WorkspaceNavId[] = [];
-	for (const entry of raw) {
-		if (typeof entry === 'string' && VALID_WORKSPACE_NAV.has(entry)) {
-			const id = entry as WorkspaceNavId;
-			if (!out.includes(id)) out.push(id);
-		}
-	}
-	return out.length > 0 ? out : [...DEFAULT_PINNED_WORKSPACE_NAV];
-}
-
-/** Pure reorder/pin transition for Workspace sidebar items (drag-and-drop & Alt+ArrowUp/Down). */
-export function moveWorkspaceNavItem(
-	current: readonly WorkspaceNavId[],
-	id: WorkspaceNavId,
-	beforeId: WorkspaceNavId | null,
-	zone: 'pinned' | 'more'
-): WorkspaceNavId[] {
-	const next = current.filter((item) => item !== id);
-	if (zone === 'more') {
-		return next.length > 0 ? next : [...current];
-	}
-	const insertAt = beforeId ? next.indexOf(beforeId) : -1;
-	if (insertAt >= 0) next.splice(insertAt, 0, id);
-	else next.push(id);
-	return next;
-}
-
-export function toggleWorkspaceNavPin(
-	current: readonly WorkspaceNavId[],
-	id: WorkspaceNavId
-): WorkspaceNavId[] {
-	if (current.includes(id)) {
-		return current.length > 1 ? current.filter((item) => item !== id) : [...current];
-	}
-	return [...current, id];
-}
 
 export const ARCHIVE_AFTER_DAYS_OPTIONS = [0, 3, 7, 10, 14, 30] as const;
 export type ArchiveAfterDays = (typeof ARCHIVE_AFTER_DAYS_OPTIONS)[number];
@@ -174,6 +154,7 @@ export interface UiPrefBootstrap {
 	showTessPill: boolean;
 	archiveAfterDays: ArchiveAfterDays;
 	workspaceNav: WorkspaceNavId[];
+	orgNav: OrgNavId[];
 }
 
 /**
@@ -200,6 +181,7 @@ export function resolveInitialPreferences({
 	let storedShowTessPill: string | null = null;
 	let storedArchiveDays: string | null = null;
 	let storedWorkspaceNav: string | null = null;
+	let storedOrgNav: string | null = null;
 	try {
 		storedThemeRaw = storage?.getItem(STORAGE_KEYS.theme) ?? null;
 		storedCozyContrast = storage?.getItem(STORAGE_KEYS.cozyHighContrast) ?? null;
@@ -210,6 +192,7 @@ export function resolveInitialPreferences({
 		storedShowTessPill = storage?.getItem(STORAGE_KEYS.showTessPill) ?? null;
 		storedArchiveDays = storage?.getItem(STORAGE_KEYS.archiveAfterDays) ?? null;
 		storedWorkspaceNav = storage?.getItem(STORAGE_KEYS.workspaceNav) ?? null;
+		storedOrgNav = storage?.getItem(STORAGE_KEYS.orgNav) ?? null;
 	} catch {
 		// Private browsing or blocked storage: fall back safely to defaults.
 	}
@@ -238,6 +221,15 @@ export function resolveInitialPreferences({
 		}
 	}
 
+	let orgNav: OrgNavId[] = [...DEFAULT_PINNED_ORG_NAV];
+	if (storedOrgNav) {
+		try {
+			orgNav = normalizeOrgNav(JSON.parse(storedOrgNav));
+		} catch {
+			orgNav = [...DEFAULT_PINNED_ORG_NAV];
+		}
+	}
+
 	return {
 		theme,
 		cozyHighContrast: storedCozyContrast === '1',
@@ -248,7 +240,8 @@ export function resolveInitialPreferences({
 		showTessPill: storedShowTessPill === '1',
 		archiveAfterDays:
 			storedArchiveDays !== null ? normalizeArchiveAfterDays(storedArchiveDays) : 10,
-		workspaceNav
+		workspaceNav,
+		orgNav
 	};
 }
 
@@ -296,6 +289,7 @@ class UiPreferencesStore {
 	showTessPill = $state(false);
 	archiveAfterDays = $state<ArchiveAfterDays>(10);
 	workspaceNav = $state<WorkspaceNavId[]>([...DEFAULT_PINNED_WORKSPACE_NAV]);
+	orgNav = $state<OrgNavId[]>([...DEFAULT_PINNED_ORG_NAV]);
 	#hydrated = false;
 
 	hydrate(search = typeof window !== 'undefined' ? window.location.search : ''): void {
@@ -310,6 +304,7 @@ class UiPreferencesStore {
 		this.showTessPill = resolved.showTessPill;
 		this.archiveAfterDays = resolved.archiveAfterDays;
 		this.workspaceNav = resolved.workspaceNav;
+		this.orgNav = resolved.orgNav;
 		this.#hydrated = true;
 
 		// Persist explicit URL overrides and auto-migrate persisted 'light' -> 'report'.
@@ -430,6 +425,16 @@ class UiPreferencesStore {
 	toggleWorkspacePin(id: WorkspaceNavId): void {
 		this.workspaceNav = toggleWorkspaceNavPin(this.workspaceNav, id);
 		this.#save(STORAGE_KEYS.workspaceNav, JSON.stringify(this.workspaceNav));
+	}
+
+	moveOrgItem(id: OrgNavId, beforeId: OrgNavId | null, zone: 'pinned' | 'more'): void {
+		this.orgNav = moveOrgNavItem(this.orgNav, id, beforeId, zone);
+		this.#save(STORAGE_KEYS.orgNav, JSON.stringify(this.orgNav));
+	}
+
+	toggleOrgPin(id: OrgNavId): void {
+		this.orgNav = toggleOrgNavPin(this.orgNav, id);
+		this.#save(STORAGE_KEYS.orgNav, JSON.stringify(this.orgNav));
 	}
 
 	syncDom(): void {

@@ -18,13 +18,3 @@ export function isChatHashShortcut(event: KeyboardEvent, isChat: boolean): boole
 	const altGr = Boolean(event.getModifierState?.('AltGraph'));
 	return altGr || (!event.ctrlKey && !event.altKey);
 }
-
-export function exitHomeSearchFocus(homeInputEl: HTMLInputElement | null): void {
-	const heading = document.querySelector<HTMLElement>('#shell-page-title, main h1, main h2');
-	if (heading) {
-		if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
-		heading.focus({ preventScroll: true });
-	} else {
-		homeInputEl?.blur();
-	}
-}

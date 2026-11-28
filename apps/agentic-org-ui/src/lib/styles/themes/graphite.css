@@ -351,12 +351,6 @@ html[data-ui-theme='graphite'] .exec-nav-item.is-active {
 		inset 0 0 0 1px #737782;
 }
 
-html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
-	background: var(--graphite-active);
-	color: var(--exec-ink);
-	box-shadow: inset 0 0 0 1.5px rgba(184, 184, 184, 0.85);
-}
-
 @media (min-width: 640px) and (forced-colors: none) {
 	html[data-ui-theme='graphite'] {
 		--sidebar-edge-shade: linear-gradient(to left, rgb(0 0 0 / 0.37), transparent 4px);

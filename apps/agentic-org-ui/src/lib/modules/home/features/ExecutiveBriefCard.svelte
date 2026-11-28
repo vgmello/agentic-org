@@ -12,6 +12,7 @@
 	import List from '@lucide/svelte/icons/list';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import type { BriefLens, CatchUpRow, ExecutiveBrief } from '$lib/modules/home/model';
+	import { openPersonOnClick } from '$lib/platform/workspace/person-panel.svelte';
 	import BriefHighlights from './BriefHighlights.svelte';
 
 	interface Props {
@@ -149,6 +150,10 @@
 		<div class="brief-sig mt-auto flex flex-wrap items-center justify-between gap-2.5 pt-3">
 			<a
 				href={resolve(sigHref as '/activity')}
+				data-person={brief.chiefOfStaff?.id}
+				onclick={(event) => {
+					if (brief.chiefOfStaff) openPersonOnClick(event, brief.chiefOfStaff.id);
+				}}
 				class="sig-who inline-flex min-w-0 items-center gap-2.5"
 				title={brief.chiefOfStaff ? `Open ${sigName}'s profile` : 'Open activity log'}
 			>

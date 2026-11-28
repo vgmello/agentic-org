@@ -5,7 +5,10 @@
 	import { innerWidth } from 'svelte/reactivity/window';
 	import { mergeProps, Tooltip } from 'bits-ui';
 	import MenuIcon from '@lucide/svelte/icons/menu';
-	import type { Connection, ProjectSummary } from '$lib/proto';
+	import { tooltipContentClass } from '$lib/components/classes';
+	import type { Connection, ProjectSummary, ProjectTeam, WorkItemSummary } from '$lib/proto';
+	import type { InboxItem } from '$lib/platform/workspace/inbox-types';
+	import type { ProjectHealthOverlay } from '$lib/platform/workspace/project-health';
 	import ExecutiveSidebar from './ExecutiveSidebar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import { registerModalBack } from '$lib/platform/workspace/modal-back';
@@ -16,17 +19,34 @@
 		connection,
 		needsYouCount = 0,
 		projects = [],
+		workItems = [],
+		inboxItems = [],
+		projectTeams,
+		projectHealthById,
+		tessOpen = false,
+		offline = false,
+		onOpenSearch,
+		onToggleTess,
 		onWiden
 	}: {
 		open?: boolean;
 		connection: Connection;
 		needsYouCount?: number;
 		projects?: ProjectSummary[];
+		workItems?: readonly WorkItemSummary[];
+		inboxItems?: readonly InboxItem[];
+		projectTeams?: readonly ProjectTeam[];
+		projectHealthById?: Readonly<Record<string, ProjectHealthOverlay>>;
+		tessOpen?: boolean;
+		offline?: boolean;
+		onOpenSearch?: () => void;
+		onToggleTess?: () => void;
 		onWiden: () => void;
 	} = $props();
 	const menuId = $props.id();
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
+	let menuTipOpen = $state(false);
 	let closingForNavigation = false;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
@@ -43,6 +63,7 @@
 
 	function menuOpenChanged(value: boolean) {
 		if (!value) return;
+		menuTipOpen = false;
 		closingForNavigation = false;
 	}
 
@@ -92,7 +113,7 @@
 
 <Tooltip.Provider delayDuration={150}>
 	<Sheet.Root bind:open onOpenChange={menuOpenChanged}>
-		<Tooltip.Root disabled={open}>
+		<Tooltip.Root bind:open={menuTipOpen} disabled={open}>
 			<Tooltip.Trigger>
 				{#snippet child({ props: tipProps })}
 					<Sheet.Trigger bind:ref={trigger} aria-controls={menuId}>
@@ -110,10 +131,7 @@
 				{/snippet}
 			</Tooltip.Trigger>
 			<Tooltip.Portal>
-				<Tooltip.Content
-					side="bottom"
-					sideOffset={6}
-					class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+				<Tooltip.Content role="tooltip" side="bottom" sideOffset={6} class={tooltipContentClass}
 					>Menu</Tooltip.Content
 				>
 			</Tooltip.Portal>
@@ -128,7 +146,30 @@
 		>
 			<Sheet.Title class="sr-only">Main navigation</Sheet.Title>
 			<Sheet.Description class="sr-only">Choose an area of the organization.</Sheet.Description>
-			<ExecutiveSidebar {connection} {needsYouCount} {projects} onNavigate={select} />
+			<ExecutiveSidebar
+				{connection}
+				{needsYouCount}
+				{projects}
+				{workItems}
+				{inboxItems}
+				{projectTeams}
+				{projectHealthById}
+				{tessOpen}
+				{offline}
+				onOpenSearch={onOpenSearch
+					? () => {
+							closeForNavigation();
+							onOpenSearch();
+						}
+					: undefined}
+				onToggleTess={onToggleTess
+					? () => {
+							closeForNavigation();
+							onToggleTess();
+						}
+					: undefined}
+				onNavigate={select}
+			/>
 		</Sheet.Content>
 	</Sheet.Root>
 </Tooltip.Provider>
