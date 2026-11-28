@@ -93,6 +93,10 @@
 		return inner?.handlePaste(event) ?? false;
 	}
 
+	export function interruptUploads(): StagedAttachment[] {
+		return inner?.interruptUploads() ?? [];
+	}
+
 	export function clear(revoke = true): void {
 		inner?.clear(revoke);
 	}

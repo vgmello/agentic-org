@@ -22,6 +22,7 @@
 		extractClipboardFiles,
 		formatBytes,
 		isRasterImage,
+		markInterruptedUploads,
 		revokeStagedPreviews,
 		type StagedAttachment
 	} from './model';
@@ -57,6 +58,7 @@
 	let fileInput: HTMLInputElement | undefined;
 	let listEl: HTMLUListElement | undefined;
 	let notice = $state<string | undefined>();
+	let lastScopeKey: string | undefined;
 	let seq = 0;
 
 	const controllers: Record<string, AbortController> = Object.create(null);
@@ -98,16 +100,32 @@
 		}
 	}
 
-	function trackLifecycle() {
+	function trackScope(scopeKey: string) {
 		return () => {
-			abortAllUploads();
-			if (!retainPreviewsOnUnmount) {
-				revokeStagedPreviews(items);
+			if (lastScopeKey !== undefined && lastScopeKey !== scopeKey && notice !== undefined) {
+				notice = undefined;
 			}
+			lastScopeKey = scopeKey;
+			return () => {
+				abortAllUploads();
+				if (retainPreviewsOnUnmount) {
+					if (items.some((entry) => entry.status === 'uploading')) {
+						onItemsChange?.(markInterruptedUploads(items));
+					}
+				} else {
+					revokeStagedPreviews(items);
+				}
+			};
 		};
 	}
 
-	async function startUpload(localId: string, file: File, filename: string, targetOrgId: string) {
+	async function startUpload(
+		localId: string,
+		file: File,
+		filename: string,
+		targetOrgId: string,
+		uploadScope: string
+	) {
 		const controller = new AbortController();
 		controllers[localId] = controller;
 		try {
@@ -115,7 +133,7 @@
 				filename,
 				signal: controller.signal
 			});
-			if (controller.signal.aborted) return;
+			if (controller.signal.aborted || uploadScope !== resetKey) return;
 			patchItem(localId, (entry) => ({
 				...entry,
 				status: 'ready',
@@ -126,12 +144,18 @@
 				error: undefined
 			}));
 		} catch (err) {
-			if (controller.signal.aborted) return;
+			if (controller.signal.aborted || uploadScope !== resetKey) return;
 			const message = toAppError(err).message || 'Upload failed.';
 			patchItem(localId, (entry) => ({ ...entry, status: 'error', error: message }));
 		} finally {
 			if (controllers[localId] === controller) delete controllers[localId];
 		}
+	}
+
+	export function interruptUploads(): StagedAttachment[] {
+		abortAllUploads();
+		if (notice !== undefined) notice = undefined;
+		return markInterruptedUploads(items);
 	}
 
 	export function openPicker(): void {
@@ -184,8 +208,9 @@
 		if (!queued.length) return;
 		commit(current);
 		const targetOrgId = orgId;
+		const uploadScope = resetKey;
 		for (const job of queued) {
-			void startUpload(job.localId, job.file, job.filename, targetOrgId);
+			void startUpload(job.localId, job.file, job.filename, targetOrgId, uploadScope);
 		}
 	}
 
@@ -202,7 +227,7 @@
 		const target = items.find((entry) => entry.localId === localId);
 		if (!target || !target.file || !orgId) return;
 		patchItem(localId, (entry) => ({ ...entry, status: 'uploading', error: undefined }));
-		void startUpload(localId, target.file, target.filename, orgId);
+		void startUpload(localId, target.file, target.filename, orgId, resetKey);
 	}
 
 	export async function remove(localId: string): Promise<void> {
@@ -234,7 +259,7 @@
 	}
 </script>
 
-<div {@attach trackLifecycle()} class="min-w-0">
+<div {@attach trackScope(resetKey)} class="min-w-0">
 	<input
 		{@attach bindFileInput}
 		type="file"
@@ -298,7 +323,7 @@
 							<ModalTooltip label="Retry {item.filename}">
 								<button
 									type="button"
-									class="shrink-0 text-fg-muted hover:text-fg {focusClass}"
+									class="inline-flex shrink-0 items-center justify-center text-fg-muted hover:text-fg [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 {focusClass}"
 									aria-label="Retry {item.filename}"
 									onclick={() => retry(item.localId)}
 								>
@@ -312,7 +337,7 @@
 							type="button"
 							data-attachment={item.filename}
 							data-attachment-id={item.localId}
-							class="shrink-0 text-fg-muted hover:text-fg {focusClass}"
+							class="inline-flex shrink-0 items-center justify-center text-fg-muted hover:text-fg [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 {focusClass}"
 							aria-label="Remove {item.filename}"
 							onclick={() => void remove(item.localId)}
 						>

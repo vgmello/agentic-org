@@ -83,7 +83,7 @@
 	<ModalTooltip label="Download {label}">
 		<button
 			type="button"
-			class="mt-0.5 inline-flex shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:text-fg focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 motion-reduce:transition-none"
+			class="mt-0.5 inline-flex shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:text-fg focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 motion-reduce:transition-none [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 			aria-label="Download {label}"
 			disabled={downloading || !orgId}
 			onclick={() => void handleDownload()}

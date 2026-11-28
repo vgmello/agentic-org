@@ -163,6 +163,26 @@ describe('gateway status mapping, PATCH transport, and attachments client', () =
 		await expect(client.listFiles('org-1', { target_id: 'a+b' })).rejects.toMatchObject({
 			code: 'invalid_request'
 		});
+		for (const bad of ['a=b', 'a#b', 'a?b', 'a\u0007b', 'a\u0085b']) {
+			await expect(client.listFiles('org-1', { target_id: bad })).rejects.toMatchObject({
+				code: 'invalid_request'
+			});
+		}
+		for (const badLimit of [0, -1, 201, 1.5, Number.NaN]) {
+			await expect(client.listFiles('org-1', { limit: badLimit })).rejects.toMatchObject({
+				code: 'invalid_request'
+			});
+		}
+		await expect(
+			client.registerFile('org-1', { target_kind: 'organization' })
+		).rejects.toMatchObject({ code: 'invalid_request' });
+		await expect(
+			client.registerFile('org-1', {
+				upload_id: 'u-1',
+				source_attachment_id: 'a-1',
+				target_kind: 'organization'
+			})
+		).rejects.toMatchObject({ code: 'invalid_request' });
 		await expect(client.updateFile('org-1', 'file-1', {})).rejects.toMatchObject({
 			code: 'invalid_request'
 		});

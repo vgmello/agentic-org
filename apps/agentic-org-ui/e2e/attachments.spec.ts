@@ -86,6 +86,14 @@ test(
 		await expect(lightbox).toBeHidden();
 		await expect(imageTrigger).toBeFocused();
 
+		// Reopening resets zoom state cleanly back to fit-to-screen (M2).
+		await imageTrigger.click();
+		await expect(lightbox).toBeVisible();
+		await expect(lightbox.getByRole('button', { name: 'Actual size', exact: true })).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(lightbox).toBeHidden();
+		await expect(imageTrigger).toBeFocused();
+
 		// 5. Attach PDF document -> renders <DocumentAttachmentChip> with size, pages, and download button.
 		await page.getByLabel('Attach files').setInputFiles({
 			name: 'architecture-spec.pdf',
@@ -151,5 +159,74 @@ test(
 		expect(cspViolations).toEqual([]);
 		expect(pageErrors).toEqual([]);
 		expect(consoleErrors).toEqual([]);
+	}
+);
+
+test(
+	'TASK-98.5 Slice 2A H2: switching conversations mid-upload clears notice and marks outgoing upload retryable',
+	{ tag: '@webkit' },
+	async ({ page }) => {
+		const pageErrors: string[] = [];
+		page.on('pageerror', (err) => pageErrors.push(err.message));
+
+		await openChat(page);
+
+		// Trigger a validation notice in #general first.
+		await page.getByLabel('Attach files').setInputFiles({
+			name: 'bad.svg',
+			mimeType: 'image/svg+xml',
+			buffer: Buffer.from('<svg></svg>', 'utf8')
+		});
+		await expect(page.getByTestId('attachment-notice')).toBeVisible();
+
+		// Hold attachment uploads in-flight so we can switch conversations mid-upload.
+		await page.evaluate(async () => {
+			const mod = await import('/e2e/fakes/attachments-runtime.ts');
+			const runtime = mod.getAttachmentsRuntime() as {
+				uploadAttachment: (...args: unknown[]) => Promise<unknown>;
+				__origUpload?: (...args: unknown[]) => Promise<unknown>;
+			};
+			runtime.__origUpload = runtime.uploadAttachment;
+			runtime.uploadAttachment = (req: { signal?: AbortSignal }) =>
+				new Promise((_resolve, reject) => {
+					req.signal?.addEventListener('abort', () =>
+						reject(new DOMException('Aborted', 'AbortError'))
+					);
+				});
+		});
+
+		await page.getByLabel('Attach files').setInputFiles({
+			name: 'in-flight.png',
+			mimeType: 'image/png',
+			buffer: Buffer.from(PNG_1X1_BASE64, 'base64')
+		});
+		const staged = page.getByTestId('staged-attachment');
+		await expect(staged).toHaveAttribute('data-status', 'uploading');
+
+		// Switch to #atlas: validation notice and #general's staged file must NOT leak into #atlas.
+		await page.getByRole('button', { name: /^atlas\b/i }).click();
+		await expect(page.getByTestId('conversation-title')).toHaveText('#atlas');
+		await expect(page.getByTestId('attachment-notice')).toHaveCount(0);
+		await expect(page.getByTestId('staged-attachment')).toHaveCount(0);
+
+		// Restore uploads, switch back to #general: outgoing upload must be retryable error, NOT stuck uploading.
+		await page.evaluate(async () => {
+			const mod = await import('/e2e/fakes/attachments-runtime.ts');
+			const runtime = mod.getAttachmentsRuntime() as {
+				uploadAttachment: (...args: unknown[]) => Promise<unknown>;
+				__origUpload?: (...args: unknown[]) => Promise<unknown>;
+			};
+			if (runtime.__origUpload) runtime.uploadAttachment = runtime.__origUpload;
+		});
+		await page.getByRole('button', { name: /^general\b/i }).click();
+		await expect(page.getByTestId('conversation-title')).toHaveText('#general');
+		await expect(staged).toHaveCount(1);
+		await expect(staged).toHaveAttribute('data-status', 'error');
+		await expect(staged.locator('img')).toHaveAttribute('src', /^blob:/);
+
+		// Clicking Retry completes the upload cleanly.
+		await page.getByRole('button', { name: 'Retry in-flight.png', exact: true }).click();
+		await expect(staged).toHaveAttribute('data-status', 'ready');
+		expect(pageErrors).toEqual([]);
 	}
 );

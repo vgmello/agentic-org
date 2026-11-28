@@ -39,8 +39,13 @@ const signInPages = new Set([
 	'/org-chart',
 	'/projects',
 	'/projects/a-project',
+	'/work',
 	'/chat',
-	'/offices'
+	'/processes',
+	'/offices',
+	'/sessions',
+	'/activity',
+	'/settings'
 ]);
 
 // One context spans fresh documents and another page, so capture cannot reset at each navigation.

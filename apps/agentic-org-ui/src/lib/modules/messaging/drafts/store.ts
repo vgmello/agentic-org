@@ -1,4 +1,5 @@
 import type { StagedAttachment } from '$lib/components/attachments/model';
+import { subscribeAttachmentsSessionEnded } from '$lib/platform/http/attachments-runtime';
 
 function revokeStagedPreviews(items: readonly StagedAttachment[]): void {
 	for (const item of items) {
@@ -36,9 +37,18 @@ function clearRealmEntries(entries: Map<string, DraftEntry>) {
 	entries.clear();
 }
 
-export function createDraftStore(currentOrganizationId: () => string, capacity = 100): DraftStore {
+export function createDraftStore(
+	currentOrganizationId: () => string,
+	capacity = 100,
+	onSessionEnded: (listener: () => void) => () => void = subscribeAttachmentsSessionEnded
+): DraftStore {
 	let realm: Realm | undefined;
 	let disposed = false;
+
+	const unsubscribeSession = onSessionEnded(() => {
+		if (realm) clearRealmEntries(realm.entries);
+		realm = undefined;
+	});
 
 	function currentRealm() {
 		if (disposed) return;
@@ -111,6 +121,7 @@ export function createDraftStore(currentOrganizationId: () => string, capacity =
 		},
 		dispose() {
 			disposed = true;
+			unsubscribeSession();
 			if (realm) clearRealmEntries(realm.entries);
 			realm = undefined;
 		}

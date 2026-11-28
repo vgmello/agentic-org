@@ -209,4 +209,123 @@ describe('attachmentBlobCache', () => {
 		expect(cache.size()).toBe(0);
 		expect(cache.totalBytes()).toBe(0);
 	});
+
+	it('H1a: protects in-flight revalidating refs===0 entries from concurrent LRU eviction before 304', async () => {
+		let seq = 0;
+		const revoked: string[] = [];
+		let resolveRevalidate!: (value: DownloadAttachmentResult) => void;
+		const download = vi.fn((_org: string, id: string, opts?: { ifNoneMatch?: string }) => {
+			if (id === 'a1' && opts?.ifNoneMatch) {
+				return new Promise<DownloadAttachmentResult>((resolve) => {
+					resolveRevalidate = resolve;
+				});
+			}
+			return Promise.resolve<DownloadAttachmentResult>({
+				status: 200,
+				blob: makeBlob(50),
+				etag: `"etag-${id}"`,
+				contentType: 'image/png'
+			});
+		});
+
+		const cache = createAttachmentBlobCache({
+			download,
+			createObjectURL: () => `blob:test/${++seq}`,
+			revokeObjectURL: (url) => revoked.push(url),
+			maxEntries: 1,
+			maxBytes: 100
+		});
+
+		const first = await cache.acquire('org-1', 'a1');
+		cache.release(first.key, first.objectUrl);
+
+		// Start conditional revalidation on refs===0 entry, then trigger concurrent download of a2.
+		const revalidatePromise = cache.acquire('org-1', 'a1', { revalidate: true });
+		const h2 = await cache.acquire('org-1', 'a2');
+		expect(revoked).toEqual([]);
+
+		resolveRevalidate({ status: 304, etag: '"etag-a1"' });
+		const revalidated = await revalidatePromise;
+		expect(revalidated.objectUrl).toBe(first.objectUrl);
+		expect(revoked).toEqual([]);
+		cache.release(revalidated.key, revalidated.objectUrl);
+		cache.release(h2.key, h2.objectUrl);
+	});
+
+	it('H1b: starts a fresh fetch when a new acquire arrives in the same tick after sole waiter aborts', async () => {
+		let seq = 0;
+		let callCount = 0;
+		const download = vi.fn((_org: string, _id: string, opts?: { signal?: AbortSignal }) => {
+			callCount++;
+			if (callCount === 1) {
+				return new Promise<DownloadAttachmentResult>((_resolve, reject) => {
+					opts?.signal?.addEventListener('abort', () =>
+						reject(new DOMException('Aborted', 'AbortError'))
+					);
+				});
+			}
+			return Promise.resolve<DownloadAttachmentResult>({
+				status: 200,
+				blob: makeBlob(32),
+				etag: '"etag-fresh"',
+				contentType: 'image/png'
+			});
+		});
+
+		const cache = createAttachmentBlobCache({
+			download,
+			createObjectURL: () => `blob:test/${++seq}`,
+			revokeObjectURL: () => {}
+		});
+
+		const c1 = new AbortController();
+		const p1 = cache.acquire('org-1', 'a1', { signal: c1.signal });
+		c1.abort();
+		// Same-tick acquire must NOT join the already-aborted in-flight request.
+		const p2 = cache.acquire('org-1', 'a1');
+
+		await expect(p1).rejects.toThrow();
+		const handle = await p2;
+		expect(handle.objectUrl).toBe('blob:test/1');
+		expect(download).toHaveBeenCalledTimes(2);
+		cache.release(handle.key, handle.objectUrl);
+	});
+
+	it('H1c: pre-pins refs synchronously at settlement so concurrent settlement under maxEntries=1 cannot evict before waiter resumes', async () => {
+		let seq = 0;
+		const revoked: string[] = [];
+		let resolveA1!: (value: DownloadAttachmentResult) => void;
+		let resolveA2!: (value: DownloadAttachmentResult) => void;
+		const download = vi.fn((_org: string, id: string) => {
+			return new Promise<DownloadAttachmentResult>((resolve) => {
+				if (id === 'a1') resolveA1 = resolve;
+				else resolveA2 = resolve;
+			});
+		});
+
+		const cache = createAttachmentBlobCache({
+			download,
+			createObjectURL: () => `blob:test/${++seq}`,
+			revokeObjectURL: (url) => revoked.push(url),
+			maxEntries: 1,
+			maxBytes: 100
+		});
+
+		const p1 = cache.acquire('org-1', 'a1');
+		const p2 = cache.acquire('org-1', 'a2');
+
+		// Resolve both in the same tick under maxEntries=1: neither waiter has resumed yet,
+		// so a2's settlement MUST NOT evict/revoke a1's freshly stored URL.
+		resolveA1({ status: 200, blob: makeBlob(40), etag: '"e1"', contentType: 'image/png' });
+		resolveA2({ status: 200, blob: makeBlob(40), etag: '"e2"', contentType: 'image/png' });
+
+		const [h1, h2] = await Promise.all([p1, p2]);
+		expect(revoked).toEqual([]);
+		expect(h1.objectUrl).toBe('blob:test/1');
+		expect(h2.objectUrl).toBe('blob:test/2');
+
+		cache.release(h1.key, h1.objectUrl);
+		expect(revoked).toEqual([h1.objectUrl]);
+		cache.release(h2.key, h2.objectUrl);
+	});
 });

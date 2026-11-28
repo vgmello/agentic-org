@@ -140,7 +140,12 @@
 						<span class="block text-xs/5 text-fg-muted"
 							>{titleOf(t.conversation, ctx, ctx.owner)} · {nameOf(ctx, t.root.from)}</span
 						>
-						<span class="mt-0.5 block truncate text-sm/6 text-fg">{t.root.body.split('\n')[0]}</span
+						<span class="mt-0.5 block truncate text-sm/6 text-fg"
+							>{t.root.body.trim()
+								? t.root.body.split('\n')[0]
+								: (t.root.attachment_meta?.[0]?.filename ??
+									t.root.attachments?.[0] ??
+									'Attachment')}</span
 						>
 						<span class="mt-1 block text-xs/5 text-brand-text"
 							>{t.replies}

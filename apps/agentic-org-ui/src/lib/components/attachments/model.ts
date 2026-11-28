@@ -196,3 +196,14 @@ export function revokeStagedPreviews(items: readonly StagedAttachment[]): void {
 		if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
 	}
 }
+
+/** Transitions interrupted in-flight uploads to retryable errors while keeping local previews. */
+export function markInterruptedUploads(
+	items: readonly StagedAttachment[],
+	message = 'Upload interrupted. Retry to upload.'
+): StagedAttachment[] {
+	if (!items.some((item) => item.status === 'uploading')) return [...items];
+	return items.map((item) =>
+		item.status === 'uploading' ? { ...item, status: 'error' as const, error: message } : item
+	);
+}

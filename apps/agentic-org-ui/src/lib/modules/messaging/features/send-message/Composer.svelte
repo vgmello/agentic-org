@@ -1,12 +1,14 @@
 <script lang="ts">
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
-	import { tick, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import {
+		markInterruptedUploads,
 		revokeStagedPreviews,
 		stagedToAttachmentMeta,
 		type StagedAttachment
 	} from '$lib/components/attachments/model';
+	import { subscribeAttachmentsSessionEnded } from '$lib/platform/http/attachments-runtime';
 	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
@@ -101,14 +103,36 @@
 		}
 	};
 
+	function clearLocalDraftAttachments() {
+		for (const key of Object.keys(draftAttachments)) {
+			revokeStagedPreviews(draftAttachments[key]);
+			delete draftAttachments[key];
+		}
+		if (!draft && staged.length) {
+			revokeStagedPreviews(staged);
+			staged = [];
+		}
+	}
+
+	const unsubscribeSessionEnded = subscribeAttachmentsSessionEnded(clearLocalDraftAttachments);
+	onDestroy(() => {
+		unsubscribeSessionEnded();
+		clearLocalDraftAttachments();
+	});
+
 	// Conversation drafts live here. Thread drafts are supplied by the retained shell.
 	$effect(() => {
 		const key = resetKey;
 		const nextDraft = draft;
 		untrack(() => {
-			if (lastKey && !lastDraft) {
-				drafts[lastKey] = text;
-				draftAttachments[lastKey] = staged;
+			if (lastKey) {
+				const outgoing = attachmentsBar?.interruptUploads() ?? markInterruptedUploads(staged);
+				if (lastDraft) {
+					if (outgoing.length) lastDraft.writeAttachments?.(outgoing);
+				} else {
+					drafts[lastKey] = text;
+					draftAttachments[lastKey] = outgoing;
+				}
 			}
 			lastKey = key;
 			lastDraft = nextDraft;
@@ -176,7 +200,11 @@
 
 	async function send(asMessage = false) {
 		const body = text.trim();
-		if (!canWrite || busy || hasPendingUploads) return;
+		if (!canWrite || busy) return;
+		if (hasPendingUploads) {
+			error = 'Wait for attachments to finish uploading before sending.';
+			return;
+		}
 		if (hasFailedUploads) {
 			error = 'Retry or remove failed attachments before sending.';
 			return;

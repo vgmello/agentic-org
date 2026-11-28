@@ -41,6 +41,7 @@
 	const getAmbientOrgId = useAttachmentOrgId();
 	const orgId = $derived(organizationId ?? getAmbientOrgId?.() ?? '');
 
+	let contentEl = $state<HTMLElement | null>(null);
 	let zoomed = $state(false);
 	let downloading = $state(false);
 	let downloadError = $state<string | undefined>();
@@ -94,12 +95,15 @@
 
 	async function handleDownload() {
 		if (!current || !orgId || downloading) return;
+		const targetId = current.id;
 		downloading = true;
 		downloadError = undefined;
 		try {
-			await triggerAttachmentDownload(orgId, current.id, current.filename);
+			await triggerAttachmentDownload(orgId, targetId, current.filename);
 		} catch (err) {
-			downloadError = toAppError(err).message;
+			if (current?.id === targetId) {
+				downloadError = toAppError(err).message;
+			}
 		} finally {
 			downloading = false;
 		}
@@ -108,14 +112,15 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<Dialog
-	bind:open
-	onOpenChange={(next) => {
-		if (next) resetView();
-	}}
->
+<Dialog bind:open onOpenChange={() => resetView()}>
 	<DialogContent
+		bind:ref={contentEl}
 		{opener}
+		onOpenAutoFocus={(event) => {
+			resetView();
+			event.preventDefault();
+			contentEl?.focus({ preventScroll: true });
+		}}
 		class="flex max-h-[92dvh] max-w-[min(94vw,64rem)] flex-col gap-3 p-4 sm:max-w-[min(92vw,64rem)]"
 		data-testid="image-lightbox"
 	>
@@ -128,14 +133,19 @@
 
 		{#if current}
 			<div
-				class="relative flex min-h-48 flex-1 items-center justify-center overflow-auto rounded-lg border border-line bg-surface-sunken p-2"
+				class="relative flex min-h-48 flex-1 overflow-hidden rounded-lg border border-line bg-surface-sunken"
 			>
 				{#if hasMany}
-					<ModalTooltip label="Previous image" side="bottom-start" class="absolute left-2 z-10">
+					<ModalTooltip
+						label="Previous image"
+						side="bottom-start"
+						class="absolute top-1/2 left-2 z-10 -translate-y-1/2"
+					>
 						<Button
 							type="button"
 							variant="secondary"
 							size="icon-sm"
+							class="[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 							aria-label="Previous image"
 							onclick={() => step(-1)}
 						>
@@ -144,21 +154,24 @@
 					</ModalTooltip>
 				{/if}
 
-				<AttachmentImage
-					attachment={current}
-					organizationId={orgId}
-					class="bg-transparent"
-					imgClass={zoomed
-						? 'max-w-none transition-transform motion-reduce:transition-none'
-						: 'max-h-[70dvh] max-w-full object-contain transition-transform motion-reduce:transition-none'}
-				/>
+				<div class="flex flex-1 overflow-auto p-2">
+					<AttachmentImage
+						attachment={current}
+						organizationId={orgId}
+						class="m-auto bg-transparent"
+						imgClass={zoomed
+							? 'max-w-none transition-transform motion-reduce:transition-none'
+							: 'max-h-[70dvh] max-w-full object-contain transition-transform motion-reduce:transition-none'}
+					/>
+				</div>
 
 				{#if hasMany}
-					<ModalTooltip label="Next image" class="absolute right-2 z-10">
+					<ModalTooltip label="Next image" class="absolute top-1/2 right-2 z-10 -translate-y-1/2">
 						<Button
 							type="button"
 							variant="secondary"
 							size="icon-sm"
+							class="[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 							aria-label="Next image"
 							onclick={() => step(1)}
 						>
@@ -182,6 +195,7 @@
 							type="button"
 							variant="outline"
 							size="icon-sm"
+							class="[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 							aria-label={zoomed ? 'Fit to screen' : 'Actual size'}
 							aria-pressed={zoomed}
 							onclick={() => (zoomed = !zoomed)}
@@ -198,6 +212,7 @@
 							type="button"
 							variant="outline"
 							size="icon-sm"
+							class="[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 							aria-label="Download {current.filename}"
 							disabled={downloading || !orgId}
 							onclick={() => void handleDownload()}

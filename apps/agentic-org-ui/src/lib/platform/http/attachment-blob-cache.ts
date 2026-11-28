@@ -46,6 +46,9 @@ interface CacheEntry {
 interface InFlightRequest {
 	controller: AbortController;
 	waiters: number;
+	aborted: boolean;
+	settled: boolean;
+	entry?: CacheEntry;
 	promise: Promise<CacheEntry>;
 }
 
@@ -89,41 +92,48 @@ export function createAttachmentBlobCache(deps: AttachmentBlobCacheDeps) {
 		if (entries.size <= maxEntries && totalBytes <= maxBytes) return;
 		for (const [key, entry] of entries) {
 			if (entries.size <= maxEntries && totalBytes <= maxBytes) break;
-			if (entry.refs > 0 || key === protectKey) continue;
+			if (entry.refs > 0 || key === protectKey || inFlight.has(key)) continue;
 			entries.delete(key);
 			totalBytes = Math.max(0, totalBytes - entry.bytes);
 			revokeUrl(entry.objectUrl);
 		}
 	}
 
+	function retirePrevious(key: string) {
+		const prev = entries.get(key);
+		if (!prev) return;
+		entries.delete(key);
+		totalBytes = Math.max(0, totalBytes - prev.bytes);
+		if (prev.refs > 0) {
+			retired.set(prev.objectUrl, (retired.get(prev.objectUrl) ?? 0) + prev.refs);
+		} else {
+			revokeUrl(prev.objectUrl);
+		}
+	}
+
 	function storeResult(
 		key: string,
 		res: DownloadAttachmentResult,
-		existing?: CacheEntry
+		existing: CacheEntry | undefined,
+		initialRefs: number
 	): CacheEntry {
 		if (res.status === 304) {
 			if (existing && entries.get(key) === existing) {
+				existing.refs += initialRefs;
 				touch(existing);
 				return existing;
 			}
 			throw new Error('Received 304 Not Modified without a cached attachment');
 		}
 		const objectUrl = createUrl(res.blob);
-		const prev = entries.get(key);
-		if (prev) {
-			entries.delete(key);
-			totalBytes = Math.max(0, totalBytes - prev.bytes);
-			if (prev.refs > 0)
-				retired.set(prev.objectUrl, (retired.get(prev.objectUrl) ?? 0) + prev.refs);
-			else revokeUrl(prev.objectUrl);
-		}
+		retirePrevious(key);
 		const next: CacheEntry = {
 			key,
 			objectUrl,
 			etag: res.etag,
 			bytes: res.blob.size,
 			contentType: res.contentType,
-			refs: 0,
+			refs: initialRefs,
 			lastUsed: now()
 		};
 		entries.set(key, next);
@@ -140,19 +150,53 @@ export function createAttachmentBlobCache(deps: AttachmentBlobCacheDeps) {
 	): InFlightRequest {
 		const requestEpoch = epoch;
 		const controller = new AbortController();
-		const promise = deps
-			.download(orgId, attachmentId, { ifNoneMatch: existing?.etag, signal: controller.signal })
-			.then((res) => {
-				if (requestEpoch !== epoch) throw new DOMException('Session ended', 'AbortError');
-				return storeResult(key, res, existing);
-			})
-			.finally(() => {
-				if (inFlight.get(key)?.controller === controller) inFlight.delete(key);
-			});
-		promise.catch(() => {});
-		const flight: InFlightRequest = { controller, waiters: 0, promise };
+		const flight: InFlightRequest = {
+			controller,
+			waiters: 0,
+			aborted: false,
+			settled: false,
+			promise: Promise.resolve(undefined as unknown as CacheEntry)
+		};
 		inFlight.set(key, flight);
+		const finish = (res: DownloadAttachmentResult): CacheEntry => {
+			if (requestEpoch !== epoch || flight.aborted || flight.waiters <= 0) {
+				throw new DOMException('Aborted', 'AbortError');
+			}
+			const entry = storeResult(key, res, existing, flight.waiters);
+			flight.settled = true;
+			flight.entry = entry;
+			if (inFlight.get(key) === flight) inFlight.delete(key);
+			return entry;
+		};
+		const run = async (): Promise<CacheEntry> => {
+			const res = await deps.download(orgId, attachmentId, {
+				ifNoneMatch: existing?.etag,
+				signal: controller.signal
+			});
+			if (res.status === 304 && (!existing || entries.get(key) !== existing)) {
+				const fresh = await deps.download(orgId, attachmentId, { signal: controller.signal });
+				return finish(fresh);
+			}
+			return finish(res);
+		};
+		flight.promise = run().finally(() => {
+			if (inFlight.get(key) === flight) inFlight.delete(key);
+		});
+		flight.promise.catch(() => {});
 		return flight;
+	}
+
+	function detachWaiter(key: string, flight: InFlightRequest): void {
+		if (flight.settled) {
+			if (flight.entry) release(key, flight.entry.objectUrl);
+			return;
+		}
+		flight.waiters = Math.max(0, flight.waiters - 1);
+		if (flight.waiters === 0) {
+			flight.aborted = true;
+			if (inFlight.get(key) === flight) inFlight.delete(key);
+			flight.controller.abort();
+		}
 	}
 
 	async function acquire(
@@ -169,26 +213,35 @@ export function createAttachmentBlobCache(deps: AttachmentBlobCacheDeps) {
 			touch(cached);
 			return toHandle(cached);
 		}
-		const flight = inFlight.get(key) ?? startFetch(key, orgId, attachmentId, cached);
+		const active = inFlight.get(key);
+		const flight =
+			active && !active.aborted && !active.settled
+				? active
+				: startFetch(key, orgId, attachmentId, cached);
 		flight.waiters++;
 		const waitEpoch = epoch;
+		let detached = false;
 		let onAbort: (() => void) | undefined;
 		try {
 			const entry = await new Promise<CacheEntry>((resolve, reject) => {
 				onAbort = () => {
-					flight.waiters = Math.max(0, flight.waiters - 1);
-					if (flight.waiters === 0) flight.controller.abort();
+					if (detached) return;
+					detached = true;
+					detachWaiter(key, flight);
 					reject(abortError(signal!));
 				};
 				signal?.addEventListener('abort', onAbort, { once: true });
 				flight.promise.then(resolve, reject);
 			});
-			if (signal?.aborted) throw abortError(signal);
-			if (waitEpoch !== epoch || entries.get(key) !== entry) {
-				throw new DOMException('Session ended', 'AbortError');
+			if (signal?.aborted) {
+				if (!detached) {
+					detached = true;
+					release(key, entry.objectUrl);
+				}
+				throw abortError(signal);
 			}
-			entry.refs++;
-			touch(entry);
+			if (waitEpoch !== epoch) throw new DOMException('Session ended', 'AbortError');
+			if (entries.get(key) === entry) touch(entry);
 			return toHandle(entry);
 		} finally {
 			if (onAbort && signal) signal.removeEventListener('abort', onAbort);

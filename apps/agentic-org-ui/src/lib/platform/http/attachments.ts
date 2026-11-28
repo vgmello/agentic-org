@@ -72,12 +72,23 @@ export interface ListFilesResult {
 	next_cursor?: string;
 }
 
+const FILES_LIMIT_MIN = 1;
+const FILES_LIMIT_MAX = 200;
+
+function hasDisallowedQueryChar(value: string): boolean {
+	for (let i = 0; i < value.length; i++) {
+		const code = value.charCodeAt(i);
+		if (code <= 0x20 || (code >= 0x7f && code <= 0x9f)) return true;
+	}
+	return /[%+&=?\s#]/.test(value);
+}
+
 function buildFilesQuery(params?: ListFilesParams): string {
 	if (!params) return '';
 	const pairs: string[] = [];
 	const push = (key: string, value: string | undefined) => {
 		if (value === undefined || value === '') return;
-		if (/[%+&\s]/.test(value)) {
+		if (hasDisallowedQueryChar(value)) {
 			throw {
 				source: 'api',
 				code: 'invalid_request',
@@ -91,7 +102,20 @@ function buildFilesQuery(params?: ListFilesParams): string {
 	push('target_id', params.target_id);
 	push('mime_category', params.mime_category);
 	push('artifact_status', params.artifact_status);
-	if (params.limit !== undefined) push('limit', String(params.limit));
+	if (params.limit !== undefined) {
+		if (
+			!Number.isInteger(params.limit) ||
+			params.limit < FILES_LIMIT_MIN ||
+			params.limit > FILES_LIMIT_MAX
+		) {
+			throw {
+				source: 'api',
+				code: 'invalid_request',
+				message: `File list limit must be an integer between ${FILES_LIMIT_MIN} and ${FILES_LIMIT_MAX}.`
+			} satisfies AppError;
+		}
+		pairs.push(`limit=${params.limit}`);
+	}
 	push('cursor', params.cursor);
 	return pairs.length ? `?${pairs.join('&')}` : '';
 }
@@ -187,6 +211,15 @@ export function createAttachmentsClient(getRuntime: () => AttachmentsRuntime) {
 			input: RegisterFileInput,
 			signal?: AbortSignal
 		): Promise<AttachmentView> {
+			const hasUpload = Boolean(input.upload_id?.trim());
+			const hasSource = Boolean(input.source_attachment_id?.trim());
+			if (hasUpload === hasSource) {
+				throw {
+					source: 'api',
+					code: 'invalid_request',
+					message: 'Provide either upload_id or source_attachment_id, not both.'
+				} satisfies AppError;
+			}
 			const runtime = getRuntime();
 			const path = `/api/v1/organizations/${encodeURIComponent(orgId)}/files`;
 			const body = {

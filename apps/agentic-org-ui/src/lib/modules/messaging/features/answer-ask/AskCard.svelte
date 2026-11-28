@@ -125,6 +125,14 @@
 		if (closed) draft?.write('');
 	});
 
+	function setMode(next: 'reply' | 'reject' | 'withdraw' | undefined) {
+		if (mode !== next && (mode === 'reply' || mode === 'reject')) {
+			answerAttachments?.clear(true);
+			answerStaged = [];
+		}
+		mode = next;
+	}
+
 	async function go(run: () => Promise<void> | void) {
 		if (!officeRunning || busy) return;
 		const origin = document.activeElement;
@@ -136,7 +144,7 @@
 			await run();
 			clearDraft?.();
 			if (answeringDraft === draft) {
-				mode = undefined;
+				setMode(undefined);
 				text = '';
 				withdrawReason = '';
 				answerAttachments?.clear(true);
@@ -298,7 +306,8 @@
 				<QuestionForm
 					askId={message.id}
 					{questions}
-					disabled={busy || !officeRunning || answerUploading || answerUploadFailed}
+					disabled={busy || !officeRunning}
+					submitDisabled={answerUploading || answerUploadFailed}
 					onsubmit={(answers) =>
 						go(() =>
 							onanswer({
@@ -336,7 +345,7 @@
 								variant="outline"
 								disabled={busy || !officeRunning}
 								aria-expanded={mode === 'reject'}
-								onclick={() => (mode = mode === 'reject' ? undefined : 'reject')}>{o.label}</Button
+								onclick={() => setMode(mode === 'reject' ? undefined : 'reject')}>{o.label}</Button
 							>
 						{:else}
 							<Button
@@ -368,7 +377,7 @@
 							class={btn}
 							disabled={busy || !officeRunning}
 							aria-expanded={mode === 'reply'}
-							onclick={() => (mode = mode === 'reply' ? undefined : 'reply')}>Reply…</Button
+							onclick={() => setMode(mode === 'reply' ? undefined : 'reply')}>Reply…</Button
 						>
 					{/if}
 				</div>
@@ -387,7 +396,7 @@
 					class={btn}
 					disabled={busy || !officeRunning}
 					aria-expanded={mode === 'withdraw'}
-					onclick={() => (mode = mode === 'withdraw' ? undefined : 'withdraw')}>Withdraw…</Button
+					onclick={() => setMode(mode === 'withdraw' ? undefined : 'withdraw')}>Withdraw…</Button
 				>
 			</div>
 		{/if}

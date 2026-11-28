@@ -19,8 +19,21 @@ interface StoredFakeBlob {
 	readonly createdAt: string;
 }
 
-const byOrg = new Map<string, Map<string, StoredFakeBlob>>();
+const stagingByOrg = new Map<string, Map<string, StoredFakeBlob>>();
+const boundByOrg = new Map<string, Map<string, StoredFakeBlob>>();
 let seq = 0;
+
+function mapFor(
+	root: Map<string, Map<string, StoredFakeBlob>>,
+	orgId: string
+): Map<string, StoredFakeBlob> {
+	let orgMap = root.get(orgId);
+	if (!orgMap) {
+		orgMap = new Map();
+		root.set(orgId, orgMap);
+	}
+	return orgMap;
+}
 
 function fakeUuidV7(): string {
 	seq += 1;
@@ -78,12 +91,7 @@ export async function fakeUploadAttachment(
 		blob: request.body,
 		createdAt: new Date().toISOString()
 	};
-	let orgMap = byOrg.get(orgId);
-	if (!orgMap) {
-		orgMap = new Map();
-		byOrg.set(orgId, orgMap);
-	}
-	orgMap.set(id, entry);
+	mapFor(stagingByOrg, orgId).set(id, entry);
 	const uploaded: UploadedFile = {
 		upload_id: id,
 		mime_type: entry.mimeType,
@@ -101,7 +109,8 @@ export async function fakeDownloadAttachment(
 	request: AttachmentBinaryDownloadRequest
 ): Promise<AttachmentBinaryDownloadReply> {
 	const parsed = parseOrgAndIdFromDownloadPath(request.path);
-	const entry = parsed ? byOrg.get(parsed.orgId)?.get(parsed.id) : undefined;
+	// Mirrors org-office find_attachment: only committed bound attachments are downloadable, never staging upload_ids.
+	const entry = parsed ? boundByOrg.get(parsed.orgId)?.get(parsed.id) : undefined;
 	if (!entry) {
 		return {
 			status: 404,
@@ -126,24 +135,30 @@ export function resolveFakeAttachmentMeta(
 	uploadedByEmployeeId: string
 ): AttachmentMeta[] {
 	if (!ids?.length) return [];
-	const orgMap = byOrg.get(orgId);
-	if (!orgMap) return [];
+	const staging = stagingByOrg.get(orgId);
+	if (!staging) return [];
+	const bound = mapFor(boundByOrg, orgId);
 	const out: AttachmentMeta[] = [];
-	for (const id of ids) {
-		const entry = orgMap.get(id);
-		if (!entry) continue;
+	for (const uploadId of ids) {
+		const staged = staging.get(uploadId);
+		if (!staged) continue;
+		// Mint a distinct bound attachment_id (!== upload_id) matching real org-office commit semantics.
+		const boundId = fakeUuidV7();
+		const committed: StoredFakeBlob = { ...staged, id: boundId };
+		bound.set(boundId, committed);
+		staging.delete(uploadId);
 		out.push({
-			id: entry.id,
-			filename: entry.filename,
-			title: entry.filename,
+			id: committed.id,
+			filename: committed.filename,
+			title: committed.filename,
 			artifact_status: 'final',
-			mime_type: entry.mimeType,
-			byte_count: entry.byteCount,
-			...(entry.width !== undefined ? { width: entry.width } : {}),
-			...(entry.height !== undefined ? { height: entry.height } : {}),
-			...(entry.pageCount !== undefined ? { page_count: entry.pageCount } : {}),
+			mime_type: committed.mimeType,
+			byte_count: committed.byteCount,
+			...(committed.width !== undefined ? { width: committed.width } : {}),
+			...(committed.height !== undefined ? { height: committed.height } : {}),
+			...(committed.pageCount !== undefined ? { page_count: committed.pageCount } : {}),
 			uploaded_by_employee_id: uploadedByEmployeeId,
-			created_at: entry.createdAt
+			created_at: committed.createdAt
 		});
 	}
 	return out;

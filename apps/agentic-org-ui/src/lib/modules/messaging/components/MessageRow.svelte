@@ -233,7 +233,7 @@
 					{/if}
 				</div>
 			{/if}{#if details}
-				{#if !card && message.attachment_meta?.length}
+				{#if !card && !delivery && message.attachment_meta?.length}
 					<AttachmentGallery attachments={message.attachment_meta} />
 				{:else if !card && message.attachments?.length}
 					<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
