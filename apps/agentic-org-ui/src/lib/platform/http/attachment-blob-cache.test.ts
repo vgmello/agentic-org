@@ -328,4 +328,98 @@ describe('attachmentBlobCache', () => {
 		expect(revoked).toEqual([h1.objectUrl]);
 		cache.release(h2.key, h2.objectUrl);
 	});
+
+	it('N3: handles 304 without cached entry via unconditional GET and skips fallback after session clear', async () => {
+		let seq = 0;
+		let endSession!: () => void;
+		let resolveStale304!: (value: DownloadAttachmentResult) => void;
+		const download = vi
+			.fn<
+				(
+					org: string,
+					id: string,
+					opts?: { ifNoneMatch?: string; signal?: AbortSignal }
+				) => Promise<DownloadAttachmentResult>
+			>()
+			.mockResolvedValueOnce({ status: 304, etag: '"ghost"' })
+			.mockResolvedValueOnce({
+				status: 200,
+				blob: makeBlob(30),
+				etag: '"fresh"',
+				contentType: 'image/png'
+			})
+			.mockImplementationOnce(
+				() =>
+					new Promise<DownloadAttachmentResult>((resolve) => {
+						resolveStale304 = resolve;
+					})
+			);
+
+		const cache = createAttachmentBlobCache({
+			download,
+			createObjectURL: () => `blob:test/${++seq}`,
+			revokeObjectURL: () => {},
+			onSessionEnded: (listener) => {
+				endSession = listener;
+				return () => {};
+			}
+		});
+
+		const h = await cache.acquire('org-1', 'a1');
+		expect(h.objectUrl).toBe('blob:test/1');
+		expect(download).toHaveBeenCalledTimes(2);
+		expect(download).toHaveBeenNthCalledWith(
+			2,
+			'org-1',
+			'a1',
+			expect.not.objectContaining({ ifNoneMatch: expect.anything() })
+		);
+		cache.release(h.key, h.objectUrl);
+
+		// If session ends before a 304 settles, no redundant unconditional fallback GET may fire.
+		const p = cache.acquire('org-1', 'a2');
+		endSession();
+		resolveStale304({ status: 304, etag: '"stale"' });
+		await expect(p).rejects.toThrow();
+		expect(download).toHaveBeenCalledTimes(3);
+	});
+
+	it('N3: releases pre-pinned ref if a waiter aborts after flight settlement', async () => {
+		let seq = 0;
+		const revoked: string[] = [];
+		let resolveDownload!: (value: DownloadAttachmentResult) => void;
+		const download = vi.fn((_org: string, id: string) =>
+			id === 'a1'
+				? new Promise<DownloadAttachmentResult>((resolve) => {
+						resolveDownload = resolve;
+					})
+				: Promise.resolve<DownloadAttachmentResult>({
+						status: 200,
+						blob: makeBlob(40),
+						etag: '"e2"',
+						contentType: 'image/png'
+					})
+		);
+
+		const cache = createAttachmentBlobCache({
+			download,
+			createObjectURL: () => `blob:test/${++seq}`,
+			revokeObjectURL: (url) => revoked.push(url),
+			maxEntries: 1,
+			maxBytes: 100
+		});
+
+		const c1 = new AbortController();
+		const p1 = cache.acquire('org-1', 'a1', { signal: c1.signal });
+		resolveDownload({ status: 200, blob: makeBlob(40), etag: '"e1"', contentType: 'image/png' });
+		// Let flight.promise settle (pre-pinning refs=1), then abort waiter before using handle.
+		await Promise.resolve();
+		c1.abort();
+		await expect(p1).rejects.toThrow();
+
+		// Because post-settlement abort released the ref back to 0, a2 evicts and revokes a1.
+		const h2 = await cache.acquire('org-1', 'a2');
+		expect(revoked).toEqual(['blob:test/1']);
+		cache.release(h2.key, h2.objectUrl);
+	});
 });

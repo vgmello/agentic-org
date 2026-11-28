@@ -158,10 +158,13 @@ export function createAttachmentBlobCache(deps: AttachmentBlobCacheDeps) {
 			promise: Promise.resolve(undefined as unknown as CacheEntry)
 		};
 		inFlight.set(key, flight);
-		const finish = (res: DownloadAttachmentResult): CacheEntry => {
+		const ensureLive = () => {
 			if (requestEpoch !== epoch || flight.aborted || flight.waiters <= 0) {
 				throw new DOMException('Aborted', 'AbortError');
 			}
+		};
+		const finish = (res: DownloadAttachmentResult): CacheEntry => {
+			ensureLive();
 			const entry = storeResult(key, res, existing, flight.waiters);
 			flight.settled = true;
 			flight.entry = entry;
@@ -173,6 +176,7 @@ export function createAttachmentBlobCache(deps: AttachmentBlobCacheDeps) {
 				ifNoneMatch: existing?.etag,
 				signal: controller.signal
 			});
+			ensureLive();
 			if (res.status === 304 && (!existing || entries.get(key) !== existing)) {
 				const fresh = await deps.download(orgId, attachmentId, { signal: controller.signal });
 				return finish(fresh);

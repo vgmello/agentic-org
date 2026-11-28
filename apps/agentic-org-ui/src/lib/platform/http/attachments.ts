@@ -211,9 +211,9 @@ export function createAttachmentsClient(getRuntime: () => AttachmentsRuntime) {
 			input: RegisterFileInput,
 			signal?: AbortSignal
 		): Promise<AttachmentView> {
-			const hasUpload = Boolean(input.upload_id?.trim());
-			const hasSource = Boolean(input.source_attachment_id?.trim());
-			if (hasUpload === hasSource) {
+			const uploadId = input.upload_id?.trim() || undefined;
+			const sourceId = input.source_attachment_id?.trim() || undefined;
+			if (Boolean(uploadId) === Boolean(sourceId)) {
 				throw {
 					source: 'api',
 					code: 'invalid_request',
@@ -224,10 +224,8 @@ export function createAttachmentsClient(getRuntime: () => AttachmentsRuntime) {
 			const path = `/api/v1/organizations/${encodeURIComponent(orgId)}/files`;
 			const body = {
 				command_id: input.command_id ?? runtime.newOperationId(),
-				...(input.upload_id !== undefined ? { upload_id: input.upload_id } : {}),
-				...(input.source_attachment_id !== undefined
-					? { source_attachment_id: input.source_attachment_id }
-					: {}),
+				...(uploadId ? { upload_id: uploadId } : {}),
+				...(sourceId ? { source_attachment_id: sourceId } : {}),
 				target_kind: input.target_kind,
 				...(input.target_id !== undefined ? { target_id: input.target_id } : {}),
 				...(input.title !== undefined ? { title: input.title } : {}),

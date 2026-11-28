@@ -24,6 +24,7 @@ const LIMITS = {
 function compose() {
 	let state = $state<AppSessionState>({ kind: 'loading' });
 	let access = $state<AccessView>({ auth_enabled: true, listen_scheme: 'unknown' });
+	const hasSessionPair = $derived(state.kind === 'signed-in' && !state.authless);
 	let controller: Controller | undefined;
 	let booted: Promise<void> | undefined;
 	let operationClock: ReturnType<typeof createOperationClock> | undefined;
@@ -112,7 +113,7 @@ function compose() {
 		},
 		/** True when a full signed-in browser session pair (cookie + proof) is active (false in local authless mode). */
 		get hasSessionPair() {
-			return state.kind === 'signed-in' && !state.authless;
+			return hasSessionPair;
 		},
 		/** Fires when the active caller signs out or switches account (not during same-account reauth). */
 		onSessionEnded(listener: (caller: string | undefined) => void): () => void {

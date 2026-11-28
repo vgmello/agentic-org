@@ -3,10 +3,13 @@
   Main conversation column (header, status callouts, MessageFeed, typing indicator, Composer) for ChatWorkspace.
 -->
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import ArrowDown from '@lucide/svelte/icons/arrow-down';
 	import Info from '@lucide/svelte/icons/info';
 	import Unplug from '@lucide/svelte/icons/unplug';
 	import Callout from '$lib/components/Callout.svelte';
+	import { useAttachmentOrgId } from '$lib/components/attachments/context';
+	import { subscribeAttachmentsSessionEnded } from '$lib/platform/http/attachments-runtime';
 	import {
 		titleOf,
 		useOptionalDraftStore,
@@ -129,21 +132,38 @@
 	} = $props();
 
 	const draftStore = useOptionalDraftStore();
+	const getAmbientOrgId = useAttachmentOrgId();
+	const activeOrgId = $derived(getAmbientOrgId?.() ?? '');
+	let draftEpoch = $state(0);
 	const conversationId = $derived(conversation?.id);
+	let lastOrgScope: string | undefined;
 	const draftsCache: Record<
 		string,
 		ReturnType<NonNullable<typeof draftStore>['forThread']>
 	> = Object.create(null);
-	function draftsForConversation(id: string | undefined) {
+	function clearDraftsCache() {
+		for (const key of Object.keys(draftsCache)) delete draftsCache[key];
+	}
+	const unsubscribeDraftSession = subscribeAttachmentsSessionEnded(() => {
+		clearDraftsCache();
+		draftEpoch += 1;
+	});
+	onDestroy(unsubscribeDraftSession);
+	function draftsForConversation(id: string | undefined, orgScope: string, epoch: number) {
 		if (!draftStore || !id) return undefined;
-		let entry = draftsCache[id];
+		if (lastOrgScope !== orgScope) {
+			clearDraftsCache();
+			lastOrgScope = orgScope;
+		}
+		const cacheKey = `${epoch}:${orgScope}:${id}`;
+		let entry = draftsCache[cacheKey];
 		if (!entry) {
 			entry = draftStore.forThread(`conversation:${id}`);
-			draftsCache[id] = entry;
+			draftsCache[cacheKey] = entry;
 		}
 		return entry;
 	}
-	const convDrafts = $derived(draftsForConversation(conversationId));
+	const convDrafts = $derived(draftsForConversation(conversationId, activeOrgId, draftEpoch));
 	let feedScroll = $state<FeedScrollState>({ hasNewer: false, unseenCount: 0 });
 	const jumpLabel = $derived(
 		feedScroll.unseenCount > 0
@@ -166,7 +186,7 @@
 		readOnly={bridgePreview}
 		{officeRunning}
 		active={rowIsActive(m)}
-		askDraftFor={draftsForConversation(m.conversation_id)?.ask}
+		askDraftFor={draftsForConversation(m.conversation_id, activeOrgId, draftEpoch)?.ask}
 		{onmenu}
 		where={extra.where}
 		onreact={actions.react}

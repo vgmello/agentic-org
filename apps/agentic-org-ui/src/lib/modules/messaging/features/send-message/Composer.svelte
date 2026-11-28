@@ -114,7 +114,13 @@
 		}
 	}
 
-	const unsubscribeSessionEnded = subscribeAttachmentsSessionEnded(clearLocalDraftAttachments);
+	function handleSessionEnded() {
+		attachmentsBar?.clear(true);
+		staged = [];
+		clearLocalDraftAttachments();
+	}
+
+	const unsubscribeSessionEnded = subscribeAttachmentsSessionEnded(handleSessionEnded);
 	onDestroy(() => {
 		unsubscribeSessionEnded();
 		clearLocalDraftAttachments();

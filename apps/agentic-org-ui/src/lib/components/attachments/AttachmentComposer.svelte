@@ -4,7 +4,7 @@
   clipboard paste, <100ms local blob: previews, per-item retry/remove, and zero $effect hooks.
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import RotateCw from '@lucide/svelte/icons/rotate-cw';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
@@ -102,19 +102,23 @@
 
 	function trackScope(scopeKey: string) {
 		return () => {
-			if (lastScopeKey !== undefined && lastScopeKey !== scopeKey && notice !== undefined) {
-				notice = undefined;
+			if (lastScopeKey !== undefined && lastScopeKey !== scopeKey) {
+				untrack(() => {
+					if (notice !== undefined) notice = undefined;
+				});
 			}
 			lastScopeKey = scopeKey;
 			return () => {
 				abortAllUploads();
-				if (retainPreviewsOnUnmount) {
-					if (items.some((entry) => entry.status === 'uploading')) {
-						onItemsChange?.(markInterruptedUploads(items));
+				untrack(() => {
+					if (retainPreviewsOnUnmount) {
+						if (items.some((entry) => entry.status === 'uploading')) {
+							onItemsChange?.(markInterruptedUploads(items));
+						}
+					} else {
+						revokeStagedPreviews(items);
 					}
-				} else {
-					revokeStagedPreviews(items);
-				}
+				});
 			};
 		};
 	}

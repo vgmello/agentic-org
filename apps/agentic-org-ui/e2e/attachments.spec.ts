@@ -1,10 +1,55 @@
 import { expect, test, type Page } from '@playwright/test';
+import { deflateSync } from 'node:zlib';
 import { enterMockedOrganization } from './mock-organization';
 import { visit } from './ready';
 
 // Valid 1x1 red PNG (67 bytes, valid IHDR 1x1 so both browser decode & PNG dimension sniffer succeed).
 const PNG_1X1_BASE64 =
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+
+function buildCrcTable(): Uint32Array {
+	const table = new Uint32Array(256);
+	for (let n = 0; n < 256; n++) {
+		let c = n;
+		for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+		table[n] = c >>> 0;
+	}
+	return table;
+}
+
+const PNG_CRC_TABLE = buildCrcTable();
+
+function pngChunk(type: string, data: Buffer): Buffer {
+	const out = Buffer.alloc(12 + data.length);
+	out.writeUInt32BE(data.length, 0);
+	out.write(type, 4, 4, 'ascii');
+	data.copy(out, 8);
+	let crc = 0xffffffff;
+	for (let i = 4; i < 8 + data.length; i++)
+		crc = PNG_CRC_TABLE[(crc ^ out[i]) & 0xff] ^ (crc >>> 8);
+	out.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 8 + data.length);
+	return out;
+}
+
+function makeSolidPng(width: number, height: number): Buffer {
+	const ihdr = Buffer.alloc(13);
+	ihdr.writeUInt32BE(width, 0);
+	ihdr.writeUInt32BE(height, 4);
+	ihdr[8] = 8; // bit depth
+	ihdr[9] = 2; // RGB
+	const rowLen = 1 + width * 3;
+	const row = Buffer.alloc(rowLen);
+	for (let x = 0; x < width; x++) row[1 + x * 3] = 200;
+	const raw = Buffer.concat(Array.from({ length: height }, () => row));
+	return Buffer.concat([
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+		pngChunk('IHDR', ihdr),
+		pngChunk('IDAT', deflateSync(raw)),
+		pngChunk('IEND', Buffer.alloc(0))
+	]);
+}
+
+const WIDE_PNG = makeSolidPng(2400, 40);
 
 const SAMPLE_PDF = Buffer.from(
 	'%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n',
@@ -44,11 +89,11 @@ test(
 		// Clear initial Vite dev mock-mode /api/v1/version probe 404s before exercising attachments.
 		consoleErrors.length = 0;
 
-		// 1. Attach PNG image -> staged preview renders immediately with blob: URL + vision note.
+		// 1. Attach wide PNG image -> staged preview renders immediately with blob: URL + vision note.
 		await page.getByLabel('Attach files').setInputFiles({
 			name: 'diagram.png',
 			mimeType: 'image/png',
-			buffer: Buffer.from(PNG_1X1_BASE64, 'base64')
+			buffer: WIDE_PNG
 		});
 
 		const staged = page.getByTestId('staged-attachment');
@@ -81,6 +126,12 @@ test(
 		await expect(
 			lightbox.getByRole('button', { name: 'Fit to screen', exact: true })
 		).toBeVisible();
+		// Wide zoomed image must overflow and scroll horizontally instead of shrinking/clipping (N2).
+		await expect
+			.poll(() =>
+				lightbox.getByTestId('lightbox-scroll').evaluate((el) => el.scrollWidth > el.clientWidth)
+			)
+			.toBe(true);
 
 		await page.keyboard.press('Escape');
 		await expect(lightbox).toBeHidden();
@@ -226,6 +277,25 @@ test(
 
 		// Clicking Retry completes the upload cleanly.
 		await page.getByRole('button', { name: 'Retry in-flight.png', exact: true }).click();
+		await expect(staged).toHaveAttribute('data-status', 'ready');
+
+		// N1: After a conversation switch, attaching [valid.png, bad.svg] sets notice WITHOUT aborting valid.png.
+		await page.getByRole('button', { name: /^atlas\b/i }).click();
+		await expect(page.getByTestId('conversation-title')).toHaveText('#atlas');
+		await page.getByLabel('Attach files').setInputFiles([
+			{
+				name: 'mixed-ok.png',
+				mimeType: 'image/png',
+				buffer: Buffer.from(PNG_1X1_BASE64, 'base64')
+			},
+			{
+				name: 'mixed-bad.svg',
+				mimeType: 'image/svg+xml',
+				buffer: Buffer.from('<svg></svg>', 'utf8')
+			}
+		]);
+		await expect(page.getByTestId('attachment-notice')).toContainText(/not accepted/i);
+		await expect(staged).toHaveCount(1);
 		await expect(staged).toHaveAttribute('data-status', 'ready');
 		expect(pageErrors).toEqual([]);
 	}

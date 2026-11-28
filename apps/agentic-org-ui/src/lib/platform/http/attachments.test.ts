@@ -187,6 +187,35 @@ describe('gateway status mapping, PATCH transport, and attachments client', () =
 			code: 'invalid_request'
 		});
 
+		const submit = runtime.submit as ReturnType<typeof vi.fn>;
+		submit.mockResolvedValueOnce({
+			status: 201,
+			body: {
+				result: {
+					attachment: {
+						id: 'a-promoted',
+						filename: 'spec.pdf',
+						title: 'Spec',
+						artifact_status: 'final',
+						mime_type: 'application/pdf',
+						byte_count: 10,
+						uploaded_by_employee_id: 'emp-1',
+						created_at: '2026-11-27T00:00:00.000Z',
+						scope: 'shared',
+						target_kind: 'organization'
+					}
+				}
+			}
+		});
+		await client.registerFile('org-1', {
+			upload_id: '   ',
+			source_attachment_id: ' a-1 ',
+			target_kind: 'organization'
+		});
+		const sentBody = submit.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+		expect(sentBody).not.toHaveProperty('upload_id');
+		expect(sentBody.source_attachment_id).toBe('a-1');
+
 		await client.listFiles('org-1', { scope: 'shared', mime_category: 'document', limit: 25 });
 		expect(runtime.read).toHaveBeenCalledWith(
 			'/api/v1/organizations/org-1/files?scope=shared&mime_category=document&limit=25',

@@ -154,11 +154,11 @@
 					</ModalTooltip>
 				{/if}
 
-				<div class="flex flex-1 overflow-auto p-2">
+				<div class="flex flex-1 overflow-auto p-2" data-testid="lightbox-scroll">
 					<AttachmentImage
 						attachment={current}
 						organizationId={orgId}
-						class="m-auto bg-transparent"
+						class={zoomed ? 'm-auto shrink-0 bg-transparent' : 'm-auto bg-transparent'}
 						imgClass={zoomed
 							? 'max-w-none transition-transform motion-reduce:transition-none'
 							: 'max-h-[70dvh] max-w-full object-contain transition-transform motion-reduce:transition-none'}

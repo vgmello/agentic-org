@@ -237,7 +237,7 @@
 					<AttachmentGallery attachments={message.attachment_meta} />
 				{:else if !card && message.attachments?.length}
 					<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
-						{#each message.attachments as a (a)}<li
+						{#each message.attachments as a, i (message.attachment_meta?.[i]?.id ?? `${a}-${i}`)}<li
 								class="inline-flex max-w-full items-start gap-x-1 rounded bg-surface-overlay px-2 py-0.5 text-xs/5 text-fg-body"
 							>
 								<HeroIcon class="mt-0.5" variant="micro" name="paper-clip" /><span
