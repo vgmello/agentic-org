@@ -7,8 +7,8 @@ import {
 	buildProjectHealthOverlay,
 	buildProjectHealthSignals,
 	classifyProjectHealth,
-	isSeriousOpenBug,
-	type ProjectHealthOverlay
+	type ProjectHealthOverlay,
+	type ProjectHealthSignals
 } from '$lib/platform/workspace/project-health';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import {
@@ -29,39 +29,25 @@ interface ProjectWorkSignals {
 	scopedReqs: WorkItemSummary[];
 }
 
-function resolveProjectDoneTotal(
-	projItems: readonly WorkItemSummary[],
-	row: ProjectRow | undefined,
-	homeProj: HomeProject | undefined
-): { doneCount: number; totalCount: number } {
-	if (homeProj && homeProj.total > 0)
-		return { doneCount: homeProj.done, totalCount: homeProj.total };
-	const rowTotal = row
-		? row.tasks.todo + row.tasks.inProgress + row.tasks.blocked + row.tasks.done
-		: 0;
-	if (row && rowTotal > 0) return { doneCount: row.tasks.done, totalCount: rowTotal };
-	return { doneCount: projItems.filter(isItemDone).length, totalCount: projItems.length };
-}
-
 function computeProjectSignals(
 	projItems: readonly WorkItemSummary[],
-	row: ProjectRow | undefined,
-	homeProj: HomeProject | undefined
+	overlay: ProjectHealthOverlay,
+	healthSignals: ProjectHealthSignals
 ): ProjectWorkSignals {
-	const { doneCount, totalCount } = resolveProjectDoneTotal(projItems, row, homeProj);
+	const doneCount = overlay.doneCount ?? projItems.filter(isItemDone).length;
+	const totalCount = overlay.totalCount ?? projItems.length;
 	const pct = totalCount > 0 ? Math.round((doneCount * 100) / totalCount) : 0;
 	const blockedItems = projItems.filter((i) => i.status === 'blocked');
-	const blockedCount = Math.max(
-		blockedItems.length,
-		row?.tasks.blocked ?? 0,
-		homeProj?.blocked ?? 0
-	);
-	const criticalBugs = Math.max(
-		projItems.filter(isSeriousOpenBug).length,
-		row ? row.bugs.critical + row.bugs.major : 0
-	);
 	const scopedReqs = projItems.filter((i) => i.kind === 'request' && i.status === 'scoped');
-	return { doneCount, totalCount, pct, blockedItems, blockedCount, criticalBugs, scopedReqs };
+	return {
+		doneCount,
+		totalCount,
+		pct,
+		blockedItems,
+		blockedCount: healthSignals.blockedCount,
+		criticalBugs: healthSignals.criticalBugs,
+		scopedReqs
+	};
 }
 
 interface BlockerPresentation {
@@ -293,8 +279,6 @@ export function deriveProjectCards(
 		const row = rowById.get(projectId);
 		const homeProj = homeById.get(projectId);
 		const projItems = items.filter((i) => !i.deleted && i.project_id === projectId);
-		const signals = computeProjectSignals(projItems, row, homeProj);
-
 		const projInbox = openInbox.filter((i) => i.project?.id === projectId);
 		const projProblems = projInbox.filter((i) => i.kind === 'problem');
 		const projApprovals = projInbox.filter((i) => i.kind === 'approval' || i.kind === 'decision');
@@ -312,6 +296,7 @@ export function deriveProjectCards(
 			overlay,
 			nowMs
 		});
+		const signals = computeProjectSignals(projItems, overlay, healthSignals);
 		const { isOverdue, unassignedTeam } = healthSignals;
 		const {
 			label: health,

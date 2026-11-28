@@ -46,6 +46,7 @@ export class ShellData implements ShellDataContext {
 	loadedOrganizationId = $state<string | undefined>(undefined);
 
 	#loadSeq = 0;
+	#volatileOverlayLoadSeq = -1;
 	#leaving = false;
 	#activeAbort: AbortController | undefined;
 	#latestLoad: { seq: number; orgId: string; promise: Promise<ShellRefreshResult> } | undefined =
@@ -120,6 +121,7 @@ export class ShellData implements ShellDataContext {
 		options?: ProjectHealthOverlayUpdateOptions
 	): void {
 		if (this.#leaving || organizationId !== this.organizationId) return;
+		this.#volatileOverlayLoadSeq = this.#loadSeq;
 		this.#rawProjectHealthById = mergeProjectHealthOverlayMap(
 			this.#rawProjectHealthById,
 			overlays,
@@ -129,6 +131,7 @@ export class ShellData implements ShellDataContext {
 
 	clearVolatileProjectHealthCounts(organizationId = this.organizationId): void {
 		if (this.#leaving || organizationId !== this.organizationId) return;
+		this.#volatileOverlayLoadSeq = -1;
 		this.#rawProjectHealthById = stripVolatileOverlayMap(this.#rawProjectHealthById);
 	}
 
@@ -140,24 +143,32 @@ export class ShellData implements ShellDataContext {
 		this.inboxLoadedOrganizationId = undefined;
 		this.#layeredOffices = [];
 		this.#rawProjectHealthById = {};
+		this.#volatileOverlayLoadSeq = -1;
 		this.loaded = false;
 		this.loadedOrganizationId = undefined;
 	}
 
 	#applyLoadResults(
 		id: string,
+		seq: number,
 		baseOffices: OfficeInfo[],
-		orgRes: PromiseSettledResult<{ snapshot: OrgSnapshot }>,
-		workRes: PromiseSettledResult<WorkItemSummary[]>,
-		inboxRes: PromiseSettledResult<InboxItem[]>,
-		officesRes: PromiseSettledResult<OfficeInfo[]>
+		settled: [
+			PromiseSettledResult<{ snapshot: OrgSnapshot }>,
+			PromiseSettledResult<WorkItemSummary[]>,
+			PromiseSettledResult<InboxItem[]>,
+			PromiseSettledResult<OfficeInfo[]>
+		]
 	): ShellRefreshResult {
+		const [orgRes, workRes, inboxRes, officesRes] = settled;
 		if (orgRes.status === 'fulfilled') this.snapshot = orgRes.value.snapshot;
 		const workUpdated = workRes.status === 'fulfilled';
 		if (workUpdated) {
 			this.workItems = workRes.value;
 			this.workError = undefined;
-			this.#rawProjectHealthById = stripVolatileOverlayMap(this.#rawProjectHealthById);
+			if (seq > this.#volatileOverlayLoadSeq) {
+				this.#rawProjectHealthById = stripVolatileOverlayMap(this.#rawProjectHealthById);
+				this.#volatileOverlayLoadSeq = -1;
+			}
 		} else {
 			this.workError = workRes.reason;
 			this.workErrorSeq += 1;
@@ -197,13 +208,13 @@ export class ShellData implements ShellDataContext {
 			loadShellWorkItems(id, controller.signal),
 			inboxApi.list(id, controller.signal),
 			this.#options.loadOffices(id, baseOffices, controller.signal)
-		]).then(async ([orgRes, workRes, inboxRes, officesRes]): Promise<ShellRefreshResult> => {
+		]).then(async (settled): Promise<ShellRefreshResult> => {
 			if (this.#activeAbort === controller) this.#activeAbort = undefined;
 			if (this.#leaving || cancelled) return { inboxUpdated: false, workUpdated: false };
 			if (controller.signal.aborted || seq !== this.#loadSeq) {
 				return await this.#awaitSuperseded(id, seq);
 			}
-			return this.#applyLoadResults(id, baseOffices, orgRes, workRes, inboxRes, officesRes);
+			return this.#applyLoadResults(id, seq, baseOffices, settled);
 		});
 		// Retain #latestLoad until overwritten by a newer load or dispose() so slower superseded loads can read its result.
 		this.#latestLoad = { seq, orgId: id, promise };

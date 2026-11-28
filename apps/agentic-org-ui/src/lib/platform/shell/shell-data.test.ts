@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildHomeProjectHealthOverlays } from '$lib/modules/home/model';
 import type { InboxItem } from '$lib/modules/inbox/types';
+import type { ProjectRow } from '$lib/modules/projects/types';
 import { deriveProjectHealth } from '$lib/platform/workspace/project-health';
 import type { OfficeInfo, WorkItemSummary } from '$lib/proto';
 
@@ -309,4 +311,137 @@ describe('ShellData inboxLoadedOrganizationId', () => {
 		});
 		shell.dispose();
 	});
+
+	it('preserves Home overlays published while shell.load() is in flight, strips on subsequent refresh, and guards wrong-org/post-dispose clears (M1, L2)', async () => {
+		const nowMs = Date.parse('2026-11-27T12:00:00Z');
+		orgView.mockResolvedValue({
+			snapshot: {
+				members: [],
+				teams: [{ id: 'team-1', name: 'Platform', version: 1 }],
+				projects: [
+					{ id: 'p-bug', name: 'Office federation' },
+					{ id: 'p-stale-team', name: 'Unassigned project' }
+				],
+				project_teams: []
+			}
+		});
+		inboxList.mockResolvedValue([]);
+
+		let resolveInitialWork!: (v: { items: WorkItemSummary[] }) => void;
+		workSnapshot.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveInitialWork = resolve;
+				})
+		);
+
+		const shell = new ShellData({
+			getOrganizationId: () => 'org-1',
+			getBaseOffices: () => baseOffices,
+			loadOffices: async (_id, offices) => offices
+		});
+
+		// Start initial shell.load (seq=1); Home finishes publishing BEFORE shell.load settles.
+		const initialLoad = shell.load('org-1', true);
+		await Promise.resolve();
+		const rows = makeParityRows();
+		const homeProjects = [
+			{
+				id: 'p-bug',
+				name: 'Office federation',
+				done: 1,
+				total: 2,
+				open: 1,
+				blocked: 0,
+				members: 2,
+				due: '2026-11-20'
+			}
+		];
+		shell.setProjectHealthOverlays('org-1', buildHomeProjectHealthOverlays(rows, homeProjects));
+
+		// Initial shell.load (seq=1) now settles -> MUST NOT wipe Home's in-flight volatile counts.
+		resolveInitialWork({ items: [] });
+		await initialLoad.promise;
+
+		expect(shell.projectHealthById['p-bug']).toEqual({
+			dueDate: '2026-11-20',
+			doneCount: 1,
+			totalCount: 2,
+			criticalBugCount: 1,
+			teamIds: ['team-1']
+		});
+		const sidebarHealth = (projectId: string) =>
+			deriveProjectHealth({
+				projectId,
+				workItems: shell.workItems,
+				inboxItems: shell.inboxItems,
+				projectTeams: shell.validProjectTeams,
+				overlay: shell.projectHealthById[projectId],
+				nowMs
+			});
+		expect(sidebarHealth('p-bug')).toEqual({
+			tone: 'bad',
+			label: 'Off track',
+			statusPillClass: 't-red'
+		});
+		expect(sidebarHealth('p-stale-team')).toEqual({
+			tone: 'warn',
+			label: 'At risk',
+			statusPillClass: 't-amber'
+		});
+
+		// Wrong-org clearVolatileProjectHealthCounts is safely ignored.
+		shell.clearVolatileProjectHealthCounts('org-other');
+		expect(shell.projectHealthById['p-bug']?.criticalBugCount).toBe(1);
+
+		// A subsequent shell.refresh() (seq=2 > 1) strips volatile counts and reflects live workItems.
+		workSnapshot.mockResolvedValueOnce({ items: [] });
+		await shell.refresh();
+		expect(shell.projectHealthById['p-bug']).toEqual({
+			dueDate: '2026-11-20',
+			teamIds: ['team-1']
+		});
+		expect(sidebarHealth('p-bug')).toEqual({
+			tone: 'ok',
+			label: 'On track',
+			statusPillClass: 't-green'
+		});
+
+		// Post-dispose clearVolatileProjectHealthCounts is safely ignored.
+		shell.setProjectHealthOverlays('org-1', {
+			'p-bug': { dueDate: '2026-11-20', blockedCount: 2 }
+		});
+		shell.dispose();
+		shell.clearVolatileProjectHealthCounts('org-1');
+		expect(shell.projectHealthById['p-bug']?.blockedCount).toBe(2);
+	});
 });
+
+function makeParityRows(): ProjectRow[] {
+	return [
+		{
+			id: 'p-bug',
+			number: 1,
+			slug: 'office-federation',
+			name: 'Office federation',
+			ownerTeam: { id: 'team-1', name: 'Platform', ref: 'TEAM-1' },
+			contributors: [],
+			archived: false,
+			tasks: { todo: 1, inProgress: 0, blocked: 0, done: 1, cancelled: 0 },
+			bugs: { critical: 1, major: 0, minor: 0, trivial: 0, unset: 0 },
+			developmentProcess: null
+		},
+		{
+			id: 'p-stale-team',
+			number: 2,
+			slug: 'unassigned',
+			name: 'Unassigned project',
+			ownerTeam: { id: 'team-deleted', name: 'Ghost', ref: 'TEAM-9' },
+			contributors: [],
+			archived: false,
+			tasks: { todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0 },
+			bugs: { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 },
+			developmentProcess: null
+		}
+	];
+}
